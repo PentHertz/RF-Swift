@@ -74,6 +74,30 @@ To get the 10 last containers you have create, you can use the following command
 	sudo ./rfswift last -f myrfswift:latest # we are using a filter for images
 	[ 1716024976 ][ myrfswift:latest ] Container:  c9e223a987a36441fb631f4a11def746aabb1a1bc862b5f2589d5b3ac8429cb1 , Command:  /bin/bash
 
+## Options
+
+### OpenCL
+
+You can enable OpenCL with the driver associated to your graphic card:
+
+	# Installing OpenCL
+	## NVidia drivers
+	#RUN apt-fast install -y nvidia-opencl-dev nvidia-modprobe
+	## Installing Intel's OpenCL
+	#RUN apt-fast install -y intel-opencl-icd ocl-icd-dev ocl-icd-opencl-dev
+
+ ### RTL-SDR
+
+ The RTL-SDR v4 uses a different driver that replaces the others.
+
+Until we find a proper way to support both drivers, comment the basic function and uncomment the v4 one in the recipe as follow:
+
+	#RUN ./entrypoint.sh rtlsdr_devices_install
+	RUN ./entrypoint.sh rtlsdrv4_devices_install # optionnal, remove rtlsdr_devices_install if you are using the v4 version
+ 
+
+# Installing gr-fosphor with OpenCL
+#RUN ./entrypoint.sh grfosphor_grmod_install
 
 ## How to contribute
 
