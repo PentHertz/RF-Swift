@@ -1,18 +1,18 @@
 # RF Swift
 
-Welcome to the RF Swift project which aims to provide all needed tools for RF HAMs and professionals.
+Welcome to the RF Swift project! 🎉 Our mission is to provide all the essential tools for both HAM radio enthusiasts and RF professionals. 📡🔧
 
 ![RF Swift logo](images/logo.png "RF Swift logo")
 
-This toolbox written in Go and shell script allows to quickly deploy Docker containers with desired RF tools, and will all provide more feautures in the near future.
+Introducing our Go and shell script-based toolbox, designed to streamline the deployment of Docker containers for your preferred RF tools. This evolving toolkit promises even more features in the near future, making it an essential asset for RF enthusiasts.
 
-For the moment, the scripts are not yet complete, but your are welcomed to fullfil them if you see there is a needed tool you want to deploy at scale.
+Currently, the scripts are still under development. However, we invite you to contribute by adding any tools you find necessary for large-scale deployment.
 
-This toolbox was inspirated from the nice [Exegol project](https://github.com/ThePorgs/Exegol) in order to integrate all needed tools for radio analysis without uninstalling your favorite OS, and save space depending on your needs via special Docker file recipes.
+Inspired by the remarkable [Exegol project](https://github.com/ThePorgs/Exegol), our toolbox aims to integrate all essential tools for radio analysis without requiring you to uninstall your preferred operating system. It also offers special Docker file recipes to help you conserve space based on your specific needs.
 
-Still, if you want to have all RF softwares in one OS, you can alternatively use [DragonOS](https://cemaxecuter.com/). But if you want to deploy your tools, messing inside a container without affecting your host, this toolbox is for you ;)
+For those who prefer a single OS with all RF software, consider using [DragonOS](https://cemaxecuter.com/). But if your goal is to deploy tools within a container without affecting your host system, this toolbox is your ideal solution.
 
-The philosophy of this toolbox is simple -> keep your Linux or Windows systems as they are, and start to play on RF without borders!
+Our philosophy is straightforward: maintain the integrity of your Linux or Windows systems while enjoying unrestricted RF experimentation. Start exploring RF without boundaries today!
 
 ## Requirements
 
