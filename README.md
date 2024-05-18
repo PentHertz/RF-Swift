@@ -94,10 +94,9 @@ Until we find a proper way to support both drivers, comment the basic function a
 
 	#RUN ./entrypoint.sh rtlsdr_devices_install
 	RUN ./entrypoint.sh rtlsdrv4_devices_install # optionnal, remove rtlsdr_devices_install if you are using the v4 version
- 
 
-# Installing gr-fosphor with OpenCL
-#RUN ./entrypoint.sh grfosphor_grmod_install
+	# Installing gr-fosphor with OpenCL
+	#RUN ./entrypoint.sh grfosphor_grmod_install
 
 ## How to contribute
 
