@@ -46,6 +46,8 @@ https://github.com/PentHertz/RF-Swift/assets/715195/bb2ccd96-b688-4106-8fba-d82f
 
 ## Building
 
+### On Linux
+
 For the momemt the building script is rather simple and give you the choice of using a image tag name and a specific Docker file:
 
 	./build.sh 
@@ -56,6 +58,11 @@ For the momemt the building script is rather simple and give you the choice of u
 	Enter value for Dockerfile to use (default: Dockerfile):
 
 Note: uncomment some lines in Docker files, particularly if you are using the GPU with OpenCL
+
+### On Windows
+
+Use the `build-windows.bat` instead after installing all the requirements.
+
 
 ## Creating and running a container
 
