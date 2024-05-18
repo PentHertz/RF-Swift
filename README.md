@@ -1,0 +1,90 @@
+# RF Swift
+
+Welcome to the RF Swift project which aims to provide all needed tools for RF HAMs and professionals.
+
+![RF Swift logo](images/logo.png "RF Swift logo")
+
+This toolbox written in Go and shell script allows to quickly deploy Docker containers with desired RF tools, and will all provide more feautures in the near future.
+
+For the moment, the scripts are not yet complete, but your are welcomed to fullfil them if you see there is a needed tool you want to deploy at scale.
+
+## Building
+
+For the momemt the building script is rather simple and give you the choice of using a image tag name and a specific Docker file:
+
+	./build.sh 
+	[+] Installing Go
+	...
+	[+] Building RF Switch Go Project
+	Enter image tag value (default: myrfswift:latest): 
+	Enter value for Dockerfile to use (default: Dockerfile):
+
+## Creating and running a container
+
+To run a container, use the command `./rfswift run -h` to see needed arguments:
+
+	[...]
+	Usage:
+	  rfswift run [flags]
+
+	Flags:
+	  -b, --bind string      extra bindings (separe them with commas)
+	  -e, --command string   command to exec (by default: '/bin/bash')
+	  -d, --display string   set X Display (by default: 'DISPLAY=:0')
+	  -h, --help             help for run
+	  -i, --image string     image (by default: 'myrfswift:latest')
+
+
+By default, you can the command without arguments if you want to start the `/bin/bash` interpreter and use the default image tag name, and with default environement diplay variable.
+
+## Executing a command inside an existing container
+
+Running a command inside a previous container is fairly easy, if you run a cointainer and exit it.
+
+All you need to do, is to execute the desire command as follows:
+
+	sudo ./rfswift exec -e urh
+
+if you want to run it into another existing container, you can precise the container ID as follows:
+
+	sudo ./rfswift last # to get the list
+	[...]
+	[ 1716024976 ][ myrfswift:latest ] Container:  c9e223a987a36441fb631f4a11def746aabb1a1bc862b5f2589d5b3ac8429cb1 , Command:  /bin/bash
+	[ 1716024209 ][ sha256:ed26c47b0d1dba0473a4729885374e04e24b4189125a245c77280fd472bf934b ] Container:  2354c99f6699b4f3abc97d55cdb825fcfafba2af1b27e02a612fc2586061eb6e , Command:  /bin/sh -c './entrypoint.sh eaphammer_soft_install'
+	[ 1716021780 ][ myrfswift:rfid ] Container:  a3e91704571d92f9a48e355b1db0ca5a97769087aebf573a6295392fb3f4d394 , Command:  /bin/bash
+	[ 1716021385 ][ sha256:95fd8938e078792fc3e09c1311c7bdbed3e8e112887b7f0f36bf5a57616cf414 ] Container:  0b922d0ee58c1235bdba13fe2793ee7544f16fc5a5a710df4ebc68b05b928cc8 , Command:  /bin/sh -c './entrypoint.sh mfoc_soft_install'
+	[...]
+	sudo ./rfswift exec -e /bin/bash -c c9e223a987a36441fb631f4a11def746aabb1a1bc862b5f2589d5b3ac8429cb1 # we are executing on the 'c9e223a987a36441fb631f4a11def746aabb1a1bc862b5f2589d5b3ac8429cb1' container
+
+
+## Getting the latests containers
+
+To get the 10 last containers you have create, you can use the following command:
+
+	sudo ./rfswift last -h
+	  rfswift last [flags]
+
+	Flags:
+	  -f, --filter string   filter by image name
+	[...]
+	sudo ./rfswift last -f myrfswift:latest # we are using a filter for images
+	[ 1716024976 ][ myrfswift:latest ] Container:  c9e223a987a36441fb631f4a11def746aabb1a1bc862b5f2589d5b3ac8429cb1 , Command:  /bin/bash
+
+
+## How to contribute
+
+You are warmly welcomed to contribute to fill scripts we your desired tools.
+
+In the future, we will create a dedicated page for developpers.
+
+## Troubleshooting
+
+### Sound
+
+The sound is sometimes notes restarting when stoping to play with tools like SDR++. 
+
+To solve it for the moment, you can restart the tool and try playing it.
+
+Some tools like GQRX are not yet working with the sound, we will try to fix it when possible, but you can also capture the signal and demodulate it to `wav` and play it with Audacity as a quick fix.
+
+If some contributor have the time to solve this issue, that would be awesome <3

@@ -1,0 +1,3 @@
+pulseaudio -D
+
+-v /etc/localtime:/etc/localtime:ro
