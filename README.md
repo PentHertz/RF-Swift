@@ -10,7 +10,9 @@ For the moment, the scripts are not yet complete, but your are welcomed to fullf
 
 This toolbox was inspirated from the nice [Exegol project](https://github.com/ThePorgs/Exegol) in order to integrate all needed tools for radio analysis without uninstalling your favorite OS, and save space depending on your needs via special Docker file recipes.
 
-Still, if you want to have all RF software in one OS, you can alternatively use [Dragon OS](https://cemaxecuter.com/). But if you want to deploy your tools, messing inside a container without affecting your host, this toolbox is for you ;)
+Still, if you want to have all RF softwares in one OS, you can alternatively use [DragonOS](https://cemaxecuter.com/). But if you want to deploy your tools, messing inside a container without affecting your host, this toolbox is for you ;)
+
+The philosophy of this toolbox is simple -> keep your Linux or Windows systems as there are, and start to play on RF without borders!
 
 ## Requirements
 
