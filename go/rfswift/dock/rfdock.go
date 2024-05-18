@@ -44,6 +44,15 @@ var dockerObj = DockerInst{ net: "host",
                             shell: "/bin/bash"} // Instance with default values
 
 
+func DockerSetx11(x11forward string) {
+    /* Sets the shell to use in the Docker container
+        in(1): string command shell to use
+    */
+    if (x11forward != "") {
+        dockerObj.x11forward = x11forward
+    }
+}
+
 func DockerSetShell(shellcmd string) {
     /* Sets the shell to use in the Docker container
         in(1): string command shell to use
@@ -118,9 +127,13 @@ func DockerRun() {
 	}
 	defer cli.Close()
  
-    var bindings = []string{dockerObj.x11forward, dockerObj.usbforward}
+    x11split := strings.Split(dockerObj.x11forward, ",")
+    var bindings = x11split
+    //bindings = append(bindings, dockerObj.x11split...)
+    bindings = append(bindings, strings.Split(dockerObj.usbforward, ",")...)
+
     if (dockerObj.extrabinding != "") {
-        bindings = append([]string{dockerObj.x11forward, dockerObj.usbforward}, strings.Split(dockerObj.extrabinding, ",")...)
+        bindings = append(bindings, strings.Split(dockerObj.extrabinding, ",")...)
     }
 
     resp, err := cli.ContainerCreate(ctx, &container.Config{

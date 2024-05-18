@@ -7,6 +7,7 @@ package cli
 import (
     "fmt"
     "os"
+    "runtime"
 
     "github.com/spf13/cobra"
     rfdock "penthertz/rfswift/dock"
@@ -37,11 +38,16 @@ var runCmd = &cobra.Command{
   Short: "create and run a program",
   Long:  `Create a container and run a program inside the docker container`,
   Run: func(cmd *cobra.Command, args []string) {
-    rfutils.XHostEnable() // force xhost to add local connections ALCs, TODO: to optimize later
-    rfdock.DockerSetShell(ExecCmd)
-    rfdock.DockerAddBiding(ExtraBind)
-    rfdock.DockerSetImage(DImage)
-    rfdock.DockerRun()
+      os := runtime.GOOS
+      if os == "windows" {
+          rfdock.DockerSetx11("/run/desktop/mnt/host/wslg/.X11-unix:/tmp/.X11-unix,/run/desktop/mnt/host/wslg:/mnt/wslg")
+      } else {
+          rfutils.XHostEnable() // force xhost to add local connections ALCs, TODO: to optimize later
+      }
+      rfdock.DockerSetShell(ExecCmd)
+      rfdock.DockerAddBiding(ExtraBind)
+      rfdock.DockerSetImage(DImage)
+      rfdock.DockerRun()
   },
 }
 
@@ -50,9 +56,14 @@ var execCmd = &cobra.Command{
   Short: "exec a command",
   Long:  `Exec a program on a created docker container, even not started`,
   Run: func(cmd *cobra.Command, args []string) {
-    rfutils.XHostEnable() // force xhost to add local connections ALCs, TODO: to optimize later
-    rfdock.DockerSetShell(ExecCmd)
-    rfdock.DockerExec(ContID, "/root")
+      os := runtime.GOOS
+      if os == "windows" {
+          rfdock.DockerSetx11("/run/desktop/mnt/host/wslg/.X11-unix:/tmp/.X11-unix,/run/desktop/mnt/host/wslg:/mnt/wslg")
+      } else {
+          rfutils.XHostEnable() // force xhost to add local connections ALCs, TODO: to optimize later
+      }
+      rfdock.DockerSetShell(ExecCmd)
+      rfdock.DockerExec(ContID, "/root")
   },
 }
 

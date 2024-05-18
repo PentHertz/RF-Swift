@@ -93,11 +93,14 @@ RUN ./entrypoint.sh grfhss_utils_grmod_install # depends on 'grpdu_utils_grmod_i
 # Installing gr-fosphor with OpenCL
 #RUN ./entrypoint.sh grfosphor_grmod_install
 
+# Installing cyberther with OpenCL
+RUN ./entrypoint.sh cyberther_soft_install
+
 # Installing softwares
 RUN ./entrypoint.sh sdrpp_soft_install
 RUN ./entrypoint.sh sigdigger_soft_install
 RUN ./entrypoint.sh inspection_decoding_tools
-RUN ./entrypoint.sh cyberther_soft_install
+#RUN ./entrypoint.sh cyberther_soft_install
 RUN ./entrypoint.sh qsstv_soft_install
 RUN ./entrypoint.sh ice9_bluetooth_soft_install
 
