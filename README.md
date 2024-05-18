@@ -12,7 +12,7 @@ This toolbox was inspirated from the nice [Exegol project](https://github.com/Th
 
 Still, if you want to have all RF softwares in one OS, you can alternatively use [DragonOS](https://cemaxecuter.com/). But if you want to deploy your tools, messing inside a container without affecting your host, this toolbox is for you ;)
 
-The philosophy of this toolbox is simple -> keep your Linux or Windows systems as there are, and start to play on RF without borders!
+The philosophy of this toolbox is simple -> keep your Linux or Windows systems as they are, and start to play on RF without borders!
 
 ## Requirements
 
