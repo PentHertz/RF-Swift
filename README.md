@@ -115,3 +115,7 @@ To solve it for the moment, you can restart the tool and try playing it.
 Some tools like GQRX are not yet working with the sound, we will try to fix it when possible, but you can also capture the signal and demodulate it to `wav` and play it with Audacity as a quick fix.
 
 If some contributor have the time to solve this issue, that would be awesome <3
+
+### Wiki??!
+
+We will find out some time to build one ;)
