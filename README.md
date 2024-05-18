@@ -42,7 +42,15 @@ After that, the device should appear on the container without issues ;)
 
 ## Quick overview
 
+## On Linux
+
 https://github.com/PentHertz/RF-Swift/assets/715195/bb2ccd96-b688-4106-8fba-d82f84ff1ea4
+
+## On Windows
+
+With GQRX ;)
+
+https://github.com/PentHertz/RF-Swift/assets/715195/25a4a857-aa5a-4daa-9a08-28fa53d2f799
 
 ## Building
 
