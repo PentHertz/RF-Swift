@@ -12,6 +12,34 @@ This toolbox was inspirated from the nice [Exegol project](https://github.com/Th
 
 Still, if you want to have all RF software in one OS, you can alternatively use [Dragon OS](https://cemaxecuter.com/). But if you want to deploy your tools, messing inside a container without affecting your host, this toolbox is for you ;)
 
+## Requirements
+
+### Linux
+
+The tool requires only one direct dependency to install on you own:
+
+- Docker engine (e.g: `apt install docker.io` in Ubuntu)
+
+### Windows
+
+You need to install 3 tools:
+
+- Docker desktop following this link (making sure it is run in WSL 2): https://docs.docker.com/desktop/wsl/#enabling-docker-support-in-wsl-2-distros
+- GoLang installed with MSI package: https://go.dev/dl/
+- `usbipd` as described here: https://learn.microsoft.com/en-us/windows/wsl/connect-usb 
+
+To attach USB device, you'll need first to detect the USB id you are connecting with this command line:
+
+	usbipd wsl list
+
+Then bind & attach this device:
+
+	usbipd bind --busid <bus id>
+	usbipd attach --wsl --busid <busid>
+
+After that, the device should appear on the container without issues ;)
+
+
 ## Quick overview
 
 https://github.com/PentHertz/RF-Swift/assets/715195/bb2ccd96-b688-4106-8fba-d82f84ff1ea4
@@ -26,6 +54,8 @@ For the momemt the building script is rather simple and give you the choice of u
 	[+] Building RF Switch Go Project
 	Enter image tag value (default: myrfswift:latest): 
 	Enter value for Dockerfile to use (default: Dockerfile):
+
+Note: uncomment some lines in Docker files, particularly if you are using the GPU with OpenCL
 
 ## Creating and running a container
 
