@@ -37,7 +37,7 @@ var runCmd = &cobra.Command{
   Short: "create and run a program",
   Long:  `Create a container and run a program inside the docker container`,
   Run: func(cmd *cobra.Command, args []string) {
-    //rfutils.XHostEnable() // force xhost to add local connections ALCs, TODO: to optimize later
+    rfutils.XHostEnable() // force xhost to add local connections ALCs, TODO: to optimize later
     rfdock.DockerSetShell(ExecCmd)
     rfdock.DockerAddBiding(ExtraBind)
     rfdock.DockerSetImage(DImage)
