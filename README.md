@@ -136,6 +136,8 @@ You can enable OpenCL with the driver associated to your graphic card:
 	#RUN apt-fast install -y nvidia-opencl-dev nvidia-modprobe
 	## Installing Intel's OpenCL
 	#RUN apt-fast install -y intel-opencl-icd ocl-icd-dev ocl-icd-opencl-dev
+ 
+![OpenCL recipe in action](https://github.com/PentHertz/RF-Swift/assets/715195/a29eedd5-b1df-40fc-97c0-4dc5323f36a8)
 
  ### RTL-SDR
 
