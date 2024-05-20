@@ -128,7 +128,6 @@ if you want to run it into another existing container, you can precise the conta
 	[...]
 	sudo ./rfswift exec -e /bin/bash -c c9e223a987a36441fb631f4a11def746aabb1a1bc862b5f2589d5b3ac8429cb1 # we are executing on the 'c9e223a987a36441fb631f4a11def746aabb1a1bc862b5f2589d5b3ac8429cb1' container
 
-
 ## Getting the latests containers
 
 To get the 10 last containers you have create, you can use the following command:
@@ -141,6 +140,13 @@ To get the 10 last containers you have create, you can use the following command
 	[...]
 	sudo ./rfswift last -f myrfswift:latest # we are using a filter for images
 	[ 1716024976 ][ myrfswift:latest ] Container:  c9e223a987a36441fb631f4a11def746aabb1a1bc862b5f2589d5b3ac8429cb1 , Command:  /bin/bash
+
+
+## Commit changes
+
+If you want to commit changes you've made of your container an start at this images later on a new one, you can use the `commit` command as follows:
+
+	sudo ./fswift commit -c <container id> -i myrfswift:newtag
 
 ## Options
 
