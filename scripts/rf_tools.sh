@@ -81,7 +81,6 @@ function eaphammer_soft_install() {
 	installfromnet "git clone https://github.com/s0lst1c3/eaphammer.git"
 	cd eaphammer/
 	./ubuntu-unattended-setup
-	./eaphammer --cert-wizard
 }
 
 function airgeddon_soft_install() { # TODO: install all dependencies

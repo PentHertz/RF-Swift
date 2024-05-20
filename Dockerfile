@@ -100,7 +100,6 @@ RUN ./entrypoint.sh cyberther_soft_install
 RUN ./entrypoint.sh sdrpp_soft_install
 RUN ./entrypoint.sh sigdigger_soft_install
 RUN ./entrypoint.sh inspection_decoding_tools
-#RUN ./entrypoint.sh cyberther_soft_install
 RUN ./entrypoint.sh qsstv_soft_install
 RUN ./entrypoint.sh ice9_bluetooth_soft_install
 
@@ -112,6 +111,17 @@ RUN ./entrypoint.sh proxmark3_soft_install
 RUN ./entrypoint.sh libnfc_soft_install
 RUN ./entrypoint.sh mfoc_soft_install
 RUN ./entrypoint.sh mfcuk_soft_install
+
+# Tools for Wi-Fi
+RUN ./entrypoint.sh common_nettools
+RUN ./entrypoint.sh aircrack_soft_install
+RUN ./entrypoint.sh reaver_soft_install
+RUN ./entrypoint.sh bully_soft_install
+RUN ./entrypoint.sh pixiewps_soft_install
+RUN ./entrypoint.sh Pyrit_soft_install
+RUN ./entrypoint.sh eaphammer_soft_install
+RUN ./entrypoint.sh airgeddon_soft_install
+RUN ./entrypoint.sh wifite2_soft_install
 
 # Installing extra software
 RUN ./entrypoint.sh jupiter_soft_install

@@ -10,7 +10,7 @@ TITLE Installing RF Switch for Windows
 echo [+] Compiling RF Switch Go project
 cd go/rfswift
 start "" "C:\Program Files\Go\bin\go.exe" "build" "."
-move "rfswift.exe" %oldpath%
+move "rfswift.exe" "%oldpath%"
 cd %oldpath%
 
 echo [+] Building the Docker images
