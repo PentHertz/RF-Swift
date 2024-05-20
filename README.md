@@ -1,16 +1,18 @@
 # RF Swift
 
-Welcome to the RF Swift project which aims to provide all needed tools for RF HAMs and professionals.
+Welcome to the RF Swift project! 🎉 Our mission is to provide all the essential tools for both HAM radio enthusiasts and RF professionals. 📡🔧
 
 ![RF Swift logo](images/logo.png "RF Swift logo")
 
-This toolbox written in Go and shell script allows to quickly deploy Docker containers with desired RF tools, and will all provide more feautures in the near future.
+Introducing our Go and shell script-based toolbox, designed to streamline the deployment of Docker containers for your preferred RF tools. This evolving toolkit promises even more features in the near future, making it an essential asset for RF enthusiasts.
 
-For the moment, the scripts are not yet complete, but your are welcomed to fullfil them if you see there is a needed tool you want to deploy at scale.
+Currently, the scripts are still under development. However, we invite you to contribute by adding any tools you find necessary for large-scale deployment.
 
-This toolbox was inspirated from the nice [Exegol project](https://github.com/ThePorgs/Exegol) in order to integrate all needed tools for radio analysis without uninstalling your favorite OS, and save space depending on your needs via special Docker file recipes.
+Inspired by the remarkable [Exegol project](https://github.com/ThePorgs/Exegol), our toolbox aims to integrate all essential tools for radio analysis without requiring you to uninstall your preferred operating system. It also offers special Docker file recipes to help you conserve space based on your specific needs.
 
-Still, if you want to have all RF software in one OS, you can alternatively use [Dragon OS](https://cemaxecuter.com/). But if you want to deploy your tools, messing inside a container without affecting your host, this toolbox is for you ;)
+For those who prefer a single OS with all RF software, consider using [DragonOS](https://cemaxecuter.com/). But if your goal is to deploy tools within a container without affecting your host system, or saving space deploying specific recipes, this toolbox is your ideal solution.
+
+Our philosophy is straightforward: maintain the integrity of your Linux or Windows systems while enjoying unrestricted RF experimentation. Start exploring RF without boundaries today!
 
 ## Requirements
 
@@ -42,9 +44,19 @@ After that, the device should appear on the container without issues ;)
 
 ## Quick overview
 
+## On Linux
+
 https://github.com/PentHertz/RF-Swift/assets/715195/bb2ccd96-b688-4106-8fba-d82f84ff1ea4
 
+## On Windows
+
+With GQRX ;)
+
+https://github.com/PentHertz/RF-Swift/assets/715195/25a4a857-aa5a-4daa-9a08-28fa53d2f799
+
 ## Building
+
+### On Linux
 
 For the momemt the building script is rather simple and give you the choice of using a image tag name and a specific Docker file:
 
@@ -56,6 +68,11 @@ For the momemt the building script is rather simple and give you the choice of u
 	Enter value for Dockerfile to use (default: Dockerfile):
 
 Note: uncomment some lines in Docker files, particularly if you are using the GPU with OpenCL
+
+### On Windows
+
+Use the `build-windows.bat` instead after installing all the requirements.
+
 
 ## Creating and running a container
 
@@ -119,6 +136,8 @@ You can enable OpenCL with the driver associated to your graphic card:
 	#RUN apt-fast install -y nvidia-opencl-dev nvidia-modprobe
 	## Installing Intel's OpenCL
 	#RUN apt-fast install -y intel-opencl-icd ocl-icd-dev ocl-icd-opencl-dev
+ 
+![OpenCL recipe in action](https://github.com/PentHertz/RF-Swift/assets/715195/a29eedd5-b1df-40fc-97c0-4dc5323f36a8)
 
  ### RTL-SDR
 
