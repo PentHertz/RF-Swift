@@ -16,6 +16,25 @@ function uhd_devices_install() {
     installfromnet "/usr/bin/uhd_images_downloader"
 }
 
+function antsdr_uhd_devices_install() { # Is replacing original one for now
+	goodecho "[+] Installing dependencies for ANTSDR UHD"
+	installfromnet "apt-fast install -y autoconf automake build-essential ccache cmake cpufrequtils doxygen ethtool"
+	installfromnet "apt-fast install -y g++ git inetutils-tools libboost-all-dev libncurses5 libncurses5-dev libusb-1.0-0 libusb-1.0-0-dev"
+	installfromnet "apt-fast install -y python3-dev python3-mako python3-numpy python3-requests python3-scipy python3-setuptools"
+	installfromnet "apt-fast install -y python3-ruamel.yaml"
+	[ -d /root/thirdparty ] || mkdir /root/thirdparty
+	cd /root/thirdparty
+	installfromnet "git clone https://github.com/MicroPhase/antsdr_uhd.git"
+	cd antsdr_uhd
+	cd host/
+	mkdir build
+	cd build
+	cmake ../
+	make -j$(nproc)
+	make install
+	ldconfig
+}
+
 function nuand_devices_install() {
 	goodecho "[+] Installing Nuand's libs and tools from package manager"
 	installfromnet "add-apt-repository ppa:nuandllc/bladerf"

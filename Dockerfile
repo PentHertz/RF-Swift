@@ -43,6 +43,7 @@ RUN chmod +x entrypoint.sh
 ## Installing peripherals
 RUN ./entrypoint.sh ad_devices_install
 RUN ./entrypoint.sh uhd_devices_install
+#RUN ./entrypoint.sh antsdr_uhd_devices_install # Disable orignal UHD
 RUN ./entrypoint.sh nuand_devices_install
 RUN ./entrypoint.sh hackrf_devices_install
 RUN ./entrypoint.sh airspy_devices_install
