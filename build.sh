@@ -16,7 +16,7 @@ install_go() {
     		prog="go1.22.3.linux-arm64.tar.gz";;
   		*)
     		printf 'Unsupported architecture: "%s" -> Download or build Go instead\n' "$arch" >&2; exit 2;;
-esac
+	esac
 	wget "https://go.dev/dl/$prog"
 	sudo rm -rf /usr/local/go && sudo tar -C /usr/local -xzf prog
 	export PATH=$PATH:/usr/local/go/bin
