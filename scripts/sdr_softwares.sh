@@ -35,8 +35,18 @@ function sdrpp_soft_install () {
 	goodecho "[+] Installing SDR++"
 	[ -d /root/thirdparty ] || mkdir /root/thirdparty
 	cd /root/thirdparty
-	installfromnet "wget https://github.com/AlexandreRouma/SDRPlusPlus/releases/download/nightly/sdrpp_ubuntu_jammy_amd64.deb"
-	dpkg -i sdrpp_ubuntu_jammy_amd64.deb
+	arch=`uname -i`
+	prog=""
+	case "$arch" in
+  		x86_64|amd64)
+    		prog="sdrpp_ubuntu_jammy_amd64.deb";;
+  		arm*) # For Raspberry Pi for now
+    		prog="sdrpp_raspios_bullseye_armhf.deb";;
+  		*)
+    		printf 'Unsupported architecture: "%s" -> Download or build Go instead\n' "$arch" >&2; exit 2;;
+	esac
+	installfromnet "wget https://github.com/AlexandreRouma/SDRPlusPlus/releases/download/nightly/$prog"
+	dpkg -i $prog
 	cd /root
 }
 
@@ -44,7 +54,7 @@ function sigdigger_soft_install () {
 	goodecho "[+] Installing dependencies"
 	installfromnet "apt-fast install -y libxml2-dev libxml2-utils libfftw3-dev libasound-dev"
 	goodecho "[+] Downloading and launching auto-script"
-	[ -d /sdrtools ] || mkdir -p /opt/sdrtools
+	[ -d /sdrtools ] || mkdir -p /sdrtools
 	cd /sdrtools
 	installfromnet "wget https://actinid.org/blsd"
 	chmod +x blsd \ 
@@ -88,6 +98,7 @@ function cyberther_soft_install() {
 function inspection_decoding_tools () {
 	goodecho "[+] Installing common inspection and decoding tools from package manager"
 	installfromnet "apt-fast install -y audacity inspectrum sox multimon-ng gqrx-sdr"
+	installfromnet "pip3 install cython"
 	installfromnet "pip3 install urh"
 	goodecho "[+] Installing rtl_433 tools"
 	[ -d /root/thirdparty ] || mkdir /root/thirdparty
