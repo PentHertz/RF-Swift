@@ -123,6 +123,9 @@ RUN ./entrypoint.sh eaphammer_soft_install
 RUN ./entrypoint.sh airgeddon_soft_install
 RUN ./entrypoint.sh wifite2_soft_install
 
+# Tools for Bluetooth
+#RUN ./entrypoint.sh mirage_soft_install # TODO: In progress
+
 # Installing extra software
 RUN ./entrypoint.sh jupiter_soft_install
 

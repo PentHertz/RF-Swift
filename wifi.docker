@@ -38,7 +38,7 @@ COPY rules /root/rules/
 WORKDIR /root/scripts/
 RUN chmod +x entrypoint.sh
 
-# Tools for RFID
+# Tools for Wi-Fi
 RUN ./entrypoint.sh common_nettools
 RUN ./entrypoint.sh aircrack_soft_install
 RUN ./entrypoint.sh reaver_soft_install
