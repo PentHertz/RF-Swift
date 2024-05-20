@@ -56,6 +56,9 @@ https://github.com/PentHertz/RF-Swift/assets/715195/25a4a857-aa5a-4daa-9a08-28fa
 
 ## Building
 
+This section is about building your own images with our provided recipes, but also your own recipes as well.
+If you want to use an already built docker container, you can skip this section and go the the "Pulling containers" one.
+
 ### On Linux
 
 For the momemt the building script is rather simple and give you the choice of using a image tag name and a specific Docker file:
@@ -69,9 +72,23 @@ For the momemt the building script is rather simple and give you the choice of u
 
 Note: uncomment some lines in Docker files, particularly if you are using the GPU with OpenCL
 
+Note 2: the default tag that is used by the tool is `myrfswift:latest`. We will manage configuration file in the future to avoid precising it for each `run` and `exec` commands when using a non-default one.
+
 ### On Windows
 
 Use the `build-windows.bat` instead after installing all the requirements.
+
+## Pulling a container
+
+If you want to use an already built container and save more time, you can pull one docker container from our official repository: https://hub.docker.com/repository/docker/penthertz/rfswift/tags
+
+As an example, we'd like to pull `rfswift:bluetooth` that includes all tools from the `bluetooth.docker` file, we can use the following command:
+
+	sudo ./rfswift pull -i "penthertz/rfswift:bluetooth" -t myrfswift:bluetooth
+	[...]
+	{"status":"Pulling from penthertz/rfswift","id":"bluetooth"}
+	{"status":"Digest: sha256:44b12f2be4f596d4d788f70c401ee757f80b1c85a1f91b5d4c69cb1260d49b88"}
+	{"status":"Status: Image is up to date for penthertz/rfswift:bluetooth"}
 
 
 ## Creating and running a container
