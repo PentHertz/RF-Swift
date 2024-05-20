@@ -1,6 +1,8 @@
 #!/bin/bash
 
 function mirage_soft_install() {
+	goodecho "[+] Installing bettercap dependencies"
+	installfromnet "apt-fast install -y libpcsclite-dev pcsc-tools"
 	goodecho "[+] Installing Mirage"
 	[ -d /root/thirdparty ] || mkdir /root/thirdparty
 	cd /root/thirdparty
