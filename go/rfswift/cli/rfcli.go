@@ -21,6 +21,8 @@ var FilterLast string
 var ExtraBind string
 var XDisplay string
 var SInstall string
+var ImageRef string
+var ImageTag string
 
 var rootCmd = &cobra.Command{
     Use:  "rfswift",
@@ -96,14 +98,38 @@ var commitCmd = &cobra.Command{
   },
 }
 
+var pullCmd = &cobra.Command{
+  Use:   "pull",
+  Short: "pull a container",
+  Long:  `Pull a container from internet`,
+  Run: func(cmd *cobra.Command, args []string) {
+    rfdock.DockerPull(ImageRef, ImageTag)
+  },
+}
+
+var renameCmd = &cobra.Command{
+  Use:   "rename",
+  Short: "rename a image",
+  Long:  `Rename an image with another tag`,
+  Run: func(cmd *cobra.Command, args []string) {
+    rfdock.DockerRename(ImageRef, ImageTag)
+  },
+}
+
 func init() {
     rootCmd.AddCommand(runCmd)
     rootCmd.AddCommand(lastCmd)
     rootCmd.AddCommand(execCmd)
     rootCmd.AddCommand(commitCmd)
+    rootCmd.AddCommand(pullCmd)
+    rootCmd.AddCommand(renameCmd)
     //rootCmd.AddCommand(installCmd) // TODO: fix this function
     installCmd.Flags().StringVarP(&ExecCmd, "install", "i", "", "function for installation")
     installCmd.Flags().StringVarP(&ContID, "container", "c", "", "container to run")
+    pullCmd.Flags().StringVarP(&ImageRef, "image", "i", "", "image reference")
+    pullCmd.Flags().StringVarP(&ImageTag, "tag", "t", "", "rename to target tag")
+    renameCmd.Flags().StringVarP(&ImageRef, "image", "i", "", "image reference")
+    renameCmd.Flags().StringVarP(&ImageTag, "tag", "t", "", "rename to target tag")
     commitCmd.Flags().StringVarP(&ContID, "container", "c", "", "container to run")
     commitCmd.Flags().StringVarP(&DImage, "image", "i", "", "image (by default: 'myrfswift:latest')")
     commitCmd.MarkFlagRequired("command")

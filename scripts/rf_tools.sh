@@ -28,7 +28,6 @@ function bettercap_soft_install() {
 }
 
 # RFID package
-
 function proxmark3_soft_install() {
 	goodecho "[+] Installing proxmark3 dependencies"
 	installfromnet "apt-fast install -y --no-install-recommends git ca-certificates build-essential pkg-config libreadline-dev"
@@ -65,7 +64,6 @@ function common_nettools() {
 	echo apt-fast wireshark-common/install-setuid boolean true | debconf-set-selections
 	installfromnet "apt-fast install -y -q tshark"
 }
-
 
 function aircrack_soft_install() {
 	goodecho "[+] Installing aircrack-ng"
@@ -108,7 +106,6 @@ function airgeddon_soft_install() { # TODO: install all dependencies
 	installfromnet "git clone https://github.com/v1s1t0r1sh3r3/airgeddon.git"
 	cd airgeddon/
 }
-
 
 function wifite2_soft_install () {
 	goodecho "[+] Installing wifite2"

@@ -16,6 +16,7 @@ import (
  "github.com/docker/docker/pkg/stdcopy"
  "github.com/docker/docker/api/types/network"
  "github.com/docker/docker/api/types"
+ "github.com/docker/docker/api/types/image"
 )
 
 var inout chan []byte
@@ -373,21 +374,63 @@ func DockerCommit(contid string) {
         panic(err)
     }
 
-    /*statusCh, errCh := cli.ContainerWait(ctx, contid, container.WaitConditionNotRunning)
-    select {
-    case err := <-errCh:
-        if err != nil {
-            panic(err)
-        }
-    case <-statusCh:
-    }*/
-
-
-    fmt.Println("test")
 
     commitResp, err := cli.ContainerCommit(ctx, contid, container.CommitOptions{Reference: dockerObj.imagename})
     if err != nil {
         panic(err)
     }
     fmt.Println(commitResp.ID)
+}
+
+
+func DockerPull(imageref string, imagetag string) {
+    /* Pulls an image from a registry
+        in(1): string Image reference
+        in(2): string Image tag target
+    */
+
+    if (imagetag == "") { // if tag is empty, keep same tag
+        imagetag = imageref
+    }
+
+    ctx := context.Background()
+    cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
+    if err != nil {
+        panic(err)
+    }
+    defer cli.Close()
+
+    out, err := cli.ImagePull(ctx, imageref, image.PullOptions{})
+    if err != nil {
+        panic(err)
+    }
+
+    defer out.Close()
+
+    io.Copy(os.Stdout, out)
+
+    err = cli.ImageTag(ctx, imageref, imagetag)
+    if err != nil {
+        panic(err)
+    }
+}
+
+func DockerRename(imageref string, imagetag string) {
+    /* Rename an image to another name
+        in(1): string Image reference
+        in(2): string Image tag target
+    */
+    ctx := context.Background()
+    cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
+    if err != nil {
+        panic(err)
+    }
+    defer cli.Close()
+
+    err = cli.ImageTag(ctx, imageref, imagetag)
+    if err != nil {
+        panic(err)
+    } else {
+        fmt.Println("[+] Image renamed!")
+    }
 }
