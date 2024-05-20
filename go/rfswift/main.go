@@ -11,6 +11,8 @@ import (
 )
 
 
+var version = "0.1"
+
 var ascii_art = `                                                                                                    
                                                                                           
                                                                                           
@@ -69,5 +71,6 @@ var ascii_art = `
 
 func main() {
 	fmt.Println(ascii_art)
+  fmt.Println("Version:", version, "\n")
     cli.Execute()
 }
