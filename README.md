@@ -160,7 +160,7 @@ To get the 10 last containers you have create, you can use the following command
 
 If you want to commit changes you've made of your container an start at this images later on a new one, you can use the `commit` command as follows:
 
-	sudo ./fswift commit -c <container id> -i myrfswift:newtag
+	sudo ./rfswift commit -c <container id> -i myrfswift:newtag
 
 ## Options
 
