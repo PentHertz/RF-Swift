@@ -161,7 +161,7 @@ In the future, we will create a dedicated page for developpers.
 
 ### Sound
 
-The sound is sometimes notes restarting when stoping to play with tools like SDR++. 
+The sound is sometimes not restarting when stoping to play with tools like SDR++. 
 
 To solve it for the moment, you can restart the tool and try playing it.
 
