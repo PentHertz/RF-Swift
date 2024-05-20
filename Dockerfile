@@ -134,7 +134,7 @@ RUN ./entrypoint.sh bettercap_soft_install
 # Installing extra software
 RUN ./entrypoint.sh jupiter_soft_install
 
-RUN mkdir /sdrtools/
+RUN mkdir -p /sdrtools/
 COPY run /sdrtools/run
 
 # Cleaning and quitting
