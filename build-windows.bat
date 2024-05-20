@@ -14,11 +14,11 @@ move "rfswift.exe" "%oldpath%"
 cd %oldpath%
 
 echo [+] Building the Docker images
-set "imagename=myrfswift:latest
+set "imagename=myrfswift:latest"
 set /p "imagename=Enter image tag value (default: %imagename%): "
 echo %imagename%
 
-set "dockerfile=Dockerfile
+set "dockerfile=Dockerfile"
 set /p "dockerfile=Enter value for Dockerfile to use (default: %dockerfile%): "
 echo %dockerfile%
 
