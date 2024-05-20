@@ -2,7 +2,11 @@
 
 function mirage_soft_install() {
 	goodecho "[+] Installing bettercap dependencies"
-	installfromnet "apt-fast install -y libpcsclite-dev pcsc-tools"
+	echo apt-fast keyboard-configuration/variant string "English (US)" | debconf-set-selections
+	echo apt-fast keyboard-configuration/layout string "English (US)" | debconf-set-selections
+	echo apt-fast console-setup/codeset47 string "Guess optimal character set" | debconf-set-selections
+	echo apt-fast console-setup/charmap47 string "UTF-8" | debconf-set-selections
+	installfromnet "apt-fast install -y libpcsclite-dev pcsc-tools kmod kbd"
 	goodecho "[+] Installing Mirage"
 	[ -d /root/thirdparty ] || mkdir /root/thirdparty
 	cd /root/thirdparty
@@ -13,7 +17,6 @@ function mirage_soft_install() {
 
 function bettercap_soft_install() {
 	goodecho "[+] Installing bettercap dependencies"
-	installfromnet "apt-fast update"
 	installfromnet "apt-fast install -y golang git build-essential libpcap-dev libusb-1.0-0-dev libnetfilter-queue-dev"
 	goodecho "[+] Installing bettercap software"
 	[ -d /rftools ] || mkdir /rftools
