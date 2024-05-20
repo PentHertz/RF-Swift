@@ -9,6 +9,13 @@ function mirage_soft_install() {
 	python3 setup.py install
 }
 
+function bettercap_soft_install() {
+	goodecho "[+] Installing bettercap dependencies"
+	installfromnet "apt-fast install -y golang git build-essential libpcap-dev libusb-1.0-0-dev libnetfilter-queue-dev"
+	goodecho "[+] Installing bettercap software"
+	installfromnet "go get -u github.com/bettercap/bettercap"
+}
+
 # RFID package
 
 function proxmark3_soft_install() {
