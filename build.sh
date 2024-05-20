@@ -5,8 +5,20 @@
 install_go() {
 	[ -d thirdparty ] || mkdir thirdparty
 	cd thirdparty
-	wget https://go.dev/dl/go1.22.3.linux-amd64.tar.gz
-	sudo rm -rf /usr/local/go && sudo tar -C /usr/local -xzf go1.22.3.linux-amd64.tar.gz
+	arch=`uname -i`
+	prog="" # default Go binary tar.gz
+	case "$arch" in
+  		x86_64|amd64)
+    		prog="go1.22.3.linux-amd64.tar.gz";;
+  		i?86)
+    		prog="go1.22.3.linux-386.tar.gz";;
+  		arm64|aarch64)
+    		prog="go1.22.3.linux-arm64.tar.gz";;
+  		*)
+    		printf 'Unsupported architecture: "%s" -> Download or build Go instead\n' "$arch" >&2; exit 2;;
+esac
+	wget "https://go.dev/dl/$prog"
+	sudo rm -rf /usr/local/go && sudo tar -C /usr/local -xzf prog
 	export PATH=$PATH:/usr/local/go/bin
 	cd ..
 	rm -R thirdparty
