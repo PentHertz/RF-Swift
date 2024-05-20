@@ -53,18 +53,7 @@ function hackrf_devices_install() {
 
 function airspy_devices_install() {
 	goodecho "[+] Installing airspy from package manager"
-	installfromnet "apt-fast install -y airspy"
-	goodecho "[+] Downloading airspy HF+ drivers and libs"
-	[ -d /root/thirdparty ] || mkdir /root/thirdparty
-	cd /root/thirdparty
-	installfromnet "git clone https://github.com/airspy/airspyhf.git"
-	cd airspyhf
-	mkdir build
-	cd build
-	goodecho "[+] Building and installing Airspy libs"
-	cmake -DCMAKE_INSTALL_PREFIX=/usr ../
-	make -j$(nproc); sudo make install
-	cd ../..
+	installfromnet "apt-fast install -y airspy libairspy-dev airspyhf libairspyhf-dev"
 }
 
 function limesdr_devices_install() {
