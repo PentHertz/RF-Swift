@@ -42,7 +42,7 @@ RUN chmod +x entrypoint.sh
 RUN ./entrypoint.sh bettercap_soft_install
 
 # Tools for Bluetooth
-#RUN ./entrypoint.sh mirage_soft_install # TODO: In progress
+RUN ./entrypoint.sh mirage_soft_install # TODO: In progress
 
 # Cleaning and quitting
 WORKDIR /root/

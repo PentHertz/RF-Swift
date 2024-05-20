@@ -11,9 +11,15 @@ function mirage_soft_install() {
 
 function bettercap_soft_install() {
 	goodecho "[+] Installing bettercap dependencies"
+	installfromnet "apt-fast update"
 	installfromnet "apt-fast install -y golang git build-essential libpcap-dev libusb-1.0-0-dev libnetfilter-queue-dev"
 	goodecho "[+] Installing bettercap software"
-	installfromnet "go get -u github.com/bettercap/bettercap"
+	[ -d /rftools ] || mkdir /rftools
+	cd /rftools
+	installfromnet "git clone https://github.com/bettercap/bettercap.git"
+	cd bettercap
+	./build.sh
+	make
 }
 
 # RFID package
