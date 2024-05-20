@@ -98,6 +98,7 @@ RUN ./entrypoint.sh grfhss_utils_grmod_install # depends on 'grpdu_utils_grmod_i
 RUN ./entrypoint.sh cyberther_soft_install
 
 # Installing softwares
+RUN ./entrypoint.sh sdrangel_soft_install
 RUN ./entrypoint.sh sdrpp_soft_install
 RUN ./entrypoint.sh sigdigger_soft_install
 RUN ./entrypoint.sh inspection_decoding_tools
