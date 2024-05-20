@@ -162,6 +162,12 @@ If you want to commit changes you've made of your container an start at this ima
 
 	sudo ./rfswift commit -c <container id> -i myrfswift:newtag
 
+## Renaming images
+
+You can rename images using the `rename` command as follows:
+
+	sudo ./rfswift rename -i myrfswift:supertag -t myrfswift:newsupertag
+
 ## Options
 
 ### OpenCL
