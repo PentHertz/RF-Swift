@@ -54,6 +54,14 @@ With GQRX ;)
 
 https://github.com/PentHertz/RF-Swift/assets/715195/25a4a857-aa5a-4daa-9a08-28fa53d2f799
 
+## On Mac-OS - Apple Silicon M1/M2/M3
+
+Even if the Go program can build in any platform and Dockerfile are compilable also on Mac OS, the USB may be difficult to reach on this platform.
+
+For the moment, consider using the tool inside a VM that handles USB such as VM Fusion.
+
+You can directly pull a working container from our registry using the `penthertz/rfswift:sdr_full_aarch64` reference: https://hub.docker.com/layers/penthertz/rfswift/sdr_full_aarch64/images/sha256-3385e49c1369bad2465e85c75b74ae241a0e285f0666321620c73fc9ff260996?context=repo
+
 ## Building
 
 This section is about building your own images with our provided recipes, but also your own recipes as well.
