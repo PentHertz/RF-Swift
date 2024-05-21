@@ -26,4 +26,6 @@ jobs:
         cd go/rfswift
         go build -v .
     - name: Test
-      run: go test -v .
+      run: |
+        cd go/rfswift
+        go test -v .
