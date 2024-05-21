@@ -70,7 +70,7 @@ var ascii_art = `
 `
 
 func main() {
-	fmt.Println(ascii_art)
-  fmt.Println("Version:", version, "\n")
+    fmt.Println(ascii_art)
+    fmt.Print("Version:", version, "\n\n")
     cli.Execute()
 }
