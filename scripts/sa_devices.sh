@@ -28,7 +28,7 @@ function kc908_sa_device() {
 }
 
 function signalhound_sa_device() {
-	goodecho "[+] Downloading bin from DEEPACE"
+	goodecho "[+] Downloading bin from SignalHound"
 	[ -d /rftools ] || mkdir /rftools
 	cd /rftools/
 	installfromnet "wget https://signalhound.com/sigdownloads/Spike/Spike(Ubuntu22.04x64)_3_9_6.zip"
