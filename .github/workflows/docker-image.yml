@@ -16,13 +16,3 @@ jobs:
     - uses: actions/checkout@v4
     - name: Build the full Docker image
       run: docker build . --file Dockerfile --tag rfswift_full:$(date +%s)
-    - name: Build the sdr_full Docker image
-      run: docker build . --file sdr_full.docker --tag rfswift_sdrfull:$(date +%s)
-    - name: Build the sdr_light Docker image
-      run: docker build . --file sdr_light.docker --tag rfswift_sdrfull:$(date +%s)
-    - name: Build the Wi-Fi Docker image
-      run: docker build . --file wifi.docker --tag rfswift_wifi:$(date +%s)
-    - name: Build the Bluetooth Docker image
-      run: docker build . --file wifi.docker --tag rfswift_bluetooth:$(date +%s)
-    - name: Build the RFID Docker image
-      run: docker build . --file rfid.docker --tag rfswift_rfid:$(date +%s)
