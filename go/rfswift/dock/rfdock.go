@@ -40,7 +40,7 @@ var dockerObj = DockerInst{ net: "host",
                             entrypoint: "/bin/bash",
                             x11forward: "/tmp/.X11-unix:/tmp/.X11-unix",
                             usbforward: "/dev/bus/usb:/dev/bus/usb",
-                            extrabinding: "/dev/ttyACM0:/dev/ttyACM0",
+                            extrabinding: "/dev/ttyACM0:/dev/ttyACM0", // Some more if needed /run/dbus/system_bus_socket:/run/dbus/system_bus_socket,/dev/snd:/dev/snd,/dev/dri:/dev/dri
                             imagename: "myrfswift:latest",
                             shell: "/bin/bash"} // Instance with default values
 
@@ -153,6 +153,7 @@ func DockerRun() {
             NetworkMode: "host",
             Binds: bindings,
             Privileged: true,
+            //ExtraHosts: []string{"pluto.local:192.168.2.1"}, // TODO: look if needed later
 	}, &network.NetworkingConfig{}, nil,"")
 
 	if err != nil {
