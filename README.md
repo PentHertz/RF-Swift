@@ -123,6 +123,12 @@ To run a container, use the command `./rfswift run -h` to see needed arguments:
 
 By default, you can the command without arguments if you want to start the `/bin/bash` interpreter and use the default image tag name, and with default environement diplay variable.
 
+### Not able to see some devices
+
+You can add extra bindings with the following command line that helps bringing the PlutoSDR:
+
+	sudo ./rfswift run -b "/run/dbus/system_bus_socket:/run/dbus/system_bus_socket,/dev/snd:/dev/snd,/dev/dri:/dev/dri"
+
 ## Executing a command inside an existing container
 
 Running a command inside a previous container is fairly easy, if you run a cointainer and exit it.
