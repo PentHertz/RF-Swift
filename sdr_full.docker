@@ -32,6 +32,9 @@ RUN echo apt-fast apt-fast/aptmanager string apt-get | debconf-set-selections
 
 RUN apt-get -y install apt-fast python3-matplotlib
 
+# Audio part
+RUN apt-fast install -y pulseaudio-utils pulseaudio libasound2-dev libavahi-client-dev --no-install-recommends
+
 COPY scripts /root/scripts/
 COPY rules /root/rules/
 
@@ -106,7 +109,8 @@ RUN ./entrypoint.sh qsstv_soft_install
 RUN ./entrypoint.sh ice9_bluetooth_soft_install
 
 # Installing SA device modules
-RUN ./entrypoint.sh kc908_sa_device
+RUN ./entrypoint.sh kc908_sa_device # Note: Only works on x86_64
+RUN ./entrypoint.sh signalhound_sa_device # Note: Only works on x86_64
 
 # Installing extra software
 RUN ./entrypoint.sh jupiter_soft_install

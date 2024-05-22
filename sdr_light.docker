@@ -31,6 +31,9 @@ RUN echo apt-fast apt-fast/aptmanager string apt-get | debconf-set-selections
 
 RUN apt-get -y install apt-fast python3-matplotlib
 
+# Audio part
+RUN apt-fast install -y pulseaudio-utils pulseaudio libasound2-dev libavahi-client-dev --no-install-recommends
+
 COPY scripts /root/scripts/
 COPY rules /root/rules/
 
@@ -41,8 +44,8 @@ RUN chmod +x entrypoint.sh
 
 ## Installing peripherals
 RUN ./entrypoint.sh ad_devices_install
-#RUN ./entrypoint.sh uhd_devices_install
-RUN ./entrypoint.sh antsdr_uhd_devices_install # Disable orignal UHD
+RUN ./entrypoint.sh uhd_devices_install
+#RUN ./entrypoint.sh antsdr_uhd_devices_install # Disable orignal UHD
 RUN ./entrypoint.sh nuand_devices_install
 RUN ./entrypoint.sh hackrf_devices_install
 RUN ./entrypoint.sh airspy_devices_install
@@ -56,7 +59,8 @@ RUN ./entrypoint.sh common_sources_and_sinks
 RUN ./entrypoint.sh install_soapy_modules
 
 # Installing SA device modules
-RUN ./entrypoint.sh kc908_sa_device
+RUN ./entrypoint.sh kc908_sa_device # Note: Only works on x86_64
+RUN ./entrypoint.sh signalhound_sa_device # Note: Only works on x86_64
 
 # Installing extra software
 RUN ./entrypoint.sh jupiter_soft_install

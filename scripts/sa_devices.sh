@@ -26,3 +26,14 @@ function kc908_sa_device() {
 	&& make -j$(nproc); sudo make install
 	cd /root/
 }
+
+function signalhound_sa_device() {
+	goodecho "[+] Downloading bin from DEEPACE"
+	[ -d /rftools ] || mkdir rftools
+	cd /rftools/
+	installfromnet "wget https://signalhound.com/sigdownloads/Spike/Spike(Ubuntu22.04x64)_3_9_6.zip"
+	unzip Spike\(Ubuntu22.04x64\)_3_9_6.zip
+	cd Spike\(Ubuntu22.04x64\)_3_9_6/
+	chmod +x setup.sh
+	sh -c ./setup.sh
+}

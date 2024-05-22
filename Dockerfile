@@ -38,7 +38,8 @@ COPY rules /root/rules/
 WORKDIR /root/scripts/
 RUN chmod +x entrypoint.sh
 
-# Installing Devices 
+# Audio part
+RUN apt-fast install -y pulseaudio-utils pulseaudio libasound2-dev libavahi-client-dev --no-install-recommends
 
 ## Installing peripherals
 RUN ./entrypoint.sh ad_devices_install
@@ -106,7 +107,8 @@ RUN ./entrypoint.sh qsstv_soft_install
 RUN ./entrypoint.sh ice9_bluetooth_soft_install
 
 # Installing SA device modules
-RUN ./entrypoint.sh kc908_sa_device
+RUN ./entrypoint.sh kc908_sa_device # Note: Only works on x86_64
+RUN ./entrypoint.sh signalhound_sa_device # Note: Only works on x86_64
 
 # Tools for RFID
 RUN ./entrypoint.sh proxmark3_soft_install
