@@ -62,6 +62,9 @@ RUN ./entrypoint.sh install_soapy_modules
 RUN ./entrypoint.sh kc908_sa_device # Note: Only works on x86_64
 RUN ./entrypoint.sh signalhound_sa_device # Note: Only works on x86_64
 
+# Calibration equipements
+RUN ./entrypoint.sh leobodnarv1_cal_device
+
 # Installing extra software
 RUN ./entrypoint.sh jupiter_soft_install
 RUN ./entrypoint.sh inspection_decoding_tools

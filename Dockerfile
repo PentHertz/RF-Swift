@@ -110,6 +110,9 @@ RUN ./entrypoint.sh ice9_bluetooth_soft_install
 RUN ./entrypoint.sh kc908_sa_device # Note: Only works on x86_64
 RUN ./entrypoint.sh signalhound_sa_device # Note: Only works on x86_64
 
+# Calibration equipements
+RUN ./entrypoint.sh leobodnarv1_cal_device
+
 # Tools for RFID
 RUN ./entrypoint.sh proxmark3_soft_install
 RUN ./entrypoint.sh libnfc_soft_install
