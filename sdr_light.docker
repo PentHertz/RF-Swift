@@ -36,6 +36,7 @@ RUN apt-fast install -y pulseaudio-utils pulseaudio libasound2-dev libavahi-clie
 
 COPY scripts /root/scripts/
 COPY rules /root/rules/
+COPY config /root/config/
 
 WORKDIR /root/scripts/
 RUN chmod +x entrypoint.sh
@@ -61,6 +62,7 @@ RUN ./entrypoint.sh install_soapy_modules
 # Installing SA device modules
 RUN ./entrypoint.sh kc908_sa_device # Note: Only works on x86_64
 RUN ./entrypoint.sh signalhound_sa_device # Note: Only works on x86_64
+RUN ./entrypoint.sh harogic_sa_device # working only on x86_64 and aarch64
 
 # Calibration equipements
 RUN ./entrypoint.sh leobodnarv1_cal_device
@@ -76,6 +78,7 @@ COPY run /sdrtools/run
 WORKDIR /root/
 RUN rm -rf /root/thirdparty
 RUN rm -rf /root/rules/
+RUN rm -rf /root/config/
 RUN apt-fast clean
 RUN DEBIAN_FRONTEND=noninteractive rm -rf /var/lib/apt/lists/*
 #RUN useradd -ms /bin/bash phzapp

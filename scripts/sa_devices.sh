@@ -37,3 +37,24 @@ function signalhound_sa_device() {
 	chmod +x setup.sh
 	sh -c ./setup.sh
 }
+
+function harogic_sa_device() {
+	goodecho "[+] Downloading SAStudio4"
+	[ -d /rftools ] || mkdir /rftools
+	cd /rftools/
+	arch=`uname -i`
+	prog=""
+	case "$arch" in
+  		x86_64|amd64)
+    		prog="SAStudio4_x86_64_05_23_17_06";;
+  		aarch64|unknown) # We asume unknwon would be RPi 5 for now...?
+    		prog="SAStudio4_aarch64_05_22_17_41";;
+  		*)
+    		printf 'Unsupported architecture: "%s"!\n' "$arch" >&2; exit 2;;
+	esac
+	installfromnet "wget https://github.com/PentHertz/rfswift_harogic_install/releases/download/v05.23.17/$prog.zip"
+	unzip "$prog"
+	cd "$prog"
+	sh -c ./install.sh
+	colorecho "[+] Note: you'll have to put your calibration data after!"
+}

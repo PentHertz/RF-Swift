@@ -29,7 +29,31 @@ function sdrangel_soft_install() {
 	cd /root
 }
 
-function sdrpp_soft_install () {
+function sdrpp_soft_fromsource_install () { # Beta test, but should work on almost all platforms
+	goodecho "[+] Installing dependencies"
+	installfromnet "apt-fast install libfftw3-dev libglfw3-dev libvolk2-dev libzstd-dev libairspyhf-dev libiio-dev libad9361-dev librtaudio-dev libhackrf-dev portaudio19-dev libcodec2-dev -y"
+	goodecho "[+] Installing SDR++"
+	[ -d /root/thirdparty ] || mkdir /root/thirdparty
+	cd /root/thirdparty
+	goodecho "[+] Cloning SDR++ project"
+	installfromnet "git clone https://github.com/AlexandreRouma/SDRPlusPlus.git"
+	cd SDRPlusPlus/
+	mkdir build
+	cd build
+	cmake .. -DOPT_BUILD_SOAPY_SOURCE=ON -DOPT_BUILD_AIRSPY_SOURCE=ON -DOPT_BUILD_AIRSPYHF_SOURCE=ON -DOPT_BUILD_NETWORK_SINK=ON \
+			-DOPT_BUILD_FREQUENCY_MANAGER=ON -DOPT_BUILD_IQ_EXPORTER=ON -DOPT_BUILD_RECORDER=ON -DOPT_BUILD_RIGCTL_SERVER=ON -DOPT_BUILD_METEOR_DEMODULATOR=ON \
+			-DOPT_BUILD_RADIO=ON -DOPT_BUILD_USRP_SOURCE=ON -DOPT_BUILD_FILE_SOURCE=ON -DOPT_BUILD_HACKRF_SOURCE=ON -DOPT_BUILD_RTL_SDR_SOURCE=ON -DOPT_BUILD_RTL_TCP_SOURCE=ON \
+			-DOPT_BUILD_SDRPP_SERVER_SOURCE=ON -DOPT_BUILD_SOAPY_SOURCE=ON -DOPT_BUILD_SPECTRAN_SOURCE=OFF -DOPT_BUILD_SPECTRAN_HTTP_SOURCE=OFF  -DOPT_BUILD_LIMESDR_SOURCE=ON \
+			-DOPT_BUILD_PLUTOSDR_SOURCE=ON -DOPT_BUILD_BLADERF_SOURCE=ON -DOPT_BUILD_AUDIO_SOURCE=ON -DOPT_BUILD_AUDIO_SINK=ON -DOPT_BUILD_PORTAUDIO_SINK=OFF \
+			-DOPT_BUILD_NEW_PORTAUDIO_SINK=OFF -DOPT_BUILD_M17_DECODER=ON -DUSE_BUNDLE_DEFAULTS=ON -DCMAKE_BUILD_TYPE=Release # TODO: support Spectran devices on Docker creation
+	make -j$(nproc)
+	make install
+	mkdir -p "/root/Library/Application Support/sdrpp/"
+	cp /root/config/sdrpp-config.json "/root/Library/Application Support/sdrpp/config.json"
+	cd /root
+}
+
+function sdrpp_soft_install () { # Working but not compatible with aarch64
 	goodecho "[+] Installing dependencies"
 	installfromnet "apt-fast install libfftw3-dev libglfw3-dev libvolk2-dev libzstd-dev libairspyhf-dev libiio-dev libad9361-dev librtaudio-dev libhackrf-dev -y"
 	goodecho "[+] Installing SDR++"
@@ -43,7 +67,7 @@ function sdrpp_soft_install () {
   		arm*) # For Raspberry Pi for now
     		prog="sdrpp_raspios_bullseye_armhf.deb";;
   		*)
-    		printf 'Unsupported architecture: "%s" -> Download or build Go instead\n' "$arch" >&2; exit 2;;
+    		printf 'Unsupported architecture: "%s" -> use sdrpp_soft_fromsource_install instead\n' "$arch" >&2; exit 2;;
 	esac
 	installfromnet "wget https://github.com/AlexandreRouma/SDRPlusPlus/releases/download/nightly/$prog"
 	dpkg -i $prog

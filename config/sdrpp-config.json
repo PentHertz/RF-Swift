@@ -1,0 +1,184 @@
+{
+    "bandColors": {
+        "amateur": "#FF0000FF",
+        "aviation": "#00FF00FF",
+        "broadcast": "#0000FFFF",
+        "marine": "#00FFFFFF",
+        "military": "#FFFF00FF"
+    },
+    "bandPlan": "General",
+    "bandPlanEnabled": true,
+    "bandPlanPos": 0,
+    "centerTuning": false,
+    "colorMap": "Classic",
+    "decimationPower": 0,
+    "fastFFT": false,
+    "fftHeight": 300,
+    "fftHold": false,
+    "fftHoldSpeed": 60,
+    "fftRate": 20,
+    "fftSize": 65536,
+    "fftSmoothing": false,
+    "fftSmoothingSpeed": 100,
+    "fftWindow": 2,
+    "frequency": 100000000.0,
+    "fullWaterfallUpdate": false,
+    "fullscreen": false,
+    "invertIQ": false,
+    "iqCorrection": false,
+    "lockMenuOrder": false,
+    "max": 0.0,
+    "maximized": false,
+    "menuElements": [
+        {
+            "name": "Source",
+            "open": true
+        },
+        {
+            "name": "Radio",
+            "open": true
+        },
+        {
+            "name": "Recorder",
+            "open": true
+        },
+        {
+            "name": "Frequency Manager",
+            "open": true
+        },
+        {
+            "name": "VFO Color",
+            "open": true
+        },
+        null,
+        {
+            "name": "Band Plan",
+            "open": true
+        },
+        {
+            "name": "Display",
+            "open": true
+        }
+    ],
+    "menuWidth": 300,
+    "min": -120.0,
+    "moduleInstances": {
+        "Airspy Source": {
+            "enabled": true,
+            "module": "airspy_source"
+        },
+        "AirspyHF+ Source": {
+            "enabled": true,
+            "module": "airspyhf_source"
+        },
+        "Audio Sink": {
+            "enabled": true,
+            "module": "audio_sink"
+        },
+        "Audio Source": {
+            "enabled": true,
+            "module": "audio_source"
+        },
+        "BladeRF Source": {
+            "enabled": true,
+            "module": "bladerf_source"
+        },
+        "File Source": {
+            "enabled": true,
+            "module": "file_source"
+        },
+        "Frequency Manager": {
+            "enabled": true,
+            "module": "frequency_manager"
+        },
+        "HackRF Source": {
+            "enabled": true,
+            "module": "hackrf_source"
+        },
+        "Hermes Source": {
+            "enabled": true,
+            "module": "hermes_source"
+        },
+        "LimeSDR Source": {
+            "enabled": true,
+            "module": "limesdr_source"
+        },
+        "Network Sink": {
+            "enabled": true,
+            "module": "network_sink"
+        },
+        "PerseusSDR Source": {
+            "enabled": true,
+            "module": "perseus_source"
+        },
+        "PlutoSDR Source": {
+            "enabled": true,
+            "module": "plutosdr_source"
+        },
+        "RFspace Source": {
+            "enabled": true,
+            "module": "rfspace_source"
+        },
+        "RTL-SDR Source": {
+            "enabled": true,
+            "module": "rtl_sdr_source"
+        },
+        "RTL-TCP Source": {
+            "enabled": true,
+            "module": "rtl_tcp_source"
+        },
+        "Radio": {
+            "enabled": true,
+            "module": "radio"
+        },
+        "Recorder": {
+            "enabled": true,
+            "module": "recorder"
+        },
+        "Rigctl Server": {
+            "enabled": true,
+            "module": "rigctl_server"
+        },
+        "SDR++ Server Source": {
+            "enabled": true,
+            "module": "sdrpp_server_source"
+        },
+        "SDRplay Source": {
+            "enabled": true,
+            "module": "sdrplay_source"
+        },
+        "SpyServer Source": {
+            "enabled": true,
+            "module": "spyserver_source"
+        }
+    },
+    "modules": [],
+    "modulesDirectory": "/usr/lib/sdrpp/plugins",
+    "offset": 0.0,
+    "offsetMode": 0,
+    "resourcesDirectory": "/usr/share/sdrpp",
+    "showMenu": true,
+    "showWaterfall": true,
+    "snrSmoothing": false,
+    "snrSmoothingSpeed": 20,
+    "source": "",
+    "streams": {
+        "Radio": {
+            "muted": false,
+            "sink": "Audio",
+            "volume": 1.0
+        }
+    },
+    "theme": "Dark",
+    "uiScale": 1.0,
+    "vfoColors": {
+        "Radio": "#FFFFFF"
+    },
+    "vfoOffsets": {
+        "Radio": 0.0
+    },
+    "windowSize": {
+        "h": 720,
+        "w": 1280
+    }
+}                                                                   

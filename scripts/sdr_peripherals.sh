@@ -58,7 +58,7 @@ function airspy_devices_install() {
 
 function limesdr_devices_install() {
 	goodecho "[+] Installing LimeSDR's libs and tools from package manager"
-	installfromnet "apt-fast install -y soapysdr-module-lms7 libsoapysdr-dev"
+	installfromnet "apt-fast install -y soapysdr-module-lms7 libsoapysdr-dev liblimesuite-dev limesuite limesuite-udev"
 }
 
 function install_soapy_modules() {
