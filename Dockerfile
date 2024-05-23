@@ -34,6 +34,7 @@ RUN apt-get -y install apt-fast python3-matplotlib
 
 COPY scripts /root/scripts/
 COPY rules /root/rules/
+COPY config /root/config/
 
 WORKDIR /root/scripts/
 RUN chmod +x entrypoint.sh
@@ -100,7 +101,7 @@ RUN ./entrypoint.sh cyberther_soft_install
 
 # Installing softwares
 RUN ./entrypoint.sh sdrangel_soft_install
-RUN ./entrypoint.sh sdrpp_soft_install
+RUN ./entrypoint.sh sdrpp_soft_fromsource_install # replace to 'sdrpp_soft_install' if you see bugs
 RUN ./entrypoint.sh sigdigger_soft_install
 RUN ./entrypoint.sh inspection_decoding_tools
 RUN ./entrypoint.sh qsstv_soft_install
@@ -109,6 +110,7 @@ RUN ./entrypoint.sh ice9_bluetooth_soft_install
 # Installing SA device modules
 RUN ./entrypoint.sh kc908_sa_device # Note: Only works on x86_64
 RUN ./entrypoint.sh signalhound_sa_device # Note: Only works on x86_64
+RUN ./entrypoint.sh harogic_sa_device # working only on x86_64 and aarch64
 
 # Calibration equipements
 RUN ./entrypoint.sh leobodnarv1_cal_device

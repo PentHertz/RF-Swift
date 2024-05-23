@@ -37,6 +37,7 @@ RUN apt-fast install -y pulseaudio-utils pulseaudio libasound2-dev libavahi-clie
 
 COPY scripts /root/scripts/
 COPY rules /root/rules/
+COPY config /root/config/
 
 WORKDIR /root/scripts/
 RUN chmod +x entrypoint.sh
