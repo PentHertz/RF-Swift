@@ -56,5 +56,9 @@ function harogic_sa_device() {
 	unzip "$prog"
 	cd "$prog"
 	sh -c ./install.sh
+	case "$arch" in # quick fix for aarch64
+  		aarch64|unknown) 
+    		ln -s /usr/lib/aarch64-linux-gnu/libffi.so.8 /usr/lib/libffi.so.6;;
+	esac
 	colorecho "[+] Note: you'll have to put your calibration data after!"
 }
