@@ -12,7 +12,7 @@ install_go() {
     		prog="go1.22.3.linux-amd64.tar.gz";;
   		i?86)
     		prog="go1.22.3.linux-386.tar.gz";;
-  		arm64|aarch64)
+  		arm64|aarch64|unknown) # Let assume from now unknown is RPi 5 => TODO: fix
     		prog="go1.22.3.linux-arm64.tar.gz";;
   		*)
     		printf 'Unsupported architecture: "%s" -> Download or build Go instead\n' "$arch" >&2; exit 2;;
