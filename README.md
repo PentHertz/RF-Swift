@@ -121,7 +121,7 @@ To run a container, use the command `./rfswift run -h` to see needed arguments:
 	  -i, --image string     image (by default: 'myrfswift:latest')
 
 
-By default, you can the command without arguments if you want to start the `/bin/bash` interpreter and use the default image tag name, and with default environement diplay variable.
+By default, you can the command without arguments if you want to start the `/bin/bash` interpreter and use the default image tag name, and with default environment diplay variable.
 
 ### Not able to see some devices
 
