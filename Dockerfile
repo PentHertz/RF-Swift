@@ -17,7 +17,8 @@ RUN DEBIAN_FRONTEND=noninteractive \
   	libusb-1.0-0 libncurses5-dev libtecla1 libtecla-dev dialog procps unzip \
   	texlive liblog4cpp5-dev libcurl4-gnutls-dev libpcap-dev libgtk-3-dev \
   	qtcreator qtcreator-data qtcreator-doc qtbase5-examples qtbase5-doc-html \
-  	qtbase5-dev qtbase5-private-dev libqt5opengl5-dev libqt5svg5-dev
+  	qtbase5-dev qtbase5-private-dev libqt5opengl5-dev libqt5svg5-dev \
+  	libcanberra-gtk-module libcanberra-gtk3-module
 
 RUN DEBIAN_FRONTEND=noninteractive TZ=Etc/UTC \
 	apt-get install tzdata
@@ -58,6 +59,7 @@ RUN ./entrypoint.sh gnuradio_soft_install
 RUN ./entrypoint.sh common_sources_and_sinks
 RUN ./entrypoint.sh grgsm_grmod_install
 RUN ./entrypoint.sh install_soapy_modules
+RUN ./entrypoint.sh install_soapyPlutoSDR_modules
 RUN ./entrypoint.sh grlora_grmod_install
 RUN ./entrypoint.sh grlorasdr_grmod_install
 RUN ./entrypoint.sh griridium_grmod_install
