@@ -4,5 +4,5 @@ function jupiter_soft_install() {
 	goodecho "[+] Installing Jupyter lab"
 	installfromnet "pip3 install jupyterlab"
 	goodecho "[+] Installing Jupyter lab"
-	installfromnet "pip3 install jupyterlab"
+	installfromnet "pip3 install notebook"
 }
