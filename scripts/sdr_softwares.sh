@@ -125,15 +125,7 @@ function inspection_decoding_tools () {
 	installfromnet "pip3 install cython"
 	installfromnet "pip3 install urh"
 	goodecho "[+] Installing rtl_433 tools"
-	[ -d /root/thirdparty ] || mkdir /root/thirdparty
-	cd /root/thirdparty
-	installfromnet "git clone https://github.com/merbanan/rtl_433.git"
-	cd rtl_433/ \
-	&& mkdir build \
-	&& cd build \
-	&& cmake ../ \
-	&& make -j$(nproc) && sudo make install
-	cd /root
+	installfromnet "apt-fast install -y rtl-433"
 }
 
 function qsstv_soft_install () {
@@ -178,4 +170,16 @@ function nfclaboratory_soft_install () {
 	cp nfc-laboratory/dat/config/nfc-lab.conf /root
 	[ -d /rftools ] || mkdir /rftools/
 	cp ./cmake-build-release/src/nfc-app/app-qt/nfc-lab /rftools/
+}
+
+
+function retrogram_soapysdr_soft_install () {
+	goodecho "[+] Installing dependencies for retrogram"
+	installfromnet "apt-fast install -y libsoapysdr-dev libncurses5-dev libboost-program-options-dev"
+	goodecho "[+] Installing nfc-laboratory"
+	[ -d /sdrtools ] || mkdir /sdrtools
+	cd /sdrtools
+	installfromnet "git clone https://github.com/r4d10n/retrogram-soapysdr.git"
+	cd retrogram-soapysdr
+	make -j$(nproc)
 }
