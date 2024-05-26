@@ -125,7 +125,15 @@ function inspection_decoding_tools () {
 	installfromnet "pip3 install cython"
 	installfromnet "pip3 install urh"
 	goodecho "[+] Installing rtl_433 tools"
-	installfromnet "apt-fast install -y rtl-433"
+	[ -d /root/thirdparty ] || mkdir /root/thirdparty
+	cd /root/thirdparty
+	installfromnet "git clone https://github.com/merbanan/rtl_433.git"
+	cd rtl_433/ \
+	&& mkdir build \
+	&& cd build \
+	&& cmake ../ \
+	&& make -j$(nproc) && sudo make install
+	cd /root
 }
 
 function qsstv_soft_install () {
