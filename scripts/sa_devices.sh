@@ -6,6 +6,7 @@ function kc908_sa_device() {
 	cd /root/thirdparty
 	installfromnet "wget https://deepace.net/wp-content/uploads/2024/04/KC908-GNURadio24.4.06.zip"
 	unzip KC908-GNURadio24.4.06.zip
+	rm KC908-GNURadio24.4.06.zip
 	cd KC908-GNURadio/lib
 	INCLUDE_DIR="/usr/local/include/kcsdr"
 	LIB_DIR="/usr/local/lib"
@@ -31,8 +32,9 @@ function signalhound_sa_device() {
 	goodecho "[+] Downloading bin from SignalHound"
 	[ -d /rftools ] || mkdir /rftools
 	cd /rftools/
-	installfromnet "wget https://signalhound.com/sigdownloads/Spike/Spike(Ubuntu22.04x64)_3_9_6.zip"
+	installfromnet "wget --no-check-certificate https://signalhound.com/sigdownloads/Spike/Spike(Ubuntu22.04x64)_3_9_6.zip"
 	unzip Spike\(Ubuntu22.04x64\)_3_9_6.zip
+	rm Spike\(Ubuntu22.04x64\)_3_9_6.zip
 	cd Spike\(Ubuntu22.04x64\)_3_9_6/
 	chmod +x setup.sh
 	sh -c ./setup.sh
@@ -54,6 +56,7 @@ function harogic_sa_device() {
 	esac
 	installfromnet "wget https://github.com/PentHertz/rfswift_harogic_install/releases/download/v05.23.17/$prog.zip"
 	unzip "$prog"
+	rm "$prog.zip"
 	cd "$prog"
 	sh -c ./install.sh
 	case "$arch" in # quick fix for aarch64
