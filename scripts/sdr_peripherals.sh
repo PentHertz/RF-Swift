@@ -4,7 +4,7 @@ source common.sh
 
 function ad_devices_install() {
 	goodecho "[+] Installing AD libs and tools from package manager"
-	installfromnet "apt-fast install -y libad9361-dev libiio-utils"
+	installfromnet "apt-fast install -y libad9361-dev libiio-utils libiio-dev"
 }
 
 function uhd_devices_install() {
@@ -64,6 +64,20 @@ function limesdr_devices_install() {
 function install_soapy_modules() {
 	goodecho "[+] Installing Soapy extra modules"
 	installfromnet "apt-fast install -y libsoapysdr-dev soapysdr-module-osmosdr soapysdr-module-rtlsdr soapysdr-module-bladerf soapysdr-module-hackrf soapysdr-module-uhd soapysdr-module-mirisdr soapysdr-module-rfspace soapysdr-module-airspy"
+}
+
+function install_soapyPlutoSDR_modules() {
+	goodecho "[+] Installing Soapy PlutoSDR module"
+	installfromnet "apt-fast install -y libad9361-dev libiio-utils libiio-dev"
+	[ -d /root/thirdparty ] || mkdir /root/thirdparty
+	cd /root/thirdparty
+	installfromnet "git clone https://github.com/pothosware/SoapyPlutoSDR"
+	cd SoapyPlutoSDR
+	mkdir build
+	cd build
+	cmake -DCMAKE_INSTALL_PREFIX=/usr ../
+	make
+	sudo make install
 }
 
 function rtlsdr_devices_install() {
