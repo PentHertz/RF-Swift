@@ -5,6 +5,7 @@ go 1.22.3
 require (
 	github.com/docker/docker v26.1.3+incompatible
 	github.com/spf13/cobra v1.8.0
+	golang.org/x/crypto v0.0.0-20200622213623-75b288015ac9
 )
 
 require (

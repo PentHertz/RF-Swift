@@ -17,6 +17,7 @@ import (
  "github.com/docker/docker/api/types/network"
  "github.com/docker/docker/api/types"
  "github.com/docker/docker/api/types/image"
+ "golang.org/x/crypto/ssh/terminal"
 )
 
 var inout chan []byte
@@ -160,10 +161,6 @@ func DockerRun() {
 		panic(err)
 	}
 
-    if err := cli.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
-		panic(err)
-	}
-
     waiter, err := cli.ContainerAttach(ctx, resp.ID, container.AttachOptions{
         Stderr:       true,
         Stdout:       true,
@@ -171,38 +168,38 @@ func DockerRun() {
         Stream:       true,
     })
 
+    if err := cli.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
+        panic(err)
+    }
+
     // readapted from https://stackoverflow.com/questions/58732588/accept-user-input-os-stdin-to-container-using-golang-docker-sdk-interactive-co
-    go  io.Copy(os.Stdout, waiter.Reader)
-    go  io.Copy(os.Stderr, waiter.Reader)
+    go io.Copy(os.Stdout, waiter.Reader)
+    go io.Copy(os.Stderr, waiter.Reader)
     go io.Copy(waiter.Conn, os.Stdin)
 
     if err != nil {
         panic(err)
     }
 
-    go func() {
-        scanner := bufio.NewScanner(os.Stdin)
-        for scanner.Scan() {
-            inout <- []byte(scanner.Text())
+    fd:=int(os.Stdin.Fd())
+    var oldState *terminal.State
+    if terminal.IsTerminal(fd) {
+        oldState, err = terminal.MakeRaw(fd)
+        if err != nil {// TODO handle error?
         }
-    }()
 
-    // Write to docker container
-    go func(w io.WriteCloser) {
-        for {
-            data, ok := <-inout
-            //log.Println("Received to send to docker", string(data))
-            if !ok {
-                fmt.Println("!ok")
-                w.Close()
-                return
-            }
-
-            w.Write(append(data, '\n'))
-        }
-    }(waiter.Conn)
-
-    statusCh, errCh := cli.ContainerWait(ctx, resp.ID, container.WaitConditionNotRunning)
+        go func(){
+                for {
+                        consoleReader:= bufio.NewReaderSize(os.Stdin,1)
+                        input,_:= consoleReader.ReadByte() // Ctrl-C = 3
+                        /*if (input ==3) {
+                            cli.ContainerRemove( context.Background(), cont.ID, types.ContainerRemoveOptions{Force:true,})
+                        }*/
+                        waiter.Conn.Write([]byte{input})
+                }
+        }()
+    }
+    statusCh, errCh := cli.ContainerWait(ctx, resp.ID, container.WaitConditionNextExit)
 	select {
 	    case err := <-errCh:
 		    if err != nil {
@@ -210,6 +207,10 @@ func DockerRun() {
 		    }
 	    case <-statusCh:
 	}
+
+    if terminal.IsTerminal(fd) {
+        terminal.Restore(fd, oldState)
+    }
 
 	out, err := cli.ContainerLogs(ctx, resp.ID, container.LogsOptions{ShowStdout: true})
 	if err != nil {
@@ -265,6 +266,8 @@ func DockerExec(contid string, WorkingDir string) {
         panic(err)
     }
 
+    var oldState *terminal.State
+
     if (dockerObj.shell != "/bin/bash") { // Attach and Exec the binarry
         optionsCreate := types.ExecConfig{
             WorkingDir: WorkingDir,
@@ -282,8 +285,6 @@ func DockerExec(contid string, WorkingDir string) {
             panic(err)
         }
 
-        //cli.ContainerExecCreate(ctx, rst.ID, optionsCreate) // TODO: run few tests before removing this one
-
         optionsStartCheck := types.ExecStartCheck{
             Detach: true,
             Tty: true,
@@ -295,6 +296,16 @@ func DockerExec(contid string, WorkingDir string) {
         }
 
         defer response.Close()
+        
+        statusCh, errCh := cli.ContainerWait(ctx, contid, container.WaitConditionNextExit)
+        select {
+            case err := <-errCh:
+                if err != nil {
+                    panic(err)
+                }
+            case <-statusCh:
+        }
+
     } else { // Interactive mode
         response, err := cli.ContainerAttach(ctx, contid, container.AttachOptions{
             Stderr:       true,
@@ -303,53 +314,44 @@ func DockerExec(contid string, WorkingDir string) {
             Stream:       true,
         })
 
-        go  io.Copy(os.Stdout, response.Reader)
-        go  io.Copy(os.Stderr, response.Reader)
+        go io.Copy(os.Stdout, response.Reader)
+        go io.Copy(os.Stderr, response.Reader)
         go io.Copy(response.Conn, os.Stdin)
 
         if err != nil {
             panic(err)
         }
 
-        go func() {
-            scanner := bufio.NewScanner(os.Stdin)
-            for scanner.Scan() {
-                inout <- []byte(scanner.Text())
+        fd:=int(os.Stdin.Fd())
+        if terminal.IsTerminal(fd) {
+            oldState, err = terminal.MakeRaw(fd)
+            if err != nil {// TODO handle error?
             }
-        }()
 
-        // Write to docker container
-        go func(w io.WriteCloser) {
-            for {
-                data, ok := <-inout
-                //log.Println("Received to send to docker", string(data))
-                if !ok {
-                    fmt.Println("!ok")
-                    w.Close()
-                    return
+            go func(){
+                    for {
+                            consoleReader:= bufio.NewReaderSize(os.Stdin,1)
+                            input,_:= consoleReader.ReadByte() // Ctrl-C = 3
+                            /*if (input ==3) {
+                                cli.ContainerRemove( context.Background(), cont.ID, types.ContainerRemoveOptions{Force:true,})
+                            }*/
+                            response.Conn.Write([]byte{input})
+                    }
+            }()
+        }
+        statusCh, errCh := cli.ContainerWait(ctx, contid, container.WaitConditionNextExit)
+        select {
+            case err := <-errCh:
+                if err != nil {
+                    panic(err)
                 }
+            case <-statusCh:
+        }
 
-                w.Write(append(data, '\n'))
-            }
-        }(response.Conn)
+        if terminal.IsTerminal(fd) {
+            terminal.Restore(fd, oldState)
+        }
     }
-
-    statusCh, errCh := cli.ContainerWait(ctx, contid, container.WaitConditionNotRunning)
-    select {
-        case err := <-errCh:
-            if err != nil {
-                panic(err)
-            }
-        case <-statusCh:
-    }
-
-    // TODO: to clean after a few tests
-    /*out, err := cli.ContainerLogs(ctx, contid, container.LogsOptions{ShowStdout: true})
-    if err != nil {
-        panic(err)
-    }
-
-    stdcopy.StdCopy(os.Stdout, os.Stderr, out) */
 }
 
 // TODO: fix this function
