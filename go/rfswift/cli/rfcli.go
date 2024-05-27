@@ -116,6 +116,15 @@ var renameCmd = &cobra.Command{
   },
 }
 
+var removeCmd = &cobra.Command{
+  Use:   "remove",
+  Short: "remove a container",
+  Long:  `Remore an existing container`,
+  Run: func(cmd *cobra.Command, args []string) {
+    rfdock.DockerRemove(ContID)
+  },
+}
+
 func init() {
     rootCmd.AddCommand(runCmd)
     rootCmd.AddCommand(lastCmd)
@@ -123,7 +132,9 @@ func init() {
     rootCmd.AddCommand(commitCmd)
     rootCmd.AddCommand(pullCmd)
     rootCmd.AddCommand(renameCmd)
-    rootCmd.AddCommand(installCmd) // TODO: fix this function
+    rootCmd.AddCommand(installCmd)
+    rootCmd.AddCommand(removeCmd)
+    removeCmd.Flags().StringVarP(&ContID, "container", "c", "", "container to remove")
     installCmd.Flags().StringVarP(&ExecCmd, "install", "i", "", "function for installation")
     installCmd.Flags().StringVarP(&ContID, "container", "c", "", "container to run")
     pullCmd.Flags().StringVarP(&ImageRef, "image", "i", "", "image reference")

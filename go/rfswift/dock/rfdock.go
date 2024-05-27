@@ -447,3 +447,21 @@ func DockerRename(imageref string, imagetag string) {
         fmt.Println("[+] Image renamed!")
     }
 }
+
+func DockerRemove(contid string) {
+    /* Remove a container
+        in(1): string container ID
+    */
+    ctx := context.Background()
+    cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
+    if err != nil {
+        panic(err)
+    } 
+    defer cli.Close()
+    err = cli.ContainerRemove(ctx, contid, container.RemoveOptions{Force:true,})
+    if err != nil {
+        panic(err)
+    } else {
+        fmt.Println("[+] Container removed!")
+    }
+}
