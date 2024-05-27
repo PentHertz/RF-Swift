@@ -252,6 +252,8 @@ func DockerExec(contid string, WorkingDir string) {
     */
     ctx := context.Background()
     cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
+    execShell := []string{}
+
     if err != nil {
         panic(err)
     }
@@ -268,7 +270,11 @@ func DockerExec(contid string, WorkingDir string) {
 
     var oldState *terminal.State
 
-    if (dockerObj.shell != "/bin/bash") { // Attach and Exec the binarry
+    if (dockerObj.shell != "") {
+        execShell = append(execShell, strings.Split(dockerObj.shell, " ")...)
+    }
+
+    if (dockerObj.shell != "/bin/bash") { // Attach and Exec the binarr
         optionsCreate := types.ExecConfig{
             WorkingDir: WorkingDir,
             AttachStdin: true,
@@ -277,8 +283,10 @@ func DockerExec(contid string, WorkingDir string) {
             Detach: false,
             Privileged: true,
             Tty: true,
-            Cmd:          []string{dockerObj.shell},
+            Cmd:        execShell,
         }
+
+        fmt.Println(WorkingDir)
 
         rst, err := cli.ContainerExecCreate(ctx, contid, optionsCreate)
         if err != nil {
@@ -286,7 +294,7 @@ func DockerExec(contid string, WorkingDir string) {
         }
 
         optionsStartCheck := types.ExecStartCheck{
-            Detach: true,
+            Detach: false,
             Tty: true,
         }
 
@@ -295,6 +303,9 @@ func DockerExec(contid string, WorkingDir string) {
             panic(err)
         }
 
+        go io.Copy(os.Stdout, response.Reader)
+        go io.Copy(os.Stderr, response.Reader)
+        go io.Copy(response.Conn, os.Stdin)
         defer response.Close()
         
         statusCh, errCh := cli.ContainerWait(ctx, contid, container.WaitConditionNextExit)
@@ -305,7 +316,6 @@ func DockerExec(contid string, WorkingDir string) {
                 }
             case <-statusCh:
         }
-
     } else { // Interactive mode
         response, err := cli.ContainerAttach(ctx, contid, container.AttachOptions{
             Stderr:       true,
@@ -354,12 +364,12 @@ func DockerExec(contid string, WorkingDir string) {
     }
 }
 
-// TODO: fix this function
+// TODO: Optimize it and handle errors
 func DockerInstallFromScript(contid string) {
     /* Hot install inside a created Docker container
         in(1): string function script to use
     */
-    s := fmt.Sprintf("/root/scripts/postinstall.sh %s", dockerObj.shell)
+    s := fmt.Sprintf("./entrypoint.sh %s", dockerObj.shell)
     fmt.Println(s)
     dockerObj.shell = s
     DockerExec(contid, "/root/scripts")

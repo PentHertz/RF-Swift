@@ -123,7 +123,7 @@ func init() {
     rootCmd.AddCommand(commitCmd)
     rootCmd.AddCommand(pullCmd)
     rootCmd.AddCommand(renameCmd)
-    //rootCmd.AddCommand(installCmd) // TODO: fix this function
+    rootCmd.AddCommand(installCmd) // TODO: fix this function
     installCmd.Flags().StringVarP(&ExecCmd, "install", "i", "", "function for installation")
     installCmd.Flags().StringVarP(&ContID, "container", "c", "", "container to run")
     pullCmd.Flags().StringVarP(&ImageRef, "image", "i", "", "image reference")
