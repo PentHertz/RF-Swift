@@ -161,6 +161,11 @@ To get the 10 last containers you have create, you can use the following command
 	sudo ./rfswift last -f myrfswift:latest # we are using a filter for images
 	[ 1716024976 ][ myrfswift:latest ] Container:  c9e223a987a36441fb631f4a11def746aabb1a1bc862b5f2589d5b3ac8429cb1 , Command:  /bin/bash
 
+## Hotinstall 
+
+If you forgot to enable an installation function, you can always install it :
+
+	sudo ./rfswift install -i <install function (called by entrypoint.sh)> -c <container id> [-c <container id>]
 
 ## Commit changes
 
