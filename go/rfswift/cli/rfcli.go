@@ -23,6 +23,7 @@ var XDisplay string
 var SInstall string
 var ImageRef string
 var ImageTag string
+var ExtraHost string
 
 var rootCmd = &cobra.Command{
     Use:  "rfswift",
@@ -49,6 +50,7 @@ var runCmd = &cobra.Command{
       rfdock.DockerSetShell(ExecCmd)
       rfdock.DockerAddBiding(ExtraBind)
       rfdock.DockerSetImage(DImage)
+      rfdock.DockerSetExtraHosts(ExtraHost)
       rfdock.DockerRun()
   },
 }
@@ -151,9 +153,10 @@ func init() {
     execCmd.Flags().StringVarP(&ExecCmd, "command", "e", "", "command to exec (required!)")
     execCmd.Flags().StringVarP(&SInstall, "install", "i", "", "install from function script (e.g: 'sdrpp_soft_install')")
     execCmd.MarkFlagRequired("command")
-    runCmd.Flags().StringVarP(&XDisplay, "display", "d", "", "set X Display (by default: 'DISPLAY=:0')")
+    runCmd.Flags().StringVarP(&ExtraHost, "extrahosts", "x", "", "set extra hosts (by default: 'pluto.local:192.168.1.2' separated by commas)")
+    runCmd.Flags().StringVarP(&XDisplay, "display", "d", "", "set X Display (by default: 'DISPLAY=:0' separated by commas)")
     runCmd.Flags().StringVarP(&ExecCmd, "command", "e", "", "command to exec (by default: '/bin/bash')")
-    runCmd.Flags().StringVarP(&ExtraBind, "bind", "b", "", "extra bindings (separe them with commas)")
+    runCmd.Flags().StringVarP(&ExtraBind, "bind", "b", "", "extra bindings (separed with commas)")
     runCmd.Flags().StringVarP(&DImage, "image", "i", "", "image (by default: 'myrfswift:latest')")
     lastCmd.Flags().StringVarP(&FilterLast, "filter", "f", "", "filter by image name")
 }

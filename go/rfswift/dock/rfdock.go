@@ -33,6 +33,7 @@ type DockerInst struct {
     imagename   string
     extrabinding string
     entrypoint string
+    extrahosts string
 }
 
 var dockerObj = DockerInst{ net: "host", 
@@ -43,53 +44,8 @@ var dockerObj = DockerInst{ net: "host",
                             usbforward: "/dev/bus/usb:/dev/bus/usb",
                             extrabinding: "/dev/ttyACM0:/dev/ttyACM0", // Some more if needed /run/dbus/system_bus_socket:/run/dbus/system_bus_socket,/dev/snd:/dev/snd,/dev/dri:/dev/dri
                             imagename: "myrfswift:latest",
+                            extrahosts: "",
                             shell: "/bin/bash"} // Instance with default values
-
-
-func DockerSetx11(x11forward string) {
-    /* Sets the shell to use in the Docker container
-        in(1): string command shell to use
-    */
-    if (x11forward != "") {
-        dockerObj.x11forward = x11forward
-    }
-}
-
-func DockerSetShell(shellcmd string) {
-    /* Sets the shell to use in the Docker container
-        in(1): string command shell to use
-    */
-    if (shellcmd != "") {
-        dockerObj.shell = shellcmd
-    }
-}
-
-func DockerAddBiding(addbindings string) {
-    /* Add extra bindings to the Docker container to run
-        in(1): string of bindings separated by commas
-    */
-    if (addbindings != "") {
-        dockerObj.extrabinding = addbindings
-    }
-}
-
-func DockerSetImage(imagename string) {
-    /* Set image name to use if the default one is not used
-        in(1): string image name
-    */ 
-    if (imagename != "") {
-        dockerObj.imagename = imagename
-    }
-}
-
-func DockerSetXDisplay(display string) {
-    /* Sets the XDISPLAY env variable value
-        in(1): string display
-    */
-    if (display != "") {
-        dockerObj.xdisplay = display
-    }
-}
 
 func DockerLast(ifilter string) {
     /* Lists 10 last Docker containers
@@ -131,8 +87,12 @@ func DockerRun() {
  
     x11split := strings.Split(dockerObj.x11forward, ",")
     var bindings = x11split
-    //bindings = append(bindings, dockerObj.x11split...)
+    extrahosts := []string{}
+
     bindings = append(bindings, strings.Split(dockerObj.usbforward, ",")...)
+    if (dockerObj.extrahosts != "") {
+        extrahosts = append(extrahosts, strings.Split(dockerObj.extrahosts, ",")...)
+    }
 
     if (dockerObj.extrabinding != "") {
         bindings = append(bindings, strings.Split(dockerObj.extrabinding, ",")...)
@@ -154,7 +114,7 @@ func DockerRun() {
             NetworkMode: "host",
             Binds: bindings,
             Privileged: true,
-            //ExtraHosts: []string{"pluto.local:192.168.2.1"}, // TODO: look if needed later
+            ExtraHosts: extrahosts,
 	}, &network.NetworkingConfig{}, nil,"")
 
 	if err != nil {
@@ -362,17 +322,6 @@ func DockerExec(contid string, WorkingDir string) {
             terminal.Restore(fd, oldState)
         }
     }
-}
-
-// TODO: Optimize it and handle errors
-func DockerInstallFromScript(contid string) {
-    /* Hot install inside a created Docker container
-        in(1): string function script to use
-    */
-    s := fmt.Sprintf("./entrypoint.sh %s", dockerObj.shell)
-    fmt.Println(s)
-    dockerObj.shell = s
-    DockerExec(contid, "/root/scripts")
 }
 
 func DockerCommit(contid string) {
