@@ -179,7 +179,7 @@ You can rename images using the `rename` command as follows:
 
 	sudo ./rfswift rename -i myrfswift:supertag -t myrfswift:newsupertag
 
-## Renmoving container
+## Removing container
 
 You can remove a container using the `remove` command as follows:
 
