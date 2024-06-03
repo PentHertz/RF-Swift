@@ -11,7 +11,7 @@ import (
 )
 
 
-var version = "0.2"
+var version = "0.3"
 
 var ascii_art = `                                                                                                    
                                                                                           
@@ -71,6 +71,6 @@ var ascii_art = `
 
 func main() {
     fmt.Println(ascii_art)
-    fmt.Print("Version:", version, "\n\n")
+    fmt.Print("Version: ", version, "\n\n")
     cli.Execute()
 }
