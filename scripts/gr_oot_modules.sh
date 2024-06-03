@@ -444,3 +444,75 @@ function grsatellites_grmod_install () {
 	&& make -j$(nproc); sudo make install
 	cd ../..
 }
+
+function gradsb_grmod_install () {
+	goodecho "[+] Installing gr-adsb dependencies (especially for webserver)"
+	installfromnet "pip3 install zmq flask flask-socketio gevent gevent-websocket"
+	goodecho "[+] Installing gr-adsb"
+	[ -d /rftools ] || mkdir /rftools
+	cd /rftools
+	installfromnet "git clone -b maint-3.10 https://github.com/mhostetter/gr-adsb"
+	goodecho "[+] Building and installing gr-adsb"
+	cd gr-adsb \
+	&& mkdir build \
+	&& cd build/ \
+	&& cmake -DCMAKE_INSTALL_PREFIX=/usr ../ \
+	&& make -j$(nproc); sudo make install
+	cd ../..
+}
+
+function grkeyfob_grmod_install () {
+	goodecho "[+] Cloning gr-keyfob"
+	[ -d /root/thirdparty ] || mkdir /root/thirdparty
+	cd /root/thirdparty
+	installfromnet "git clone https://github.com/bastibl/gr-keyfob.git"
+	goodecho "[+] Building and installing gr-keyfob"
+	cd gr-keyfob \
+	&& mkdir build \
+	&& cd build/ \
+	&& cmake -DCMAKE_INSTALL_PREFIX=/usr ../ \
+	&& make -j$(nproc); sudo make install
+	cd ../..
+}
+
+function grradar_grmod_install () {
+	goodecho "[+] Cloning gr-radar"
+	[ -d /root/thirdparty ] || mkdir /root/thirdparty
+	cd /root/thirdparty
+	installfromnet "git clone https://github.com/radioconda/gr-radar.git"
+	goodecho "[+] Building and installing gr-radar"
+	cd gr-radar \
+	&& mkdir build \
+	&& cd build/ \
+	&& cmake -DCMAKE_INSTALL_PREFIX=/usr ../ \
+	&& make -j$(nproc); sudo make install
+	cd ../..
+}
+
+function grnordic_grmod_install () {
+	goodecho "[+] Cloning gr-nordic"
+	[ -d /root/thirdparty ] || mkdir /root/thirdparty
+	cd /root/thirdparty
+	installfromnet "git clone https://github.com/bkerler/gr-nordic.git"
+	goodecho "[+] Building and installing gr-radar"
+	cd gr-nordic \
+	&& mkdir build \
+	&& cd build/ \
+	&& cmake -DCMAKE_INSTALL_PREFIX=/usr ../ \
+	&& make -j$(nproc); sudo make install
+	cd ../..
+}
+
+function grpaint_grmod_install () {
+	goodecho "[+] Cloning gr-paint"
+	[ -d /root/thirdparty ] || mkdir /root/thirdparty
+	cd /root/thirdparty
+	installfromnet "git clone https://github.com/drmpeg/gr-paint.git"
+	goodecho "[+] Building and installing gr-paint"
+	cd gr-paint \
+	&& mkdir build \
+	&& cd build/ \
+	&& cmake -DCMAKE_INSTALL_PREFIX=/usr ../ \
+	&& make -j$(nproc); sudo make install
+	cd ../..
+}

@@ -180,7 +180,6 @@ function nfclaboratory_soft_install () {
 	cp ./cmake-build-release/src/nfc-app/app-qt/nfc-lab /rftools/
 }
 
-
 function retrogram_soapysdr_soft_install () {
 	goodecho "[+] Installing dependencies for retrogram"
 	installfromnet "apt-fast install -y libsoapysdr-dev libncurses5-dev libboost-program-options-dev"
@@ -190,4 +189,39 @@ function retrogram_soapysdr_soft_install () {
 	installfromnet "git clone https://github.com/r4d10n/retrogram-soapysdr.git"
 	cd retrogram-soapysdr
 	make -j$(nproc)
+}
+
+function gps_sdr_sim_soft_install () {
+	goodecho "[+] Installing gps-sdr-sim"
+	[ -d /sdrtools ] || mkdir /sdrtools
+	cd /sdrtools
+	installfromnet "git clone https://github.com/osqzss/gps-sdr-sim.git"
+	cd gps-sdr-sim
+	gcc gpssim.c -lm -O3 -o gps-sdr-sim
+}
+
+function acarsdec_soft_install () {
+	goodecho "[+] Installing acarsdec dependencies"
+	[ -d /root/thirdparty ] || mkdir /root/thirdparty
+	cd /root/thirdparty
+	installfromnet "apt-fast install -y zlib1g-dev libjansson-dev libxml2-dev"
+	installfromnet "git clone https://github.com/szpajder/libacars.git"
+	cd libacars
+	mkdir build
+	cd build
+	cmake ../
+	make -j$(nproc)
+	make install
+	ldconfig
+
+	goodecho "[+] Installing acarsdec_"
+	[ -d /sdrtools ] || mkdir /sdrtools
+	cd /sdrtools
+	installfromnet "git clone https://github.com/TLeconte/acarsdec.git"
+	cd acarsdec
+	mkdir build
+	cd build
+	cmake .. -Drtl=ON -Dairspy=ON -Dsoapy=ON #-Dsdrplay=ON
+	make -j$(nproc)
+	make install
 }

@@ -63,5 +63,6 @@ function harogic_sa_device() {
   		aarch64|unknown) 
     		ln -s /usr/lib/aarch64-linux-gnu/libffi.so.8 /usr/lib/libffi.so.6;;
 	esac
+	ln -s /usr/local/bin/sastudio/.sastudio.sh /usr/sbin/sastudio
 	colorecho "[+] Note: you'll have to put your calibration data after!"
 }

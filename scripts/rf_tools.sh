@@ -1,5 +1,10 @@
 #!/bin/bash
 
+function blueztools_soft_install() {
+	goodecho "[+] Installing bluez tools"
+	installfromnet "apt-fast install -y bluez bluez-tools bluez-hcidump bluez-btsco bluez-obexd"
+}
+
 function mirage_soft_install() {
 	goodecho "[+] Installing bettercap dependencies"
 	echo apt-fast keyboard-configuration/variant string "English (US)" | debconf-set-selections
@@ -55,6 +60,16 @@ function mfoc_soft_install() {
 function mfcuk_soft_install() {
 	goodecho "[+] Installing mfcuk"
 	installfromnet "apt-fast install -y mfcuk"
+}
+
+function mfread_soft_install() {
+	goodecho "[+] Installing mfread dependencies"
+	installfromnet "pip3 install bitstring"
+	installfromnet "apt-fast install -y  gcc-arm-none-eabi libnewlib-dev qtbase5-dev libbz2-dev liblz4-dev libbluetooth-dev libpython3-dev libssl-dev libgd-dev"
+	goodecho "[+] Installing mfdread"
+	[ -d /rftools ] || mkdir /rftools
+	cd /rftools
+	installfromnet "git clone https://github.com/zhovner/mfdread.git"
 }
 
 # Wi-Fi Package

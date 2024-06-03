@@ -41,7 +41,10 @@ RUN chmod +x entrypoint.sh
 # Installing bettecap tool
 RUN ./entrypoint.sh bettercap_soft_install
 
-# Tools for Bluetooth
+# Tools for Bluetooth #TODO: more more!
+RUN ./entrypoint.sh blueztools_soft_install
+
+# Tools for Bluetooth LE
 RUN ./entrypoint.sh mirage_soft_install # TODO: In progress
 
 # Cleaning and quitting

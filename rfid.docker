@@ -43,6 +43,7 @@ RUN ./entrypoint.sh proxmark3_soft_install
 RUN ./entrypoint.sh libnfc_soft_install
 RUN ./entrypoint.sh mfoc_soft_install
 RUN ./entrypoint.sh mfcuk_soft_install
+RUN ./entrypoint.sh mfread_soft_install
 
 RUN mkdir /sdrtools/
 COPY run /sdrtools/run

@@ -18,7 +18,7 @@ RUN DEBIAN_FRONTEND=noninteractive \
   	texlive liblog4cpp5-dev libcurl4-gnutls-dev libpcap-dev libgtk-3-dev \
   	qtcreator qtcreator-data qtcreator-doc qtbase5-examples qtbase5-doc-html \
   	qtbase5-dev qtbase5-private-dev libqt5opengl5-dev libqt5svg5-dev \
-  	libcanberra-gtk-module libcanberra-gtk3-module
+  	libcanberra-gtk-module libcanberra-gtk3-module unity-tweak-tool
 
 RUN DEBIAN_FRONTEND=noninteractive TZ=Etc/UTC \
 	apt-get install tzdata
@@ -81,6 +81,11 @@ RUN ./entrypoint.sh grieee802154_grmod_install # depends on grfoo_grmod_install
 RUN ./entrypoint.sh grrds_grmod_install
 RUN ./entrypoint.sh grdroineid_grmod_install
 RUN ./entrypoint.sh grsatellites_grmod_install
+RUN ./entrypoint.sh gradsb_grmod_install
+RUN ./entrypoint.sh grkeyfob_grmod_install
+RUN ./entrypoint.sh grradar_grmod_install
+RUN ./entrypoint.sh grnordic_grmod_install
+RUN ./entrypoint.sh grpaint_grmod_install
 ## TODO: More more!
 
 # Installing OOT modules from sandia
@@ -108,6 +113,7 @@ RUN ./entrypoint.sh sigdigger_soft_install
 RUN ./entrypoint.sh inspection_decoding_tools
 RUN ./entrypoint.sh qsstv_soft_install
 RUN ./entrypoint.sh ice9_bluetooth_soft_install
+RUN ./entrypoint.sh gps_sdr_sim_soft_install
 
 # Installing SA device modules
 RUN ./entrypoint.sh kc908_sa_device # Note: Only works on x86_64
@@ -122,6 +128,7 @@ RUN ./entrypoint.sh proxmark3_soft_install
 RUN ./entrypoint.sh libnfc_soft_install
 RUN ./entrypoint.sh mfoc_soft_install
 RUN ./entrypoint.sh mfcuk_soft_install
+RUN ./entrypoint.sh mfread_soft_install
 
 # Tools for Wi-Fi
 RUN ./entrypoint.sh common_nettools
@@ -137,11 +144,24 @@ RUN ./entrypoint.sh wifite2_soft_install
 # Installing bettecap tool
 RUN ./entrypoint.sh bettercap_soft_install
 
-# Tools for Bluetooth
-#RUN ./entrypoint.sh mirage_soft_install # TODO: In progress
+# Tools for Bluetooth #TODO: more more!
+RUN ./entrypoint.sh blueztools_soft_install
+
+# Tools for Bluetooth LE
+RUN ./entrypoint.sh mirage_soft_install # TODO: In progress
 
 # Installing extra software
 RUN ./entrypoint.sh jupiter_soft_install
+RUN ./entrypoint.sh ml_and_dl_soft_install
+
+# Installing reversing software
+RUN ./entrypoint.sh kataistruct_soft_install
+RUN ./entrypoint.sh unicorn_soft_install
+RUN ./entrypoint.sh keystone_soft_install
+RUN ./entrypoint.sh radare2_soft_install
+RUN ./entrypoint.sh ghidra_soft_install
+RUN ./entrypoint.sh binwalk_soft_install
+#RUN ./entrypoint.sh cutter_soft_install #TODO: fix install
 
 RUN mkdir -p /sdrtools/
 COPY run /sdrtools/run
