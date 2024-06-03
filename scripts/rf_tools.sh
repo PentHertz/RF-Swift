@@ -74,6 +74,7 @@ function mfread_soft_install() {
 
 # Wi-Fi Package
 function common_nettools() {
+	installfromnet "apt-fast install -y iproute2"
 	echo apt-fast macchanger/automatically_run  boolean false | debconf-set-selections
 	installfromnet "apt-fast install -y -q macchanger"
 	echo apt-fast wireshark-common/install-setuid boolean true | debconf-set-selections
