@@ -111,7 +111,7 @@ var pullCmd = &cobra.Command{
 
 var renameCmd = &cobra.Command{
   Use:   "rename",
-  Short: "rename a image",
+  Short: "rename an image",
   Long:  `Rename an image with another tag`,
   Run: func(cmd *cobra.Command, args []string) {
     rfdock.DockerRename(ImageRef, ImageTag)

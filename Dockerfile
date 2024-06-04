@@ -114,6 +114,7 @@ RUN ./entrypoint.sh inspection_decoding_tools
 RUN ./entrypoint.sh qsstv_soft_install
 RUN ./entrypoint.sh ice9_bluetooth_soft_install
 RUN ./entrypoint.sh gps_sdr_sim_soft_install
+RUN ./entrypoint.sh retrogram_soapysdr_soft_install # enable by uncommenting
 
 # Installing SA device modules
 RUN ./entrypoint.sh kc908_sa_device # Note: Only works on x86_64
