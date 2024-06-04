@@ -1,4 +1,4 @@
-name: Docker Image CI
+name: Docker Image CI - RFID
 
 on:
   push:
@@ -15,4 +15,4 @@ jobs:
     steps:
     - uses: actions/checkout@v4
     - name: Build the full Docker image
-      run: docker build . --file Dockerfile --tag rfswift_full:$(date +%s)
+      run: docker build . --file rfid.docker --tag rfswift_full:$(date +%s)
