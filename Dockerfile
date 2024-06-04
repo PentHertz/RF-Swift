@@ -1,5 +1,5 @@
 # This DockerFile is part of the RFSwift project
-# Install type: full
+# Install type: Full all
 # Author(s): Sébastien Dudek (@FlUxIuS) @Penthertz
 # website: penthertz.com
 
