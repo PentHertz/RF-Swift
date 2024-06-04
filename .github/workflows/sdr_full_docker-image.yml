@@ -15,4 +15,4 @@ jobs:
     steps:
     - uses: actions/checkout@v4
     - name: Build the full Docker image
-      run: docker build . --file sdr_full.docker --tag rfswift_full:$(date +%s)
+      run: docker build . --file sdr_full.docker --tag rfswift_sdrfull:$(date +%s)
