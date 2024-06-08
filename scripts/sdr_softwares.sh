@@ -183,7 +183,7 @@ function nfclaboratory_soft_install () {
 function retrogram_soapysdr_soft_install () {
 	goodecho "[+] Installing dependencies for retrogram"
 	installfromnet "apt-fast install -y libsoapysdr-dev libncurses5-dev libboost-program-options-dev"
-	goodecho "[+] Installing nfc-laboratory"
+	goodecho "[+] Installing retrogram_soapysdr"
 	[ -d /sdrtools ] || mkdir /sdrtools
 	cd /sdrtools
 	installfromnet "git clone https://github.com/r4d10n/retrogram-soapysdr.git"
@@ -214,7 +214,7 @@ function acarsdec_soft_install () {
 	make install
 	ldconfig
 
-	goodecho "[+] Installing acarsdec_"
+	goodecho "[+] Installing acarsdec"
 	[ -d /sdrtools ] || mkdir /sdrtools
 	cd /sdrtools
 	installfromnet "git clone https://github.com/TLeconte/acarsdec.git"
@@ -224,4 +224,13 @@ function acarsdec_soft_install () {
 	cmake .. -Drtl=ON -Dairspy=ON -Dsoapy=ON #-Dsdrplay=ON
 	make -j$(nproc)
 	make install
+}
+
+function meshtastic_sdr_soft_install () {
+	goodecho "[+] Installing Meshtastic_SDR dependencies"
+	installfromnet "pip3 install meshtastic"
+	[ -d /sdrtools ] || mkdir /sdrtools
+	cd /sdrtools
+	goodecho "[+] Cloning Meshtastic_SDR"
+	installfromnet "git clone https://gitlab.com/crankylinuxuser/meshtastic_sdr.git"
 }
