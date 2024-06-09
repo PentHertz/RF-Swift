@@ -266,11 +266,11 @@ In the future, we will create a dedicated page for developers.
 
 The sound sometimes does not restart when stopping playback with tools like SDR++. Try using different `hw` identifiers.
 
-Some tools, like GQRX, use **pulseaudio** so the best way would be to load `pulseaudio` on TCP giving access to container's IP address:
+Some tools, like GQRX, use **pulseaudio** so the best way would be to load `pulseaudio` on TCP giving access to container's IP address on the host:
 
 	pactl load-module module-native-protocol-tcp  port=34567 auth-ip-acl=<container IP address>
 
- Then use an environment variable while running programs like GQRX:
+ Then use an environment variable while running programs like GQRX inside the container:
 
  	PULSE_SERVER=tcp:<host IP address>:34567 gqrx
 
