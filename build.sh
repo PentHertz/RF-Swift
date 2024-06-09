@@ -2,18 +2,26 @@
 
 # Quick and dirty building shell script which will evolve with more time make inside a Makefile
 
+
+# stop the script if any command fails
+set -euo pipefail
+
 install_go() {
+    go version && { echo "golang is already installed. moving on" && return 0 ; }
+
 	[ -d thirdparty ] || mkdir thirdparty
 	cd thirdparty
 	arch=`uname -i`
 	prog="" # default Go binary tar.gz
+    version="1.22.4"
+
 	case "$arch" in
   		x86_64|amd64)
-    		prog="go1.22.3.linux-amd64.tar.gz";;
+    		prog="go${version}.linux-amd64.tar.gz";;
   		i?86)
-    		prog="go1.22.3.linux-386.tar.gz";;
+    		prog="go${version}.linux-386.tar.gz";;
   		arm64|aarch64|unknown) # Let assume from now unknown is RPi 5 => TODO: fix
-    		prog="go1.22.3.linux-arm64.tar.gz";;
+    		prog="go${version}.linux-arm64.tar.gz";;
   		*)
     		printf 'Unsupported architecture: "%s" -> Download or build Go instead\n' "$arch" >&2; exit 2;;
 	esac
@@ -32,7 +40,7 @@ building_rfswift() {
 }
 
 echo "[+] Installing Go"
-install_go 
+install_go
 
 echo "[+] Building RF Switch Go Project"
 building_rfswift
