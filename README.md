@@ -264,13 +264,18 @@ In the future, we will create a dedicated page for developers.
 
 ### Sound
 
-The sound sometimes does not restart when stopping playback with tools like SDR++.
+The sound sometimes does not restart when stopping playback with tools like SDR++. Try using different `hw` identifiers.
 
-To solve it for now, you can restart the tool and try playing it again.
+Some tools, like GQRX, use **pulseaudio** so the best way would be to load `pulseaudio` on TCP giving access to container's IP address:
 
-Some tools, like GQRX, are not yet working with sound. We will try to fix it when possible, but you can also capture the signal and demodulate it to `wav` and play it with Audacity as a quick fix.
+	pactl load-module module-native-protocol-tcp  port=34567 auth-ip-acl=<container IP address>
 
-If any contributor has the time to solve this issue, that would be awesome. ❤️
+ Then use an environment variable while running programs like GQRX:
+
+ 	PULSE_SERVER=tcp:<host IP address>:34567 gqrx
+
+Note: If network type mode is set to host on the container, then host is equal to container ip address. 
+If any contributor has the time to smooth all of this, that would be awesome. ❤️
 
 ### Wiki??!
 
