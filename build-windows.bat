@@ -1,25 +1,62 @@
-@ECHO OFF
+@echo off
 
 :: This code is part of RF Switch by @Penthertz
 ::  Author(s): Sébastien Dudek (@FlUxIuS)
 
-set oldpath=%cd%
+setlocal enabledelayedexpansion
 
-TITLE Installing RF Switch for Windows
+:: Stop the script if any command fails
+set "errorlevel="
+if not defined errorlevel goto :eof
 
-echo [+] Compiling RF Switch Go project
-cd go/rfswift
-start "" "C:\Program Files\Go\bin\go.exe" "build" "."
-move "rfswift.exe" "%oldpath%"
-cd %oldpath%
+:install_go
+go version >nul 2>&1
+if %errorlevel% equ 0 (
+    echo golang is already installed. moving on
+    goto :build_rfswift
+)
 
-echo [+] Building the Docker images
-set "imagename=myrfswift:latest"
-set /p "imagename=Enter image tag value (default: %imagename%): "
-echo %imagename%
+if not exist thirdparty mkdir thirdparty
+cd thirdparty
+for /f "tokens=2 delims==" %%i in ('wmic os get osarchitecture /value') do set "arch=%%i"
+set "prog="
+set "version=1.22.4"
 
-set "dockerfile=Dockerfile"
-set /p "dockerfile=Enter value for Dockerfile to use (default: %dockerfile%): "
-echo %dockerfile%
+if "%arch%"=="64-bit" (
+    set "prog=go%version%.windows-amd64.zip"
+) else if "%arch%"=="32-bit" (
+    set "prog=go%version%.windows-386.zip"
+) else (
+    echo Unsupported architecture: %arch% -> Download or build Go instead
+    exit /b 2
+)
 
-start "" "docker" "build" "." "-t" "%imagename%" "-f" "%dockerfile%"
+powershell -command "Invoke-WebRequest -Uri 'https://go.dev/dl/%prog%' -OutFile '%prog%'"
+powershell -command "Expand-Archive -Path '%prog%' -DestinationPath 'C:\Go'"
+setx PATH "%PATH%;C:\Go\bin"
+cd ..
+rmdir /s /q thirdparty
+
+:build_rfswift
+cd go\rfswift
+go build .
+move rfswift ..\..
+cd ..\..
+
+:: Set default values
+set "DEFAULT_IMAGE=myrfswift:latest"
+set "DEFAULT_DOCKERFILE=Dockerfile"
+
+:: Prompt the user for input with default values
+set /p "imagename=Enter image tag value (default: %DEFAULT_IMAGE%): "
+set /p "dockerfile=Enter value for Dockerfile to use (default: %DEFAULT_DOCKERFILE%): "
+
+:: Use default values if variables are empty
+if "%imagename%"=="" set "imagename=%DEFAULT_IMAGE%"
+if "%dockerfile%"=="" set "dockerfile=%DEFAULT_DOCKERFILE%"
+
+echo [+] Building the Docker container
+docker build . -t %imagename% -f %dockerfile%
+
+endlocal
+
