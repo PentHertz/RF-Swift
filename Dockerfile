@@ -3,7 +3,7 @@
 # Author(s): Sébastien Dudek (@FlUxIuS) @Penthertz
 # website: penthertz.com
 
-FROM ubuntu:22.04
+FROM ubuntu:22.04 as base
 RUN echo 'APT::Install-Suggests "0";' >> /etc/apt/apt.conf.d/00-docker
 RUN echo 'APT::Install-Recommends "0";' >> /etc/apt/apt.conf.d/00-docker
 
@@ -18,7 +18,7 @@ RUN DEBIAN_FRONTEND=noninteractive \
   	texlive liblog4cpp5-dev libcurl4-gnutls-dev libpcap-dev libgtk-3-dev \
   	qtcreator qtcreator-data qtcreator-doc qtbase5-examples qtbase5-doc-html \
   	qtbase5-dev qtbase5-private-dev libqt5opengl5-dev libqt5svg5-dev \
-  	libcanberra-gtk-module libcanberra-gtk3-module unity-tweak-tool
+  	libcanberra-gtk-module libcanberra-gtk3-module unity-tweak-tool libhdf5-dev
 
 RUN DEBIAN_FRONTEND=noninteractive TZ=Etc/UTC \
 	apt-get install tzdata
@@ -36,30 +36,41 @@ RUN apt-get -y install apt-fast python3-matplotlib
 COPY scripts /root/scripts/
 COPY rules /root/rules/
 COPY config /root/config/
-
 WORKDIR /root/scripts/
 RUN chmod +x entrypoint.sh
 
 # Audio part
 RUN apt-fast install -y pulseaudio-utils pulseaudio libasound2-dev libavahi-client-dev --no-install-recommends
-
 ## Installing peripherals
 RUN ./entrypoint.sh ad_devices_install
-RUN ./entrypoint.sh uhd_devices_install
-#RUN ./entrypoint.sh antsdr_uhd_devices_install # Disable orignal UHD
 RUN ./entrypoint.sh nuand_devices_install
 RUN ./entrypoint.sh hackrf_devices_install
 RUN ./entrypoint.sh airspy_devices_install
 RUN ./entrypoint.sh limesdr_devices_install
+
+FROM base as sdr1
+RUN ./entrypoint.sh uhd_devices_install
+#RUN ./entrypoint.sh antsdr_uhd_devices_install # Disable orignal UHD
 RUN ./entrypoint.sh rtlsdr_devices_install
 #RUN ./entrypoint.sh rtlsdrv4_devices_install # optionnal, remove rtlsdr_devices_install if you are using the v4 version
-
 # Installing GNU Radio + extra OOT modules
 RUN ./entrypoint.sh gnuradio_soft_install
 RUN ./entrypoint.sh common_sources_and_sinks
-RUN ./entrypoint.sh grgsm_grmod_install
 RUN ./entrypoint.sh install_soapy_modules
 RUN ./entrypoint.sh install_soapyPlutoSDR_modules
+# Installing some software
+RUN ./entrypoint.sh inspection_decoding_tools
+RUN ./entrypoint.sh retrogram_soapysdr_soft_install 
+# Installing SA device modules
+RUN ./entrypoint.sh kc908_sa_device # Note: Only works on x86_64
+RUN ./entrypoint.sh signalhound_sa_device # Note: Only works on x86_64
+RUN ./entrypoint.sh harogic_sa_device # working only on x86_64 and aarch64
+# Calibration equipements
+RUN ./entrypoint.sh leobodnarv1_cal_device
+
+FROM sdr1 as sdr2
+# Installing extra OOT modules
+RUN ./entrypoint.sh grgsm_grmod_install
 RUN ./entrypoint.sh grlora_grmod_install
 RUN ./entrypoint.sh grlorasdr_grmod_install
 RUN ./entrypoint.sh griridium_grmod_install
@@ -110,21 +121,12 @@ RUN ./entrypoint.sh cyberther_soft_install
 RUN ./entrypoint.sh sdrangel_soft_install
 RUN ./entrypoint.sh sdrpp_soft_fromsource_install # replace to 'sdrpp_soft_install' if you see bugs
 RUN ./entrypoint.sh sigdigger_soft_install
-RUN ./entrypoint.sh inspection_decoding_tools
 RUN ./entrypoint.sh qsstv_soft_install
 RUN ./entrypoint.sh ice9_bluetooth_soft_install
 RUN ./entrypoint.sh gps_sdr_sim_soft_install
-RUN ./entrypoint.sh retrogram_soapysdr_soft_install # enable by uncommenting
 RUN ./entrypoint.sh meshtastic_sdr_soft_install
 
-# Installing SA device modules
-RUN ./entrypoint.sh kc908_sa_device # Note: Only works on x86_64
-RUN ./entrypoint.sh signalhound_sa_device # Note: Only works on x86_64
-RUN ./entrypoint.sh harogic_sa_device # working only on x86_64 and aarch64
-
-# Calibration equipements
-RUN ./entrypoint.sh leobodnarv1_cal_device
-
+FROM sdr2 as otherrftools
 # Tools for RFID
 RUN ./entrypoint.sh proxmark3_soft_install
 RUN ./entrypoint.sh libnfc_soft_install

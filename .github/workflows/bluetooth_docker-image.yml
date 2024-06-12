@@ -14,5 +14,9 @@ jobs:
 
     steps:
     - uses: actions/checkout@v4
+
+    - name: Build the core image
+      run: docker build . --file Dockerfiles/SDR/corebuild.docker --tag corebuild:latest
+    
     - name: Build the full Docker image
-      run: docker build . --file bluetooth.docker --tag rfswift_bluetooth:$(date +%s)
+      run: docker build . --file Dockerfiles/bluetooth.docker --tag rfswift_bluetooth:$(date +%s)

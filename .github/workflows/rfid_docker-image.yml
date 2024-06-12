@@ -14,5 +14,9 @@ jobs:
 
     steps:
     - uses: actions/checkout@v4
+
+    - name: Build the core image
+      run: docker build . --file Dockerfiles/SDR/corebuild.docker --tag corebuild:latest
+    
     - name: Build the full Docker image
-      run: docker build . --file rfid.docker --tag rfswift_rfid:$(date +%s)
+      run: docker build . --file Dockerfiles/rfid.docker --tag rfswift_rfid:$(date +%s)

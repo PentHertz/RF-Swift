@@ -1,0 +1,33 @@
+# This DockerFile is part of the RFSwift project
+# Install type: Bluetooth
+# Author(s): Sébastien Dudek (@FlUxIuS) @Penthertz
+# website: penthertz.com
+
+FROM corebuild:latest
+RUN echo 'APT::Install-Suggests "0";' >> /etc/apt/apt.conf.d/00-docker
+RUN echo 'APT::Install-Recommends "0";' >> /etc/apt/apt.conf.d/00-docker
+
+RUN apt-fast update
+
+COPY scripts /root/scripts/
+COPY rules /root/rules/
+
+WORKDIR /root/scripts/
+RUN chmod +x entrypoint.sh
+
+# Installing bettecap tool
+RUN ./entrypoint.sh bettercap_soft_install
+
+# Tools for Bluetooth #TODO: more more!
+RUN ./entrypoint.sh blueztools_soft_install
+
+# Tools for Bluetooth LE
+RUN ./entrypoint.sh mirage_soft_install # TODO: In progress
+
+# Cleaning and quitting
+WORKDIR /root/
+#RUN rm -rf /root/scripts/
+RUN rm -rf /root/rules/
+RUN rm -rf /root/thirdparty
+RUN apt-fast clean
+RUN DEBIAN_FRONTEND=noninteractive rm -rf /var/lib/apt/lists/*

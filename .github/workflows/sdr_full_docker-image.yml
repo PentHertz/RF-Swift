@@ -14,5 +14,11 @@ jobs:
 
     steps:
     - uses: actions/checkout@v4
-    - name: Build the full Docker image
-      run: docker build . --file sdr_full.docker --tag rfswift_sdrfull:$(date +%s)
+    - name: Build the core image
+      run: docker build . --file Dockerfiles/SDR/corebuild.docker --tag corebuild:latest
+
+    - name: Build the light stage for SDR
+      run: docker build . --file Dockerfiles/SDR/sdr_light.docker --tag sdr_light:latest
+
+    - name: Build the full SDR image
+      run: docker build . --file Dockerfiles/SDR/sdr_full.docker --tag sdr_full:latest
