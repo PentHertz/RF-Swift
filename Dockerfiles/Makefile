@@ -8,13 +8,13 @@ sdrfull: common sdrlight
 	docker build -f SDR/sdr_full.docker -t sdr_full:latest ..
 
 rfid: common
-	docker build -f SDR/rfid.docker -t rfid:latest ..
+	docker build -f rfid.docker -t rfid:latest ..
 
 wifi: common
-	docker build -f SDR/wifi.docker -t wifi:latest ..
+	docker build -f wifi.docker -t wifi:latest ..
 
 bluetooth: common
-	docker build -f SDR/bluetooth.docker -t bluetooth:latest ..
+	docker build -f bluetooth.docker -t bluetooth:latest ..
 
 build: sdrfull bluetooth wifi rfid
 	echo "Done!"

@@ -16,6 +16,52 @@ function uhd_devices_install() {
     installfromnet "/usr/bin/uhd_images_downloader"
 }
 
+function check_neon() {
+    if grep -q 'Features.*neon' /proc/cpuinfo; then
+        return 0 # NEON is present
+    else
+        return 1 # NEON is not present
+    fi
+}
+
+
+function uhd_devices_fromsource_install() {
+	goodecho "[+] Installing UHD's dependencies"
+	installfromnet "apt-fast install -y dpdk dpdk-dev autoconf automake build-essential ccache cmake cpufrequtils doxygen ethtool g++ git inetutils-tools libboost-all-dev libncurses5 libncurses5-dev libusb-1.0-0 libusb-1.0-0-dev libusb-dev python3-dev python3-mako python3-numpy python3-requests python3-scipy python3-setuptools \
+python3-ruamel.yaml"
+	goodecho "[+] Copying rules sets"
+	cp /root/rules/uhd-usrp.rules  /etc/udev/rules.d/
+	goodecho "[+] Cloning and compiling UHD"
+	[ -d /root/thirdparty ] || mkdir /root/thirdparty
+	cd /root/thirdparty
+	installfromnet "git clone https://github.com/EttusResearch/uhd.git"
+	cd uhd/host
+	mkdir build
+	cd build
+	# Detect if the architecture is ARM
+	ARCH=$(uname -m)
+
+	if [[ "$ARCH" == arm* || "$ARCH" == aarch64 ]]; then
+	    echo "Architecture is ARM."
+
+	    if check_neon; then
+	        echo "NEON extension is present."
+	        cmake -DCMAKE_FIND_ROOT_PATH=/usr ..
+	    else
+	        echo "NEON extension is not present."
+	        cmake -DCMAKE_FIND_ROOT_PATH=/usr -DNEON_SIMD_ENABLE=OFF ..
+	    fi
+	else
+	    echo "Architecture is not ARM."
+	    cmake -DCMAKE_FIND_ROOT_PATH=/usr ..
+	fi
+	make -j$(nproc)
+	sudo make install
+	sudo ldconfig
+	goodecho "[+] Downloading Hardware Driver firmware/FPGA"
+    	installfromnet "uhd_images_downloader"
+}
+
 function antsdr_uhd_devices_install() { # Is replacing original one for now
 	goodecho "[+] Installing dependencies for ANTSDR UHD"
 	installfromnet "apt-fast install -y autoconf automake build-essential ccache cmake cpufrequtils doxygen ethtool"
@@ -44,6 +90,24 @@ function nuand_devices_install() {
 	cp /root/rules/88-nuand-bladerf1.rules.in /etc/udev/rules.d/
 	cp /root/rules/88-nuand-bladerf2.rules.in /etc/udev/rules.d/
 	cp /root/rules/88-nuand-bootloader.rules.in /etc/udev/rules.d/
+}
+
+function nuand_devices_fromsource_install() {
+        goodecho "[+] Installing bladeRF dependencies"
+	installfromnet "apt-fast install -y libusb-1.0-0-dev libusb-1.0-0 build-essential cmake libncurses5-dev libtecla1 libtecla-dev pkg-config git wget"
+        goodecho "[+] Cloning, building and installing Nuand's repository"
+	[ -d /root/thirdparty ] || mkdir /root/thirdparty
+        cd /root/thirdparty
+	installfromnet "git clone https://github.com/Nuand/bladeRF.git ./bladeRF"
+	cd ./bladeRF
+	mkdir build
+	cd build
+	cmake -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr/local -DINSTALL_UDEV_RULES=ON ../
+	make && sudo make install && sudo ldconfig
+	goodecho "[+] Copying rules sets"
+        cp /root/rules/88-nuand-bladerf1.rules.in /etc/udev/rules.d/
+        cp /root/rules/88-nuand-bladerf2.rules.in /etc/udev/rules.d/
+        cp /root/rules/88-nuand-bootloader.rules.in /etc/udev/rules.d/
 }
 
 function hackrf_devices_install() {

@@ -19,7 +19,7 @@ RUN DEBIAN_FRONTEND=noninteractive \
   	qtcreator qtcreator-data qtcreator-doc qtbase5-examples qtbase5-doc-html \
   	qtbase5-dev qtbase5-private-dev libqt5opengl5-dev libqt5svg5-dev \
   	libcanberra-gtk-module libcanberra-gtk3-module unity-tweak-tool libhdf5-dev \
-	libreadline-dev
+	libreadline-dev automake
 
 RUN DEBIAN_FRONTEND=noninteractive TZ=Etc/UTC \
 	apt-get install tzdata
@@ -50,7 +50,8 @@ RUN chmod +x entrypoint.sh
 RUN ./entrypoint.sh ad_devices_install
 #RUN ./entrypoint.sh uhd_devices_install # to install after
 #RUN ./entrypoint.sh antsdr_uhd_devices_install # Disable orignal UHD
-RUN ./entrypoint.sh nuand_devices_install
+#RUN ./entrypoint.sh nuand_devices_install
+RUN ./entrypoint.sh nuand_devices_fromsource_install
 RUN ./entrypoint.sh hackrf_devices_install
 RUN ./entrypoint.sh airspy_devices_install
 RUN ./entrypoint.sh limesdr_devices_install
