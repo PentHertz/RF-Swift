@@ -65,13 +65,15 @@ RUN ./entrypoint.sh grfhss_utils_grmod_install # depends on 'grpdu_utils_grmod_i
 RUN ./entrypoint.sh cyberther_soft_install # Enabe OpenCL for better exp
 
 # Installing softwares
-RUN ./entrypoint.sh sdrangel_soft_install
+#RUN ./entrypoint.sh sdrangel_soft_install
+RUN ./entrypoint.sh sdrangel_soft_fromsource_install
 RUN ./entrypoint.sh sdrpp_soft_fromsource_install # replace to 'sdrpp_soft_install' if you see bugs
 RUN ./entrypoint.sh sigdigger_soft_install
 RUN ./entrypoint.sh qsstv_soft_install
 RUN ./entrypoint.sh ice9_bluetooth_soft_install
 RUN ./entrypoint.sh meshtastic_sdr_soft_install
 RUN ./entrypoint.sh gps_sdr_sim_soft_install
+RUN ./entrypoint.sh nfclaboratory_soft_install
 
 # Installing extra software
 RUN ./entrypoint.sh ml_and_dl_soft_install

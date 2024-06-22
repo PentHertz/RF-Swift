@@ -211,6 +211,7 @@ function sigdigger_soft_install () {
 	chmod +x blsd \ 
 	./blsd
 	cd /root
+	ln -s /sdrtools/blsd-dir/SigDigger/SigDigger /usr/sbin/SigDigger
 }
 
 function cyberther_soft_install() {
@@ -295,7 +296,7 @@ function ice9_bluetooth_soft_install () {
 
 function nfclaboratory_soft_install () {
 	goodecho "[+] Installing dependencies for nfc-laboratory"
-	installfromnet "apt-fast install -y libusb-1.0-0 qt5-default"
+	installfromnet "apt-fast install -y libusb-1.0-0"
 	goodecho "[+] Installing nfc-laboratory"
 	[ -d /root/thirdparty ] || mkdir /root/thirdparty
 	cd /root/thirdparty
@@ -305,6 +306,7 @@ function nfclaboratory_soft_install () {
 	cp nfc-laboratory/dat/config/nfc-lab.conf /root
 	[ -d /rftools ] || mkdir /rftools/
 	cp ./cmake-build-release/src/nfc-app/app-qt/nfc-lab /rftools/
+	ln -s /rftools/nfc-lab /usr/bin/nfc-lab
 }
 
 function retrogram_soapysdr_soft_install () {
@@ -316,6 +318,7 @@ function retrogram_soapysdr_soft_install () {
 	installfromnet "git clone https://github.com/r4d10n/retrogram-soapysdr.git"
 	cd retrogram-soapysdr
 	make -j$(nproc)
+	ln -s /sdrtools/retrogram-soapysdr/retrogram-soapysdr /usr/bin/retrogram-soapysdr
 }
 
 function gps_sdr_sim_soft_install () {
