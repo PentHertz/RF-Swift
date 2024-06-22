@@ -153,6 +153,7 @@ function sdrangel_soft_fromsource_install() {
 	-DGGMORSE_DIR=/opt/install/ggmorse \
 	-DCMAKE_INSTALL_PREFIX=/opt/install/sdrangel ..
 	make -j $(nproc) install
+	ln -s /opt/install/sdrangel/bin/sdrangel /usr/bin/sdrangel
 }
 
 function sdrpp_soft_fromsource_install () { # Beta test, but should work on almost all platforms

@@ -404,11 +404,10 @@ function grdroineid_grmod_install () {
 	[ -d /root/thirdparty ] || mkdir /root/thirdparty
 	cd /root/thirdparty
 	installfromnet "git clone https://github.com/zlinwei/turbofec.git"
-	cd turbofec \
-	&& mkdir build \
-	&& cd build/ \
-	&& cmake ../ \
-	&& make -j$(nproc); sudo make install
+	cd turbofec 
+	autoreconf -i
+	./configure
+	make -j$(nproc); sudo make install
 	cd /root/thirdparty
 	installfromnet "git clone https://github.com/d-bahr/CRCpp.git"
 	cd CRCpp \
