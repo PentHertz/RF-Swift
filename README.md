@@ -7,6 +7,8 @@ Welcome to the RF Swift project! 🎉 Our mission is to provide all the essentia
   <br><br>
   <img alt="linux supported" src="https://img.shields.io/badge/linux-supported-success">
   <img alt="windows supported" src="https://img.shields.io/badge/windows-supported-success">
+  <img alt="windows supported" src="https://img.shields.io/badge/macos-pending-orange">
+	
   <br>
   <img alt="amd64" src="https://img.shields.io/badge/amd64%20(x86__64)-supported-success">
   <img alt="arm64" src="https://img.shields.io/badge/arm64%20(aarch64)-supported-success">
