@@ -2,7 +2,22 @@
 
 Welcome to the RF Swift project! 🎉 Our mission is to provide all the essential tools for both HAM radio enthusiasts and RF professionals. 📡🔧
 
-![RF Swift logo](images/logo.png "RF Swift logo")
+<div align="center">
+  <img alt="RF Swift logo" width="600" src="https://github.com/PentHertz/RF-Swift-docs/blob/main/.assets/logo.png?raw=true">
+  <br><br>
+  <img alt="linux supported" src="https://img.shields.io/badge/linux-supported-success">
+  <img alt="windows supported" src="https://img.shields.io/badge/windows-supported-success">
+  <br>
+  <img alt="amd64" src="https://img.shields.io/badge/amd64%20(x86__64)-supported-success">
+  <img alt="arm64" src="https://img.shields.io/badge/arm64%20(aarch64)-supported-success">
+  <br><br>
+  <a target="_blank" rel="noopener noreferrer" href="https://x.com/intent/follow?screen_name=FlUxIuS" title="Follow"><img src="https://img.shields.io/twitter/follow/_nwodtuhs?label=FlUxIuS&style=social" alt="Twitter FlUxIuS"></a>
+  <a target="_blank" rel="noopener noreferrer" href="https://x.com/intent/follow?screen_name=Penthertz" title="Follow"><img src="https://img.shields.io/twitter/follow/_nwodtuhs?label=Penthertz&style=social" alt="Twitter Dramelac"></a>
+  <br><br>
+  <a target="_blank" rel="noopener noreferrer" href="https://discord.gg/4FbMfZEz" title="Join us on Discord"><img src="https://github.com/PentHertz/RF-Swift-docs/blob/main/.assets/discord_join_us.png?raw=true" width="150" alt="Join us on Discord"></a>
+  <br><br>
+</div><div class="toctree-wrapper compound">
+</div>
 
 Introducing our Go and shell script-based toolbox, designed to streamline the deployment of Docker containers for your preferred RF tools. This evolving toolkit promises even more features in the near future, making it an essential asset for RF enthusiasts.
 
