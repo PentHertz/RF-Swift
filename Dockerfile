@@ -225,6 +225,7 @@ RUN ./entrypoint.sh cantact_soft_install
 RUN ./entrypoint.sh caringcaribou_soft_install
 RUN ./entrypoint.sh savvycan_soft_install
 #RUN ./entrypoint.sh internalphz_carzombie
+RUN ./entrypoint.sh gallia_soft_install
 
 RUN mkdir -p /sdrtools/
 COPY run /sdrtools/run
