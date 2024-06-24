@@ -1,0 +1,33 @@
+# This DockerFile is part of the RFSwift project
+# Install type: Reversing
+# Author(s): Sébastien Dudek (@FlUxIuS) @Penthertz
+# website: penthertz.com
+
+FROM corebuild:latest
+RUN echo 'APT::Install-Suggests "0";' >> /etc/apt/apt.conf.d/00-docker
+RUN echo 'APT::Install-Recommends "0";' >> /etc/apt/apt.conf.d/00-docker
+
+RUN apt-fast update
+
+COPY scripts /root/scripts/
+COPY rules /root/rules/
+
+WORKDIR /root/scripts/
+RUN chmod +x entrypoint.sh
+
+# Installing Reversing tools
+RUN ./entrypoint.sh kataistruct_soft_install
+RUN ./entrypoint.sh unicorn_soft_install
+RUN ./entrypoint.sh keystone_soft_install
+RUN ./entrypoint.sh radare2_soft_install
+RUN ./entrypoint.sh ghidra_soft_install
+RUN ./entrypoint.sh binwalk_soft_install
+#RUN ./entrypoint.sh cutter_soft_install #TODO: fix install
+
+# Cleaning and quitting
+WORKDIR /root/
+#RUN rm -rf /root/scripts/
+RUN rm -rf /root/rules/
+RUN rm -rf /root/thirdparty
+RUN apt-fast clean
+RUN DEBIAN_FRONTEND=noninteractive rm -rf /var/lib/apt/lists/*

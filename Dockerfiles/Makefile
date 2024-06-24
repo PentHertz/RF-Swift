@@ -16,5 +16,8 @@ wifi: common
 bluetooth: common
 	docker build -f bluetooth.docker -t bluetooth:latest ..
 
-build: sdrfull bluetooth wifi rfid
+reversing: common
+        docker build -f reversing.docker -t reversing:latest ..
+
+build: sdrfull bluetooth wifi rfid reversing
 	echo "Done!"
