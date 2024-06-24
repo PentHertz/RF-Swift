@@ -205,7 +205,7 @@ RUN ./entrypoint.sh mirage_soft_install # TODO: In progress
 # Reversing
 ##################
 FROM base as reversing
-# Installing reversing software
+# Installing Reversing tools
 RUN ./entrypoint.sh kataistruct_soft_install
 RUN ./entrypoint.sh unicorn_soft_install
 RUN ./entrypoint.sh keystone_soft_install
@@ -213,6 +213,18 @@ RUN ./entrypoint.sh radare2_soft_install
 RUN ./entrypoint.sh ghidra_soft_install
 RUN ./entrypoint.sh binwalk_soft_install
 #RUN ./entrypoint.sh cutter_soft_install #TODO: fix install
+RUN ./entrypoint.sh qiling_soft_install
+
+##################
+# Automotive
+##################
+FROM base as automotive
+# Installing Automotive tools
+RUN ./entrypoint.sh canutils_soft_install
+RUN ./entrypoint.sh cantact_soft_install
+RUN ./entrypoint.sh caringcaribou_soft_install
+RUN ./entrypoint.sh savvycan_soft_install
+#RUN ./entrypoint.sh internalphz_carzombie
 
 RUN mkdir -p /sdrtools/
 COPY run /sdrtools/run

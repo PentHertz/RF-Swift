@@ -9,6 +9,7 @@ source sa_devices.sh
 source rf_tools.sh
 source cal_devices.sh
 source reverse_software.sh
+source automotive_software.sh
 
 # Part picket from Exegol project with love <3 (https://github.com/ThePorgs/Exegol)
 if [[ $EUID -ne 0 ]]; then

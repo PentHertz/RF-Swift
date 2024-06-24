@@ -1,5 +1,5 @@
 # This DockerFile is part of the RFSwift project
-# Install type: Reversing
+# Install type: Automotive
 # Author(s): Sébastien Dudek (@FlUxIuS) @Penthertz
 # website: penthertz.com
 
@@ -15,15 +15,12 @@ COPY rules /root/rules/
 WORKDIR /root/scripts/
 RUN chmod +x entrypoint.sh
 
-# Installing Reversing tools
-RUN ./entrypoint.sh kataistruct_soft_install
-RUN ./entrypoint.sh unicorn_soft_install
-RUN ./entrypoint.sh keystone_soft_install
-RUN ./entrypoint.sh radare2_soft_install
-RUN ./entrypoint.sh ghidra_soft_install
-RUN ./entrypoint.sh binwalk_soft_install
-#RUN ./entrypoint.sh cutter_soft_install #TODO: fix install
-RUN ./entrypoint.sh qiling_soft_install
+# Installing Automotive tools
+RUN ./entrypoint.sh canutils_soft_install
+RUN ./entrypoint.sh cantact_soft_install
+RUN ./entrypoint.sh caringcaribou_soft_install
+RUN ./entrypoint.sh savvycan_soft_install
+#RUN ./entrypoint.sh internalphz_carzombie
 
 # Cleaning and quitting
 WORKDIR /root/
