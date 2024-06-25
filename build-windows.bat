@@ -40,7 +40,7 @@ rmdir /s /q thirdparty
 :build_rfswift
 cd go\rfswift
 go build .
-move rfswift ..\..
+move rfswift.exe ..\..
 cd ..\..
 
 :: Set default values
