@@ -1,6 +1,6 @@
 /* This code is part of RF Switch by @Penthertz
 *  Author(s): Sébastien Dudek (@FlUxIuS)
-*/
+ */
 
 package main
 
@@ -10,8 +10,7 @@ import (
 	cli "penthertz/rfswift/cli"
 )
 
-
-var version = "0.3"
+var version = "0.4"
 
 var ascii_art = `                                                                                                    
                                                                                           
@@ -70,7 +69,7 @@ var ascii_art = `
 `
 
 func main() {
-    fmt.Println(ascii_art)
-    fmt.Print("Version: ", version, "\n\n")
-    cli.Execute()
+	fmt.Println(ascii_art)
+	fmt.Print("Version: ", version, "\n\n")
+	cli.Execute()
 }
