@@ -1,7 +1,7 @@
 @echo off
 
 :: This code is part of RF Switch by @Penthertz
-::  Author(s): Sébastien Dudek (@FlUxIuS)
+:: Author(s): Sébastien Dudek (@FlUxIuS)
 
 setlocal enabledelayedexpansion
 
@@ -13,7 +13,7 @@ if not defined errorlevel goto :eof
 go version >nul 2>&1
 if %errorlevel% equ 0 (
     echo golang is already installed. moving on
-    goto :build_rfswift
+    goto :install_usbipd
 )
 
 if not exist thirdparty mkdir thirdparty
@@ -35,12 +35,21 @@ powershell -command "Invoke-WebRequest -Uri 'https://go.dev/dl/%prog%' -OutFile 
 powershell -command "Expand-Archive -Path '%prog%' -DestinationPath 'C:\Go'"
 setx PATH "%PATH%;C:\Go\bin"
 cd ..
-rmdir /s /q thirdparty
 
-:build_rfswift
+:install_usbipd
+if not exist thirdparty mkdir thirdparty
+cd thirdparty
+
+:: Download and install usbipd-win_4.2.0.msi
+powershell -command "Invoke-WebRequest -Uri 'https://github.com/dorssel/usbipd-win/releases/download/v4.2.0/usbipd-win_4.2.0.msi' -OutFile 'usbipd-win_4.2.0.msi'"
+msiexec /i usbipd-win_4.2.0.msi /quiet /norestart
+
+cd ..
+
+:: Build rfswift
 cd go\rfswift
 go build .
-move rfswift ..\..
+move rfswift.exe ..\..
 cd ..\..
 
 :: Set default values
@@ -59,4 +68,3 @@ echo [+] Building the Docker container
 docker build . -t %imagename% -f %dockerfile%
 
 endlocal
-
