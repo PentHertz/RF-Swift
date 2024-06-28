@@ -128,6 +128,7 @@ function srsran5GSA_soft_install() {
 function Open5GS_soft_install() {
 	goodecho "[+] Installing Open5GS dependencies"
 	echo "deb [ arch=amd64,arm64 signed-by=/usr/share/keyrings/mongodb-server-6.0.gpg] https://repo.mongodb.org/apt/ubuntu jammy/mongodb-org/6.0 multiverse" | sudo tee /etc/apt/sources.list.d/mongodb-org-6.0.list
+	installfromnet "apt-fast -y update"
 	installfromnet "apt-fast install -y mongodb-org python3-pip python3-setuptools python3-wheel ninja-build build-essential flex bison git cmake libsctp-dev libgnutls28-dev libgcrypt-dev libssl-dev libidn11-dev libmongoc-dev libbson-dev libyaml-dev libnghttp2-dev libmicrohttpd-dev libcurl4-gnutls-dev libnghttp2-dev libtins-dev libtalloc-dev meson"
 	goodecho "[+] Feching Open5GS"
 	[ -d /telecom/5G ] || mkdir -p /telecom/5G
