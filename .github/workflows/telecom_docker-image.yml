@@ -1,0 +1,22 @@
+name: Docker Image CI - Telecom
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+
+  build:
+
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Build the core image
+      run: docker build . --file Dockerfiles/SDR/corebuild.docker --tag corebuild:latest
+
+    - name: Build the Telecom Docker image
+      run: docker build . --file Dockerfiles/telecom.docker --tag rfswift_telecom:$(date +%s)
