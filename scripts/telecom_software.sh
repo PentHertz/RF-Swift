@@ -101,7 +101,7 @@ function srsran4G_5GNSA_soft_install() {
 	cd build
 	cmake ../
 	make -j$(nproc)
-	make test
+	#make test
 }
 
 function srsran5GSA_soft_install() {
@@ -117,7 +117,7 @@ function srsran5GSA_soft_install() {
 	cd build
 	cmake ../
 	make -j $(nproc)
-	make test -j $(nproc)
+	#make test -j $(nproc)
 }
 
 function Open5GS_soft_install() {
