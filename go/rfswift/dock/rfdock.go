@@ -500,7 +500,7 @@ func DeleteImage(imageIDOrTag string) error {
     }
     defer cli.Close()
 
-    _, err = cli.ImageRemove(ctx, imageIDOrTag, types.ImageRemoveOptions{Force: true, PruneChildren: true})
+    _, err = cli.ImageRemove(ctx, imageIDOrTag, image.RemoveOptions{Force: true, PruneChildren: true})
     if err != nil {
         return err
     }

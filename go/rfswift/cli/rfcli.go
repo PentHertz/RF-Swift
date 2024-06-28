@@ -40,7 +40,7 @@ One can use stringer to modify or inspect strings straight from the terminal`,
 
 var runCmd = &cobra.Command{
 	Use:   "run",
-	Short: "create and run a program",
+	Short: "Create and run a program",
 	Long:  `Create a container and run a program inside the docker container`,
 	Run: func(cmd *cobra.Command, args []string) {
 		os := runtime.GOOS
@@ -63,7 +63,7 @@ var runCmd = &cobra.Command{
 
 var execCmd = &cobra.Command{
 	Use:   "exec",
-	Short: "exec a command",
+	Short: "Exec a command",
 	Long:  `Exec a program on a created docker container, even not started`,
 	Run: func(cmd *cobra.Command, args []string) {
 		os := runtime.GOOS
@@ -79,7 +79,7 @@ var execCmd = &cobra.Command{
 
 var lastCmd = &cobra.Command{
 	Use:   "last",
-	Short: "last container run",
+	Short: "Last container run",
 	Long:  `Display the latest container that was run`,
 	Run: func(cmd *cobra.Command, args []string) {
    		labelKey := "org.container.project"
@@ -90,7 +90,7 @@ var lastCmd = &cobra.Command{
 
 var installCmd = &cobra.Command{
 	Use:   "install",
-	Short: "install function script",
+	Short: "Install function script",
 	Long:  `Install function script inside the container`,
 	Run: func(cmd *cobra.Command, args []string) {
 		rfdock.DockerSetShell(ExecCmd)
@@ -100,7 +100,7 @@ var installCmd = &cobra.Command{
 
 var commitCmd = &cobra.Command{
 	Use:   "commit",
-	Short: "commit a container",
+	Short: "Commit a container",
 	Long:  `Commit a container with change we have made`,
 	Run: func(cmd *cobra.Command, args []string) {
 		rfdock.DockerSetImage(DImage)
@@ -110,7 +110,7 @@ var commitCmd = &cobra.Command{
 
 var pullCmd = &cobra.Command{
 	Use:   "pull",
-	Short: "pull a container",
+	Short: "Pull a container",
 	Long:  `Pull a container from internet`,
 	Run: func(cmd *cobra.Command, args []string) {
 		rfdock.DockerPull(ImageRef, ImageTag)
@@ -119,7 +119,7 @@ var pullCmd = &cobra.Command{
 
 var renameCmd = &cobra.Command{
 	Use:   "rename",
-	Short: "rename an image",
+	Short: "Rename an image",
 	Long:  `Rename an image with another tag`,
 	Run: func(cmd *cobra.Command, args []string) {
 		rfdock.DockerRename(ImageRef, ImageTag)
@@ -128,7 +128,7 @@ var renameCmd = &cobra.Command{
 
 var removeCmd = &cobra.Command{
 	Use:   "remove",
-	Short: "remove a container",
+	Short: "Remove a container",
 	Long:  `Remore an existing container`,
 	Run: func(cmd *cobra.Command, args []string) {
 		rfdock.DockerRemove(ContID)
@@ -179,7 +179,7 @@ var winusbdetachCmd = &cobra.Command{
 
 var ImagesCmd = &cobra.Command{
 	Use:   "images",
-	Short: "show rfswift images",
+	Short: "Show rfswift images",
 	Long:  `Display images build for RF Swift`,
 	Run: func(cmd *cobra.Command, args []string) {
     	labelKey := "org.container.project"
@@ -198,6 +198,15 @@ var ImagesCmd = &cobra.Command{
 	},
 }
 
+var DeleteCmd = &cobra.Command{
+	Use:   "delete",
+	Short: "Delete an rfswift images",
+	Long:  `Delete an RF Swift image from image name or tag`,
+	Run: func(cmd *cobra.Command, args []string) {
+    	rfdock.DeleteImage(DImage)
+	},
+}
+
 func init() {
 	rootCmd.AddCommand(runCmd)
 	rootCmd.AddCommand(lastCmd)
@@ -208,6 +217,7 @@ func init() {
 	rootCmd.AddCommand(installCmd)
 	rootCmd.AddCommand(removeCmd)
 	rootCmd.AddCommand(ImagesCmd)
+	rootCmd.AddCommand(DeleteCmd)
 
 	// Adding special commands for Windows
 	os := runtime.GOOS
@@ -220,6 +230,7 @@ func init() {
 		winusbdetachCmd.Flags().StringVarP(&UsbDevice, "busid", "i", "", "busid")
 	}
 
+	DeleteCmd.Flags().StringVarP(&ContID, "image", "i", "", "image ID or tag")
 	removeCmd.Flags().StringVarP(&ContID, "container", "c", "", "container to remove")
 	installCmd.Flags().StringVarP(&ExecCmd, "install", "i", "", "function for installation")
 	installCmd.Flags().StringVarP(&ContID, "container", "c", "", "container to run")
