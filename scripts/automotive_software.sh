@@ -36,4 +36,14 @@ function gallia_soft_install() {
 	installfromnet "pip3 install gallia"
 }
 
+function v2ginjector_soft_install() {
+	goodecho "[+] Installing V2G Injector"
+	[ -d /automotive ] || mkdir /automotive
+	cd /automotive
+	installfromnet "git clone https://github.com/FlUxIuS/V2GInjector.git"
+	cd V2GInjector
+	chmod +x install.sh
+	./install.sh
+}
+
 ### TODO: more More!
