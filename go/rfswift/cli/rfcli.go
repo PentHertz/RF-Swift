@@ -82,7 +82,9 @@ var lastCmd = &cobra.Command{
 	Short: "last container run",
 	Long:  `Display the latest container that was run`,
 	Run: func(cmd *cobra.Command, args []string) {
-		rfdock.DockerLast(FilterLast)
+   		labelKey := "org.container.project"
+    	labelValue := "rfswift"
+		rfdock.DockerLast(FilterLast, labelKey, labelValue)
 	},
 }
 
@@ -175,6 +177,27 @@ var winusbdetachCmd = &cobra.Command{
 	},
 }
 
+var ImagesCmd = &cobra.Command{
+	Use:   "images",
+	Short: "show rfswift images",
+	Long:  `Display images build for RF Swift`,
+	Run: func(cmd *cobra.Command, args []string) {
+    	labelKey := "org.container.project"
+    	labelValue := "rfswift"
+		images_list, err := rfdock.ListImages(labelKey, labelValue)
+	    if err != nil {
+	        fmt.Println("Error:", err)
+	        os.Exit(1)
+	    }
+		for _, image := range images_list {
+            fmt.Println("ID:", image.ID)
+            fmt.Println("RepoTags:", image.RepoTags)
+            fmt.Println("Labels:", image.Labels)
+            fmt.Println()
+        }
+	},
+}
+
 func init() {
 	rootCmd.AddCommand(runCmd)
 	rootCmd.AddCommand(lastCmd)
@@ -184,6 +207,7 @@ func init() {
 	rootCmd.AddCommand(renameCmd)
 	rootCmd.AddCommand(installCmd)
 	rootCmd.AddCommand(removeCmd)
+	rootCmd.AddCommand(ImagesCmd)
 
 	// Adding special commands for Windows
 	os := runtime.GOOS
@@ -202,7 +226,7 @@ func init() {
 	pullCmd.Flags().StringVarP(&ImageRef, "image", "i", "", "image reference")
 	pullCmd.Flags().StringVarP(&ImageTag, "tag", "t", "", "rename to target tag")
 	pullCmd.MarkFlagRequired("image")
-	pullCmd.MarkFlagRequired("tag")
+	//pullCmd.MarkFlagRequired("tag")
 	renameCmd.Flags().StringVarP(&ImageRef, "image", "i", "", "image reference")
 	renameCmd.Flags().StringVarP(&ImageTag, "tag", "t", "", "rename to target tag")
 	commitCmd.Flags().StringVarP(&ContID, "container", "c", "", "container to run")
@@ -210,15 +234,15 @@ func init() {
 	commitCmd.MarkFlagRequired("container")
 	commitCmd.MarkFlagRequired("image")
 	execCmd.Flags().StringVarP(&ContID, "container", "c", "", "container to run")
-	execCmd.Flags().StringVarP(&ExecCmd, "command", "e", "", "command to exec (required!)")
+	execCmd.Flags().StringVarP(&ExecCmd, "command", "e", "/bin/bash", "command to exec (by default: /bin/bash)")
 	execCmd.Flags().StringVarP(&SInstall, "install", "i", "", "install from function script (e.g: 'sdrpp_soft_install')")
-	execCmd.MarkFlagRequired("command")
+	//execCmd.MarkFlagRequired("command")
 	runCmd.Flags().StringVarP(&ExtraHost, "extrahosts", "x", "", "set extra hosts (default: 'pluto.local:192.168.1.2', and separate them with commas)")
 	runCmd.Flags().StringVarP(&XDisplay, "display", "d", "", "set X Display (by default: 'DISPLAY=:0', and separate them with commas)")
 	runCmd.Flags().StringVarP(&ExecCmd, "command", "e", "", "command to exec (by default: '/bin/bash')")
 	runCmd.Flags().StringVarP(&ExtraBind, "bind", "b", "", "extra bindings (separate them with commas)")
 	runCmd.Flags().StringVarP(&DImage, "image", "i", "", "image (default: 'myrfswift:latest')")
-	runCmd.Flags().StringVarP(&PulseServer, "pulseserver", "p", "tcp:localhost:34567", "PULSE SERVER TCP address (by default: tcp:localhost:34567)")
+	runCmd.Flags().StringVarP(&PulseServer, "pulseserver", "p", "tcp:127.0.0.1:34567", "PULSE SERVER TCP address (by default: tcp:127.0.0.1:34567)")
 	lastCmd.Flags().StringVarP(&FilterLast, "filter", "f", "", "filter by image name")
 }
 
