@@ -22,5 +22,5 @@ reversing: common
 automotive: common
 	docker build -f automotive.docker -t automotive:latest ..
 
-build: sdrfull bluetooth wifi rfid reversing
+build: sdrfull bluetooth wifi rfid reversing automotive
 	echo "Done!"

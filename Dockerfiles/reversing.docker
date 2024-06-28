@@ -27,7 +27,7 @@ RUN ./entrypoint.sh radare2_soft_install
 RUN ./entrypoint.sh ghidra_soft_install
 RUN ./entrypoint.sh binwalk_soft_install
 #RUN ./entrypoint.sh cutter_soft_install #TODO: fix install
-RUN ./entrypoint.sh qiling_soft_install
+#RUN ./entrypoint.sh qiling_soft_install # TODO: resolve some debconf
 
 # Cleaning and quitting
 WORKDIR /root/
