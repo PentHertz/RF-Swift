@@ -236,6 +236,7 @@ RUN ./entrypoint.sh v2ginjector_soft_install
 # Telco
 ##################
 # Tools for Telecom
+FROM sdrlight as telecom
 RUN ./entrypoint.sh yatebts_blade2_soft_install
 RUN ./entrypoint.sh openbts_uhd_soft_install
 RUN ./entrypoint.sh openbts_umts_soft_install
