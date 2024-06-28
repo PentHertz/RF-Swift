@@ -217,7 +217,7 @@ RUN ./entrypoint.sh radare2_soft_install
 RUN ./entrypoint.sh ghidra_soft_install
 RUN ./entrypoint.sh binwalk_soft_install
 #RUN ./entrypoint.sh cutter_soft_install #TODO: fix install
-RUN ./entrypoint.sh qiling_soft_install
+#RUN ./entrypoint.sh qiling_soft_install
 
 ##################
 # Automotive
@@ -230,6 +230,7 @@ RUN ./entrypoint.sh caringcaribou_soft_install
 RUN ./entrypoint.sh savvycan_soft_install
 #RUN ./entrypoint.sh internalphz_carzombie
 RUN ./entrypoint.sh gallia_soft_install
+RUN ./entrypoint.sh v2ginjector_soft_install
 
 RUN mkdir -p /sdrtools/
 COPY run /sdrtools/run
