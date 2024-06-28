@@ -4,7 +4,7 @@
 function yatebts_blade2_soft_install() { # TODO: make few tests with new Nuand libs, if unstable: fetch 3a411c87c2416dc68030d5823d73ebf3f797a145 
 	goodecho "[+] Feching YateBTS from Nuand for firwmares"
 	installfromnet "apt-fast install -y qtmultimedia5-dev libqt5multimediawidgets5 libqt5multimedia5-plugins libqt5multimedia5 qttools5-dev qttools5-dev-tools"
-	[ -d /telecom/2G ] || mkdir /telecom/2G
+	[ -d /telecom/2G ] || mkdir -p /telecom/2G
 	cd /telecom/2G
 	installfromnet "wget https://nuand.com/downloads/yate-rc-3.tar.gz"
 	tar xvzf yate-rc-3.tar.gz
@@ -36,7 +36,7 @@ function yatebts_blade2_soft_install() { # TODO: make few tests with new Nuand l
 # TODO: move to QT5
 function yatebts_blade2_soft_install_toreview() { # TODO: make few tests with new Nuand libs, if unstable: fetch 3a411c87c2416dc68030d5823d73ebf3f797a145 
 	goodecho "[+] Feching YateBTS from Nuand"
-	[ -d /root/thirdparty ] || mkdir /root/thirdparty
+	[ -d /root/thirdparty ] || mkdir -p /root/thirdparty
 	cd /root/thirdparty
 	installfromnet "wget https://nuand.com/downloads/yate-rc-3.tar.gz"
 	goodecho "[+] Installing Yate"
