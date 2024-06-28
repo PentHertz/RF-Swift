@@ -9,7 +9,7 @@ function yatebts_blade2_soft_install() { # TODO: make few tests with new Nuand l
 	installfromnet "wget https://nuand.com/downloads/yate-rc-3.tar.gz"
 	tar xvzf yate-rc-3.tar.gz
 	rm -R yate
-	goodecho "[+] Feching Yate"
+	goodecho "[+] Fetching Yate"
 	installfromnet "git clone https://github.com/svedm/yate.git" # TODO: maybe needs to be updated to rc3? 
 	cd yate
 	./autogen.sh
