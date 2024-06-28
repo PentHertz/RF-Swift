@@ -5,23 +5,23 @@ package dock
 
 import (
 	"bufio"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
 	"strings"
-    "encoding/json"
 
 	"context"
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/api/types/filters"
 	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/client"
+	"github.com/docker/docker/pkg/jsonmessage"
 	"github.com/docker/docker/pkg/stdcopy"
+	"github.com/moby/term"
 	"golang.org/x/crypto/ssh/terminal"
-    "github.com/docker/docker/pkg/jsonmessage"
-    "github.com/moby/term"
-    "github.com/docker/docker/api/types/filters"
 )
 
 var inout chan []byte
@@ -58,77 +58,77 @@ var dockerObj = DockerInst{net: "host",
 	shell:        "/bin/bash"} // Instance with default values
 
 func DockerLast(ifilter string, labelKey string, labelValue string) {
-    /* Lists 10 last Docker containers
-       in(1):  string optional filter for image name
-    */
-    ctx := context.Background()
-    cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
-    if err != nil {
-        panic(err)
-    }
-    defer cli.Close()
+	/* Lists 10 last Docker containers
+	   in(1):  string optional filter for image name
+	*/
+	ctx := context.Background()
+	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
+	if err != nil {
+		panic(err)
+	}
+	defer cli.Close()
 
-    // Create filters
-    containerFilters := filters.NewArgs()
-    if ifilter != "" {
-        containerFilters.Add("ancestor", ifilter)
-    }
+	// Create filters
+	containerFilters := filters.NewArgs()
+	if ifilter != "" {
+		containerFilters.Add("ancestor", ifilter)
+	}
 
-    containerFilters.Add("label", fmt.Sprintf("%s=%s", labelKey, labelValue)) // filter by label
+	containerFilters.Add("label", fmt.Sprintf("%s=%s", labelKey, labelValue)) // filter by label
 
-    // List containers with the specified filter
-    containers, err := cli.ContainerList(ctx, container.ListOptions{
-        All:     true,
-        Limit:   10,
-        Filters: containerFilters,
-    })
-    if err != nil {
-        panic(err)
-    }
+	// List containers with the specified filter
+	containers, err := cli.ContainerList(ctx, container.ListOptions{
+		All:     true,
+		Limit:   10,
+		Filters: containerFilters,
+	})
+	if err != nil {
+		panic(err)
+	}
 
-    for _, container := range containers {
-        fmt.Println("[", container.Created, "][", container.Image, "] Container: ", container.ID, ", Command: ", container.Command)
-    }
+	for _, container := range containers {
+		fmt.Println("[", container.Created, "][", container.Image, "] Container: ", container.ID, ", Command: ", container.Command)
+	}
 }
 
 func latestDockerID(labelKey string, labelValue string) string {
-    /* Get latest Docker container ID by image label
-       in(1): string label key
-       in(2): string label value
-       out: string container ID
-    */
-    ctx := context.Background()
-    cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
-    if err != nil {
-        panic(err)
-    }
-    defer cli.Close()
+	/* Get latest Docker container ID by image label
+	   in(1): string label key
+	   in(2): string label value
+	   out: string container ID
+	*/
+	ctx := context.Background()
+	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
+	if err != nil {
+		panic(err)
+	}
+	defer cli.Close()
 
-    // Filter containers by the specified image label
-    containerFilters := filters.NewArgs()
-    containerFilters.Add("label", fmt.Sprintf("%s=%s", labelKey, labelValue))
+	// Filter containers by the specified image label
+	containerFilters := filters.NewArgs()
+	containerFilters.Add("label", fmt.Sprintf("%s=%s", labelKey, labelValue))
 
-    containers, err := cli.ContainerList(ctx, container.ListOptions{
-        All:     true,
-        Filters: containerFilters,
-    })
-    if err != nil {
-        panic(err)
-    }
+	containers, err := cli.ContainerList(ctx, container.ListOptions{
+		All:     true,
+		Filters: containerFilters,
+	})
+	if err != nil {
+		panic(err)
+	}
 
-    var latestContainer types.Container
-    for _, container := range containers {
-        if latestContainer.ID == "" || container.Created > latestContainer.Created {
-            latestContainer = container
-        }
-    }
+	var latestContainer types.Container
+	for _, container := range containers {
+		if latestContainer.ID == "" || container.Created > latestContainer.Created {
+			latestContainer = container
+		}
+	}
 
-    if latestContainer.ID == "" {
-        fmt.Println("No container found with the specified image label.")
-        return ""
-    }
+	if latestContainer.ID == "" {
+		fmt.Println("No container found with the specified image label.")
+		return ""
+	}
 
-    return latestContainer.ID
+	return latestContainer.ID
 }
 
 func DockerExec(contid string, WorkingDir string) {
@@ -144,8 +144,8 @@ func DockerExec(contid string, WorkingDir string) {
 	defer cli.Close()
 
 	if contid == "" {
-        labelKey := "org.container.project" // TODO: maybe to move in global
-        labelValue := "rfswift"  // TODO: maybe to move in global
+		labelKey := "org.container.project" // TODO: maybe to move in global
+		labelValue := "rfswift"             // TODO: maybe to move in global
 		contid = latestDockerID(labelKey, labelValue)
 	}
 
@@ -368,50 +368,50 @@ func DockerCommit(contid string) {
 }
 
 func DockerPull(imageref string, imagetag string) {
-    /* Pulls an image from a registry
-       in(1): string Image reference
-       in(2): string Image tag target
-    */
+	/* Pulls an image from a registry
+	   in(1): string Image reference
+	   in(2): string Image tag target
+	*/
 
-    if imagetag == "" { // if tag is empty, keep same tag
-        imagetag = imageref
-    }
+	if imagetag == "" { // if tag is empty, keep same tag
+		imagetag = imageref
+	}
 
-    ctx := context.Background()
-    cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
-    if err != nil {
-        panic(err)
-    }
-    defer cli.Close()
+	ctx := context.Background()
+	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
+	if err != nil {
+		panic(err)
+	}
+	defer cli.Close()
 
-    out, err := cli.ImagePull(ctx, imageref, image.PullOptions{})
-    if err != nil {
-        panic(err)
-    }
-    defer out.Close()
+	out, err := cli.ImagePull(ctx, imageref, image.PullOptions{})
+	if err != nil {
+		panic(err)
+	}
+	defer out.Close()
 
-    fd, isTerminal := term.GetFdInfo(os.Stdout)
-    jsonDecoder := json.NewDecoder(out)
+	fd, isTerminal := term.GetFdInfo(os.Stdout)
+	jsonDecoder := json.NewDecoder(out)
 
-    for {
-        var msg jsonmessage.JSONMessage
-        if err := jsonDecoder.Decode(&msg); err == io.EOF {
-            break
-        } else if err != nil {
-            panic(err)
-        }
+	for {
+		var msg jsonmessage.JSONMessage
+		if err := jsonDecoder.Decode(&msg); err == io.EOF {
+			break
+		} else if err != nil {
+			panic(err)
+		}
 
-        if isTerminal {
-            _ = jsonmessage.DisplayJSONMessagesStream(out, os.Stdout, fd, isTerminal, nil)
-        } else {
-            fmt.Println(msg)
-        }
-    }
+		if isTerminal {
+			_ = jsonmessage.DisplayJSONMessagesStream(out, os.Stdout, fd, isTerminal, nil)
+		} else {
+			fmt.Println(msg)
+		}
+	}
 
-    err = cli.ImageTag(ctx, imageref, imagetag)
-    if err != nil {
-        panic(err)
-    }
+	err = cli.ImageTag(ctx, imageref, imagetag)
+	if err != nil {
+		panic(err)
+	}
 }
 
 func DockerRename(imageref string, imagetag string) {
@@ -458,34 +458,34 @@ func ListImages(labelKey string, labelValue string) ([]image.Summary, error) {
 	   in(2): string labelValue
 	   out: Tuple ImageSummary, error
 	*/
-    ctx := context.Background()
-    cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
-    if err != nil {
-        return nil, err
-    }
-    defer cli.Close()
+	ctx := context.Background()
+	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
+	if err != nil {
+		return nil, err
+	}
+	defer cli.Close()
 
-    // Filter images by the specified image label
-    imagesFilters := filters.NewArgs()
-    imagesFilters.Add("label", fmt.Sprintf("%s=%s", labelKey, labelValue))
+	// Filter images by the specified image label
+	imagesFilters := filters.NewArgs()
+	imagesFilters.Add("label", fmt.Sprintf("%s=%s", labelKey, labelValue))
 
-    images, err := cli.ImageList(ctx, image.ListOptions{
-        All:     true,
-        Filters: imagesFilters,
-    })
-    if err != nil {
-        return nil, err
-    }
+	images, err := cli.ImageList(ctx, image.ListOptions{
+		All:     true,
+		Filters: imagesFilters,
+	})
+	if err != nil {
+		return nil, err
+	}
 
-    // Only display images with RepoTags
-    var filteredImages []image.Summary
-    for _, image := range images {
-        if len(image.RepoTags) > 0 {
-            filteredImages = append(filteredImages, image)
-        }
-    }
+	// Only display images with RepoTags
+	var filteredImages []image.Summary
+	for _, image := range images {
+		if len(image.RepoTags) > 0 {
+			filteredImages = append(filteredImages, image)
+		}
+	}
 
-    return filteredImages, nil
+	return filteredImages, nil
 }
 
 func DeleteImage(imageIDOrTag string) error {
@@ -493,18 +493,18 @@ func DeleteImage(imageIDOrTag string) error {
 	   in(1): string image ID or tag
 	   out: error
 	*/
-    ctx := context.Background()
-    cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
-    if err != nil {
-        return err
-    }
-    defer cli.Close()
+	ctx := context.Background()
+	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
+	if err != nil {
+		return err
+	}
+	defer cli.Close()
 
-    _, err = cli.ImageRemove(ctx, imageIDOrTag, image.RemoveOptions{Force: true, PruneChildren: true})
-    if err != nil {
-        return err
-    }
+	_, err = cli.ImageRemove(ctx, imageIDOrTag, image.RemoveOptions{Force: true, PruneChildren: true})
+	if err != nil {
+		return err
+	}
 
-    fmt.Printf("Successfully deleted image: %s\n", imageIDOrTag)
-    return nil
+	fmt.Printf("Successfully deleted image: %s\n", imageIDOrTag)
+	return nil
 }

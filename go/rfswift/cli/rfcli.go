@@ -82,8 +82,8 @@ var lastCmd = &cobra.Command{
 	Short: "Last container run",
 	Long:  `Display the latest container that was run`,
 	Run: func(cmd *cobra.Command, args []string) {
-   		labelKey := "org.container.project"
-    	labelValue := "rfswift"
+		labelKey := "org.container.project"
+		labelValue := "rfswift"
 		rfdock.DockerLast(FilterLast, labelKey, labelValue)
 	},
 }
@@ -182,19 +182,19 @@ var ImagesCmd = &cobra.Command{
 	Short: "Show rfswift images",
 	Long:  `Display images build for RF Swift`,
 	Run: func(cmd *cobra.Command, args []string) {
-    	labelKey := "org.container.project"
-    	labelValue := "rfswift"
+		labelKey := "org.container.project"
+		labelValue := "rfswift"
 		images_list, err := rfdock.ListImages(labelKey, labelValue)
-	    if err != nil {
-	        fmt.Println("Error:", err)
-	        os.Exit(1)
-	    }
+		if err != nil {
+			fmt.Println("Error:", err)
+			os.Exit(1)
+		}
 		for _, image := range images_list {
-            fmt.Println("ID:", image.ID)
-            fmt.Println("RepoTags:", image.RepoTags)
-            fmt.Println("Labels:", image.Labels)
-            fmt.Println()
-        }
+			fmt.Println("ID:", image.ID)
+			fmt.Println("RepoTags:", image.RepoTags)
+			fmt.Println("Labels:", image.Labels)
+			fmt.Println()
+		}
 	},
 }
 
@@ -203,7 +203,7 @@ var DeleteCmd = &cobra.Command{
 	Short: "Delete an rfswift images",
 	Long:  `Delete an RF Swift image from image name or tag`,
 	Run: func(cmd *cobra.Command, args []string) {
-    	rfdock.DeleteImage(DImage)
+		rfdock.DeleteImage(DImage)
 	},
 }
 
