@@ -18,5 +18,8 @@ jobs:
     - name: Build the core image
       run: docker build . --file Dockerfiles/SDR/corebuild.docker --tag corebuild:latest
 
+    - name: Build the sdr_light image
+      run: docker build . --file Dockerfiles/SDR/sdr_light.docker --tag sdr_light:latest
+
     - name: Build the Telecom Docker image
       run: docker build . --file Dockerfiles/telecom.docker --tag rfswift_telecom:$(date +%s)
