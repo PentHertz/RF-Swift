@@ -232,6 +232,18 @@ RUN ./entrypoint.sh savvycan_soft_install
 RUN ./entrypoint.sh gallia_soft_install
 RUN ./entrypoint.sh v2ginjector_soft_install
 
+##################
+# Telco
+##################
+# Tools for Telecom
+RUN ./entrypoint.sh yatebts_blade2_soft_install
+RUN ./entrypoint.sh openbts_uhd_soft_install
+RUN ./entrypoint.sh openbts_umts_soft_install
+RUN ./entrypoint.sh srsran4G_5GNSA_soft_install
+RUN ./entrypoint.sh srsran5GSA_soft_install
+RUN ./entrypoint.sh Open5GS_soft_install
+RUN ./entrypoint.sh pycrate_soft_install
+
 RUN mkdir -p /sdrtools/
 COPY run /sdrtools/run
 
