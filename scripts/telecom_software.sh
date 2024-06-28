@@ -26,6 +26,11 @@ function yatebts_blade2_soft_install() { # TODO: make few tests with new Nuand l
 	make -j$(nproc)
 	make install
 	ldconfig
+	goodecho "[+] Creating some confs"
+	touch /usr/local/etc/yate/snmp_data.conf /usr/local/etc/yate/tmsidata.conf
+	# chown root:yate /usr/local/etc/yate/*.conf # TODO: next when dropping root privs
+	chmod g+w /usr/local/etc/yate/*.conf
+	colorecho "[+] Now it's time for you to configure ;)"
 }
 
 # TODO: move to QT5
