@@ -15,6 +15,7 @@ RUN apt-fast update
 
 COPY scripts /root/scripts/
 COPY rules /root/rules/
+COPY config /root/config
 
 WORKDIR /root/scripts/
 RUN chmod +x entrypoint.sh
@@ -27,6 +28,7 @@ RUN ./entrypoint.sh srsran4G_5GNSA_soft_install
 RUN ./entrypoint.sh srsran5GSA_soft_install
 RUN ./entrypoint.sh Open5GS_soft_install
 RUN ./entrypoint.sh pycrate_soft_install
+RUN ./entrypoint.sh osmobts_suite_soft_install
 # More to come!
 
 RUN mkdir -p /sdrtools/

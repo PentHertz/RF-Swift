@@ -153,12 +153,58 @@ function Open5GS_soft_install() {
 }
 
 function pycrate_soft_install() {
-	[ -d /telecom/5G ] || mkdir -p /telecom
+	[ -d /telecom ] || mkdir -p /telecom
 	cd /telecom
 	goodecho "[+] Cloninig and installing pycrate"
 	installfromnet "git clone https://github.com/pycrate-org/pycrate.git"
 	cd pycrate
 	python3 setup.py install
+}
+
+function osmobts_suite_soft_install() {
+	set -e
+    goodecho "[+] Installing OsmoBTS suite dependencies"
+    installfromnet "apt-fast install -y libmnl-dev libpcsclite-dev liburing-dev libtool libgnutls28-dev libtalloc-dev libsctp-dev lksctp-tools libortp-dev dahdi-source libopenr2-dev libc-ares-dev libtonezone-dev libsqlite3-dev"
+
+    install_lib() {
+        local repo_url=$1
+        local repo_dir=$2
+        local configure_opts=$3
+
+        goodecho "[+] Cloning and installing $repo_dir"
+        cd $osmo_src
+        installfromnet "git clone $repo_url" || { echo "Failed to clone $repo_dir"; exit 1; }
+        cd $repo_dir
+        autoreconf -fi || { echo "autoreconf failed for $repo_dir"; exit 1; }
+        ./configure $configure_opts || { echo "configure failed for $repo_dir"; exit 1; }
+        make -j$(nproc) || { echo "make failed for $repo_dir"; exit 1; }
+        #make check || { echo "make check failed for $repo_dir"; exit 1; }
+        make install || { echo "make install failed for $repo_dir"; exit 1; }
+        sudo ldconfig || { echo "ldconfig failed for $repo_dir"; exit 1; }
+    }
+
+    [ -d /telecom/2G/osmocom ] || mkdir -p /telecom/2G/osmocom
+    cd /telecom/2G/osmocom
+    mkdir -p tmp/osmo/src
+    osmo_src=$(pwd)/tmp/osmo/src
+
+    install_lib "https://gitea.osmocom.org/osmocom/libosmocore.git" "libosmocore"
+    install_lib "https://gitea.osmocom.org/osmocom/libosmo-abis.git" "libosmo-abis"
+    install_lib "https://gitea.osmocom.org/osmocom/libosmo-netif.git" "libosmo-netif"
+    install_lib "https://gitea.osmocom.org/osmocom/libosmo-sccp.git" "libosmo-sccp"
+    install_lib "https://gitea.osmocom.org/cellular-infrastructure/libsmpp34.git" "libsmpp34"
+    install_lib "https://gitea.osmocom.org/cellular-infrastructure/osmo-mgw.git" "osmo-mgw"
+    install_lib "https://gitea.osmocom.org/cellular-infrastructure/libasn1c.git" "libasn1c"
+    install_lib "https://gitea.osmocom.org/cellular-infrastructure/osmo-iuh.git" "osmo-iuh"
+    install_lib "https://gitea.osmocom.org/cellular-infrastructure/osmo-hlr.git" "osmo-hlr"
+    install_lib "https://gitea.osmocom.org/cellular-infrastructure/osmo-msc.git" "osmo-msc" "--enable-iu"
+    install_lib "https://gitea.osmocom.org/cellular-infrastructure/osmo-ggsn.git" "osmo-ggsn"
+    install_lib "https://gitea.osmocom.org/cellular-infrastructure/osmo-sgsn.git" "osmo-sgsn" "--enable-iu"
+
+    # cleaning
+    cd /telecom/2G/osmocom
+    rm -R tmp
+    cp /root/config/osmobts/nitb/* .
 }
 
 ### TODO: more More!

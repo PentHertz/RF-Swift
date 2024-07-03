@@ -244,6 +244,7 @@ RUN ./entrypoint.sh srsran4G_5GNSA_soft_install
 RUN ./entrypoint.sh srsran5GSA_soft_install
 RUN ./entrypoint.sh Open5GS_soft_install
 RUN ./entrypoint.sh pycrate_soft_install
+RUN ./entrypoint.sh osmobts_suite_soft_install
 
 RUN mkdir -p /sdrtools/
 COPY run /sdrtools/run

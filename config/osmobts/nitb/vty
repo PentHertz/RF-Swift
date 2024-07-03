@@ -1,0 +1,58 @@
+#!/usr/bin/expect -f
+set vty [lindex $argv 0]
+set host localhost
+switch $vty {
+ hlr { set port 4258 }
+ bsc { set port 4242 }
+ mgw { set port 4243 }
+ mgw2 {
+        set host 127.0.0.2
+        set port 4243
+      }
+ sg { set port 4245 }
+ msc { set port 4254 }
+ sip { set port 4256 }
+ gg { set port 4260 }
+ osmo-hlr { set port 4258 }
+ osmo-bsc { set port 4242 }
+ osmo-mgw { set port 4243 }
+ osmo-mgw-for-bsc { set port 4243 }
+ osmo-mgw-for-msc {
+        set host 127.0.0.2
+        set port 4243
+      }
+ osmo-sgsn { set port 4245 }
+ osmo-msc { set port 4254 }
+ osmo-sip-connector { set port 4256 }
+ osmo-ggsn { set port 4260 }
+ default { set port 4242 }
+}
+spawn telnet localhost $port
+expect ">"
+send "enable\r"
+expect "#"
+send "logging enable\r"
+expect "#"
+send "logging print category 1\r"
+expect "#"
+send "logging print category-hex 0\r"
+expect "#"
+send "logging print level 1\r"
+expect "#"
+send "logging print file basename last\r"
+expect "#"
+send "logging print extended-timestamp 1\r"
+expect "#"
+send "logging level set-all notice\r"
+expect "#"
+switch $vty {
+ msc {
+  send "logging level mm info\r"
+  expect "#"
+  send "logging level cc info\r"
+  expect "#"
+ }
+}
+send "logging filter all 1\r"
+expect "#"
+interact

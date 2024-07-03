@@ -1,0 +1,5 @@
+#!/bin/sh
+while true; do
+        vty $@
+        sleep 3
+done
