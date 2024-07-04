@@ -145,7 +145,7 @@ function install_soapyPlutoSDR_modules() {
 
 function rtlsdr_devices_install() {
 	goodecho "[+] Installing RTL-SDR's libs and tools from package manager"
-	installfromnet "apt-fast install -y librtlsdr-dev librtlsdr0"
+	installfromnet "apt-fast install -y librtlsdr-dev librtlsdr0 rtl-sdr"
 }
 
 function rtlsdrv4_devices_install() {

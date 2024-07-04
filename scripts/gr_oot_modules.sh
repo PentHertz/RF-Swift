@@ -190,7 +190,7 @@ function graistx_grmod_install () {
 	cd /root/thirdparty
 	installfromnet "git clone -b maint-3.10 https://github.com/bkerler/ais.git"
 	goodecho "[+] Building and installing gr-ais-tx"
-	cd ais \
+	cd ais/gr-aistx \
 	&& mkdir build \
 	&& cd build/ \
 	&& cmake -DCMAKE_INSTALL_PREFIX=/usr ../ \
