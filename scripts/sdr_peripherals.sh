@@ -24,7 +24,6 @@ function check_neon() {
     fi
 }
 
-
 function uhd_devices_fromsource_install() {
 	goodecho "[+] Installing UHD's dependencies"
 	installfromnet "apt-fast install -y dpdk dpdk-dev autoconf automake build-essential ccache cmake cpufrequtils doxygen ethtool g++ git inetutils-tools libboost-all-dev libncurses5 libncurses5-dev libusb-1.0-0 libusb-1.0-0-dev libusb-dev python3-dev python3-mako python3-numpy python3-requests python3-scipy python3-setuptools \
@@ -167,4 +166,28 @@ function rtlsdrv4_devices_install() {
 	sudo ldconfig
 	cd /root
 	rm -R /root/thirdparty
+}
+
+function osmofl2k_devices_install() {
+	goodecho "[+] Installing osmo-fl2k dependencies"
+	installfromnet "apt-fast install -y libusb-1.0-0-dev sox pv"
+	goodecho "[+] Cloning and Installing osmo-fl2k"
+	apt purge -y ^librtlsdr
+	rm -rvf /usr/lib/librtlsdr* /usr/include/rtl-sdr* /usr/local/lib/librtlsdr* /usr/local/include/rtl-sdr* /usr/local/include/rtl_* /usr/local/bin/rtl_*
+	installfromnet "apt-fast install -y libusb-1.0-0-dev git cmake pkg-config"
+	[ -d /root/thirdparty ] || mkdir /root/thirdparty
+	cd /root/thirdparty
+	installfromnet "git clone https://gitea.osmocom.org/sdr/osmo-fl2k"
+	mkdir osmo-fl2k/build
+	cd osmo-fl2k/build
+	cmake ../ -DINSTALL_UDEV_RULES=ON
+	make -j 3
+	sudo make install
+	sudo ldconfig
+	cd /root
+	rm -R /root/thirdparty
+	[ -d /sdrtools ] || mkdir /sdrtools
+	cd /sdrtools
+	goodecho "[+] Cloning a few examples"
+	installfromnet "git clone https://github.com/steve-m/fl2k-examples.git"
 }

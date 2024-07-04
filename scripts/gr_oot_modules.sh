@@ -184,6 +184,76 @@ function grais_grmod_install () {
 	cd ../..
 }
 
+function graistx_grmod_install () {
+	goodecho "[+] Cloning gr-ais-tx"
+	[ -d /root/thirdparty ] || mkdir /root/thirdparty
+	cd /root/thirdparty
+	installfromnet "git clone -b maint-3.10 https://github.com/bkerler/ais.git"
+	goodecho "[+] Building and installing gr-ais-tx"
+	cd ais \
+	&& mkdir build \
+	&& cd build/ \
+	&& cmake -DCMAKE_INSTALL_PREFIX=/usr ../ \
+	&& make -j$(nproc); sudo make install
+	cd ../..
+}
+
+function grairmodes_grmod_install () {
+	goodecho "[+] Cloning gr-air-modes"
+	[ -d /root/thirdparty ] || mkdir /root/thirdparty
+	cd /root/thirdparty
+	installfromnet "git clone -b gr3.9 https://github.com/bistromath/gr-air-modes.git"
+	goodecho "[+] Building and installing gr-air-modes"
+	cd gr-air-modes \
+	&& mkdir build \
+	&& cd build/ \
+	&& cmake -DCMAKE_INSTALL_PREFIX=/usr ../ \
+	&& make -j$(nproc); sudo make install
+	cd ../..
+}
+
+function grj2497_grmod_install () {
+	goodecho "[+] Cloning gr-j2497"
+	[ -d /root/thirdparty ] || mkdir /root/thirdparty
+	cd /root/thirdparty
+	installfromnet "git clone https://github.com/ainfosec/gr-j2497.git"
+	goodecho "[+] Building and installing gr-j2497"
+	cd gr-j2497 \
+	&& mkdir build \
+	&& cd build/ \
+	&& cmake -DCMAKE_INSTALL_PREFIX=/usr ../ \
+	&& make -j$(nproc); sudo make install
+	cd ../..
+}
+
+function grzwavepoore_grmod_install () {
+	goodecho "[+] Cloning gr-zwave_poore"
+	[ -d /root/thirdparty ] || mkdir /root/thirdparty
+	cd /root/thirdparty
+	installfromnet "git clone https://github.com/cpoore1/gr-zwave_poore.git"
+	goodecho "[+] Building and installing gr-zwave_poore"
+	cd gr-zwave_poore \
+	&& mkdir build \
+	&& cd build/ \
+	&& cmake -DCMAKE_INSTALL_PREFIX=/usr ../ \
+	&& make -j$(nproc); sudo make install
+	cd ../..
+}
+
+function grmixalot_grmod_install () {
+	goodecho "[+] Cloning gr-mixalot"
+	[ -d /root/thirdparty ] || mkdir /root/thirdparty
+	cd /root/thirdparty
+	installfromnet "git clone https://github.com/unsynchronized/gr-mixalot.git"
+	goodecho "[+] Building and installing gr-mixalot"
+	cd gr-mixalot \
+	&& mkdir build \
+	&& cd build/ \
+	&& cmake -DCMAKE_INSTALL_PREFIX=/usr ../ \
+	&& make -j$(nproc); sudo make install
+	cd ../..
+}
+
 function grreveng_grmod_install () {
 	goodecho "[+] Cloning gr-reveng"
 	[ -d /root/thirdparty ] || mkdir /root/thirdparty
@@ -509,6 +579,52 @@ function grpaint_grmod_install () {
 	installfromnet "git clone https://github.com/drmpeg/gr-paint.git"
 	goodecho "[+] Building and installing gr-paint"
 	cd gr-paint \
+	&& mkdir build \
+	&& cd build/ \
+	&& cmake -DCMAKE_INSTALL_PREFIX=/usr ../ \
+	&& make -j$(nproc); sudo make install
+	cd ../..
+}
+
+function gr_DCF77_Receiver_grmod_install () {
+	goodecho "[+] Cloning gr_DCF77_Receiver"
+	[ -d /root/thirdparty ] || mkdir /root/thirdparty
+	cd /root/thirdparty
+	installfromnet "git clone https://github.com/henningM1r/gr_DCF77_Receiver.git"
+	goodecho "[+] Building and installing gr_DCF77_Receiver"
+	cd gr_DCF77_Receiver \
+	&& mkdir build \
+	&& cd build/ \
+	&& cmake -DCMAKE_INSTALL_PREFIX=/usr ../ \
+	&& make -j$(nproc); sudo make install
+	cd ../..
+}
+
+function grbb60_Receiver_grmod_install () { # TODO: ask SH for ARM64 support
+	goodecho "[+] Installing gr-bb60 dependencies"
+	installfromnet "apt install -y libusb-1.0-0"
+	[ -d /root/thirdparty ] || mkdir /root/thirdparty
+	cd /root/thirdparty
+	installfromnet "wget https://ftdichip.com/wp-content/uploads/2022/07/libftd2xx-x86_64-1.4.27.tgz"
+	cd tar xvfz libftd2xx-x86_64-1.4.27.tgz
+	cd release/build
+	cp libftd2xx.* /usr/local/lib
+	chmod 0755 /usr/local/lib/libftd2xx.so.1.4.27
+	ln -sf /usr/local/lib/libftd2xx.so.1.4.27 /usr/local/lib/libftd2xx.so
+	cd ..
+	cp ftd2xx.h  /usr/local/include
+	cp WinTypes.h  /usr/local/include
+	ldconfig -v
+	installfromnet "wget https://signalhound.com/sigdownloads/SDK/signal_hound_sdk_06_24_24.zip"
+	unzip signal_hound_sdk_06_24_24.zip
+	cd "signal_hound_sdk/device_apis/bb_series/lib/linux/Ubuntu 18.04"
+	cp libbb_api.* /usr/local/lib
+	ldconfig -v -n /usr/local/lib
+	ln -sf /usr/local/lib/libbb_api.so.5 /usr/local/lib/libbb_api.so
+	goodecho "[+] Cloning gr-bb60"
+	installfromnet "git clone https://github.com/SignalHound/gr-bb60.git"
+	goodecho "[+] Building and installing gr-bb60"
+	cd gr-bb60 \
 	&& mkdir build \
 	&& cd build/ \
 	&& cmake -DCMAKE_INSTALL_PREFIX=/usr ../ \

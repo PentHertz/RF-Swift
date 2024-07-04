@@ -27,6 +27,7 @@ RUN ./entrypoint.sh uhd_devices_install
 #RUN ./entrypoint.sh antsdr_uhd_devices_install # Disable orignal UHD
 RUN ./entrypoint.sh rtlsdr_devices_install
 #RUN ./entrypoint.sh rtlsdrv4_devices_install # optionnal, remove rtlsdr_devices_install if you are using the v4 version
+RUN ./entrypoint.sh osmofl2k_devices_install
 
 # Installing GNU Radio + some OOT modules
 RUN ./entrypoint.sh gnuradio_soft_install

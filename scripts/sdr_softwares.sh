@@ -364,3 +364,42 @@ function meshtastic_sdr_soft_install () {
 	goodecho "[+] Cloning Meshtastic_SDR"
 	installfromnet "git clone https://gitlab.com/crankylinuxuser/meshtastic_sdr.git"
 }
+
+function gpredict_sdr_soft_install () {
+	goodecho "[+] Installing GPredict dependencies"
+	installfromnet "apt-fast install -y libtool intltool autoconf automake libcurl4-openssl-dev pkg-config libglib2.0-dev libgtk-3-dev libgoocanvas-2.0-dev"
+	[ -d /root/thirdparty ] || mkdir /root/thirdparty
+	cd /root/thirdparty
+	goodecho "[+] Cloning Meshtastic_SDR"
+	installfromnet "git clone https://github.com/csete/gpredict.git"
+	cd gpredict
+	./configure
+	make -j$(nproc)
+	make install
+}
+
+function v2verifier_sdr_soft_install () {
+	goodecho "[+] Installing v2verifier dependencies"
+	installfromnet "apt-fast install -y swig libgmp3-dev python3-pip python3-tk python3-pil libssl-dev python3-pil.imagetk"
+	[ -d /sdrtools ] || mkdir /sdrtools
+	cd /sdrtools
+	goodecho "[+] Cloning v2verifier"
+	installfromnet "git clone https://github.com/twardokus/v2verifier.git"
+	cd v2verifier
+	mkdir build
+	cd build
+	cmake ../
+	make -j$(nproc)
+}
+
+function wavingz_sdr_soft_install () {
+	[ -d /sdrtools ] || mkdir /sdrtools
+	cd /sdrtools
+	goodecho "[+] Cloning waving-z"
+	installfromnet "git clone https://github.com/baol/waving-z.git"
+	cd waving-z
+	mkdir build
+	cd build
+	cmake .. -DCMAKE_BUILD_TYPE=Release
+	cmake --build .
+}
