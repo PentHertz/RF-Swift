@@ -385,7 +385,7 @@ function v2verifier_sdr_soft_install () {
 	[ -d /sdrtools ] || mkdir /sdrtools
 	cd /sdrtools
 	goodecho "[+] Cloning v2verifier"
-	installfromnet "git clone https://github.com/twardokus/v2verifier.git"
+	installfromnet "git clone git@github.com:FlUxIuS/v2verifier.git"
 	cd v2verifier
 	mkdir build
 	cd build
