@@ -33,7 +33,7 @@ RUN ./entrypoint.sh wifite2_soft_install
 # Installing bettecap tool
 RUN ./entrypoint.sh bettercap_soft_install
 
-RUN mkdir /sdrtools/
+RUN mkdir -p /sdrtools/
 COPY run /sdrtools/run
 
 # Cleaning and quitting

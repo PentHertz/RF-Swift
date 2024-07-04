@@ -26,7 +26,7 @@ RUN ./entrypoint.sh mfoc_soft_install
 RUN ./entrypoint.sh mfcuk_soft_install
 RUN ./entrypoint.sh mfread_soft_install
 
-RUN mkdir /sdrtools/
+RUN mkdir -p /sdrtools/
 COPY run /sdrtools/run
 
 # Cleaning and quitting
