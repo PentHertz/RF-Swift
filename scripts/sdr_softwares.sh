@@ -373,6 +373,7 @@ function gpredict_sdr_soft_install () {
 	goodecho "[+] Cloning Meshtastic_SDR"
 	installfromnet "git clone https://github.com/csete/gpredict.git"
 	cd gpredict
+	./autogen.sh
 	./configure
 	make -j$(nproc)
 	make install
