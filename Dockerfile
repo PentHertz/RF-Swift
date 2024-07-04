@@ -61,6 +61,8 @@ RUN ./entrypoint.sh airspy_devices_install
 RUN ./entrypoint.sh limesdr_devices_install
 #RUN ./entrypoint.sh rtlsdr_devices_install to install later
 #RUN ./entrypoint.sh rtlsdrv4_devices_install # optionnal, remove rtlsdr_devices_install if you are using the v4 version
+RUN ./entrypoint.sh osmofl2k_devices_install
+RUN ./entrypoint.sh xtrx_devices_install
 
 ##################
 # SDR1 
@@ -113,6 +115,7 @@ RUN ./entrypoint.sh grgfdm_grmod_install
 RUN ./entrypoint.sh graaronia_rtsa_grmod_install
 #RUN ./entrypoint.sh grccsds_move_rtsa_grmod_install #TODO: fix problem with strtod_l dependency
 RUN ./entrypoint.sh grais_grmod_install
+RUN ./entrypoint.sh graistx_grmod_install
 RUN ./entrypoint.sh grreveng_grmod_install
 RUN ./entrypoint.sh grdvbs2_grmod_install
 RUN ./entrypoint.sh grtempest_grmod_install
@@ -129,6 +132,12 @@ RUN ./entrypoint.sh grkeyfob_grmod_install
 RUN ./entrypoint.sh grradar_grmod_install
 RUN ./entrypoint.sh grnordic_grmod_install
 RUN ./entrypoint.sh grpaint_grmod_install
+RUN ./entrypoint.sh grzwavepoore_grmod_install
+RUN ./entrypoint.sh grmixalot_grmod_install
+RUN ./entrypoint.sh gr_DCF77_Receiver_grmod_install
+RUN ./entrypoint.sh grj2497_grmod_install
+RUN ./entrypoint.sh grairmodes_grmod_install
+RUN ./entrypoint.sh grbb60_Receiver_grmod_install # Only available for x86_64
 ## TODO: More more!
 
 # Installing OOT modules from sandia
@@ -159,6 +168,9 @@ RUN ./entrypoint.sh ice9_bluetooth_soft_install
 RUN ./entrypoint.sh meshtastic_sdr_soft_install
 RUN ./entrypoint.sh gps_sdr_sim_soft_install
 RUN ./entrypoint.sh nfclaboratory_soft_install
+RUN ./entrypoint.sh gpredict_sdr_soft_install
+RUN ./entrypoint.sh v2verifier_sdr_soft_install
+RUN ./entrypoint.sh wavingz_sdr_soft_install
 
 # Installing extra software
 RUN ./entrypoint.sh ml_and_dl_soft_install
