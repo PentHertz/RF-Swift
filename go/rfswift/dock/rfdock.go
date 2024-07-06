@@ -185,6 +185,9 @@ func DockerRun() {
 		AttachStdout: true,
 		AttachStderr: true,
 		Tty:          true,
+		Labels: map[string]string{
+			"org.container.project": "rfswift",
+		},
 	}, &container.HostConfig{
 		NetworkMode: container.NetworkMode(dockerObj.network_mode),
 		Binds:       bindings,

@@ -10,7 +10,7 @@ import (
 	cli "penthertz/rfswift/cli"
 )
 
-var version = "0.4"
+var version = "0.4.1"
 
 var ascii_art = `                                                                                                    
                                                                                           
