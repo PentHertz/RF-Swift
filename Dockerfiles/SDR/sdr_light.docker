@@ -45,6 +45,9 @@ RUN ./entrypoint.sh harogic_sa_device # working only on x86_64 and aarch64
 
 # Calibration equipements
 RUN ./entrypoint.sh leobodnarv1_cal_device
+RUN ./entrypoint.sh KCSDI_cal_device
+RUN ./entrypoint.sh NanoVNASaver_cal_device
+RUN ./entrypoint.sh NanoVNA_QT_cal_device
 
 # Installing extra software
 RUN ./entrypoint.sh jupiter_soft_install
