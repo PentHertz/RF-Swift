@@ -23,8 +23,6 @@ function KCSDI_cal_device() {
 	ln -s KCSDI-v0.4.5-45-linux-x86_64.AppImage /usr/bin/KCSDI
 }
 
-libxcb-cursor0
-
 function NanoVNASaver_cal_device() {
 	goodecho "[+] Installing dependencies for NanoVNASaver"
 	[ -d /root/thirdparty ] || mkdir /root/thirdparty
