@@ -49,6 +49,7 @@ var runCmd = &cobra.Command{
 		} else {
 			rfutils.XHostEnable() // force xhost to add local connections ALCs, TODO: to optimize later
 		}
+		rfdock.DockerSetXDisplay(XDisplay)
 		rfdock.DockerSetShell(ExecCmd)
 		rfdock.DockerAddBiding(ExtraBind)
 		rfdock.DockerSetImage(DImage)
@@ -207,6 +208,35 @@ var DeleteCmd = &cobra.Command{
 	},
 }
 
+var HostCmd = &cobra.Command{
+	Use:   "host",
+	Short: "Host configuration",
+	Long:  `Configures the host for container operations`,
+}
+
+var HostPulseAudioCmd = &cobra.Command{
+	Use:   "audio",
+	Short: "Pulseaudio server",
+	Long:  `Manage pulseaudio server`,
+}
+
+var HostPulseAudioEnableCmd = &cobra.Command{
+	Use:   "enable",
+	Short: "Enable connection",
+	Long:  `Allow connections to a specific port and interface. Warning: command to be executed as user!`,
+	Run: func(cmd *cobra.Command, args []string) {
+		rfutils.SetPulseCTL(PulseServer)
+	},
+}
+
+var HostPulseAudioUnloadCmd = &cobra.Command{
+	Use:   "unload",
+	Short: "Unload TCP module from Pulseaudio server",
+	Run: func(cmd *cobra.Command, args []string) {
+		rfutils.UnloadPulseCTL()
+	},
+}
+
 func init() {
 	rootCmd.AddCommand(runCmd)
 	rootCmd.AddCommand(lastCmd)
@@ -218,6 +248,7 @@ func init() {
 	rootCmd.AddCommand(removeCmd)
 	rootCmd.AddCommand(ImagesCmd)
 	rootCmd.AddCommand(DeleteCmd)
+	rootCmd.AddCommand(HostCmd)
 
 	// Adding special commands for Windows
 	os := runtime.GOOS
@@ -229,6 +260,11 @@ func init() {
 		winusbattachCmd.Flags().StringVarP(&UsbDevice, "busid", "i", "", "busid")
 		winusbdetachCmd.Flags().StringVarP(&UsbDevice, "busid", "i", "", "busid")
 	}
+
+	HostCmd.AddCommand(HostPulseAudioCmd)
+	HostPulseAudioCmd.AddCommand(HostPulseAudioEnableCmd)
+	HostPulseAudioCmd.AddCommand(HostPulseAudioUnloadCmd)
+	HostPulseAudioEnableCmd.Flags().StringVarP(&PulseServer, "pulseserver", "s", "tcp:127.0.0.1:34567", "pulse server address (by default: 'tcp:127.0.0.1:34567')")
 
 	DeleteCmd.Flags().StringVarP(&ContID, "image", "i", "", "image ID or tag")
 	removeCmd.Flags().StringVarP(&ContID, "container", "c", "", "container to remove")
@@ -249,7 +285,7 @@ func init() {
 	execCmd.Flags().StringVarP(&SInstall, "install", "i", "", "install from function script (e.g: 'sdrpp_soft_install')")
 	//execCmd.MarkFlagRequired("command")
 	runCmd.Flags().StringVarP(&ExtraHost, "extrahosts", "x", "", "set extra hosts (default: 'pluto.local:192.168.1.2', and separate them with commas)")
-	runCmd.Flags().StringVarP(&XDisplay, "display", "d", "", "set X Display (by default: 'DISPLAY=:0', and separate them with commas)")
+	runCmd.Flags().StringVarP(&XDisplay, "display", "d", rfutils.GetDisplayEnv(), "set X Display (duplicates hosts's env by default)")
 	runCmd.Flags().StringVarP(&ExecCmd, "command", "e", "", "command to exec (by default: '/bin/bash')")
 	runCmd.Flags().StringVarP(&ExtraBind, "bind", "b", "", "extra bindings (separate them with commas)")
 	runCmd.Flags().StringVarP(&DImage, "image", "i", "", "image (default: 'myrfswift:latest')")

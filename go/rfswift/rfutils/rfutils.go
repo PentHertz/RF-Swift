@@ -6,6 +6,7 @@ package rfutils
 
 import (
 	"fmt"
+	"os"
 	"os/exec"
 )
 
@@ -30,4 +31,24 @@ func XHostEnable() {
 	*/
 	s := "xhost local:root"
 	HostCmdExec(s)
+}
+
+func displayEnv() (string, error) {
+	display := os.Getenv("DISPLAY")
+	if display == "" {
+		return "", fmt.Errorf("DISPLAY environment variable is not set")
+	}
+	return display, nil
+}
+
+func GetDisplayEnv() (string) {
+	var dispenv string
+	display, err := displayEnv()
+	if err != nil {
+		fmt.Println("Error (using default 'DISPLAY=:0 value'):", err)
+		dispenv = "DISPLAY=:0"
+	} else {
+		dispenv = "DISPLAY="+display
+	}
+	return dispenv
 }

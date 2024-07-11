@@ -9,6 +9,8 @@ import (
 	"fmt"
 	"os/exec"
 	"strings"
+
+	"github.com/lawl/pulseaudio"
 )
 
 // USBDevice represents a USB device information
@@ -245,18 +247,73 @@ func AutoUnbindDetachUSB_Windows() {
 
 func SetPulseCTL(address string) error {
 	/*
-	*	SetPulseCTL Set pulse server IP and TCP port ACLs
-	*	in(1): ip string
-	*	in(2): port string
-	*	out: error
-	 */
-
+	*	Use PACTL in command line to accept connection in TCP with defined port
+	*/
 	parts := strings.Split(address, ":")
-	portstr := "port=" + parts[2]
-	ipstr := "auth-ip-acl=" + parts[1]
-	cmd := exec.Command("pactl", "load-module", "module-native-protocol-tcp", portstr, ipstr)
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("failed to load ACLs %s: %w", address, err)
+	if len(parts) != 3 {
+		return fmt.Errorf("invalid address format, expected format 'protocol:ip:port'")
 	}
+	port := parts[2]
+	ip := parts[1]
+
+	// Connect to PulseAudio
+	client, err := pulseaudio.NewClient()
+	if err != nil {
+		return fmt.Errorf("failed to connect to PulseAudio: %w", err)
+	}
+	defer client.Close()
+
+	// Construct the module arguments string
+	moduleArgs := fmt.Sprintf("port=%s auth-ip-acl=%s", port, ip)
+
+	// Load module-native-protocol-tcp with the specified IP and port
+	moduleIndex, err := client.LoadModule("module-native-protocol-tcp", moduleArgs)
+	if err != nil {
+		return fmt.Errorf("failed to load module-native-protocol-tcp: %w", err)
+	}
+
+	fmt.Printf("[+] Successfully loaded module-native-protocol-tcp with index %d\n", moduleIndex)
+	return nil
+}
+
+func UnloadPulseCTL() error {
+	/*
+	*	Unload pulseaudio TCP module
+	*/
+	cmd := exec.Command("pactl", "list", "modules")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("failed to list PulseAudio modules: %w\nOutput: %s", err, string(output))
+	}
+
+	// Parse the output to find the module-native-protocol-tcp index
+	lines := strings.Split(string(output), "\n")
+	var moduleIndex string
+	for i, line := range lines {
+		if strings.Contains(line, "Name: module-native-protocol-tcp") {
+			// Find the "Index:" line above the module name
+			for j := i; j >= 0; j-- {
+				if strings.Contains(lines[j], "Module #") {
+					moduleIndex = strings.TrimSpace(strings.TrimPrefix(lines[j], "Module #"))
+					break
+				}
+			}
+			break
+		}
+	}
+
+	if moduleIndex == "" {
+		return fmt.Errorf("module-native-protocol-tcp not found")
+	}
+
+	// Execute pactl unload-module to unload the module
+	unloadCmd := exec.Command("pactl", "unload-module", moduleIndex)
+	unloadOutput, err := unloadCmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("failed to unload module-native-protocol-tcp: %w\nOutput: %s", err, string(unloadOutput))
+	}
+	fmt.Printf("Command output: %s\n", string(unloadOutput))
+
+	fmt.Printf("[+] Successfully unloaded module-native-protocol-tcp with index %s\n", moduleIndex)
 	return nil
 }
