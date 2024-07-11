@@ -4,67 +4,79 @@
 :: Author(s): Sébastien Dudek (@FlUxIuS)
 
 setlocal enabledelayedexpansion
+set "GOVERSION=1.22.5"
 
-:: Stop the script if any command fails
-set "errorlevel="
-if not defined errorlevel goto :eof
+install_go() (
+    go version >nul 2>&1 && (
+        echo golang is already installed. moving on
+        exit /b 0
+    )
 
-:install_go
-go version >nul 2>&1
-if %errorlevel% equ 0 (
-    echo golang is already installed. moving on
-    goto :install_usbipd
+    if not exist thirdparty mkdir thirdparty
+    cd thirdparty
+    for /f "tokens=2 delims==" %%a in ('"wmic os get osarchitecture /value"') do set "arch=%%a"
+    set "arch=!arch: =!"
+
+    set "prog="
+    if "!arch!"=="64-bit" (
+        set "prog=go%GOVERSION%.windows-amd64.zip"
+    ) else if "!arch!"=="32-bit" (
+        set "prog=go%GOVERSION%.windows-386.zip"
+    ) else (
+        echo Unsupported architecture: "!arch!" -> Download or build Go instead
+        exit /b 2
+    )
+
+    powershell -command "Invoke-WebRequest -Uri https://go.dev/dl/%prog% -OutFile %prog%"
+    rmdir /s /q C:\Go
+    powershell -command "Expand-Archive -Path %prog% -DestinationPath C:\Go"
+    setx PATH "%PATH%;C:\Go\bin"
+    cd ..
+    rmdir /s /q thirdparty
 )
 
-if not exist thirdparty mkdir thirdparty
-cd thirdparty
-for /f "tokens=2 delims==" %%i in ('wmic os get osarchitecture /value') do set "arch=%%i"
-set "prog="
-set "version=1.22.4"
+building_rfswift() (
+    cd go\rfswift
+    go build .
+    move rfswift.exe ..\..
+    cd ..\..
+)
 
-if "%arch%"=="64-bit" (
-    set "prog=go%version%.windows-amd64.zip"
-) else if "%arch%"=="32-bit" (
-    set "prog=go%version%.windows-386.zip"
+echo [+] Installing Go
+install_go
+
+echo [+] Building RF Switch Go Project
+building_rfswift
+
+REM Prompt the user if they want to build a Docker container or pull an image
+echo Do you want to build a Docker container or pull an existing image?
+echo 1) Build Docker container
+echo 2) Pull Docker image
+set /p option=Choose an option (1 or 2): 
+
+if "%option%"=="1" (
+    REM Set default values
+    set "DEFAULT_IMAGE=myrfswift:latest"
+    set "DEFAULT_DOCKERFILE=Dockerfile"
+
+    REM Prompt the user for input with default values
+    set /p imagename=Enter image tag value (default: %DEFAULT_IMAGE%): 
+    set /p dockerfile=Enter value for Dockerfile to use (default: %DEFAULT_DOCKERFILE%): 
+
+    REM Use default values if variables are empty
+    if not defined imagename set "imagename=%DEFAULT_IMAGE%"
+    if not defined dockerfile set "dockerfile=%DEFAULT_DOCKERFILE%"
+
+    echo [+] Building the Docker container
+    docker build . -t %imagename% -f %dockerfile%
+) else if "%option%"=="2" (
+    set "DEFAULT_IMAGE=penthertz/rfswift:latest"
+    set /p pull_image=Enter the image tag to pull (default: %DEFAULT_IMAGE%): 
+    if not defined pull_image set "pull_image=%DEFAULT_IMAGE%"
+
+    echo [+] Pulling the Docker image
+    docker pull %pull_image%
 ) else (
-    echo Unsupported architecture: %arch% -> Download or build Go instead
-    exit /b 2
+    echo Invalid option. Exiting.
+    exit /b 1
 )
-
-powershell -command "Invoke-WebRequest -Uri 'https://go.dev/dl/%prog%' -OutFile '%prog%'"
-powershell -command "Expand-Archive -Path '%prog%' -DestinationPath 'C:\Go'"
-setx PATH "%PATH%;C:\Go\bin"
-cd ..
-
-:install_usbipd
-if not exist thirdparty mkdir thirdparty
-cd thirdparty
-
-:: Download and install usbipd-win_4.2.0.msi
-powershell -command "Invoke-WebRequest -Uri 'https://github.com/dorssel/usbipd-win/releases/download/v4.2.0/usbipd-win_4.2.0.msi' -OutFile 'usbipd-win_4.2.0.msi'"
-msiexec /i usbipd-win_4.2.0.msi /quiet /norestart
-
-cd ..
-
-:: Build rfswift
-cd go\rfswift
-go build .
-move rfswift.exe ..\..
-cd ..\..
-
-:: Set default values
-set "DEFAULT_IMAGE=myrfswift:latest"
-set "DEFAULT_DOCKERFILE=Dockerfile"
-
-:: Prompt the user for input with default values
-set /p "imagename=Enter image tag value (default: %DEFAULT_IMAGE%): "
-set /p "dockerfile=Enter value for Dockerfile to use (default: %DEFAULT_DOCKERFILE%): "
-
-:: Use default values if variables are empty
-if "%imagename%"=="" set "imagename=%DEFAULT_IMAGE%"
-if "%dockerfile%"=="" set "dockerfile=%DEFAULT_DOCKERFILE%"
-
-echo [+] Building the Docker container
-docker build . -t %imagename% -f %dockerfile%
-
-endlocal
