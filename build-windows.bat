@@ -4,29 +4,20 @@ REM Author(s): Sébastien Dudek (@FlUxIuS)
 
 setlocal enabledelayedexpansion
 
-set "GREEN="
-set "RED="
-set "YELLOW="
-set "NC="
-
-REM Function to check Docker installation
+REM Function to check and activate Docker if installed
 :check_docker
 docker --version >nul 2>&1
 if %errorlevel% neq 0 (
-    echo Docker is not installed. Do you want to install it now? (yes/no)
-    set /p install_docker="Choose an option: "
-    if "%install_docker%" == "yes" (
-        echo Installing Docker...
-        powershell -Command "Invoke-WebRequest -UseBasicParsing https://get.docker.com/ | Invoke-Expression"
-        powershell -Command "Start-Service docker"
-        powershell -Command "Set-Service -Name docker -StartupType Automatic"
-        echo Docker installed successfully.
-    ) else (
-        echo Docker is required to proceed. Exiting.
-        exit /b 1
-    )
+    echo Docker is not installed. Please install Docker to proceed. Exiting.
+    exit /b 1
 ) else (
-    echo Docker is already installed. Moving on.
+    echo Docker is already installed. Attempting to start Docker service...
+    net start com.docker.service >nul 2>&1
+    if %errorlevel% neq 0 (
+        echo Docker service is already running or failed to start. Moving on.
+    ) else (
+        echo Docker service started successfully.
+    )
 )
 goto :eof
 
@@ -76,7 +67,7 @@ echo RF Switch Go Project built successfully.
 goto :eof
 
 REM Main script execution
-echo Checking Docker installation
+echo Checking Docker installation and activation
 call :check_docker
 
 echo Installing Go
