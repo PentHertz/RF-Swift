@@ -63,6 +63,7 @@ RUN ./entrypoint.sh limesdr_devices_install
 #RUN ./entrypoint.sh rtlsdrv4_devices_install # optionnal, remove rtlsdr_devices_install if you are using the v4 version
 RUN ./entrypoint.sh osmofl2k_devices_install
 RUN ./entrypoint.sh xtrx_devices_install
+RUN ./entrypoint.sh funcube_devices_install
 
 ##################
 # SDR1 
