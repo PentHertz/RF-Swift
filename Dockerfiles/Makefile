@@ -22,7 +22,7 @@ reversing: common
 automotive: common
 	docker build -f automotive.docker -t automotive:latest ..
 
-automotive: common
+telecom: common
 	docker build -f telecom.docker -t telecom:latest ..
 
 build: sdrfull bluetooth wifi rfid reversing automotive telecom
