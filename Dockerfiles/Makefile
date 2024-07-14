@@ -8,10 +8,13 @@ sdrfull1: common sdrlight
 	docker build -f SDR/sdr_full.docker --target extraoot ..
 
 sdrfull2: common sdrlight
-	docker build -f SDR/sdr_full.docker -t extrasofts ..
+	docker build -f SDR/sdr_full.docker --target extrasofts ..
 
 sdrfull3: common sdrlight
-	docker build -f SDR/sdr_full.docker -t mldlsofts ..
+	docker build -f SDR/sdr_full.docker --target mldlsofts ..
+
+sdrfull: common sdrlight
+	docker build -f SDR/sdr_full.docker --target sdr_full:latest ..
 
 rfid: common
 	docker build -f rfid.docker -t rfid:latest ..
@@ -31,5 +34,5 @@ automotive: common
 telecom: common
 	docker build -f telecom.docker -t telecom:latest ..
 
-build: bluetooth wifi rfid reversing automotive telecom sdrfull1 sdrfull2 sdrfull3
+build: bluetooth wifi rfid reversing automotive telecom sdrfull
 	echo "Done!"
