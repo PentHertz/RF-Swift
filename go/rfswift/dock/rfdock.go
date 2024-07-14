@@ -10,6 +10,8 @@ import (
 	"io"
 	"os"
 	"strings"
+	"time"
+	"log"
 
 	"context"
 	"github.com/docker/docker/api/types"
@@ -22,6 +24,7 @@ import (
 	"github.com/docker/docker/pkg/stdcopy"
 	"github.com/moby/term"
 	"golang.org/x/crypto/ssh/terminal"
+	"github.com/olekukonko/tablewriter"
 )
 
 var inout chan []byte
@@ -57,6 +60,7 @@ var dockerObj = DockerInst{net: "host",
 	pulse_server: "tcp:localhost:34567",
 	shell:        "/bin/bash"} // Instance with default values
 
+
 func DockerLast(ifilter string, labelKey string, labelValue string) {
 	/* Lists 10 last Docker containers
 	   in(1):  string optional filter for image name
@@ -86,9 +90,22 @@ func DockerLast(ifilter string, labelKey string, labelValue string) {
 		panic(err)
 	}
 
+	clearScreen()
+
+	table := tablewriter.NewWriter(os.Stdout)
+	table.SetHeader([]string{"Created", "Image", "Container ID", "Command"})
+
 	for _, container := range containers {
-		fmt.Println("[", container.Created, "][", container.Image, "] Container: ", container.ID, ", Command: ", container.Command)
+		created := time.Unix(container.Created, 0).Format(time.RFC3339)
+		table.Append([]string{
+			created,
+			container.Image,
+			container.ID[:12],
+			container.Command,
+		})
 	}
+
+	table.Render()
 }
 
 func latestDockerID(labelKey string, labelValue string) string {
@@ -489,6 +506,42 @@ func ListImages(labelKey string, labelValue string) ([]image.Summary, error) {
 	}
 
 	return filteredImages, nil
+}
+
+func PrintImagesTable(labelKey string, labelValue string) {
+	/* Print RF Swift Images in a table
+	   in(1): string labelKey
+	   in(2): string labelValue
+	*/
+	images, err := ListImages(labelKey, labelValue)
+	if err != nil {
+		log.Fatalf("Error listing images: %v", err)
+	}
+
+	clearScreen()
+
+	table := tablewriter.NewWriter(os.Stdout)
+	table.SetHeader([]string{"Repository", "Tag", "Image ID", "Created", "Size"})
+
+	for _, image := range images {
+		for _, repoTag := range image.RepoTags {
+			repoTagParts := strings.Split(repoTag, ":")
+			repository := repoTagParts[0]
+			tag := repoTagParts[1]
+			created := time.Unix(image.Created, 0).Format(time.RFC3339)
+			size := fmt.Sprintf("%.2f MB", float64(image.Size)/1024/1024)
+
+			table.Append([]string{
+				repository,
+				tag,
+				image.ID[:12],
+				created,
+				size,
+			})
+		}
+	}
+
+	table.Render()
 }
 
 func DeleteImage(imageIDOrTag string) error {

@@ -180,22 +180,36 @@ var winusbdetachCmd = &cobra.Command{
 
 var ImagesCmd = &cobra.Command{
 	Use:   "images",
-	Short: "Show rfswift images",
-	Long:  `Display images build for RF Swift`,
+	Short: "RF Swift images management remote/local",
+	Long:  `List local and remote images`,
+}
+
+var ImagesLocalCmd = &cobra.Command{
+	Use:   "local",
+	Short: "List local images",
+	Long:  `List pulled and built images`,
 	Run: func(cmd *cobra.Command, args []string) {
 		labelKey := "org.container.project"
 		labelValue := "rfswift"
-		images_list, err := rfdock.ListImages(labelKey, labelValue)
-		if err != nil {
-			fmt.Println("Error:", err)
-			os.Exit(1)
-		}
-		for _, image := range images_list {
-			fmt.Println("ID:", image.ID)
-			fmt.Println("RepoTags:", image.RepoTags)
-			fmt.Println("Labels:", image.Labels)
-			fmt.Println()
-		}
+		rfdock.PrintImagesTable(labelKey, labelValue)
+	},
+}
+
+var ImagesRemoteCmd = &cobra.Command{
+	Use:   "remote",
+	Short: "List remote images",
+	Long:  `Lists RF Swift images from official repository`,
+	Run: func(cmd *cobra.Command, args []string) {
+		rfdock.ListDockerImagesRepo()
+	},
+}
+
+var ImagesPullCmd = &cobra.Command{
+	Use:   "pull",
+	Short: "Pull a container",
+	Long:  `Pull a container from internet`,
+	Run: func(cmd *cobra.Command, args []string) {
+		rfdock.DockerPull(ImageRef, ImageTag)
 	},
 }
 
@@ -237,18 +251,27 @@ var HostPulseAudioUnloadCmd = &cobra.Command{
 	},
 }
 
+var UpdateCmd = &cobra.Command{
+	Use:   "update",
+	Short: "Update RF Swift",
+	Long:  `Update RF Swift binary from official Penthertz' repository`,
+	Run: func(cmd *cobra.Command, args []string) {
+		rfutils.GetLatestRFSwift()
+	},
+}
+
 func init() {
 	rootCmd.AddCommand(runCmd)
 	rootCmd.AddCommand(lastCmd)
 	rootCmd.AddCommand(execCmd)
 	rootCmd.AddCommand(commitCmd)
-	rootCmd.AddCommand(pullCmd)
 	rootCmd.AddCommand(renameCmd)
 	rootCmd.AddCommand(installCmd)
 	rootCmd.AddCommand(removeCmd)
 	rootCmd.AddCommand(ImagesCmd)
 	rootCmd.AddCommand(DeleteCmd)
 	rootCmd.AddCommand(HostCmd)
+	rootCmd.AddCommand(UpdateCmd)
 
 	// Adding special commands for Windows
 	os := runtime.GOOS
@@ -261,6 +284,13 @@ func init() {
 		winusbdetachCmd.Flags().StringVarP(&UsbDevice, "busid", "i", "", "busid")
 	}
 
+	ImagesCmd.AddCommand(pullCmd)
+	ImagesCmd.AddCommand(ImagesRemoteCmd)
+	ImagesCmd.AddCommand(ImagesLocalCmd)
+	pullCmd.Flags().StringVarP(&ImageRef, "image", "i", "", "image reference")
+	pullCmd.Flags().StringVarP(&ImageTag, "tag", "t", "", "rename to target tag")
+	pullCmd.MarkFlagRequired("image")
+
 	HostCmd.AddCommand(HostPulseAudioCmd)
 	HostPulseAudioCmd.AddCommand(HostPulseAudioEnableCmd)
 	HostPulseAudioCmd.AddCommand(HostPulseAudioUnloadCmd)
@@ -270,9 +300,7 @@ func init() {
 	removeCmd.Flags().StringVarP(&ContID, "container", "c", "", "container to remove")
 	installCmd.Flags().StringVarP(&ExecCmd, "install", "i", "", "function for installation")
 	installCmd.Flags().StringVarP(&ContID, "container", "c", "", "container to run")
-	pullCmd.Flags().StringVarP(&ImageRef, "image", "i", "", "image reference")
-	pullCmd.Flags().StringVarP(&ImageTag, "tag", "t", "", "rename to target tag")
-	pullCmd.MarkFlagRequired("image")
+
 	//pullCmd.MarkFlagRequired("tag")
 	renameCmd.Flags().StringVarP(&ImageRef, "image", "i", "", "image reference")
 	renameCmd.Flags().StringVarP(&ImageTag, "tag", "t", "", "rename to target tag")
