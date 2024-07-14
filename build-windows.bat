@@ -19,19 +19,19 @@ if %errorlevel% neq 0 (
         echo Docker service started successfully.
     )
 )
-goto :eof
+exit /b 0
 
 REM Function to install Go
 :install_go
 where go >nul 2>&1
 if %errorlevel% == 0 (
     echo golang is already installed and in PATH. Moving on.
-    goto :eof
+    exit /b 0
 )
 
 if exist "C:\Go\bin\go.exe" (
     echo golang is already installed in C:\Go\bin. Moving on.
-    goto :eof
+    exit /b 0
 )
 
 if not exist thirdparty mkdir thirdparty
@@ -55,7 +55,7 @@ setx PATH "%PATH%;C:\Go\bin"
 cd ..
 rmdir /s /q thirdparty
 echo Go installed successfully.
-goto :eof
+exit /b 0
 
 REM Function to build RF Switch Go Project
 :building_rfswift
@@ -64,7 +64,7 @@ go build .
 move rfswift.exe ..\..\
 cd ..\..
 echo RF Switch Go Project built successfully.
-goto :eof
+exit /b 0
 
 REM Main script execution
 echo Checking Docker installation and activation
