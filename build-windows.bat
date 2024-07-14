@@ -10,28 +10,14 @@ docker --version >nul 2>&1
 if %errorlevel% neq 0 (
     echo Docker is not installed. Please install Docker to proceed. Exiting.
     exit /b 1
-) else (
-    echo Docker is already installed. Attempting to start Docker service...
-    net start com.docker.service >nul 2>&1
-    if %errorlevel% neq 0 (
-        echo Docker service is already running or failed to start. Moving on.
-    ) else (
-        echo Docker service started successfully.
-    )
-)
-exit /b 0
+) 
 
 REM Function to install Go
 :install_go
 where go >nul 2>&1
 if %errorlevel% == 0 (
     echo golang is already installed and in PATH. Moving on.
-    exit /b 0
-)
-
-if exist "C:\Go\bin\go.exe" (
-    echo golang is already installed in C:\Go\bin. Moving on.
-    exit /b 0
+    goto building_rfswift
 )
 
 if not exist thirdparty mkdir thirdparty
@@ -55,7 +41,7 @@ setx PATH "%PATH%;C:\Go\bin"
 cd ..
 rmdir /s /q thirdparty
 echo Go installed successfully.
-exit /b 0
+goto building_rfswift
 
 REM Function to build RF Switch Go Project
 :building_rfswift
@@ -64,17 +50,6 @@ go build .
 move rfswift.exe ..\..\
 cd ..\..
 echo RF Switch Go Project built successfully.
-exit /b 0
-
-REM Main script execution
-echo Checking Docker installation and activation
-call :check_docker
-
-echo Installing Go
-call :install_go
-
-echo Building RF Switch Go Project
-call :building_rfswift
 
 REM Prompt the user if they want to build a Docker container, pull an image, or exit
 echo Do you want to build a Docker container, pull an existing image, or exit?
@@ -89,19 +64,19 @@ if "%option%" == "1" (
     set "DEFAULT_DOCKERFILE=Dockerfile"
 
     REM Prompt the user for input with default values
-    set /p imagename="Enter image tag value (default: %DEFAULT_IMAGE%): "
-    set /p dockerfile="Enter value for Dockerfile to use (default: %DEFAULT_DOCKERFILE%): "
+    set /p imagename="Enter image tag value (default: !DEFAULT_IMAGE!): "
+    set /p dockerfile="Enter value for Dockerfile to use (default: !DEFAULT_DOCKERFILE!): "
 
     REM Use default values if variables are empty
-    if "!imagename!" == "" set "imagename=%DEFAULT_IMAGE%"
-    if "!dockerfile!" == "" set "dockerfile=%DEFAULT_DOCKERFILE%"
+    if "!imagename!" == "" set "imagename=!DEFAULT_IMAGE!"
+    if "!dockerfile!" == "" set "dockerfile=!DEFAULT_DOCKERFILE!"
 
     echo Building the Docker container
     docker build . -t !imagename! -f !dockerfile!
 ) else if "%option%" == "2" (
     set "DEFAULT_PULL_IMAGE=penthertz/rfswift:latest"
-    set /p pull_image="Enter the image tag to pull (default: %DEFAULT_PULL_IMAGE%): "
-    if "!pull_image!" == "" set "pull_image=%DEFAULT_PULL_IMAGE%"
+    set /p pull_image="Enter the image tag to pull (default: !DEFAULT_PULL_IMAGE!): "
+    if "!pull_image!" == "" set "pull_image=!DEFAULT_PULL_IMAGE!"
 
     echo Pulling the Docker image
     docker pull !pull_image!
