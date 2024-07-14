@@ -20,5 +20,11 @@ jobs:
     - name: Build the light stage for SDR
       run: docker build . --file Dockerfiles/SDR/sdr_light.docker --tag sdr_light:latest
 
-    - name: Build the full SDR image
-      run: docker build . --file Dockerfiles/SDR/sdr_full.docker --tag sdr_full:latest
+    - name: Build the full SDR image (stage 1)
+      run: docker build . --file Dockerfiles/SDR/sdr_full.docker --target extraoot --tag sdr_full_stage1:latest
+
+    - name: Build the full SDR image (stage 2)
+      run: docker build . --file Dockerfiles/SDR/sdr_full.docker --target extrasofts --tag sdr_full_stage2:latest
+
+    - name: Build the full SDR image (stage 1)
+      run: docker build . --file Dockerfiles/SDR/sdr_full.docker --target mldlsofts --tag sdr_full_stage1:latest
