@@ -32,12 +32,15 @@ check_docker() {
 }
 
 install_go() {
+    if command -v go &> /dev/null; then
+        echo -e "${GREEN}golang is already installed and in PATH. Moving on.${NC}"
+        return 0
+    fi
+
     if [ -x "/usr/local/go/bin/go" ]; then
         echo -e "${GREEN}golang is already installed in /usr/local/go/bin. Moving on.${NC}"
         return 0
     fi
-
-    go version && { echo -e "${GREEN}golang is already installed. Moving on.${NC}" && return 0 ; }
 
     [ -d thirdparty ] || mkdir thirdparty
     cd thirdparty
@@ -107,7 +110,7 @@ elif [ "$option" -eq 2 ]; then
     pull_image=${pull_image:-penthertz/rfswift:latest}
 
     echo -e "${YELLOW}[+] Pulling the Docker image${NC}"
-    sudo ./rfswift images pull -i $pull_image
+    sudo docker pull $pull_image
 elif [ "$option" -eq 3 ]; then
     echo -e "${GREEN}Exiting without building or pulling Docker images.${NC}"
     exit 0
