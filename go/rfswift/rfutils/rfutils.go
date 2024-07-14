@@ -101,3 +101,9 @@ func GetDisplayEnv() (string) {
 	}
 	return dispenv
 }
+
+func ClearScreen() {
+	cmd := exec.Command("clear")
+	cmd.Stdout = os.Stdout
+	cmd.Run()
+}

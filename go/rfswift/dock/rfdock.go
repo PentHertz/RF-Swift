@@ -25,6 +25,7 @@ import (
 	"github.com/moby/term"
 	"golang.org/x/crypto/ssh/terminal"
 	"github.com/olekukonko/tablewriter"
+	rfutils "penthertz/rfswift/rfutils"
 )
 
 var inout chan []byte
@@ -90,7 +91,7 @@ func DockerLast(ifilter string, labelKey string, labelValue string) {
 		panic(err)
 	}
 
-	clearScreen()
+	rfutils.ClearScreen()
 
 	table := tablewriter.NewWriter(os.Stdout)
 	table.SetHeader([]string{"Created", "Image", "Container ID", "Command"})
@@ -518,7 +519,7 @@ func PrintImagesTable(labelKey string, labelValue string) {
 		log.Fatalf("Error listing images: %v", err)
 	}
 
-	clearScreen()
+	rfutils.ClearScreen()
 
 	table := tablewriter.NewWriter(os.Stdout)
 	table.SetHeader([]string{"Repository", "Tag", "Image ID", "Created", "Size"})
