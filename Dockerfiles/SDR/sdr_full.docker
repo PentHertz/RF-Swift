@@ -64,7 +64,7 @@ RUN ./entrypoint.sh grtiming_utils_grmod_install
 RUN ./entrypoint.sh grfhss_utils_grmod_install # depends on 'grpdu_utils_grmod_install' and 'grtiming_utils_grmod_install' and 'grsandia_utils_grmod_install'
 
 
-FROM sdr_light:latest as gpumods
+FROM extraoot as gpumods
 # Installing OpenCL
 ## NVidia drivers
 #RUN apt-fast install -y nvidia-opencl-dev nvidia-modprobe
@@ -74,7 +74,7 @@ FROM sdr_light:latest as gpumods
 # Installing gr-fosphor with OpenCL
 #RUN ./entrypoint.sh grfosphor_grmod_install
 
-FROM sdr_light:latest as extrasofts
+FROM extraoot as extrasofts
 # Installing CyberEther
 RUN ./entrypoint.sh cyberther_soft_install # Enabe OpenCL for better exp
 
