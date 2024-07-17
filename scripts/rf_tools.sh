@@ -12,6 +12,9 @@ function kismet_soft_install() {
 	./configure --enable-bladerf --enable-wifi-coconut --enable-btgeiger --enable-prelude
 	make
 	make -j$(nproc)
+	make suidinstall
+	make forceconfigs
+	make install
 }
 
 # Bluetooth Classic and LE
