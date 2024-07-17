@@ -31,7 +31,7 @@ python3-ruamel.yaml"
 	goodecho "[+] Copying rules sets"
 	cp /root/rules/uhd-usrp.rules  /etc/udev/rules.d/
 	goodecho "[+] Cloning and compiling UHD"
-	[ -d /root/thirdparty ] || mkdir /root/thirdparty
+	[ -d /root/thirdparty ] || mkdir -p /root/thirdparty
 	cd /root/thirdparty
 	installfromnet "git clone https://github.com/EttusResearch/uhd.git"
 	cd uhd/host
@@ -67,7 +67,7 @@ function antsdr_uhd_devices_install() { # Is replacing original one for now
 	installfromnet "apt-fast install -y g++ git inetutils-tools libboost-all-dev libncurses5 libncurses5-dev libusb-1.0-0 libusb-1.0-0-dev"
 	installfromnet "apt-fast install -y python3-dev python3-mako python3-numpy python3-requests python3-scipy python3-setuptools"
 	installfromnet "apt-fast install -y python3-ruamel.yaml"
-	[ -d /root/thirdparty ] || mkdir /root/thirdparty
+	[ -d /root/thirdparty ] || mkdir -p /root/thirdparty
 	cd /root/thirdparty
 	installfromnet "git clone https://github.com/MicroPhase/antsdr_uhd.git"
 	cd antsdr_uhd
@@ -95,8 +95,8 @@ function nuand_devices_fromsource_install() {
         goodecho "[+] Installing bladeRF dependencies"
 	installfromnet "apt-fast install -y libusb-1.0-0-dev libusb-1.0-0 build-essential cmake libncurses5-dev libtecla1 libtecla-dev pkg-config git wget"
         goodecho "[+] Cloning, building and installing Nuand's repository"
-	[ -d /root/thirdparty ] || mkdir /root/thirdparty
-        cd /root/thirdparty
+	[ -d /root/thirdparty ] || mkdir -p /root/thirdparty
+    cd /root/thirdparty
 	installfromnet "git clone https://github.com/Nuand/bladeRF.git ./bladeRF"
 	cd ./bladeRF
 	mkdir build
@@ -132,7 +132,7 @@ function install_soapy_modules() {
 function install_soapyPlutoSDR_modules() {
 	goodecho "[+] Installing Soapy PlutoSDR module"
 	installfromnet "apt-fast install -y libad9361-dev libiio-utils libiio-dev"
-	[ -d /root/thirdparty ] || mkdir /root/thirdparty
+	[ -d /root/thirdparty ] || mkdir -p /root/thirdparty
 	cd /root/thirdparty
 	installfromnet "git clone https://github.com/pothosware/SoapyPlutoSDR"
 	cd SoapyPlutoSDR
@@ -153,7 +153,7 @@ function rtlsdrv4_devices_install() {
 	apt purge -y ^librtlsdr
 	rm -rvf /usr/lib/librtlsdr* /usr/include/rtl-sdr* /usr/local/lib/librtlsdr* /usr/local/include/rtl-sdr* /usr/local/include/rtl_* /usr/local/bin/rtl_*
 	installfromnet "apt-fast install -y libusb-1.0-0-dev git cmake pkg-config"
-	[ -d /root/thirdparty ] || mkdir /root/thirdparty
+	[ -d /root/thirdparty ] || mkdir -p /root/thirdparty
 	cd /root/thirdparty
 	installfromnet "git clone https://github.com/rtlsdrblog/rtl-sdr-blog"
 	cd rtl-sdr-blog
@@ -175,7 +175,7 @@ function osmofl2k_devices_install() {
 	apt purge -y ^librtlsdr
 	rm -rvf /usr/lib/librtlsdr* /usr/include/rtl-sdr* /usr/local/lib/librtlsdr* /usr/local/include/rtl-sdr* /usr/local/include/rtl_* /usr/local/bin/rtl_*
 	installfromnet "apt-fast install -y libusb-1.0-0-dev git cmake pkg-config"
-	[ -d /root/thirdparty ] || mkdir /root/thirdparty
+	[ -d /root/thirdparty ] || mkdir -p /root/thirdparty
 	cd /root/thirdparty
 	installfromnet "git clone https://gitea.osmocom.org/sdr/osmo-fl2k"
 	mkdir osmo-fl2k/build
@@ -186,8 +186,8 @@ function osmofl2k_devices_install() {
 	sudo ldconfig
 	cd /root
 	rm -R /root/thirdparty
-	[ -d /sdrtools ] || mkdir /sdrtools
-	cd /sdrtools
+	[ -d /rftools/sdr ] || mkdir -p /rftools/sdr
+	cd /rftools/sdr
 	goodecho "[+] Cloning a few examples"
 	installfromnet "git clone https://github.com/steve-m/fl2k-examples.git"
 }

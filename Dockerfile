@@ -214,9 +214,11 @@ RUN ./entrypoint.sh bettercap_soft_install
 
 # Tools for Bluetooth #TODO: more more!
 RUN ./entrypoint.sh blueztools_soft_install
+RUN ./entrypoint.sh bluing_soft_install
 
 # Tools for Bluetooth LE
 RUN ./entrypoint.sh mirage_soft_install # TODO: In progress
+RUN ./entrypoint.sh sniffle_soft_install
 
 ##################
 # Reversing

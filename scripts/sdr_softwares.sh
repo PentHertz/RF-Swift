@@ -205,13 +205,13 @@ function sigdigger_soft_install () {
 	goodecho "[+] Installing dependencies"
 	installfromnet "apt-fast install -y libxml2-dev libxml2-utils libfftw3-dev libasound-dev"
 	goodecho "[+] Downloading and launching auto-script"
-	[ -d /sdrtools ] || mkdir -p /sdrtools
-	cd /sdrtools
+	[ -d /rftool/sdr ] || mkdir -p /rftool/sdr
+	cd /rftool/sdr
 	installfromnet "wget https://actinid.org/blsd"
 	chmod +x blsd \ 
 	./blsd
 	cd /root
-	ln -s /sdrtools/blsd-dir/SigDigger/SigDigger /usr/sbin/SigDigger
+	ln -s /rftool/sdr/blsd-dir/SigDigger/SigDigger /usr/sbin/SigDigger
 }
 
 function cyberther_soft_install() {
@@ -313,21 +313,22 @@ function retrogram_soapysdr_soft_install () {
 	goodecho "[+] Installing dependencies for retrogram"
 	installfromnet "apt-fast install -y libsoapysdr-dev libncurses5-dev libboost-program-options-dev"
 	goodecho "[+] Installing retrogram_soapysdr"
-	[ -d /sdrtools ] || mkdir /sdrtools
-	cd /sdrtools
+	[ -d /rftool/sdr ] || mkdir -p /rftool/sdr
+	cd /rftool/sdr
 	installfromnet "git clone https://github.com/r4d10n/retrogram-soapysdr.git"
 	cd retrogram-soapysdr
 	make -j$(nproc)
-	ln -s /sdrtools/retrogram-soapysdr/retrogram-soapysdr /usr/bin/retrogram-soapysdr
+	ln -s /rftool/sdr/retrogram-soapysdr/retrogram-soapysdr /usr/bin/retrogram-soapysdr
 }
 
 function gps_sdr_sim_soft_install () {
 	goodecho "[+] Installing gps-sdr-sim"
-	[ -d /sdrtools ] || mkdir /sdrtools
-	cd /sdrtools
+	[ -d /rftool/sdr ] || mkdir -p /rftool/sdr
+	cd /rftool/sdr
 	installfromnet "git clone https://github.com/osqzss/gps-sdr-sim.git"
 	cd gps-sdr-sim
 	gcc gpssim.c -lm -O3 -o gps-sdr-sim
+	ln -s /rftool/sdr/gps-sdr-sim/gps-sdr-sim /usr/bin/gps-sdr-sim
 }
 
 function acarsdec_soft_install () {
@@ -345,8 +346,8 @@ function acarsdec_soft_install () {
 	ldconfig
 
 	goodecho "[+] Installing acarsdec"
-	[ -d /sdrtools ] || mkdir /sdrtools
-	cd /sdrtools
+	[ -d /root/thirdparty ] || mkdir /root/thirdparty
+	cd /root/thirdparty
 	installfromnet "git clone https://github.com/TLeconte/acarsdec.git"
 	cd acarsdec
 	mkdir build
@@ -359,8 +360,8 @@ function acarsdec_soft_install () {
 function meshtastic_sdr_soft_install () {
 	goodecho "[+] Installing Meshtastic_SDR dependencies"
 	installfromnet "pip3 install meshtastic"
-	[ -d /sdrtools ] || mkdir /sdrtools
-	cd /sdrtools
+	[ -d /rftool/sdr ] || mkdir -p /rftool/sdr
+	cd /rftool/sdr
 	goodecho "[+] Cloning Meshtastic_SDR"
 	installfromnet "git clone https://gitlab.com/crankylinuxuser/meshtastic_sdr.git"
 }
@@ -382,8 +383,8 @@ function gpredict_sdr_soft_install () {
 function v2verifier_sdr_soft_install () {
 	goodecho "[+] Installing v2verifier dependencies"
 	installfromnet "apt-fast install -y swig libgmp3-dev python3-pip python3-tk python3-pil libssl-dev python3-pil.imagetk"
-	[ -d /sdrtools ] || mkdir /sdrtools
-	cd /sdrtools
+	[ -d /rftool/sdr ] || mkdir -p /rftool/sdr
+	cd /rftool/sdr
 	goodecho "[+] Cloning v2verifier"
 	installfromnet "git clone https://github.com/FlUxIuS/v2verifier.git"
 	cd v2verifier
@@ -394,8 +395,8 @@ function v2verifier_sdr_soft_install () {
 }
 
 function wavingz_sdr_soft_install () {
-	[ -d /sdrtools ] || mkdir /sdrtools
-	cd /sdrtools
+	[ -d /rftool/sdr ] || mkdir -p /rftool/sdr
+	cd /rftool/sdr
 	goodecho "[+] Cloning waving-z"
 	installfromnet "git clone https://github.com/baol/waving-z.git"
 	cd waving-z

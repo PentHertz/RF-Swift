@@ -2,7 +2,7 @@
 
 function kc908_sa_device() {
 	goodecho "[+] Downloading bin from DEEPACE"
-	[ -d /root/thirdparty ] || mkdir /root/thirdparty
+	[ -d /root/thirdparty ] || mkdir -p /root/thirdparty
 	cd /root/thirdparty
 	installfromnet "wget https://deepace.net/wp-content/uploads/2024/04/KC908-GNURadio24.4.06.zip"
 	unzip KC908-GNURadio24.4.06.zip
@@ -30,20 +30,21 @@ function kc908_sa_device() {
 
 function signalhound_sa_device() {
 	goodecho "[+] Downloading bin from SignalHound"
-	[ -d /rftools ] || mkdir /rftools
-	cd /rftools/
+	[ -d /rftool/analysers ] || mkdir -p /rftool/analysers
+	cd /rftool/analysers
 	installfromnet "wget --no-check-certificate https://signalhound.com/sigdownloads/Spike/Spike(Ubuntu22.04x64)_3_9_6.zip"
 	unzip Spike\(Ubuntu22.04x64\)_3_9_6.zip
 	rm Spike\(Ubuntu22.04x64\)_3_9_6.zip
 	cd Spike\(Ubuntu22.04x64\)_3_9_6/
 	chmod +x setup.sh
 	sh -c ./setup.sh
+	ln -s Spike /usr/bin/Spike
 }
 
 function harogic_sa_device() {
 	goodecho "[+] Downloading SAStudio4"
-	[ -d /rftools ] || mkdir /rftools
-	cd /rftools/
+	[ -d /rftool/analysers ] || mkdir -p /rftool/analysers
+	cd /rftool/analysers
 	arch=`uname -i`
 	prog=""
 	case "$arch" in

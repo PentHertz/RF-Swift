@@ -2,7 +2,7 @@
 
 function kataistruct_soft_install() {
 	goodecho "[+] Installing Katai Struct"
-	[ -d /root/thirdparty ] || mkdir /root/thirdparty
+	[ -d /root/thirdparty ] || mkdir -p /root/thirdparty
 	cd /root/thirdparty
 	installfromnet "curl -LO https://github.com/kaitai-io/kaitai_struct_compiler/releases/download/0.10/kaitai-struct-compiler_0.10_all.deb"
 	installfromnet "apt-fast install -y ./kaitai-struct-compiler_0.10_all.deb"
@@ -10,7 +10,7 @@ function kataistruct_soft_install() {
 
 function unicorn_soft_install() {
 	goodecho "[+] Cloning Unicorn Engine project"
-	[ -d /root/thirdparty ] || mkdir /root/thirdparty
+	[ -d /root/thirdparty ] || mkdir -p /root/thirdparty
 	cd /root/thirdparty
 	installfromnet "git clone https://github.com/unicorn-engine/unicorn.git"
 	cd unicorn
@@ -24,7 +24,7 @@ function unicorn_soft_install() {
 
 function keystone_soft_install() {
 	goodecho "[+] Cloning Keystone Engine project"
-	[ -d /root/thirdparty ] || mkdir /root/thirdparty
+	[ -d /root/thirdparty ] || mkdir -p /root/thirdparty
 	cd /root/thirdparty
 	installfromnet "git clone https://github.com/keystone-engine/keystone.git"
 	cd keystone
@@ -38,7 +38,7 @@ function keystone_soft_install() {
 
 function radare2_soft_install() {
 	goodecho "[+] Installing Radare"
-	[ -d /root/thirdparty ] || mkdir /root/thirdparty
+	[ -d /root/thirdparty ] || mkdir -p /root/thirdparty
 	cd /root/thirdparty
 	installfromnet "git clone https://github.com/radareorg/radare2"
 	cd radare2 ; sys/install.sh
@@ -80,7 +80,7 @@ function qiling_soft_install() {
 	goodecho "[+] Installing Qiling's dependencies"
 	installfromnet "apt-fast install -y ack antlr3 aria2 asciidoc autoconf automake autopoint binutils bison build-essential bzip2 ccache cmake cpio curl device-tree-compiler fastjar flex gawk gettext gcc-multilib g++-multilib git gperf haveged help2man intltool libc6-dev-i386 libelf-dev libglib2.0-dev libgmp3-dev libltdl-dev libmpc-dev libmpfr-dev libncurses5-dev libncursesw5-dev libreadline-dev libssl-dev libtool lrzsz mkisofs msmtp nano ninja-build p7zip p7zip-full patch pkgconf python2.7 python3 python3-pip libpython3-dev qemu-utils rsync scons squashfs-tools subversion swig texinfo uglifyjs upx-ucl unzip vim wget xmlto xxd zlib1g-dev"
 	goodecho "[+] Cloning and installing Qiling"
-	[ -d /root/thirdparty ] || mkdir /root/thirdparty
+	[ -d /root/thirdparty ] || mkdir -p /root/thirdparty
 	cd /root/thirdparty
 	git clone -b dev https://github.com/qilingframework/qiling.git
 	cd qiling && git submodule update --init --recursive

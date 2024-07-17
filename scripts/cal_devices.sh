@@ -2,8 +2,8 @@
 
 function leobodnarv1_cal_device() {
 	goodecho "[+] Installing dependencies for Leobodnar v1 GPSDO"
-	[ -d /rftools ] || mkdir /rftools
-	cd /rftools
+	[ -d /rftools/calibration ] || mkdir -p /rftools/calibration
+	cd /rftools/calibration
 	installfromnet "apt-fast install -y libhidapi-libusb0 libhidapi-hidraw0"
 	goodecho "[+] Cloning repository for Leobodnar v1 GPSDO"
 	installfromnet "git clone https://github.com/hamarituc/lbgpsdo.git"
@@ -12,8 +12,8 @@ function leobodnarv1_cal_device() {
 
 function KCSDI_cal_device() {
 	goodecho "[+] Installing dependencies for KCSDI"
-	[ -d /rftools ] || mkdir /rftools
-	cd /rftools
+	[ -d /rftools/calibration ] || mkdir -p /rftools/calibration
+	cd /rftools/calibration
 	mkdir Deepace
 	cd Deepace
 	installfromnet "apt-fast install -y libnss3-dev libfuse-dev"
@@ -38,8 +38,8 @@ function NanoVNASaver_cal_device() {
 
 function NanoVNA_QT_cal_device() {
 	goodecho "[+] Installing dependencies for NanoVNA-QT"
-	[ -d /rftools ] || mkdir /rftools
-	cd /rftools
+	[ -d /rftools/calibration ] || mkdir -p /rftools/calibration
+	cd /rftools/calibration
 	installfromnet "apt-fast install -y automake libtool make g++ libeigen3-dev libfftw3-dev libqt5charts5-dev"
 	goodecho "[+] Cloning and installing NanoVNA-QT"
 	installfromnet "git clone https://github.com/nanovna-v2/NanoVNA-QT.git"
