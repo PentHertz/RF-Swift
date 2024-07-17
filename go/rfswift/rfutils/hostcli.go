@@ -72,7 +72,7 @@ func AttachUSBDevice(busID string) error {
 	*	in(1): bus ID string to attach
 	*	out: error
 	 */
-	cmd := exec.Command("usbipd.exe", "attach", "-a", "--wsl", "--busid", busID)
+	cmd := exec.Command("usbipd.exe", "attach", "--wsl", "--busid", busID)
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("failed to attach device %s: %w", busID, err)
 	}
