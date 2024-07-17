@@ -94,7 +94,7 @@ function bdaddr_soft_install() {
 # RFID package
 function proxmark3_soft_install() {
 	goodecho "[+] Installing proxmark3 dependencies"
-	installfromnet "apt-fast install -y --no-install-recommends git ca-certificates build-essential pkg-config libreadline-dev arm-none-eabi"
+	installfromnet "apt-fast install -y --no-install-recommends git ca-certificates build-essential pkg-config libreadline-dev"
 	installfromnet "apt-fast install -y  gcc-arm-none-eabi libnewlib-dev qtbase5-dev libbz2-dev liblz4-dev libbluetooth-dev libpython3-dev libssl-dev libgd-dev"
 	goodecho "[+] Installing proxmark3"
 	[ -d /rftools/rfid ] || mkdir -p /rftools/rfid
@@ -102,6 +102,7 @@ function proxmark3_soft_install() {
 	installfromnet "git clone https://github.com/RfidResearchGroup/proxmark3.git"
 	cd proxmark3/
 	make clean && make -j$(nproc)
+	ln -s pm3 /usr/sbin/pm3
 }
 
 function libnfc_soft_install() {
