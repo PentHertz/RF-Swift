@@ -92,7 +92,7 @@ RUN ./entrypoint.sh gpredict_sdr_soft_install
 RUN ./entrypoint.sh v2verifier_sdr_soft_install
 RUN ./entrypoint.sh wavingz_sdr_soft_install
 
-FROM sdr_light:latest as mldlsofts
+FROM extraoot as mldlsofts
 # Installing extra software
 RUN ./entrypoint.sh ml_and_dl_soft_install
 
