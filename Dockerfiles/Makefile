@@ -14,7 +14,7 @@ sdrfull3: common sdrlight
 	docker build -f SDR/sdr_full.docker --target mldlsofts ..
 
 sdrfull: common sdrlight
-	docker build -f SDR/sdr_full.docker --target sdr_full:latest ..
+	docker build -f SDR/sdr_full.docker -t sdr_full:latest ..
 
 rfid: common
 	docker build -f rfid.docker -t rfid:latest ..
