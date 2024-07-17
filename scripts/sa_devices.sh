@@ -30,8 +30,8 @@ function kc908_sa_device() {
 
 function signalhound_sa_device() {
 	goodecho "[+] Downloading bin from SignalHound"
-	[ -d /rftool/analysers ] || mkdir -p /rftool/analysers
-	cd /rftool/analysers
+	[ -d /rftools/analysers ] || mkdir -p /rftools/analysers
+	cd /rftools/analysers
 	installfromnet "wget --no-check-certificate https://signalhound.com/sigdownloads/Spike/Spike(Ubuntu22.04x64)_3_9_6.zip"
 	unzip Spike\(Ubuntu22.04x64\)_3_9_6.zip
 	rm Spike\(Ubuntu22.04x64\)_3_9_6.zip
@@ -43,8 +43,8 @@ function signalhound_sa_device() {
 
 function harogic_sa_device() {
 	goodecho "[+] Downloading SAStudio4"
-	[ -d /rftool/analysers ] || mkdir -p /rftool/analysers
-	cd /rftool/analysers
+	[ -d /rftools/analysers ] || mkdir -p /rftools/analysers
+	cd /rftools/analysers
 	arch=`uname -i`
 	prog=""
 	case "$arch" in

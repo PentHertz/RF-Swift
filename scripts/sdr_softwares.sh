@@ -205,13 +205,13 @@ function sigdigger_soft_install () {
 	goodecho "[+] Installing dependencies"
 	installfromnet "apt-fast install -y libxml2-dev libxml2-utils libfftw3-dev libasound-dev"
 	goodecho "[+] Downloading and launching auto-script"
-	[ -d /rftool/sdr ] || mkdir -p /rftool/sdr
-	cd /rftool/sdr
+	[ -d /rftools/sdr ] || mkdir -p /rftools/sdr
+	cd /rftools/sdr
 	installfromnet "wget https://actinid.org/blsd"
 	chmod +x blsd \ 
 	./blsd
 	cd /root
-	ln -s /rftool/sdr/blsd-dir/SigDigger/SigDigger /usr/sbin/SigDigger
+	ln -s /rftools/sdr/blsd-dir/SigDigger/SigDigger /usr/sbin/SigDigger
 }
 
 function cyberther_soft_install() {
@@ -304,17 +304,17 @@ function nfclaboratory_soft_install () {
 	cmake -DCMAKE_BUILD_TYPE=Release -S nfc-laboratory -B cmake-build-release
 	cmake --build cmake-build-release --target nfc-lab -- -j $(nproc)
 	cp nfc-laboratory/dat/config/nfc-lab.conf /root
-	[ -d /rftools ] || mkdir /rftools/
-	cp ./cmake-build-release/src/nfc-app/app-qt/nfc-lab /rftools/
-	ln -s /rftools/nfc-lab /usr/bin/nfc-lab
+	[ -d /rftools/sdr ] || mkdir /rftools/sdr
+	cp ./cmake-build-release/src/nfc-app/app-qt/nfc-lab /rftools/sdr/
+	ln -s /rftools/sdr/nfc-lab /usr/bin/nfc-lab
 }
 
 function retrogram_soapysdr_soft_install () {
 	goodecho "[+] Installing dependencies for retrogram"
 	installfromnet "apt-fast install -y libsoapysdr-dev libncurses5-dev libboost-program-options-dev"
 	goodecho "[+] Installing retrogram_soapysdr"
-	[ -d /rftool/sdr ] || mkdir -p /rftool/sdr
-	cd /rftool/sdr
+	[ -d /rftools/sdr ] || mkdir -p /rftools/sdr
+	cd /rftools/sdr
 	installfromnet "git clone https://github.com/r4d10n/retrogram-soapysdr.git"
 	cd retrogram-soapysdr
 	make -j$(nproc)
@@ -323,8 +323,8 @@ function retrogram_soapysdr_soft_install () {
 
 function gps_sdr_sim_soft_install () {
 	goodecho "[+] Installing gps-sdr-sim"
-	[ -d /rftool/sdr ] || mkdir -p /rftool/sdr
-	cd /rftool/sdr
+	[ -d /rftools/sdr ] || mkdir -p /rftools/sdr
+	cd /rftools/sdr
 	installfromnet "git clone https://github.com/osqzss/gps-sdr-sim.git"
 	cd gps-sdr-sim
 	gcc gpssim.c -lm -O3 -o gps-sdr-sim
@@ -360,8 +360,8 @@ function acarsdec_soft_install () {
 function meshtastic_sdr_soft_install () {
 	goodecho "[+] Installing Meshtastic_SDR dependencies"
 	installfromnet "pip3 install meshtastic"
-	[ -d /rftool/sdr ] || mkdir -p /rftool/sdr
-	cd /rftool/sdr
+	[ -d /rftools/sdr ] || mkdir -p /rftools/sdr
+	cd /rftools/sdr
 	goodecho "[+] Cloning Meshtastic_SDR"
 	installfromnet "git clone https://gitlab.com/crankylinuxuser/meshtastic_sdr.git"
 }
@@ -383,8 +383,8 @@ function gpredict_sdr_soft_install () {
 function v2verifier_sdr_soft_install () {
 	goodecho "[+] Installing v2verifier dependencies"
 	installfromnet "apt-fast install -y swig libgmp3-dev python3-pip python3-tk python3-pil libssl-dev python3-pil.imagetk"
-	[ -d /rftool/sdr ] || mkdir -p /rftool/sdr
-	cd /rftool/sdr
+	[ -d /rftools/sdr ] || mkdir -p /rftools/sdr
+	cd /rftools/sdr
 	goodecho "[+] Cloning v2verifier"
 	installfromnet "git clone https://github.com/FlUxIuS/v2verifier.git"
 	cd v2verifier
@@ -395,8 +395,8 @@ function v2verifier_sdr_soft_install () {
 }
 
 function wavingz_sdr_soft_install () {
-	[ -d /rftool/sdr ] || mkdir -p /rftool/sdr
-	cd /rftool/sdr
+	[ -d /rftools/sdr ] || mkdir -p /rftools/sdr
+	cd /rftools/sdr
 	goodecho "[+] Cloning waving-z"
 	installfromnet "git clone https://github.com/baol/waving-z.git"
 	cd waving-z
