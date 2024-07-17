@@ -1,13 +1,17 @@
 #!/bin/bash
 
-# General
-
+# General monitoring tools
 function kismet_soft_install() {
+	goodecho "[+] Installing Kismet dependencies"
+	[ -d /rftools ] || mkdir -p /rftools
+	cd /rftools
+	installfromnet "apt-fast install -y ubertooth libprelude-dev build-essential git libwebsockets-dev pkg-config zlib1g-dev libnl-3-dev libnl-genl-3-dev libcap-dev libpcap-dev libnm-dev libdw-dev libsqlite3-dev libprotobuf-dev libprotobuf-c-dev protobuf-compiler protobuf-c-compiler libsensors4-dev libusb-1.0-0-dev python3 python3-setuptools python3-protobuf python3-requests python3-numpy python3-serial python3-usb python3-dev python3-websockets librtlsdr0 libubertooth-dev libbtbb-dev libmosquitto-dev"
 	goodecho "[+] Installing Kismet"
-	wget -O - https://www.kismetwireless.net/repos/kismet-release.gpg.key --quiet | gpg --dearmor | sudo tee /usr/share/keyrings/kismet-archive-keyring.gpg >/dev/null
-	echo 'deb [signed-by=/usr/share/keyrings/kismet-archive-keyring.gpg] https://www.kismetwireless.net/repos/apt/release/jammy jammy main' | sudo tee /etc/apt/sources.list.d/kismet.list >/dev/null
-	installfromnet "apt-fast update"
-	installfromnet "apt-fast -y install kismet"
+	installfromnet "git clone https://www.kismetwireless.net/git/kismet.git"
+	cd kismet
+	./configure --enable-bladerf --enable-wifi-coconut --enable-btgeiger --enable-prelude
+	make
+	make -j$(nproc)
 }
 
 # Bluetooth Classic and LE

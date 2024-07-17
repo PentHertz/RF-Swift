@@ -1,0 +1,20 @@
+name: Docker Image CI - ML DL
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+
+  build:
+
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+    - name: Build the core image
+      run: docker build . --file Dockerfiles/SDR/corebuild.docker --tag corebuild:latest
+    - name: Building ML and DL tools
+      run: docker build . --file Dockerfiles/SDR/sdr_full.docker --target mldlsofts --tag sdr_full_stage1:latest

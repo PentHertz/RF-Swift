@@ -25,6 +25,3 @@ jobs:
 
     - name: Build the full SDR image (stage 2)
       run: docker build . --file Dockerfiles/SDR/sdr_full.docker --target extrasofts --tag sdr_full_stage2:latest
-
-    - name: Build the full SDR image (stage 3)
-      run: docker build . --file Dockerfiles/SDR/sdr_full.docker --target mldlsofts --tag sdr_full_stage1:latest
