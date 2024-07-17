@@ -59,7 +59,7 @@ RUN ./entrypoint.sh nuand_devices_install
 RUN ./entrypoint.sh hackrf_devices_install
 RUN ./entrypoint.sh airspy_devices_install
 RUN ./entrypoint.sh limesdr_devices_install
-#RUN ./entrypoint.sh rtlsdr_devices_install to install later
+#RUN ./entrypoint.sh rtlsdr_devices_install # to install later
 #RUN ./entrypoint.sh rtlsdrv4_devices_install # optionnal, remove rtlsdr_devices_install if you are using the v4 version
 RUN ./entrypoint.sh osmofl2k_devices_install
 RUN ./entrypoint.sh xtrx_devices_install
@@ -176,6 +176,9 @@ RUN ./entrypoint.sh wavingz_sdr_soft_install
 # Installing extra software
 RUN ./entrypoint.sh ml_and_dl_soft_install
 
+# General monitoring software
+RUN ./entrypoint.sh kismet_soft_install
+
 ##################
 # RFID
 ##################
@@ -215,6 +218,7 @@ RUN ./entrypoint.sh bettercap_soft_install
 # Tools for Bluetooth #TODO: more more!
 RUN ./entrypoint.sh blueztools_soft_install
 RUN ./entrypoint.sh bluing_soft_install
+RUN ./entrypoint.sh bdaddr_soft_install
 
 # Tools for Bluetooth LE
 RUN ./entrypoint.sh mirage_soft_install # TODO: In progress

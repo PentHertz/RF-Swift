@@ -31,9 +31,6 @@ RUN chmod +x entrypoint.sh
 #RUN ./entrypoint.sh mirage_soft_install # TODO: In progress
 #RUN ./entrypoint.sh sniffle_soft_install
 
-# General monitoring software
-RUN ./entrypoint.sh kismet_soft_install
-
 # Cleaning and quitting
 WORKDIR /root/
 #RUN rm -rf /root/scripts/
