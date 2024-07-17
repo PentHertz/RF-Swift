@@ -17,6 +17,9 @@ jobs:
 
     - name: Build the core image
       run: docker build . --file Dockerfiles/SDR/corebuild.docker --tag corebuild:latest
+
+    - name: Build the light stage for SDR
+      run: docker build . --file Dockerfiles/SDR/sdr_light.docker --tag sdr_light:latest
     
     - name: Build the Bluetooth Docker image
       run: docker build . --file Dockerfiles/bluetooth.docker --tag rfswift_bluetooth:$(date +%s)
