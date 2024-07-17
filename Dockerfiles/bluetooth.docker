@@ -3,7 +3,7 @@
 # Author(s): Sébastien Dudek (@FlUxIuS) @Penthertz
 # website: penthertz.com
 
-FROM corebuild:latest
+FROM sdr_light:latest
 
 LABEL "org.container.project"="rfswift"
 LABEL "org.container.author"="Sébastien Dudek (FlUxIuS)"
@@ -20,16 +20,19 @@ WORKDIR /root/scripts/
 RUN chmod +x entrypoint.sh
 
 # Installing bettecap tool
-RUN ./entrypoint.sh bettercap_soft_install
+#RUN ./entrypoint.sh bettercap_soft_install
 
 # Tools for Bluetooth #TODO: more more!
-RUN ./entrypoint.sh blueztools_soft_install
-RUN ./entrypoint.sh bluing_soft_install
-RUN ./entrypoint.sh bdaddr_soft_install
+#RUN ./entrypoint.sh blueztools_soft_install
+#RUN ./entrypoint.sh bluing_soft_install
+#RUN ./entrypoint.sh bdaddr_soft_install
 
 # Tools for Bluetooth LE
-RUN ./entrypoint.sh mirage_soft_install # TODO: In progress
-RUN ./entrypoint.sh sniffle_soft_install
+#RUN ./entrypoint.sh mirage_soft_install # TODO: In progress
+#RUN ./entrypoint.sh sniffle_soft_install
+
+# General monitoring software
+RUN ./entrypoint.sh kismet_soft_install
 
 # Cleaning and quitting
 WORKDIR /root/

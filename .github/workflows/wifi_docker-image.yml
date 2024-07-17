@@ -18,5 +18,8 @@ jobs:
     - name: Build the core image
       run: docker build . --file Dockerfiles/SDR/corebuild.docker --tag corebuild:latest
 
+    - name: Build the light stage for SDR
+      run: docker build . --file Dockerfiles/SDR/sdr_light.docker --tag sdr_light:latest
+
     - name: Build the Wi-Fi Docker image
       run: docker build . --file Dockerfiles/wifi.docker --tag rfswift_wifi:$(date +%s)
