@@ -16,5 +16,7 @@ jobs:
     - uses: actions/checkout@v4
     - name: Build the core image
       run: docker build . --file Dockerfiles/SDR/corebuild.docker --tag corebuild:latest
+    - name: Build the light stage for SDR
+      run: docker build . --file Dockerfiles/SDR/sdr_light.docker --tag sdr_light:latest
     - name: Building ML and DL tools
-      run: docker build . --file Dockerfiles/SDR/sdr_full.docker --target mldlsofts --tag sdr_full_stage1:latest
+      run: docker build . --file Dockerfiles/SDR/sdr_full.docker --target mldlsofts --tag ml_dl:latest
