@@ -119,7 +119,8 @@ RUN ./entrypoint.sh grais_grmod_install
 RUN ./entrypoint.sh graistx_grmod_install
 RUN ./entrypoint.sh grreveng_grmod_install
 RUN ./entrypoint.sh grdvbs2_grmod_install
-RUN ./entrypoint.sh grtempest_grmod_install
+RUN ./entrypoint.sh grtempest_grmod_install # Original module replaced by deep-tempest to use DL
+#RUN ./entrypoint.sh deeptempest_grmod_install
 RUN ./entrypoint.sh grdab_grmod_install
 RUN ./entrypoint.sh grdect2_grmod_install
 RUN ./entrypoint.sh grfoo_grmod_install
