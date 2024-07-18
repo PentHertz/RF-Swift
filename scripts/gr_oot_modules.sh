@@ -311,7 +311,7 @@ function grdvbs2_grmod_install () {
 	cd ../..
 }
 
-function grtempest_grmod_install () {
+function grtempest_grmod_install () { # Original gr-tempest mod
 	goodecho "[+] Cloning gr-tempest"
 	[ -d /root/thirdparty ] || mkdir /root/thirdparty
 	cd /root/thirdparty
@@ -323,6 +323,28 @@ function grtempest_grmod_install () {
 	&& cmake -DCMAKE_INSTALL_PREFIX=/usr ../ \
 	&& make -j$(nproc); sudo make install
 	cd ../..
+}
+
+function deeptempest_grmod_install () { # extended gr-tempest with DL
+	goodecho "[+] Cloning deep-tempest"
+	[ -d /rftools/sdr ] || mkdir /rftools/sdr
+	cd /rftools/sdr
+	installfromnet "git clone https://github.com/PentHertz/deep-tempest.git"
+	goodecho "[+] Building and installing deep-tempest"
+	cd deep-tempest/gr-tempest \
+	&& mkdir build \
+	&& cd build/ \
+	&& cmake -DCMAKE_INSTALL_PREFIX=/usr ../ \
+	&& make -j$(nproc); sudo make install
+	cd ../
+	cd examples
+	grcc *.grc
+	mkdir -p /root/.grc_gnuradio
+	cp *.block.yml /root/.grc_gnuradio
+	cd ../..
+	goodecho "[+] Installing requirements for deep-tempest"
+	cd end-to-end/
+	installfromnet "pip3 install -r requirement.txt"
 }
 
 function grfhss_utils_grmod_install () {
