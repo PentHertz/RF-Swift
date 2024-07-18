@@ -34,5 +34,8 @@ automotive: common
 telecom: common
 	docker build -f telecom.docker -t telecom:latest ..
 
+deeptempest: sdrlight
+	docker build -f SDR/sdr_deeptemptest_beta.docker -t deeptempest_beta:latest ..
+
 build: bluetooth wifi rfid reversing automotive telecom sdrfull
 	echo "Done!"

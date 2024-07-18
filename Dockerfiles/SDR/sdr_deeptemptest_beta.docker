@@ -1,0 +1,41 @@
+# This DockerFile is part of the RFSwift project
+# Install type: SDR deep temptest beta lab
+# Author(s): Sébastien Dudek (@FlUxIuS) @Penthertz
+# website: penthertz.com
+
+FROM sdr_light:latest as extraoot
+
+LABEL "org.container.project"="rfswift"
+LABEL "org.container.author"="Sébastien Dudek (FlUxIuS)"
+
+RUN echo 'APT::Install-Suggests "0";' >> /etc/apt/apt.conf.d/00-docker
+RUN echo 'APT::Install-Recommends "0";' >> /etc/apt/apt.conf.d/00-docker
+
+RUN apt-fast update
+
+COPY scripts /root/scripts/
+COPY rules /root/rules/
+COPY config /root/config/
+
+WORKDIR /root/scripts/
+RUN chmod +x entrypoint.sh
+
+# Installing GNU Radio + extra OOT modules
+RUN ./entrypoint.sh deeptempest_grmod_install
+
+FROM extraoot as gpumods
+# Installing OpenCL
+## NVidia drivers
+#RUN apt-fast install -y nvidia-opencl-dev nvidia-modprobe
+## Installing Intel's OpenCL
+#RUN apt-fast install -y intel-opencl-icd ocl-icd-dev ocl-icd-opencl-dev
+
+RUN mkdir -p /sdrtools/
+COPY run /sdrtools/run
+
+# Cleaning and quitting
+WORKDIR /root/
+RUN rm -rf /root/thirdparty
+RUN rm -rf /root/rules/
+RUN apt-fast clean
+RUN DEBIAN_FRONTEND=noninteractive rm -rf /var/lib/apt/lists/*
