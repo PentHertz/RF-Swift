@@ -38,3 +38,26 @@ function installfromnet() {
         sleep 15
     done
 }
+
+function install_dependencies() {
+    local dependencies=$1
+    goodecho "[+] Installing dependencies: ${dependencies}"
+    installfromnet "apt-fast install -y ${dependencies}"
+}
+
+function grclone_and_build() {
+    local repo_url=$1
+    local repo_dir=$2
+    goodecho "[+] Cloning ${repo_dir}"
+    [ -d /rftools/sdr/oot ] || mkdir -p /rftools/sdr/oot
+    cd /rftools/sdr/oot
+    installfromnet "git clone ${repo_url}"
+    goodecho "[+] Building and installing ${repo_dir}"
+    cd ${repo_dir}
+    mkdir build
+    cd build
+    cmake -DCMAKE_INSTALL_PREFIX=/usr ../
+    make -j$(nproc); sudo make install
+    cd ..
+    rm -R build
+}
