@@ -7,10 +7,10 @@ set -euo pipefail
 
 
 function LLVM_install() { # expects llvm version
-    echo "[+] installing LLVM ${1}"
+    echo "[+] installing LLVM 17"
 
     wget -c https://apt.llvm.org/llvm.sh && chmod +x llvm.sh
-    sudo ./llvm.sh "${1}"
+    sudo ./llvm.sh 17
 
     export LLVM_CONFIG=llvm-config-${1}
     echo "Defaults env_keep += \"${LLVM_CONFIG}\"" | sudo EDITOR='tee -a' visudo
