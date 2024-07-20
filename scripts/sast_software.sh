@@ -62,4 +62,3 @@ function clang_static_analyzer_install() {
 
     sudo apt-get install -y clang clang-tools
 }
-

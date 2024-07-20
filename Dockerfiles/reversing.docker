@@ -1,6 +1,6 @@
 # This DockerFile is part of the RFSwift project
 # Install type: Reversing
-# Author(s): Sébastien Dudek (@FlUxIuS) @Penthertz
+# Author(s): Sébastien Dudek (@FlUxIuS) @Penthertz, djnn @Penthertz
 # website: penthertz.com
 
 FROM corebuild:latest
@@ -26,6 +26,13 @@ RUN ./entrypoint.sh keystone_soft_install
 RUN ./entrypoint.sh radare2_soft_install
 RUN ./entrypoint.sh ghidra_soft_install
 RUN ./entrypoint.sh binwalk_soft_install
+
+# adding some SAST / DAST tools
+RUN ./entrypoint.sh LLVM_install
+RUN ./entrypoint.sh AFL_install
+RUN ./entrypoint.sh honggfuzz_install
+RUN ./entrypoint.sh clang_static_analyzer_install
+
 #RUN ./entrypoint.sh cutter_soft_install #TODO: fix install
 #RUN ./entrypoint.sh qiling_soft_install # TODO: resolve some debconf
 
