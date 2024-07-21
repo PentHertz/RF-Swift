@@ -24,13 +24,15 @@ RUN ./entrypoint.sh kataistruct_soft_install
 RUN ./entrypoint.sh unicorn_soft_install
 RUN ./entrypoint.sh keystone_soft_install
 RUN ./entrypoint.sh radare2_soft_install
-RUN ./entrypoint.sh ghidra_soft_install
+# RUN ./entrypoint.sh ghidra_soft_install
 RUN ./entrypoint.sh binwalk_soft_install
 
 # adding some SAST / DAST tools
 RUN ./entrypoint.sh LLVM_install
 RUN ./entrypoint.sh AFL_install
 RUN ./entrypoint.sh honggfuzz_install
+RUN ./entrypoint.sh semgrep_install
+RUN ./entrypoint.sh cppcheck_install
 RUN ./entrypoint.sh clang_static_analyzer_install
 
 #RUN ./entrypoint.sh cutter_soft_install #TODO: fix install
