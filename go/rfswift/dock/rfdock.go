@@ -21,7 +21,6 @@ import (
 	"github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/client"
 	"github.com/docker/docker/pkg/jsonmessage"
-	"github.com/docker/docker/pkg/stdcopy"
 	"github.com/moby/term"
 	"golang.org/x/crypto/ssh/terminal"
 	"github.com/olekukonko/tablewriter"
@@ -61,6 +60,28 @@ var dockerObj = DockerInst{net: "host",
 	pulse_server: "tcp:localhost:34567",
 	shell:        "/bin/bash"} // Instance with default values
 
+
+func resizeTty(ctx context.Context, cli *client.Client, contid string, fd int) {
+	/**
+	 *  Resizes TTY to handle larger terminal window
+	 */
+	for {
+		width, height, err := terminal.GetSize(fd)
+		if err != nil {
+			panic(err)
+		}
+
+		err = cli.ContainerResize(ctx, contid, container.ResizeOptions{
+			Height: uint(height),
+			Width:  uint(width),
+		})
+		if err != nil {
+			panic(err)
+		}
+
+		time.Sleep(1 * time.Second)
+	}
+}
 
 func DockerLast(ifilter string, labelKey string, labelValue string) {
 	/* Lists 10 last Docker containers
@@ -162,8 +183,8 @@ func DockerExec(contid string, WorkingDir string) {
 	defer cli.Close()
 
 	if contid == "" {
-		labelKey := "org.container.project" // TODO: maybe to move in global
-		labelValue := "rfswift"             // TODO: maybe to move in global
+		labelKey := "org.container.project"
+		labelValue := "rfswift"
 		contid = latestDockerID(labelKey, labelValue)
 	}
 
@@ -198,7 +219,7 @@ func DockerRun() {
 		Cmd:          []string{dockerObj.shell},
 		Env:          dockerenv,
 		OpenStdin:    true,
-		StdinOnce:    true,
+		StdinOnce:    false,
 		AttachStdin:  true,
 		AttachStdout: true,
 		AttachStderr: true,
@@ -225,6 +246,7 @@ func DockerRun() {
 	if err != nil {
 		panic(err)
 	}
+	defer waiter.Close()
 
 	if err := cli.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
 		panic(err)
@@ -240,18 +262,13 @@ func DockerRun() {
 		}
 		defer terminal.Restore(fd, oldState)
 
+		go resizeTty(ctx, cli, resp.ID, fd)
 		go readAndWriteInput(waiter)
 	}
 
 	waitForContainer(ctx, cli, resp.ID)
-
-	out, err := cli.ContainerLogs(ctx, resp.ID, container.LogsOptions{ShowStdout: true, ShowStderr: true})
-	if err != nil {
-		panic(err)
-	}
-
-	stdcopy.StdCopy(os.Stdout, os.Stderr, out)
 }
+
 
 func execCommandInContainer(ctx context.Context, cli *client.Client, contid, WorkingDir string) {
 	execShell := []string{}
@@ -312,6 +329,7 @@ func attachAndInteract(ctx context.Context, cli *client.Client, contid string) {
 		}
 		defer terminal.Restore(fd, oldState)
 
+		go resizeTty(ctx, cli, contid, fd)
 		go readAndWriteInput(response)
 	}
 
