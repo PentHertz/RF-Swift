@@ -39,15 +39,9 @@ function mirage_soft_install() {
 }
 
 function bettercap_soft_install() {
-	goodecho "[+] Installing bettercap dependencies"
-	installfromnet "apt-fast install -y golang git build-essential libpcap-dev libusb-1.0-0-dev libnetfilter-queue-dev"
-	goodecho "[+] Installing bettercap software"
-	[ -d /rftools/bluetooth ] || mkdir -p /rftools/bluetooth
-	cd /rftools/bluetooth
-	installfromnet "git clone https://github.com/bettercap/bettercap.git"
-	cd bettercap
-	./build.sh
-	make
+	goodecho "[+] Installing bettercap"
+	go install github.com/bettercap/bettercap@latest 
+	ln -s /root/go/bin/bettercap /usr/bin/bettercap
 }
 
 function sniffle_soft_install() {
