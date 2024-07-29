@@ -23,7 +23,7 @@ RUN DEBIAN_FRONTEND=noninteractive \
   	qtcreator qtcreator-data qtcreator-doc qtbase5-examples qtbase5-doc-html \
   	qtbase5-dev qtbase5-private-dev libqt5opengl5-dev libqt5svg5-dev \
   	libcanberra-gtk-module libcanberra-gtk3-module unity-tweak-tool libhdf5-dev \
-	libreadline-dev automake task-lxqt-desktop
+	libreadline-dev automake
 
 RUN DEBIAN_FRONTEND=noninteractive TZ=Etc/UTC \
 	apt-get install tzdata

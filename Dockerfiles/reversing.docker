@@ -24,7 +24,7 @@ RUN ./entrypoint.sh kataistruct_soft_install
 RUN ./entrypoint.sh unicorn_soft_install
 RUN ./entrypoint.sh keystone_soft_install
 RUN ./entrypoint.sh radare2_soft_install
-# RUN ./entrypoint.sh ghidra_soft_install
+RUN ./entrypoint.sh ghidra_soft_install
 RUN ./entrypoint.sh binwalk_soft_install
 
 # adding some SAST / DAST tools
