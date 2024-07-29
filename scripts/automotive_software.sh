@@ -26,7 +26,8 @@ function savvycan_soft_install() {
 	[ -d /automotive ] || mkdir /automotive
 	cd /automotive
 	installfromnet "git clone https://github.com/collin80/SavvyCAN.git"
-	qmake
+	cd SavvyCAN
+	qmake -makefile
 	make -j$(nproc)
 	ln -s SavvyCAN /usr/bin/SavvyCAN
 }

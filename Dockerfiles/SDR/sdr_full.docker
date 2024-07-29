@@ -26,7 +26,7 @@ RUN ./entrypoint.sh grlora_grmod_install
 RUN ./entrypoint.sh grlorasdr_grmod_install
 RUN ./entrypoint.sh griridium_grmod_install
 RUN ./entrypoint.sh grinspector_grmod_install
-RUN ./entrypoint.sh gruaslink_grmod_install #TODO: fix Python3 compat at least
+#RUN ./entrypoint.sh gruaslink_grmod_install #TODO: fix Python3 compat at least
 RUN ./entrypoint.sh grX10_grmod_install
 RUN ./entrypoint.sh grgfdm_grmod_install
 RUN ./entrypoint.sh graaronia_rtsa_grmod_install

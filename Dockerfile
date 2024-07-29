@@ -23,7 +23,8 @@ RUN DEBIAN_FRONTEND=noninteractive \
   	qtcreator qtcreator-data qtcreator-doc qtbase5-examples qtbase5-doc-html \
   	qtbase5-dev qtbase5-private-dev libqt5opengl5-dev libqt5svg5-dev \
   	libcanberra-gtk-module libcanberra-gtk3-module unity-tweak-tool libhdf5-dev \
-	libreadline-dev automake
+	libreadline-dev automake qtdeclarative5-dev libqt5serialport5-dev \ 
+	libqt5serialbus5-dev qttools5-dev golang-go
 
 RUN DEBIAN_FRONTEND=noninteractive TZ=Etc/UTC \
 	apt-get install tzdata
@@ -39,9 +40,9 @@ RUN echo apt-fast apt-fast/aptmanager string apt-get | debconf-set-selections
 RUN apt-get -y install apt-fast python3-matplotlib
 
 # Installing desktop features for next virtual desktop sessions
-RUN echo apt-fast keyboard-configuration/layout string "English (US)" | debconf-set-selections
-RUN echo apt-fast keyboard-configuration/variant string "English (US)" | debconf-set-selections
-RUN apt-get -y install task-lxqt-desktop
+#RUN echo apt-fast keyboard-configuration/layout string "English (US)" | debconf-set-selections
+#RUN echo apt-fast keyboard-configuration/variant string "English (US)" | debconf-set-selections
+#RUN apt-get -y install task-lxqt-desktop
 
 # Audio part
 RUN apt-fast install -y pulseaudio-utils pulseaudio libasound2-dev libavahi-client-dev --no-install-recommends
@@ -120,7 +121,7 @@ RUN ./entrypoint.sh grlora_grmod_install
 RUN ./entrypoint.sh grlorasdr_grmod_install
 RUN ./entrypoint.sh griridium_grmod_install
 RUN ./entrypoint.sh grinspector_grmod_install
-RUN ./entrypoint.sh gruaslink_grmod_install #TODO: fix Python3 compat at least
+#RUN ./entrypoint.sh gruaslink_grmod_install #TODO: fix Python3 compat at least
 RUN ./entrypoint.sh grX10_grmod_install
 RUN ./entrypoint.sh grgfdm_grmod_install
 RUN ./entrypoint.sh graaronia_rtsa_grmod_install

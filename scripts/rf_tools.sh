@@ -40,6 +40,7 @@ function mirage_soft_install() {
 
 function bettercap_soft_install() {
 	goodecho "[+] Installing bettercap"
+	installfromnet "apt-fast install -y libnetfilter-queue-dev"
 	go install github.com/bettercap/bettercap@latest 
 	ln -s /root/go/bin/bettercap /usr/bin/bettercap
 }
