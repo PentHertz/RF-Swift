@@ -3,7 +3,7 @@
 # Adapted from (tested on ubuntu 22.04):
 # https://github.com/20urc3/Talks/tree/main/leHack
 
-set -euo pipefail
+# set -euo pipefail // -> some scripts fails to install properly, and binaries are normally working. TODO: Need see why some install processes are failing with it.
 
 
 function LLVM_install() { # expects llvm version
