@@ -74,8 +74,9 @@ function ghidra_soft_install() {
 
 	installfromnet "wget https://github.com/NationalSecurityAgency/ghidra/releases/download/Ghidra_${ghidra_version}_build/${prog}.zip"
 	unzip "$prog"
-	cd "$prog"
+	cd "ghidra_${ghidra_version}_PUBLIC"
 	ln -s ghidraRun /usr/sbin/ghidraRun
+	cd ..
 	rm "$prog.zip"
 }
 

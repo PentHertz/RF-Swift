@@ -53,7 +53,6 @@ COPY config /root/config/
 WORKDIR /root/scripts/
 RUN chmod +x entrypoint.sh
 
-
 # Installing Terminal harnesses
 RUN ./entrypoint.sh fzf_soft_install
 RUN ./entrypoint.sh zsh_tools_install

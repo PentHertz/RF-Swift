@@ -19,7 +19,7 @@ function KCSDI_cal_device() {
 	installfromnet "apt-fast install -y libnss3-dev libfuse-dev"
 	goodecho "[+] Downloading KCSDI from penthertz repo"
 	installfromnet "wget https://github.com/PentHertz/rfswift_deepace_install/releases/download/nightly/KCSDI-v0.4.5-45-linux-x86_64.AppImage"
-	chown +x KCSDI-v0.4.5-45-linux-x86_64.AppImage
+	chmod +x KCSDI-v0.4.5-45-linux-x86_64.AppImage
 	ln -s KCSDI-v0.4.5-45-linux-x86_64.AppImage /usr/bin/KCSDI
 }
 
