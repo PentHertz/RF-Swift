@@ -68,8 +68,11 @@ function ghidra_soft_install() {
 	goodecho "[+] Downloading Ghidra"
 	[ -d /reverse ] || mkdir /reverse
 	cd /reverse
-	prog="ghidra_11.0.3_PUBLIC_20240410"
-	installfromnet "wget https://github.com/NationalSecurityAgency/ghidra/releases/download/Ghidra_11.0.3_build/$prog.zip"
+
+    ghidra_version="11.1.2"
+	prog="ghidra_${ghidra_version}_PUBLIC_20240709"
+
+	installfromnet "wget https://github.com/NationalSecurityAgency/ghidra/releases/download/Ghidra_${ghidra_version}_build/${prog}.zip"
 	unzip "$prog"
 	cd "$prog"
 	ln -s ghidraRun /usr/sbin/ghidraRun
