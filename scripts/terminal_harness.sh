@@ -11,9 +11,12 @@ function zsh_tools_install() {
 	chsh -s /bin/zsh 
 	zsh
 	goodecho "[+] Installing oh-my-zsh"
-	yes | sh -c "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh)"
+	sh -c "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh)"
 	goodecho "[+] Installing pluggins"
-	installfromnet "git clone https://github.com/zsh-users/zsh-autosuggestions \${ZSH_CUSTOM:-~/.oh-my-zsh/custom}/plugins/zsh-autosuggestions"
+	thedir="${ZSH_CUSTOM:-~/.oh-my-zsh/custom}/plugins/zsh-autosuggestions"
+	mkdir -p thedir
+	cd thedir
+	installfromnet "git clone https://github.com/zsh-users/zsh-autosuggestions"
 }
 
 function arsenal_soft_install() {
