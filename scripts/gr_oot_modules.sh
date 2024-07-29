@@ -181,7 +181,15 @@ function grdroineid_grmod_install() {
     cd build
     cmake ../
     make -j$(nproc); sudo make install
-    grclone_and_build "https://github.com/proto17/dji_droneid.git" "dji_droneid/gnuradio/gr-droneid"
+    #grclone_and_build "C" "dji_droneid/gnuradio/gr-droneid"
+    installfromnet "git clone -b gr-droneid https://github.com/proto17/dji_droneid.git"
+    cd dji_droneid/gnuradio/gr-droneid
+    mkdir build
+    cd build
+    cmake -DCMAKE_INSTALL_PREFIX=/usr ../
+    make -j$(nproc); sudo make install
+    cd ..
+    rm -R build
 }
 
 function grsatellites_grmod_install() {
