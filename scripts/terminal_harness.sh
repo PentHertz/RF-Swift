@@ -21,8 +21,7 @@ function zsh_tools_install() {
 
 function arsenal_soft_install() {
 	goodecho "[+] Installing arsenal"
-	[ -d /root/thirdparty ] || mkdir -p /root/thirdparty
-	cd /root/thirdparty
+	cd /opt
 	installfromnet "git clone https://github.com/Orange-Cyberdefense/arsenal.git"
 	cd arsenal
 	installfromnet "python3 -m pip install -r requirements.txt"
