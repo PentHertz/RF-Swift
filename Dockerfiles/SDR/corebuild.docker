@@ -38,6 +38,11 @@ RUN echo apt-fast apt-fast/aptmanager string apt-get | debconf-set-selections
 
 RUN apt-get -y install apt-fast python3-matplotlib
 
+# Installing desktop features for next virtual desktop sessions
+RUN echo apt-fast keyboard-configuration/layout string "English (US)" | debconf-set-selections
+RUN echo apt-fast keyboard-configuration/variant string "English (US)" | debconf-set-selections
+RUN apt-get -y install task-lxqt-desktop
+
 # Audio part
 RUN apt-fast install -y pulseaudio-utils pulseaudio libasound2-dev libavahi-client-dev --no-install-recommends
 
@@ -47,6 +52,12 @@ COPY config /root/config/
 
 WORKDIR /root/scripts/
 RUN chmod +x entrypoint.sh
+
+
+# Installing Terminal harnesses
+RUN ./entrypoint.sh fzf_soft_install
+RUN ./entrypoint.sh zsh_tools_install
+RUN ./entrypoint.sh arsenal_soft_install
 
 # Installing Devices 
 
