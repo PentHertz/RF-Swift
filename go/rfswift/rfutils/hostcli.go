@@ -256,44 +256,57 @@ func checkPulseServer(address string, port string) {
     // Attempt to establish a connection
     conn, err := net.DialTimeout("tcp", endpoint, 5*time.Second)
     if err != nil {
-        fmt.Printf("\033[33mWarning: Unable to connect to Pulse server at %s\033[0m\n", endpoint)
-        printInstallationInstructions()
+        // Connection failed, prepare the error message
+        message := fmt.Sprintf("\033[33mWarning: Unable to connect to Pulse server at %s\033[0m\n", endpoint)
+        message += retInstallationInstructions()
+        
+        // Display the notification
+        DisplayNotification(" Warning", message, "warning")
         return
     }
+
     // Close the connection if successful
     conn.Close()
-    fmt.Printf("Pulse server found at %s\n", endpoint)
+
+    // Prepare success message
+    successMessage := fmt.Sprintf("Pulse server found at %s", endpoint)
+
+    // Display success notification
+    DisplayNotification(" Audio", successMessage, "info")
 }
 
-// printInstallationInstructions prints installation instructions based on the operating system
-func printInstallationInstructions() {
-    os := runtime.GOOS
-    switch os {
-    case "windows":
-        fmt.Println("To install Pulse server on Windows, follow these steps:")
-        fmt.Println("1. Download the Pulse server installer from the official website.")
-        fmt.Println("2. Run the installer and follow the on-screen instructions.")
-    case "darwin":
-        fmt.Println("To install Pulse server on macOS, follow these steps:")
-        fmt.Println("1. Install Homebrew if you haven't already: /bin/bash -c \"$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)\"")
-        fmt.Println("2. Install Pulse server using Homebrew: brew install pulse-server")
-    case "linux":
-        if isArchLinux() {
-            fmt.Println("To install Pulse server on Arch Linux, follow these steps:")
-            fmt.Println("1. Update your package database: sudo pacman -Syu")
-            fmt.Println("2. Install Pulse server: sudo pacman -S pulse-server")
-        } else {
-            fmt.Println("To install Pulse server on Linux, follow these steps:")
-            fmt.Println("1. Update your package manager: sudo apt update (for Debian-based) or sudo yum update (for Red Hat-based).")
-            fmt.Println("2. Install Pulse server: sudo apt install pulse-server (for Debian-based) or sudo yum install pulse-server (for Red Hat-based).")
-        }
-    default:
-        fmt.Println("Unsupported operating system. Please refer to the official Pulse server documentation for installation instructions.")
-    }
 
-    // Print the final command to enable the module
-    fmt.Println("\nAfter installation, enable the module with the following command as unprivileged user:")
-    fmt.Println("\033[33m./rfswift host audio enable\033[0m")
+func retInstallationInstructions() string {
+	var retstring strings.Builder
+	os := runtime.GOOS
+
+	switch os {
+	case "windows":
+		retstring.WriteString("\nTo install Pulse server on Windows, follow these steps:\n")
+		retstring.WriteString("1. Download the Pulse server installer from the official website.\n")
+		retstring.WriteString("2. Run the installer and follow the on-screen instructions.\n")
+	case "darwin":
+		retstring.WriteString("To install Pulse server on macOS, follow these steps:\n")
+		retstring.WriteString("1. Install Homebrew if you haven't already: /bin/bash -c \"$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)\"\n")
+		retstring.WriteString("2. Install Pulse server using Homebrew: brew install pulse-server\n")
+	case "linux":
+		if isArchLinux() {
+			retstring.WriteString("\nTo install Pulse server on Arch Linux, follow these steps:\n")
+			retstring.WriteString("1. Update your package database: sudo pacman -Syu\n")
+			retstring.WriteString("2. Install Pulse server: sudo pacman -S pulse-server\n")
+		} else {
+			retstring.WriteString("To install Pulse server on Linux, follow these steps:\n")
+			retstring.WriteString("1. Update your package manager: sudo apt update (for Debian-based) or sudo yum update (for Red Hat-based).\n")
+			retstring.WriteString("2. Install Pulse server: sudo apt install pulse-server (for Debian-based) or sudo yum install pulse-server (for Red Hat-based).\n")
+		}
+	default:
+		retstring.WriteString("\nPlease refer to the official Pulse server documentation for installation instructions.\n")
+	}
+
+	retstring.WriteString("\n\nAfter installation, enable the module with the following command as unprivileged user:\n")
+	retstring.WriteString("\033[33m./rfswift host audio enable\033[0m")
+
+	return retstring.String()
 }
 
 // isArchLinux checks if the current Linux distribution is Arch Linux

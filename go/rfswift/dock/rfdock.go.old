@@ -1,3 +1,6 @@
+/* This code is part of RF Switch by @Penthertz
+*  Author(s): Sébastien Dudek (@FlUxIuS)
+ */
 package dock
 
 import (
@@ -9,7 +12,6 @@ import (
 	"strings"
 	"time"
 	"log"
-	"regexp"
 
 	"context"
 	"github.com/docker/docker/api/types"
@@ -21,7 +23,7 @@ import (
 	"github.com/docker/docker/pkg/jsonmessage"
 	"github.com/moby/term"
 	"golang.org/x/crypto/ssh/terminal"
-
+	"github.com/olekukonko/tablewriter"
 	rfutils "penthertz/rfswift/rfutils"
 	common "penthertz/rfswift/common"
 )
@@ -60,10 +62,6 @@ var dockerObj = DockerInst{net: "host",
 	shell:        "/bin/bash"} // Instance with default values
 
 func init() {
-	updateDockerObjFromConfig()
-}
-
-func updateDockerObjFromConfig() {
 	config, err := rfutils.ReadOrCreateConfig("config.ini")
 	if err != nil {
 		log.Printf("Error reading config: %v. Using default values.", err)
@@ -116,112 +114,20 @@ func resizeTty(ctx context.Context, cli *client.Client, contid string, fd int) {
 	}
 }
 
-func checkIfImageIsUpToDate(repo, tag string) (bool, error) {
-	architecture := getArchitecture()
-	tags, err := getLatestDockerHubTags(repo, architecture)
-	if err != nil {
-		return false, err
-	}
-
-	for _, latestTag := range tags {
-		if latestTag.Name == tag {
-			return true, nil
-		}
-	}
-
-	return false, nil
-}
-
-func parseImageName(imageName string) (string, string) {
-	parts := strings.Split(imageName, ":")
-	repo := parts[0]
-	tag := "latest"
-	if len(parts) > 1 {
-		tag = parts[1]
-	}
-	return repo, tag
-}
-
-
-func getLocalImageCreationDate(ctx context.Context, cli *client.Client, imageName string) (time.Time, error) {
-	localImage, _, err := cli.ImageInspectWithRaw(ctx, imageName)
-	if err != nil {
-		return time.Time{}, err
-	}
-	localImageTime, err := time.Parse(time.RFC3339, localImage.Created)
-	if err != nil {
-		return time.Time{}, err
-	}
-	return localImageTime, nil
-}
-
-func checkImageStatus(ctx context.Context, cli *client.Client, repo, tag string) (bool, bool, error) {
-	architecture := getArchitecture()
-
-	// Get the local image creation date
-	localImageTime, err := getLocalImageCreationDate(ctx, cli, fmt.Sprintf("%s:%s", repo, tag))
-	if err != nil {
-		return false, true, err
-	}
-
-	// Get the remote image creation date
-	remoteImageTime, err := getRemoteImageCreationDate(repo, tag, architecture)
-	if err != nil {
-		if err.Error() == "tag not found" {
-			return false, true, nil // Custom image if tag not found
-		}
-		return false, true, err
-	}
-
-	// Adjust the remote image creation time by an offset of 2 hours
-	remoteImageTimeAdjusted := remoteImageTime.Add(-2 * time.Hour)
-
-	// Compare local and adjusted remote image times
-	if localImageTime.Before(remoteImageTimeAdjusted) {
-		return false, false, nil // Obsolete
-	}
-	return true, false, nil // Up-to-date
-}
-
-func printContainerProperties(ctx context.Context, cli *client.Client, containerName string, props map[string]string, size string) {
+func printContainerProperties(containerName string, props DockerInst, size string) {
 	white := "\033[37m"
 	blue := "\033[34m"
-	green := "\033[32m"
-	red := "\033[31m"
-	yellow := "\033[33m"
 	reset := "\033[0m"
-
-	// Determine if the image is up-to-date, obsolete, or custom
-	repo, tag := parseImageName(props["ImageName"])
-	isUpToDate, isCustom, err := checkImageStatus(ctx, cli, repo, tag)
-	if err != nil {
-		if err.Error() != "tag not found" {
-			log.Printf("Error checking image status: %v", err)
-		}
-	}
-
-	imageStatus := fmt.Sprintf("%s (Custom)", props["ImageName"])
-	imageStatusColor := yellow
-	if !isCustom {
-		if isUpToDate {
-			imageStatus = fmt.Sprintf("%s (Up to date)", props["ImageName"])
-			imageStatusColor = green
-		} else {
-			imageStatus = fmt.Sprintf("%s (Obsolete)", props["ImageName"])
-			imageStatusColor = red
-		}
-	}
-
 	properties := [][]string{
 		{"Container Name", containerName},
-		{"X Display", props["XDisplay"]},
-		{"Shell", props["Shell"]},
-		{"Privileged Mode", props["Privileged"]},
-		{"Network Mode", props["NetworkMode"]},
-		{"Image Name", imageStatus},
+		{"X Display", props.xdisplay},
+		{"Shell", props.shell},
+		{"Privileged Mode", fmt.Sprintf("%v", props.privileged)},
+		{"Network Mode", props.network_mode},
+		{"Image Name", props.imagename},
 		{"Size on Disk", size},
-		{"Bindings", props["Bindings"]},
-		{"Extra Hosts", props["ExtraHosts"]},
+		{"Bindings", props.extrabinding},
+		{"Extra Hosts", props.extrahosts},
 	}
 
 	width, _, err := terminal.GetSize(int(os.Stdout.Fd()))
@@ -260,11 +166,6 @@ func printContainerProperties(ctx context.Context, cli *client.Client, container
 	for i, property := range properties {
 		key := property[0]
 		value := property[1]
-		valueColor := white
-
-		if key == "Image Name" {
-			valueColor = imageStatusColor
-		}
 
 		// Wrap long values
 		wrappedValue := wrapText(value, maxValueLen)
@@ -272,9 +173,9 @@ func printContainerProperties(ctx context.Context, cli *client.Client, container
 
 		for j, line := range valueLines {
 			if j == 0 {
-				fmt.Printf("│ %-*s │ %s%-*s%s │\n", maxKeyLen, key, valueColor, maxValueLen, line, reset)
+				fmt.Printf("│ %-*s │ %-*s │\n", maxKeyLen, key, maxValueLen, line)
 			} else {
-				fmt.Printf("│ %-*s │ %s%-*s%s │\n", maxKeyLen, "", valueColor, maxValueLen, line, reset)
+				fmt.Printf("│ %-*s │ %-*s │\n", maxKeyLen, "", maxValueLen, line)
 			}
 
 			if j < len(valueLines)-1 {
@@ -289,7 +190,6 @@ func printContainerProperties(ctx context.Context, cli *client.Client, container
 
 	fmt.Printf("╰%s╯\n", strings.Repeat("─", totalWidth-2))
 	fmt.Printf("%s", reset)
-	fmt.Println() // Ensure we end with a newline for clarity
 }
 
 func wrapText(text string, maxWidth int) string {
@@ -322,6 +222,9 @@ func wrapText(text string, maxWidth int) string {
 }
 
 func DockerLast(ifilter string, labelKey string, labelValue string) {
+	/* Lists 10 last Docker containers
+	   in(1):  string optional filter for image name
+	*/
 	ctx := context.Background()
 	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
 	if err != nil {
@@ -329,14 +232,15 @@ func DockerLast(ifilter string, labelKey string, labelValue string) {
 	}
 	defer cli.Close()
 
+	// Create filters
 	containerFilters := filters.NewArgs()
 	if ifilter != "" {
 		containerFilters.Add("ancestor", ifilter)
 	}
-	if labelKey != "" && labelValue != "" {
-		containerFilters.Add("label", fmt.Sprintf("%s=%s", labelKey, labelValue))
-	}
 
+	containerFilters.Add("label", fmt.Sprintf("%s=%s", labelKey, labelValue)) // filter by label
+
+	// List containers with the specified filter
 	containers, err := cli.ContainerList(ctx, container.ListOptions{
 		All:     true,
 		Limit:   10,
@@ -346,128 +250,23 @@ func DockerLast(ifilter string, labelKey string, labelValue string) {
 		panic(err)
 	}
 
-	//rfutils.ClearScreen()
+	rfutils.ClearScreen()
 
-	tableData := [][]string{}
+	table := tablewriter.NewWriter(os.Stdout)
+	table.SetHeader([]string{"Created", "Image", "Container ID", "Command"})
+
 	for _, container := range containers {
 		created := time.Unix(container.Created, 0).Format(time.RFC3339)
-		imageTag := container.Image
-		containerName := container.Names[0]
-		if containerName[0] == '/' {
-			containerName = containerName[1:]
-		}
-		containerID := container.ID[:12]
-		command := container.Command
-		tableData = append(tableData, []string{
+		table.Append([]string{
 			created,
-			imageTag,
-			containerName,
-			containerID,
-			command,
+			container.Image,
+			container.ID[:12],
+			container.Command,
 		})
 	}
 
-	headers := []string{"Created", "Image Tag", "Container Name", "Container ID", "Command"}
-	width, _, err := terminal.GetSize(int(os.Stdout.Fd()))
-	if err != nil {
-		width = 80
-	}
-
-	columnWidths := make([]int, len(headers))
-	for i, header := range headers {
-		columnWidths[i] = len(header)
-	}
-	for _, row := range tableData {
-		for i, col := range row {
-			if len(col) > columnWidths[i] {
-				columnWidths[i] = len(col)
-			}
-		}
-	}
-
-	totalWidth := len(headers) + 1
-	for _, w := range columnWidths {
-		totalWidth += w + 2
-	}
-
-	if totalWidth > width {
-		excess := totalWidth - width
-		for i := range columnWidths {
-			reduction := excess / len(columnWidths)
-			if columnWidths[i] > reduction {
-				columnWidths[i] -= reduction
-				excess -= reduction
-			}
-		}
-		totalWidth = width
-	}
-
-	pink := "\033[35m"
-	white := "\033[37m"
-	reset := "\033[0m"
-	title := "🤖 Last Run Containers"
-
-	fmt.Printf("%s%s%s%s%s\n", pink, strings.Repeat(" ", 2), title, strings.Repeat(" ", totalWidth-2-len(title)), reset)
-	fmt.Print(white)
-
-	printHorizontalBorder(columnWidths, "┌", "┬", "┐")
-	printRow(headers, columnWidths, "│")
-	printHorizontalBorder(columnWidths, "├", "┼", "┤")
-
-	for i, row := range tableData {
-		printRow(row, columnWidths, "│")
-		if i < len(tableData)-1 {
-			printHorizontalBorder(columnWidths, "├", "┼", "┤")
-		}
-	}
-
-	printHorizontalBorder(columnWidths, "└", "┴", "┘")
-
-	fmt.Print(reset)
-	fmt.Println()
+	table.Render()
 }
-
-func printHorizontalBorder(columnWidths []int, left, middle, right string) {
-	fmt.Print(left)
-	for i, width := range columnWidths {
-		fmt.Print(strings.Repeat("─", width+2))
-		if i < len(columnWidths)-1 {
-			fmt.Print(middle)
-		}
-	}
-	fmt.Println(right)
-}
-
-func printRow(row []string, columnWidths []int, separator string) {
-	fmt.Print(separator)
-	for i, col := range row {
-		fmt.Printf(" %-*s ", columnWidths[i], col)
-		fmt.Print(separator)
-	}
-	fmt.Println()
-}
-
-func distributeColumnWidths(availableWidth int, columnWidths []int) []int {
-	totalCurrentWidth := 0
-	for _, width := range columnWidths {
-		totalCurrentWidth += width
-	}
-	for i := range columnWidths {
-		columnWidths[i] = int(float64(columnWidths[i]) / float64(totalCurrentWidth) * float64(availableWidth))
-		if columnWidths[i] < 1 {
-			columnWidths[i] = 1
-		}
-	}
-	return columnWidths
-}
-
-func truncateString(s string, maxLength int) string {
-	if len(s) <= maxLength {
-		return s
-	}
-	return s[:maxLength-3] + "..."
-}
-
 
 func latestDockerID(labelKey string, labelValue string) string {
 	/* Get latest Docker container ID by image label
@@ -509,43 +308,6 @@ func latestDockerID(labelKey string, labelValue string) string {
 	return latestContainer.ID
 }
 
-func getContainerProperties(ctx context.Context, cli *client.Client, containerID string) (map[string]string, error) {
-	containerJSON, err := cli.ContainerInspect(ctx, containerID)
-	if err != nil {
-		return nil, err
-	}
-
-	// Extract the DISPLAY environment variable value
-	var xdisplay string
-	for _, env := range containerJSON.Config.Env {
-		if strings.HasPrefix(env, "DISPLAY=") {
-			xdisplay = strings.TrimPrefix(env, "DISPLAY=")
-			break
-		}
-	}
-
-	// Get the image details to find the size
-	imageInfo, _, err := cli.ImageInspectWithRaw(ctx, containerJSON.Image)
-	if err != nil {
-		return nil, err
-	}
-	imageSize := fmt.Sprintf("%.2f MB", float64(imageInfo.Size)/1024/1024)
-
-	props := map[string]string{
-		"XDisplay":      xdisplay,
-		"Shell":         containerJSON.Path,
-		"Privileged":    fmt.Sprintf("%v", containerJSON.HostConfig.Privileged),
-		"NetworkMode":   string(containerJSON.HostConfig.NetworkMode),
-		"ImageName":     containerJSON.Config.Image,
-		"ImageHash":     imageInfo.ID,
-		"Bindings":      strings.Join(containerJSON.HostConfig.Binds, ","),
-		"ExtraHosts":    strings.Join(containerJSON.HostConfig.ExtraHosts, ","),
-		"Size":          imageSize,
-	}
-
-	return props, nil
-}
-
 func DockerExec(containerIdentifier string, WorkingDir string) {
 	/*
 	 *   Start last or specified container ID/name and execute a program inside
@@ -573,27 +335,9 @@ func DockerExec(containerIdentifier string, WorkingDir string) {
 
 	common.PrintSuccessMessage(fmt.Sprintf("Container '%s' started successfully", containerIdentifier))
 
-	// Get container properties
-	props, err := getContainerProperties(ctx, cli, containerIdentifier)
-	if err != nil {
-		common.PrintErrorMessage(err)
-		return
-	}
-
-	// Get the container name
-	containerJSON, err := cli.ContainerInspect(ctx, containerIdentifier)
-	if err != nil {
-		common.PrintErrorMessage(err)
-		return
-	}
-	containerName := containerJSON.Name
-	if containerName[0] == '/' {
-		containerName = containerName[1:]
-	}
-
 	// Placeholder size, as it would require additional API calls
-	size := props["Size"]
-	printContainerProperties(ctx, cli, containerName, props, size)
+	size := "N/A"
+	printContainerProperties(containerIdentifier, dockerObj, size)
 
 	if dockerObj.shell == dockerObj.shell {
 		attachAndInteract(ctx, cli, containerIdentifier)
@@ -659,13 +403,8 @@ func DockerRun(containerName string) {
 		return
 	}
 
-	props, err := getContainerProperties(ctx, cli, resp.ID)
-	if err != nil {
-		common.PrintErrorMessage(err)
-		return
-	}
-	size := props["Size"]
-	printContainerProperties(ctx, cli, containerName, props, size)
+	size := "N/A" // Placeholder for size, as it would require additional API calls
+	printContainerProperties(containerName, dockerObj, size)
 
 	common.PrintSuccessMessage(fmt.Sprintf("Container '%s' started successfully", containerName))
 
@@ -929,6 +668,7 @@ func DockerRename(currentIdentifier string, newName string) {
 	}
 }
 
+
 func DockerRemove(containerIdentifier string) {
 	/* Remove a container by ID or name
 	   in(1): string container ID or name
@@ -970,6 +710,7 @@ func DockerRemove(containerIdentifier string) {
 	}
 }
 
+
 func ListImages(labelKey string, labelValue string) ([]image.Summary, error) {
 	/* List RF Swift Images
 	   in(1): string labelKey
@@ -1007,13 +748,10 @@ func ListImages(labelKey string, labelValue string) ([]image.Summary, error) {
 }
 
 func PrintImagesTable(labelKey string, labelValue string) {
-	ctx := context.Background()
-	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
-	if err != nil {
-		log.Fatalf("Error creating Docker client: %v", err)
-	}
-	defer cli.Close()
-
+	/* Print RF Swift Images in a table
+	   in(1): string labelKey
+	   in(2): string labelValue
+	*/
 	images, err := ListImages(labelKey, labelValue)
 	if err != nil {
 		log.Fatalf("Error listing images: %v", err)
@@ -1021,137 +759,28 @@ func PrintImagesTable(labelKey string, labelValue string) {
 
 	rfutils.ClearScreen()
 
-	// Prepare table data
-	tableData := [][]string{}
-	maxStatusLength := 0
+	table := tablewriter.NewWriter(os.Stdout)
+	table.SetHeader([]string{"Repository", "Tag", "Image ID", "Created", "Size"})
+
 	for _, image := range images {
 		for _, repoTag := range image.RepoTags {
 			repoTagParts := strings.Split(repoTag, ":")
 			repository := repoTagParts[0]
 			tag := repoTagParts[1]
-
-			// Check image status
-			isUpToDate, isCustom, err := checkImageStatus(ctx, cli, repository, tag)
-			var status string
-			if err != nil {
-				status = "Error"
-			} else if isCustom {
-				status = "Custom"
-			} else if isUpToDate {
-				status = "Up to date"
-			} else {
-				status = "Obsolete"
-			}
-
-			if len(status) > maxStatusLength {
-				maxStatusLength = len(status)
-			}
-
 			created := time.Unix(image.Created, 0).Format(time.RFC3339)
 			size := fmt.Sprintf("%.2f MB", float64(image.Size)/1024/1024)
 
-			tableData = append(tableData, []string{
+			table.Append([]string{
 				repository,
 				tag,
 				image.ID[:12],
 				created,
 				size,
-				status,
 			})
 		}
 	}
 
-	headers := []string{"Repository", "Tag", "Image ID", "Created", "Size", "Status"}
-	width, _, err := terminal.GetSize(int(os.Stdout.Fd()))
-	if err != nil {
-		width = 80 // default width if terminal size cannot be determined
-	}
-
-	columnWidths := make([]int, len(headers))
-	for i, header := range headers {
-		columnWidths[i] = len(header)
-	}
-	for _, row := range tableData {
-		for i, col := range row {
-			if len(col) > columnWidths[i] {
-				columnWidths[i] = len(col)
-			}
-		}
-	}
-
-	// Ensure the "Status" column is wide enough
-	columnWidths[len(columnWidths)-1] = max(columnWidths[len(columnWidths)-1], maxStatusLength)
-
-	// Adjust column widths to fit the terminal width
-	totalWidth := len(headers) + 1 // Adding 1 for the left border
-	for _, w := range columnWidths {
-		totalWidth += w + 2 // Adding 2 for padding
-	}
-
-	if totalWidth > width {
-		excess := totalWidth - width
-		for i := range columnWidths[:len(columnWidths)-1] { // Don't reduce the last (Status) column
-			reduction := excess / (len(columnWidths) - 1)
-			if columnWidths[i] > reduction {
-				columnWidths[i] -= reduction
-				excess -= reduction
-			}
-		}
-		totalWidth = width
-	}
-
-	yellow := "\033[33m"
-	white := "\033[37m"
-	reset := "\033[0m"
-	title := "📦 RF Swift Images"
-
-	fmt.Printf("%s%s%s%s%s\n", yellow, strings.Repeat(" ", 2), title, strings.Repeat(" ", totalWidth-2-len(title)), reset)
-	fmt.Print(white)
-
-	printHorizontalBorder(columnWidths, "┌", "┬", "┐")
-	printRow(headers, columnWidths, "│")
-	printHorizontalBorder(columnWidths, "├", "┼", "┤")
-
-	for i, row := range tableData {
-		printRowWithColor(row, columnWidths, "│")
-		if i < len(tableData)-1 {
-			printHorizontalBorder(columnWidths, "├", "┼", "┤")
-		}
-	}
-
-	printHorizontalBorder(columnWidths, "└", "┴", "┘")
-
-	fmt.Print(reset)
-	fmt.Println()
-}
-
-func printRowWithColor(row []string, columnWidths []int, separator string) {
-	fmt.Print(separator)
-	for i, col := range row {
-		if i == len(row)-1 { // Status column
-			status := col
-			color := ""
-			switch status {
-			case "Custom":
-				color = "\033[33m" // Yellow
-			case "Up to date":
-				color = "\033[32m" // Green
-			case "Obsolete":
-				color = "\033[31m" // Red
-			case "Error":
-				color = "\033[31m" // Red
-			}
-			fmt.Printf(" %s%-*s\033[0m ", color, columnWidths[i], status)
-		} else {
-			fmt.Printf(" %-*s ", columnWidths[i], truncateString(col, columnWidths[i]))
-		}
-		fmt.Print(separator)
-	}
-	fmt.Println()
-}
-func stripAnsiCodes(s string) string {
-	ansi := regexp.MustCompile(`\x1b\[[0-9;]*m`)
-	return ansi.ReplaceAllString(s, "")
+	table.Render()
 }
 
 func DeleteImage(imageIDOrTag string) error {

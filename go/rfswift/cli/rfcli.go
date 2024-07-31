@@ -26,6 +26,8 @@ var ImageTag string
 var ExtraHost string
 var UsbDevice string
 var PulseServer string
+var DockerName string
+var DockerNewName string
 
 var rootCmd = &cobra.Command{
 	Use:   "rfswift",
@@ -58,7 +60,7 @@ var runCmd = &cobra.Command{
 		if os == "linux" { // use pactl to configure ACLs
 			rfutils.SetPulseCTL(PulseServer)
 		}
-		rfdock.DockerRun()
+		rfdock.DockerRun(DockerName)
 	},
 }
 
@@ -118,12 +120,21 @@ var pullCmd = &cobra.Command{
 	},
 }
 
-var renameCmd = &cobra.Command{
-	Use:   "rename",
+var retagCmd = &cobra.Command{
+	Use:   "retag",
 	Short: "Rename an image",
 	Long:  `Rename an image with another tag`,
 	Run: func(cmd *cobra.Command, args []string) {
-		rfdock.DockerRename(ImageRef, ImageTag)
+		rfdock.DockerTag(ImageRef, ImageTag)
+	},
+}
+
+var renameCmd = &cobra.Command{
+	Use:   "rename",
+	Short: "Rename a container",
+	Long:  `Rename a container by another name`,
+	Run: func(cmd *cobra.Command, args []string) {
+		rfdock.DockerRename(DockerName, DockerNewName)
 	},
 }
 
@@ -266,6 +277,7 @@ func init() {
 	rootCmd.AddCommand(execCmd)
 	rootCmd.AddCommand(commitCmd)
 	rootCmd.AddCommand(renameCmd)
+	rootCmd.AddCommand(retagCmd)
 	rootCmd.AddCommand(installCmd)
 	rootCmd.AddCommand(removeCmd)
 	rootCmd.AddCommand(ImagesCmd)
@@ -302,8 +314,10 @@ func init() {
 	installCmd.Flags().StringVarP(&ContID, "container", "c", "", "container to run")
 
 	//pullCmd.MarkFlagRequired("tag")
-	renameCmd.Flags().StringVarP(&ImageRef, "image", "i", "", "image reference")
-	renameCmd.Flags().StringVarP(&ImageTag, "tag", "t", "", "rename to target tag")
+	retagCmd.Flags().StringVarP(&ImageRef, "image", "i", "", "image reference")
+	retagCmd.Flags().StringVarP(&ImageTag, "tag", "t", "", "rename to target tag")
+	renameCmd.Flags().StringVarP(&DockerName, "name", "n", "", "Docker current name")
+	renameCmd.Flags().StringVarP(&DockerNewName, "destination", "d", "", "Docker new name")
 	commitCmd.Flags().StringVarP(&ContID, "container", "c", "", "container to run")
 	commitCmd.Flags().StringVarP(&DImage, "image", "i", "", "image (default: 'myrfswift:latest')")
 	commitCmd.MarkFlagRequired("container")
@@ -318,6 +332,8 @@ func init() {
 	runCmd.Flags().StringVarP(&ExtraBind, "bind", "b", "", "extra bindings (separate them with commas)")
 	runCmd.Flags().StringVarP(&DImage, "image", "i", "", "image (default: 'myrfswift:latest')")
 	runCmd.Flags().StringVarP(&PulseServer, "pulseserver", "p", "tcp:127.0.0.1:34567", "PULSE SERVER TCP address (by default: tcp:127.0.0.1:34567)")
+	runCmd.Flags().StringVarP(&DockerName, "name", "n", "", "A docker name")
+	runCmd.MarkFlagRequired("name")
 	lastCmd.Flags().StringVarP(&FilterLast, "filter", "f", "", "filter by image name")
 }
 

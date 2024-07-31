@@ -7,27 +7,23 @@ import (
 	"log"
 	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/cheggaaa/pb/v3"
 	"github.com/go-resty/resty/v2"
+
+	common "penthertz/rfswift/common"
 )
 
 type Release struct {
 	TagName string `json:"tag_name"`
 }
 
-func getLatestRelease(owner string, repo string) (Release, error) {
-	/*
-	*	Get Latest Release information
-	*	in(1): owner string
-	*	in(2): repository string
-	*	out: status
-	*/ 
+func GetLatestRelease(owner string, repo string) (Release, error) {
 	client := resty.New()
 
 	resp, err := client.R().
@@ -50,25 +46,11 @@ func getLatestRelease(owner string, repo string) (Release, error) {
 	return release, nil
 }
 
-func constructDownloadURL(owner, repo, tag, fileName string) string {
-	/*
-	*	Construct download URL link for RF Swift release
-	*	in(1): owner string
-	*	in(2): repository string
-	*	in(3): tag string
-	*	in(4): filename string
-	*	out: status
-	*/ 
+func ConstructDownloadURL(owner, repo, tag, fileName string) string {
 	return fmt.Sprintf("https://github.com/%s/%s/releases/download/%s/%s", owner, repo, tag, fileName)
 }
 
-func downloadFile(url, dest string) error {
-	/*
-	*	Download RF swift binary realse
-	*	in(1): string url
-	*	in(2): destinarion string
-	*	out: status
-	*/ 
+func DownloadFile(url, dest string) error {
 	resp, err := http.Get(url)
 	if err != nil {
 		return err
@@ -91,6 +73,15 @@ func downloadFile(url, dest string) error {
 	defer out.Close()
 
 	bar := pb.Full.Start64(int64(size))
+	bar.Set(pb.Bytes, true)
+	go func() {
+		colors := []string{"\033[31m", "\033[32m", "\033[33m", "\033[34m", "\033[35m", "\033[36m"}
+		for i := 0; bar.IsStarted(); i++ {
+			bar.SetTemplateString(fmt.Sprintf("%s{{counters . }} {{bar . }} {{percent . }}%%", colors[i%len(colors)]))
+			time.Sleep(100 * time.Millisecond)
+		}
+	}()
+
 	barReader := bar.NewProxyReader(resp.Body)
 	_, err = io.Copy(out, barReader)
 	bar.Finish()
@@ -98,12 +89,7 @@ func downloadFile(url, dest string) error {
 	return err
 }
 
-func makeExecutable(path string) error {
-	/*
-	*	Making downloaded RF Swift binary executable
-	*	in(1): string path
-	*	out: status
-	*/ 
+func MakeExecutable(path string) error {
 	err := os.Chmod(path, 0755)
 	if err != nil {
 		return err
@@ -111,26 +97,12 @@ func makeExecutable(path string) error {
 	return nil
 }
 
-func replaceBinary(newBinaryPath, binaryName string) error {
-	/*
-	*	Replace original RF Swift binary by the latest release
-	*	in(1): latest binary string
-	*	in(2): original binary string
-	*	out: status
-	*/ 
-	// Ensure the new binary is executable
-	err := makeExecutable(newBinaryPath)
+func ReplaceBinary(newBinaryPath, currentBinaryPath string) error {
+	err := MakeExecutable(newBinaryPath)
 	if err != nil {
 		return err
 	}
 
-	// Determine the current binary path
-	currentBinaryPath, err := exec.LookPath(binaryName)
-	if err != nil {
-		return err
-	}
-
-	// Replace the current binary with the new one
 	err = os.Rename(newBinaryPath, currentBinaryPath)
 	if err != nil {
 		return err
@@ -139,16 +111,56 @@ func replaceBinary(newBinaryPath, binaryName string) error {
 	return nil
 }
 
+func VersionCompare(v1, v2 string) int {
+	parts1 := strings.Split(v1, ".")
+	parts2 := strings.Split(v2, ".")
+
+	for i := 0; i < len(parts1) && i < len(parts2); i++ {
+		p1, _ := strconv.Atoi(parts1[i])
+		p2, _ := strconv.Atoi(parts2[i])
+
+		if p1 > p2 {
+			return 1
+		}
+		if p1 < p2 {
+			return -1
+		}
+	}
+
+	if len(parts1) > len(parts2) {
+		return 1
+	}
+	if len(parts1) < len(parts2) {
+		return -1
+	}
+
+	return 0
+}
+
 func GetLatestRFSwift() {
-	/*
-	*	Print latest RF Swift binary from official Penthertz' repository
-	*/
 	owner := "PentHertz"
 	repo := "RF-Swift"
 
-	release, err := getLatestRelease(owner, repo)
+	release, err := GetLatestRelease(owner, repo)
 	if err != nil {
 		log.Fatalf("Error getting latest release: %v", err)
+	}
+
+	compareResult := VersionCompare(common.Version, release.TagName)
+	if compareResult >= 0 {
+		fmt.Printf("\033[35m[+]\033[0m \033[37mYou already have the latest version: \033[33m%s\033[0m\n", common.Version)
+		return
+	} else if compareResult < 0 {
+		fmt.Printf("\033[31m[!]\033[0m \033[37mYour current version (\033[33m%s\033[37m) is obsolete. Please update to version (\033[33m%s\033[37m).\n", common.Version, release.TagName)
+	}
+
+	fmt.Printf("\033[35m[+]\033[0m Do you want to update to the latest version? (yes/no): ")
+	var updateResponse string
+	fmt.Scanln(&updateResponse)
+
+	if strings.ToLower(updateResponse) != "yes" {
+		fmt.Println("Update aborted.")
+		return
 	}
 
 	arch := runtime.GOARCH
@@ -179,45 +191,42 @@ func GetLatestRFSwift() {
 		log.Fatalf("Unsupported operating system: %s", goos)
 	}
 
-	downloadURL := constructDownloadURL(owner, repo, release.TagName, fileName)
+	downloadURL := ConstructDownloadURL(owner, repo, release.TagName, fileName)
 	fmt.Printf("Latest release download URL: %s\n", downloadURL)
 
-	fmt.Printf("Do you want to replace the existing 'rfswift' binary with this new release? (yes/no): ")
+	fmt.Printf("\033[35m[+]\033[0m Do you want to replace the existing binary with this new release? (yes/no): ")
 	var response string
 	fmt.Scanln(&response)
 
+	currentBinaryPath, err := os.Executable()
+	if err != nil {
+		log.Fatalf("Error determining the current executable path: %v", err)
+	}
+
 	if response == "yes" {
 		tempDest := filepath.Join(os.TempDir(), fileName)
-		err = downloadFile(downloadURL, tempDest)
+		err = DownloadFile(downloadURL, tempDest)
 		if err != nil {
 			log.Fatalf("Error downloading file: %v", err)
 		}
 
-		err = replaceBinary(tempDest, "./rfswift")
+		err = ReplaceBinary(tempDest, currentBinaryPath)
 		if err != nil {
 			log.Fatalf("Error replacing binary: %v", err)
 		}
 
 		fmt.Println("File downloaded and replaced successfully.")
 	} else {
-		// Get the current binary directory
-		currentBinaryPath, err := exec.LookPath("./rfswift")
-		if err != nil {
-			log.Fatalf("Error locating current binary: %v", err)
-		}
-
 		var dest string
 		ext := filepath.Ext(fileName)
-		name := strings.TrimSuffix(fileName, ext)
-		dest = filepath.Join(filepath.Dir(currentBinaryPath), fmt.Sprintf("%s_%s%s", name, release.TagName, ext))
+		dest = filepath.Join(filepath.Dir(currentBinaryPath), fmt.Sprintf("%s_%s%s", strings.TrimSuffix(fileName, ext), release.TagName, ext))
 
-		err = downloadFile(downloadURL, dest)
+		err = DownloadFile(downloadURL, dest)
 		if err != nil {
 			log.Fatalf("Error downloading file: %v", err)
 		}
 
-		// Make the new binary executable
-		err = makeExecutable(dest)
+		err = MakeExecutable(dest)
 		if err != nil {
 			log.Fatalf("Error making binary executable: %v", err)
 		}
