@@ -95,13 +95,12 @@ func updateDockerObjFromConfig() {
 }
 
 func resizeTty(ctx context.Context, cli *client.Client, contid string, fd int) {
-	/**
-	 *  Resizes TTY to handle larger terminal window
-	 */
 	for {
-		width, height, err := terminal.GetSize(fd)
+		width, height, err := getTerminalSize(fd)
 		if err != nil {
-			panic(err)
+			log.Printf("Error getting terminal size: %v", err)
+			time.Sleep(1 * time.Second)
+			continue
 		}
 
 		err = cli.ContainerResize(ctx, contid, container.ResizeOptions{
@@ -109,7 +108,7 @@ func resizeTty(ctx context.Context, cli *client.Client, contid string, fd int) {
 			Width:  uint(width),
 		})
 		if err != nil {
-			panic(err)
+			log.Printf("Error resizing container TTY: %v", err)
 		}
 
 		time.Sleep(1 * time.Second)

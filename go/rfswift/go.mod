@@ -3,6 +3,7 @@ module penthertz/rfswift
 go 1.22.5
 
 require (
+	github.com/Azure/go-ansiterm v0.0.0-20230124172434-306776ec8161
 	github.com/cheggaaa/pb/v3 v3.1.5
 	github.com/docker/docker v27.1.1+incompatible
 	github.com/fatih/color v1.17.0
@@ -10,14 +11,12 @@ require (
 	github.com/lawl/pulseaudio v0.0.0-20220626105240-976bed5e247c
 	github.com/mattn/go-runewidth v0.0.16
 	github.com/moby/term v0.5.0
-	github.com/olekukonko/tablewriter v0.0.5
 	github.com/spf13/cobra v1.8.1
 	golang.org/x/crypto v0.25.0
 	golang.org/x/term v0.22.0
 )
 
 require (
-	github.com/Azure/go-ansiterm v0.0.0-20210617225240-d185dfc1b5a1 // indirect
 	github.com/Microsoft/go-winio v0.4.14 // indirect
 	github.com/VividCortex/ewma v1.2.0 // indirect
 	github.com/containerd/log v0.1.0 // indirect
