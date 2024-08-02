@@ -156,7 +156,7 @@ imagename = myrfswift:latest
 
 [container]
 shell = /bin/zsh
-bindings = /dev/bus/usb:/dev/bus/usb,/run/dbus/system_bus_socket:/run/dbus/system_bus_socket,/dev/snd:/dev/snd,/dev/dri:/dev/dri
+bindings = /dev/bus/usb:/dev/bus/usb,/run/dbus/system_bus_socket:/run/dbus/system_bus_socket,/dev/snd:/dev/snd,/dev/dri:/dev/dri,/dev/input:/dev/input
 network = host
 x11forward = /tmp/.X11-unix:/tmp/.X11-unix
 xdisplay = "DISPLAY=:0"

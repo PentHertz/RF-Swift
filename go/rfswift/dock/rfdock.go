@@ -51,7 +51,7 @@ var dockerObj = DockerInst{net: "host",
 	entrypoint:   "/bin/bash",
 	x11forward:   "/tmp/.X11-unix:/tmp/.X11-unix",
 	usbforward:   "/dev/bus/usb:/dev/bus/usb",
-	extrabinding: "/dev/ttyACM0:/dev/ttyACM0", // Some more if needed /run/dbus/system_bus_socket:/run/dbus/system_bus_socket,/dev/snd:/dev/snd,/dev/dri:/dev/dri
+	extrabinding: "/dev/ttyACM0:/dev/ttyACM0,/run/dbus/system_bus_socket:/run/dbus/system_bus_socket,/dev/snd:/dev/snd,/dev/dri:/dev/dri,/dev/input:/dev/input", // Some more if needed /run/dbus/system_bus_socket:/run/dbus/system_bus_socket,/dev/snd:/dev/snd,/dev/dri:/dev/dri
 	imagename:    "myrfswift:latest",
 	extrahosts:   "",
 	extraenv:     "",

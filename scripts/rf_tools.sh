@@ -30,6 +30,7 @@ function mirage_soft_install() {
 	echo apt-fast console-setup/codeset47 string "Guess optimal character set" | debconf-set-selections
 	echo apt-fast console-setup/charmap47 string "UTF-8" | debconf-set-selections
 	installfromnet "apt-fast install -y libpcsclite-dev pcsc-tools kmod kbd"
+	installfromnet "pip3 install keyboard"
 	goodecho "[+] Installing Mirage"
 	[ -d /root/thirdparty ] || mkdir -p /root/thirdparty
 	cd /root/thirdparty
