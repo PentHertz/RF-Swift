@@ -21,14 +21,14 @@ WORKDIR /root/scripts/
 RUN chmod +x entrypoint.sh
 
 # Tools for Telecom
-RUN ./entrypoint.sh yatebts_blade2_soft_install
-RUN ./entrypoint.sh openbts_uhd_soft_install
-RUN ./entrypoint.sh openbts_umts_soft_install
-RUN ./entrypoint.sh srsran4G_5GNSA_soft_install
-RUN ./entrypoint.sh srsran5GSA_soft_install
-RUN ./entrypoint.sh Open5GS_soft_install
-RUN ./entrypoint.sh pycrate_soft_install
-RUN ./entrypoint.sh osmobts_suite_soft_install
+RUN ./entrypoint.sh yatebts_blade2_soft_install && \
+	./entrypoint.sh openbts_uhd_soft_install && \
+	./entrypoint.sh openbts_umts_soft_install && \
+	./entrypoint.sh srsran4G_5GNSA_soft_install && \
+	./entrypoint.sh srsran5GSA_soft_install && \
+	./entrypoint.sh Open5GS_soft_install && \
+	./entrypoint.sh pycrate_soft_install && \
+	./entrypoint.sh osmobts_suite_soft_install
 # More to come!
 
 RUN mkdir -p /sdrtools/

@@ -20,15 +20,15 @@ WORKDIR /root/scripts/
 RUN chmod +x entrypoint.sh
 
 # Tools for Wi-Fi
-RUN ./entrypoint.sh common_nettools
-RUN ./entrypoint.sh aircrack_soft_install
-RUN ./entrypoint.sh reaver_soft_install
-RUN ./entrypoint.sh bully_soft_install
-RUN ./entrypoint.sh pixiewps_soft_install
-RUN ./entrypoint.sh Pyrit_soft_install
-RUN ./entrypoint.sh eaphammer_soft_install
-RUN ./entrypoint.sh airgeddon_soft_install
-RUN ./entrypoint.sh wifite2_soft_install
+RUN ./entrypoint.sh common_nettools && \
+	./entrypoint.sh aircrack_soft_install && \
+	./entrypoint.sh reaver_soft_install && \
+	./entrypoint.sh bully_soft_install && \
+	./entrypoint.sh pixiewps_soft_install && \
+	./entrypoint.sh Pyrit_soft_install && \
+	./entrypoint.sh eaphammer_soft_install && \
+	./entrypoint.sh airgeddon_soft_install && \
+	./entrypoint.sh wifite2_soft_install && \
 
 # Installing bettecap tool
 RUN ./entrypoint.sh bettercap_soft_install

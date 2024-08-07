@@ -20,11 +20,11 @@ WORKDIR /root/scripts/
 RUN chmod +x entrypoint.sh
 
 # Tools for RFID
-RUN ./entrypoint.sh proxmark3_soft_install
-RUN ./entrypoint.sh libnfc_soft_install
-RUN ./entrypoint.sh mfoc_soft_install
-RUN ./entrypoint.sh mfcuk_soft_install
-RUN ./entrypoint.sh mfread_soft_install
+RUN ./entrypoint.sh proxmark3_soft_install && \
+	./entrypoint.sh libnfc_soft_install && \
+	./entrypoint.sh mfoc_soft_install && \
+	./entrypoint.sh mfcuk_soft_install && \
+	./entrypoint.sh mfread_soft_install
 
 RUN mkdir -p /sdrtools/
 COPY run /sdrtools/run

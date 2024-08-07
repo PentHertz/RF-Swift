@@ -21,48 +21,48 @@ WORKDIR /root/scripts/
 RUN chmod +x entrypoint.sh
 
 # Installing GNU Radio + extra OOT modules
-RUN ./entrypoint.sh grgsm_grmod_install
-RUN ./entrypoint.sh grlora_grmod_install
-RUN ./entrypoint.sh grlorasdr_grmod_install
-RUN ./entrypoint.sh griridium_grmod_install
-RUN ./entrypoint.sh grinspector_grmod_install
-RUN ./entrypoint.sh gruaslink_grmod_install #TODO: fix Python3 compat at least
-RUN ./entrypoint.sh grX10_grmod_install
-RUN ./entrypoint.sh grgfdm_grmod_install
-RUN ./entrypoint.sh graaronia_rtsa_grmod_install
+RUN ./entrypoint.sh grgsm_grmod_install && \
+	./entrypoint.sh grlora_grmod_install && \
+	./entrypoint.sh grlorasdr_grmod_install && \
+	./entrypoint.sh griridium_grmod_install && \
+	./entrypoint.sh grinspector_grmod_install && \
+	./entrypoint.sh gruaslink_grmod_install && \ #TODO: fix Python3 compat at least
+	./entrypoint.sh grX10_grmod_install && \
+	./entrypoint.sh grgfdm_grmod_install && \
+	./entrypoint.sh graaronia_rtsa_grmod_install && \
+	./entrypoint.sh grais_grmod_install && \
+	./entrypoint.sh graistx_grmod_install && \
+	./entrypoint.sh grreveng_grmod_install && \
+	./entrypoint.sh grdvbs2_grmod_install && \
+	./entrypoint.sh grtempest_grmod_install && \ # Original module replaced by deep-tempest to use DL
+	./entrypoint.sh grdab_grmod_install && \
+	./entrypoint.sh grdect2_grmod_install && \
+	./entrypoint.sh grfoo_grmod_install && \
+	./entrypoint.sh grieee802-11_grmod_install && \ # depends on grfoo_grmod_install
+	./entrypoint.sh grieee802154_grmod_install && \ # depends on grfoo_grmod_install
+	./entrypoint.sh grrds_grmod_install && \
+	./entrypoint.sh grdroineid_grmod_install && \
+	./entrypoint.sh grsatellites_grmod_install && \
+	./entrypoint.sh gradsb_grmod_install && \
+	./entrypoint.sh grkeyfob_grmod_install && \
+	./entrypoint.sh grradar_grmod_install && \
+	./entrypoint.sh grnordic_grmod_install && \
+	./entrypoint.sh grpaint_grmod_install && \
+	./entrypoint.sh grzwavepoore_grmod_install && \
+	./entrypoint.sh grmixalot_grmod_install && \
+	./entrypoint.sh gr_DCF77_Receiver_grmod_install && \
+	./entrypoint.sh grj2497_grmod_install && \
+	./entrypoint.sh grairmodes_grmod_install && \
+	./entrypoint.sh grbb60_Receiver_grmod_install # Only available for x86_64
 #RUN ./entrypoint.sh grccsds_move_rtsa_grmod_install #TODO: fix problem with strtod_l dependency
-RUN ./entrypoint.sh grais_grmod_install
-RUN ./entrypoint.sh graistx_grmod_install
-RUN ./entrypoint.sh grreveng_grmod_install
-RUN ./entrypoint.sh grdvbs2_grmod_install
-RUN ./entrypoint.sh grtempest_grmod_install # Original module replaced by deep-tempest to use DL
 #RUN ./entrypoint.sh deeptempest_grmod_install
-RUN ./entrypoint.sh grdab_grmod_install
-RUN ./entrypoint.sh grdect2_grmod_install
-RUN ./entrypoint.sh grfoo_grmod_install
-RUN ./entrypoint.sh grieee802-11_grmod_install # depends on grfoo_grmod_install
-RUN ./entrypoint.sh grieee802154_grmod_install # depends on grfoo_grmod_install
-RUN ./entrypoint.sh grrds_grmod_install
-RUN ./entrypoint.sh grdroineid_grmod_install
-RUN ./entrypoint.sh grsatellites_grmod_install
-RUN ./entrypoint.sh gradsb_grmod_install
-RUN ./entrypoint.sh grkeyfob_grmod_install
-RUN ./entrypoint.sh grradar_grmod_install
-RUN ./entrypoint.sh grnordic_grmod_install
-RUN ./entrypoint.sh grpaint_grmod_install
-RUN ./entrypoint.sh grzwavepoore_grmod_install
-RUN ./entrypoint.sh grmixalot_grmod_install
-RUN ./entrypoint.sh gr_DCF77_Receiver_grmod_install
-RUN ./entrypoint.sh grj2497_grmod_install
-RUN ./entrypoint.sh grairmodes_grmod_install
-RUN ./entrypoint.sh grbb60_Receiver_grmod_install # Only available for x86_64
 ## TODO: More more!
 
 # Installing OOT modules from sandia
-RUN ./entrypoint.sh grpdu_utils_grmod_install
-RUN ./entrypoint.sh grsandia_utils_grmod_install # depends on grpdu_utils_grmod_install
-RUN ./entrypoint.sh grtiming_utils_grmod_install
-RUN ./entrypoint.sh grfhss_utils_grmod_install # depends on 'grpdu_utils_grmod_install' and 'grtiming_utils_grmod_install' and 'grsandia_utils_grmod_install'
+RUN ./entrypoint.sh grpdu_utils_grmod_install && \
+	./entrypoint.sh grsandia_utils_grmod_install && \ # depends on grpdu_utils_grmod_install
+	./entrypoint.sh grtiming_utils_grmod_install && \
+	./entrypoint.sh grfhss_utils_grmod_install # depends on 'grpdu_utils_grmod_install' and 'grtiming_utils_grmod_install' and 'grsandia_utils_grmod_install'
 
 
 FROM extraoot as gpumods
@@ -81,17 +81,17 @@ RUN ./entrypoint.sh cyberther_soft_install # Enabe OpenCL for better exp
 
 # Installing softwares
 #RUN ./entrypoint.sh sdrangel_soft_install
-RUN ./entrypoint.sh sdrangel_soft_fromsource_install
-RUN ./entrypoint.sh sdrpp_soft_fromsource_install # replace to 'sdrpp_soft_install' if you see bugs
-RUN ./entrypoint.sh sigdigger_soft_install
-RUN ./entrypoint.sh qsstv_soft_install
-RUN ./entrypoint.sh ice9_bluetooth_soft_install
-RUN ./entrypoint.sh meshtastic_sdr_soft_install
-RUN ./entrypoint.sh gps_sdr_sim_soft_install
-RUN ./entrypoint.sh nfclaboratory_soft_install
-RUN ./entrypoint.sh gpredict_sdr_soft_install
-RUN ./entrypoint.sh v2verifier_sdr_soft_install
-RUN ./entrypoint.sh wavingz_sdr_soft_install
+RUN ./entrypoint.sh sdrangel_soft_fromsource_install && \
+	./entrypoint.sh sdrpp_soft_fromsource_install && \ # replace to 'sdrpp_soft_install' if you see bugs
+	./entrypoint.sh sigdigger_soft_install && \
+	./entrypoint.sh qsstv_soft_install && \
+	./entrypoint.sh ice9_bluetooth_soft_install && \
+	./entrypoint.sh meshtastic_sdr_soft_install && \
+	./entrypoint.sh gps_sdr_sim_soft_install && \
+	./entrypoint.sh nfclaboratory_soft_install && \
+	./entrypoint.sh gpredict_sdr_soft_install && \
+	./entrypoint.sh v2verifier_sdr_soft_install && \
+	./entrypoint.sh wavingz_sdr_soft_install
 
 FROM extraoot as mldlsofts
 # Installing extra software

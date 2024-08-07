@@ -32,19 +32,18 @@ RUN DEBIAN_FRONTEND=noninteractive TZ=Etc/UTC \
 # Installing apt-fast wrapper
 RUN DEBIAN_FRONTEND=noninteractive \
 	apt-add-repository ppa:apt-fast/stable -y
-RUN apt-get update
-RUN echo apt-fast apt-fast/maxdownloads string 10 | debconf-set-selections
-RUN echo apt-fast apt-fast/dlflag boolean true | debconf-set-selections
-RUN echo apt-fast apt-fast/aptmanager string apt-get | debconf-set-selections
-
-RUN apt-get -y install apt-fast python3-matplotlib
+RUN apt-get update && \
+	echo apt-fast apt-fast/maxdownloads string 10 | debconf-set-selections && \
+	echo apt-fast apt-fast/dlflag boolean true | debconf-set-selections && \
+	echo apt-fast apt-fast/aptmanager string apt-get | debconf-set-selections && \
+	apt-get -y install apt-fast python3-matplotlib
 
 # Installing desktop features for next virtual desktop sessions
-RUN echo apt-fast keyboard-configuration/layout string "English (US)" | debconf-set-selections
-RUN echo apt-fast keyboard-configuration/variant string "English (US)" | debconf-set-selections
-RUN apt-fast -y install task-lxqt-desktop
-RUN apt-fast -y install language-pack-en
-RUN update-locale
+RUN echo apt-fast keyboard-configuration/layout string "English (US)" | debconf-set-selections && \
+	echo apt-fast keyboard-configuration/variant string "English (US)" | debconf-set-selections && \
+	apt-fast -y install task-lxqt-desktop && \
+	apt-fast -y install language-pack-en && \
+	update-locale
 
 # Audio part
 RUN apt-fast install -y pulseaudio-utils pulseaudio libasound2-dev libavahi-client-dev --no-install-recommends
@@ -57,27 +56,26 @@ WORKDIR /root/scripts/
 RUN chmod +x entrypoint.sh
 
 # Installing Terminal harnesses
-RUN ./entrypoint.sh fzf_soft_install
-RUN ./entrypoint.sh zsh_tools_install
-COPY config/.zshrc /root/.zshrc
-RUN ./entrypoint.sh arsenal_soft_install
+RUN ./entrypoint.sh fzf_soft_install && \
+	./entrypoint.sh zsh_tools_install && \
+	./entrypoint.sh arsenal_soft_install
+COPY config/.zshrc /root/.zshrc 
 
 # Installing Devices 
-
 ## Installing peripherals
-RUN ./entrypoint.sh ad_devices_install
+RUN ./entrypoint.sh ad_devices_install && \
+	./entrypoint.sh nuand_devices_install && \
+	./entrypoint.sh hackrf_devices_install && \
+	./entrypoint.sh airspy_devices_install && \
+	./entrypoint.sh limesdr_devices_install && \
+	./entrypoint.sh osmofl2k_devices_install && \
+	./entrypoint.sh xtrx_devices_install && \
+	./entrypoint.sh funcube_devices_install
 #RUN ./entrypoint.sh uhd_devices_install # to install after
 #RUN ./entrypoint.sh antsdr_uhd_devices_install # Disable orignal UHD
-RUN ./entrypoint.sh nuand_devices_install
 #RUN ./entrypoint.sh nuand_devices_fromsource_install
-RUN ./entrypoint.sh hackrf_devices_install
-RUN ./entrypoint.sh airspy_devices_install
-RUN ./entrypoint.sh limesdr_devices_install
 #RUN ./entrypoint.sh rtlsdr_devices_install to install later
 #RUN ./entrypoint.sh rtlsdrv4_devices_install # optionnal, remove rtlsdr_devices_install if you are using the v4 version
-RUN ./entrypoint.sh osmofl2k_devices_install
-RUN ./entrypoint.sh xtrx_devices_install
-RUN ./entrypoint.sh funcube_devices_install
 
 # Cleaning and quitting
 WORKDIR /root/

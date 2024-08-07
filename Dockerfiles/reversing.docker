@@ -20,20 +20,20 @@ WORKDIR /root/scripts/
 RUN chmod +x entrypoint.sh
 
 # Installing Reversing tools
-RUN ./entrypoint.sh kataistruct_soft_install
-RUN ./entrypoint.sh unicorn_soft_install
-RUN ./entrypoint.sh keystone_soft_install
-RUN ./entrypoint.sh radare2_soft_install
-RUN ./entrypoint.sh ghidra_soft_install
-RUN ./entrypoint.sh binwalk_soft_install
+RUN ./entrypoint.sh kataistruct_soft_install && \
+	./entrypoint.sh unicorn_soft_install && \
+	./entrypoint.sh keystone_soft_install && \
+	./entrypoint.sh radare2_soft_install && \
+	./entrypoint.sh ghidra_soft_install && \
+	./entrypoint.sh binwalk_soft_install
 
 # adding some SAST / DAST tools
-RUN ./entrypoint.sh LLVM_install
-RUN ./entrypoint.sh AFL_install
-RUN ./entrypoint.sh honggfuzz_install
-RUN ./entrypoint.sh semgrep_install
-RUN ./entrypoint.sh cppcheck_install
-RUN ./entrypoint.sh clang_static_analyzer_install
+RUN ./entrypoint.sh LLVM_install && \
+	./entrypoint.sh AFL_install && \
+	./entrypoint.sh honggfuzz_install && \
+	./entrypoint.sh semgrep_install && \
+	./entrypoint.sh cppcheck_install && \
+	./entrypoint.sh clang_static_analyzer_install
 
 #RUN ./entrypoint.sh cutter_soft_install #TODO: fix install
 #RUN ./entrypoint.sh qiling_soft_install # TODO: resolve some debconf
