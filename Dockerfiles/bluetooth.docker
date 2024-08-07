@@ -28,7 +28,7 @@ RUN ./entrypoint.sh blueztools_soft_install && \
 	./entrypoint.sh bdaddr_soft_install
 
 # Tools for Bluetooth LE
-RUN ./entrypoint.sh mirage_soft_install && \ # TODO: In progress
+RUN ./entrypoint.sh mirage_soft_install && \
 	./entrypoint.sh sniffle_soft_install
 
 # General monitoring software

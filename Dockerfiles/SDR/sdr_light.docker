@@ -35,13 +35,13 @@ RUN ./entrypoint.sh gnuradio_soft_install && \
 	./entrypoint.sh install_soapyPlutoSDR_modules
 
 # SDR extra tools
-RUN ./entrypoint.sh sdrpp_soft_fromsource_install && \ # replace to 'sdrpp_soft_install' if you see bugs
+RUN ./entrypoint.sh sdrpp_soft_fromsource_install && \
 	./entrypoint.sh retrogram_soapysdr_soft_install
 
 # Installing SA device modules
-RUN ./entrypoint.sh kc908_sa_device && \ # Note: Only works on x86_64
-	./entrypoint.sh signalhound_sa_device && \ # Note: Only works on x86_64
-	./entrypoint.sh harogic_sa_device # working only on x86_64 and aarch64
+RUN ./entrypoint.sh kc908_sa_device && \
+	./entrypoint.sh signalhound_sa_device && \ 
+	./entrypoint.sh harogic_sa_device
 
 # Calibration equipements
 RUN ./entrypoint.sh leobodnarv1_cal_device && \
