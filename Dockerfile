@@ -96,12 +96,12 @@ RUN ./entrypoint.sh gnuradio_soft_install && \
 	./entrypoint.sh install_soapyPlutoSDR_modules
 
 # SDR extra tools
-RUN ./entrypoint.sh sdrpp_soft_fromsource_install && \ # replace to 'sdrpp_soft_install' if you see bugs
+RUN ./entrypoint.sh sdrpp_soft_fromsource_install && \
 	./entrypoint.sh retrogram_soapysdr_soft_install
 
 # Installing SA device modules
-RUN ./entrypoint.sh kc908_sa_device && \ # Note: Only works on x86_64
-	./entrypoint.sh signalhound_sa_device && \ # Note: Only works on x86_64
+RUN ./entrypoint.sh kc908_sa_device && \
+	./entrypoint.sh signalhound_sa_device && \
 	./entrypoint.sh harogic_sa_device # working only on x86_64 and aarch64
 
 # Calibration equipements
@@ -123,7 +123,7 @@ RUN ./entrypoint.sh grgsm_grmod_install && \
 	./entrypoint.sh grlorasdr_grmod_install && \
 	./entrypoint.sh griridium_grmod_install && \
 	./entrypoint.sh grinspector_grmod_install && \
-	./entrypoint.sh gruaslink_grmod_install && \ #TODO: fix Python3 compat at least
+	./entrypoint.sh gruaslink_grmod_install && \
 	./entrypoint.sh grX10_grmod_install && \
 	./entrypoint.sh grgfdm_grmod_install && \
 	./entrypoint.sh graaronia_rtsa_grmod_install && \
@@ -131,12 +131,12 @@ RUN ./entrypoint.sh grgsm_grmod_install && \
 	./entrypoint.sh graistx_grmod_install && \
 	./entrypoint.sh grreveng_grmod_install && \
 	./entrypoint.sh grdvbs2_grmod_install && \
-	./entrypoint.sh grtempest_grmod_install && \ # Original module replaced by deep-tempest to use DL
+	./entrypoint.sh grtempest_grmod_install && \
 	./entrypoint.sh grdab_grmod_install && \
 	./entrypoint.sh grdect2_grmod_install && \
 	./entrypoint.sh grfoo_grmod_install && \
-	./entrypoint.sh grieee802-11_grmod_install && \ # depends on grfoo_grmod_install
-	./entrypoint.sh grieee802154_grmod_install && \ # depends on grfoo_grmod_install
+	./entrypoint.sh grieee802-11_grmod_install && \
+	./entrypoint.sh grieee802154_grmod_install && \
 	./entrypoint.sh grrds_grmod_install && \
 	./entrypoint.sh grdroineid_grmod_install && \
 	./entrypoint.sh grsatellites_grmod_install && \
@@ -157,7 +157,7 @@ RUN ./entrypoint.sh grgsm_grmod_install && \
 
 # Installing OOT modules from sandia
 RUN ./entrypoint.sh grpdu_utils_grmod_install && \
-	./entrypoint.sh grsandia_utils_grmod_install && \ # depends on grpdu_utils_grmod_install
+	./entrypoint.sh grsandia_utils_grmod_install && \
 	./entrypoint.sh grtiming_utils_grmod_install && \
 	./entrypoint.sh grfhss_utils_grmod_install # depends on 'grpdu_utils_grmod_install' and 'grtiming_utils_grmod_install' and 'grsandia_utils_grmod_install'
 
@@ -176,7 +176,6 @@ RUN ./entrypoint.sh cyberther_soft_install # Enabe OpenCL for better exp
 # Installing softwares
 #RUN ./entrypoint.sh sdrangel_soft_install
 RUN ./entrypoint.sh sdrangel_soft_fromsource_install && \
-	./entrypoint.sh sdrpp_soft_fromsource_install && \ # replace to 'sdrpp_soft_install' if you see bugs
 	./entrypoint.sh sigdigger_soft_install && \
 	./entrypoint.sh qsstv_soft_install && \
 	./entrypoint.sh ice9_bluetooth_soft_install && \
@@ -233,7 +232,7 @@ RUN ./entrypoint.sh blueztools_soft_install && \
 	./entrypoint.sh bdaddr_soft_install
 
 # Tools for Bluetooth LE
-RUN ./entrypoint.sh mirage_soft_install && \ # TODO: In progress
+RUN ./entrypoint.sh mirage_soft_install && \
 	./entrypoint.sh sniffle_soft_install
 
 # General monitoring software
