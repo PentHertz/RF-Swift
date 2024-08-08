@@ -215,7 +215,7 @@ RUN ./entrypoint.sh common_nettools && \
 	./entrypoint.sh wifite2_soft_install
 
 # Installing bettecap tool
-RUN ./entrypoint.sh bettercap_soft_install
+#RUN ./entrypoint.sh bettercap_soft_install
 
 # General monitoring software
 RUN ./entrypoint.sh kismet_soft_install
