@@ -24,6 +24,23 @@ function KCSDI_cal_device() {
 }
 
 function NanoVNASaver_cal_device() {
+    local ARCH=$(uname -m)
+
+    case "$ARCH" in
+        x86_64|amd64)
+            NanoVNASaver_cal_device_call
+            ;;
+        i?86)
+            NanoVNASaver_cal_device_call
+            ;;
+        *)
+            criticalecho "[-] Unsupported architecture: $ARCH. OpenBTS UMTS installation is not supported on this architecture."
+            return 1
+            ;;
+    esac
+}
+
+function NanoVNASaver_cal_device_call() {
 	goodecho "[+] Installing dependencies for NanoVNASaver"
 	[ -d /root/thirdparty ] || mkdir /root/thirdparty
 	cd /root/thirdparty

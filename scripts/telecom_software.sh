@@ -78,6 +78,23 @@ function openbts_uhd_soft_install() {
 }
 
 function openbts_umts_soft_install() {
+    local ARCH=$(uname -m)
+
+    case "$ARCH" in
+        x86_64|amd64)
+            openbts_umts_soft_install_call
+            ;;
+        i?86)
+            openbts_umts_soft_install_call
+            ;;
+        *)
+            criticalecho "[-] Unsupported architecture: $ARCH. OpenBTS UMTS installation is not supported on this architecture."
+            return 1
+            ;;
+    esac
+}
+
+function openbts_umts_soft_install_call() {
 	goodecho "[+] Feching OpenBTS UMTS from penthertz"
 	[ -d /telecom/3G ] || mkdir -p /telecom/3G
 	cd /telecom/3G

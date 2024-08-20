@@ -279,7 +279,24 @@ function qsstv_soft_install () {
 	sudo make install
 }
 
-function ice9_bluetooth_soft_install () {
+function ice9_bluetooth_soft_install() {
+    local ARCH=$(uname -m)
+
+    case "$ARCH" in
+        x86_64|amd64)
+            ice9_bluetooth_soft_install_call
+            ;;
+        i?86)
+            ice9_bluetooth_soft_install_call
+            ;;
+        *)
+            criticalecho "[-] Unsupported architecture: $ARCH. OpenBTS UMTS installation is not supported on this architecture."
+            return 1
+            ;;
+    esac
+}
+
+function ice9_bluetooth_soft_install_call () {
 	goodecho "[+] Installing dependencies for ice9_bluetooth"
 	installfromnet "apt-fast install -y libliquid-dev libhackrf-dev libbladerf-dev libuhd-dev libfftw3-dev"
 	goodecho "[+] Cloning ice9-bluetooth-sniffer"
