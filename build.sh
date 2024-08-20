@@ -22,12 +22,27 @@ check_docker() {
             sudo systemctl start docker
             sudo systemctl enable docker
             echo -e "${GREEN}Docker installed successfully.${NC}"
+            install_buildx
         else
             echo -e "${RED}Docker is required to proceed. Exiting.${NC}"
             exit 1
         fi
     else
         echo -e "${GREEN}Docker is already installed. Moving on.${NC}"
+        install_buildx
+    fi
+}
+
+install_buildx() {
+    if ! docker buildx version &> /dev/null; then
+        echo -e "${YELLOW}[+] Installing Docker Buildx${NC}"
+        docker run --privileged --rm tonistiigi/binfmt --install all
+        mkdir -p ~/.docker/cli-plugins/
+        curl -sSL https://github.com/docker/buildx/releases/latest/download/buildx-v0.11.2.linux-amd64 -o ~/.docker/cli-plugins/docker-buildx
+        chmod +x ~/.docker/cli-plugins/docker-buildx
+        echo -e "${GREEN}Docker Buildx installed successfully.${NC}"
+    else
+        echo -e "${GREEN}Docker Buildx is already installed. Moving on.${NC}"
     fi
 }
 
@@ -39,6 +54,7 @@ install_go() {
 
     if [ -x "/usr/local/go/bin/go" ]; then
         echo -e "${GREEN}golang is already installed in /usr/local/go/bin. Moving on.${NC}"
+        export PATH=$PATH:/usr/local/go/bin
         return 0
     fi
 
@@ -79,6 +95,9 @@ check_docker
 
 echo -e "${YELLOW}[+] Installing Go${NC}"
 install_go
+
+# Ensure Go binary is in the PATH for the current script session
+export PATH=$PATH:/usr/local/go/bin
 
 echo -e "${YELLOW}[+] Building RF Switch Go Project${NC}"
 building_rfswift
