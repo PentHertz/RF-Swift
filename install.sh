@@ -80,6 +80,8 @@ install_buildx() {
     version="v0.16.2"
 
     case "$arch" in
+        x86_64|amd64)
+            arch="amd64";;
         arm64|aarch64)
             arch="arm64";;
         *)
@@ -98,6 +100,17 @@ install_buildx() {
 }
 
 install_docker_compose() {
+    arch=$(uname -m)
+    version="v2.29.2"
+
+    case "$arch" in
+        x86_64|amd64)
+            arch="x86_64";;
+        arm64|aarch64)
+            arch="aarch64";;
+        *)
+            printf "${RED}Unsupported architecture: \"%s\" -> Download or build Go instead${NC}\n" "$arch" >&2; exit 2;;
+    esac
     if ! docker compose version &> /dev/null; then
         echo -e "${YELLOW}[+] Installing Docker Compose v2${NC}"
         DOCKER_CONFIG=${DOCKER_CONFIG:-$HOME/.docker}
