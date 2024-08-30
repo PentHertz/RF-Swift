@@ -3,7 +3,7 @@
 # This code is part of RF Switch by @Penthertz
 # Author(s): Sébastien Dudek (@FlUxIuS)
 
-# stop the script if any command fails
+# Stop the script if any command fails
 set -euo pipefail
 
 GREEN='\033[0;32m'
@@ -29,6 +29,7 @@ check_docker() {
         else
             echo -e "${GREEN}Docker is already installed. Moving on.${NC}"
             install_buildx
+            install_docker_compose
         fi
     fi
 }
@@ -40,6 +41,7 @@ install_docker_standard() {
     sudo systemctl enable docker
     echo -e "${GREEN}Docker installed successfully.${NC}"
     install_buildx
+    install_docker_compose
 }
 
 install_docker_steamdeck() {
@@ -57,6 +59,10 @@ install_docker_steamdeck() {
     echo -e "${YELLOW}[+] Re-enabling read-only mode on Steam Deck${NC}"
     sudo steamos-readonly enable
 
+    install_docker_compose_steamdeck
+}
+
+install_docker_compose_steamdeck() {
     echo -e "${YELLOW}[+] Installing Docker Compose v2 plugin${NC}"
     DOCKER_CONFIG=${DOCKER_CONFIG:-$HOME/.docker}
     mkdir -p $DOCKER_CONFIG/cli-plugins
@@ -74,11 +80,24 @@ install_buildx() {
         echo -e "${YELLOW}[+] Installing Docker Buildx${NC}"
         docker run --privileged --rm tonistiigi/binfmt --install all
         mkdir -p ~/.docker/cli-plugins/
-        curl -sSL https://github.com/docker/buildx/releases/latest/download/buildx-v0.11.2.linux-amd64 -o ~/.docker/cli-plugins/docker-buildx
+        curl -sSL https://github.com/docker/buildx/releases/download/v0.16.2/buildx-v0.16.2.linux-$(uname -m) -o ~/.docker/cli-plugins/docker-buildx
         chmod +x ~/.docker/cli-plugins/docker-buildx
         echo -e "${GREEN}Docker Buildx installed successfully.${NC}"
     else
         echo -e "${GREEN}Docker Buildx is already installed. Moving on.${NC}"
+    fi
+}
+
+install_docker_compose() {
+    if ! docker compose version &> /dev/null; then
+        echo -e "${YELLOW}[+] Installing Docker Compose v2${NC}"
+        DOCKER_CONFIG=${DOCKER_CONFIG:-$HOME/.docker}
+        mkdir -p $DOCKER_CONFIG/cli-plugins
+        curl -SL https://github.com/docker/compose/releases/download/v2.29.2/docker-compose-linux-$(uname -m) -o $DOCKER_CONFIG/cli-plugins/docker-compose
+        chmod +x $DOCKER_CONFIG/cli-plugins/docker-compose
+        echo -e "${GREEN}Docker Compose v2 installed successfully.${NC}"
+    else
+        echo -e "${GREEN}Docker Compose v2 is already installed. Moving on.${NC}"
     fi
 }
 
