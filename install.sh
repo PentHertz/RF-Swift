@@ -89,7 +89,7 @@ install_buildx() {
         echo -e "${YELLOW}[+] Installing Docker Buildx${NC}"
         docker run --privileged --rm tonistiigi/binfmt --install all
         mkdir -p ~/.docker/cli-plugins/
-        curl -sSL https://github.com/docker/buildx/releases/download/${version}/buildx-${version}.linux-$(uname -m) -o ~/.docker/cli-plugins/docker-buildx
+        curl -sSL https://github.com/docker/buildx/releases/download/${version}/buildx-${version}.linux-${arch} -o ~/.docker/cli-plugins/docker-buildx
         chmod +x ~/.docker/cli-plugins/docker-buildx
         echo -e "${GREEN}Docker Buildx installed successfully.${NC}"
     else
