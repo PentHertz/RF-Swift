@@ -8,8 +8,8 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"strings"
 	"runtime"
+	"strings"
 )
 
 // isCommandAvailable checks if a command is available in the system
@@ -90,14 +90,14 @@ func displayEnv() (string, error) {
 	return display, nil
 }
 
-func GetDisplayEnv() (string) {
+func GetDisplayEnv() string {
 	var dispenv string
 	display, err := displayEnv()
 	if err != nil {
 		fmt.Println("Error (using default 'DISPLAY=:0 value'):", err)
 		dispenv = "DISPLAY=:0"
 	} else {
-		dispenv = "DISPLAY="+display
+		dispenv = "DISPLAY=" + display
 	}
 	return dispenv
 }
