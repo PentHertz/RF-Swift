@@ -1,3 +1,6 @@
 [submodule "images"]
 	path = images
 	url = https://github.com/PentHertz/RF-Swift-images.git
+[submodule "RF-Swift-images"]
+	path = RF-Swift-images
+	url = https://github.com/PentHertz/RF-Swift-images.git
