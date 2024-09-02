@@ -12,6 +12,7 @@ Welcome to the RF Swift project! 🎉 Our mission is to provide all the essentia
   <br>
   <img alt="amd64" src="https://img.shields.io/badge/amd64%20(x86__64)-supported-success">
   <img alt="arm64" src="https://img.shields.io/badge/arm64%20(aarch64)-supported-success">
+  <img alt="risc64" src="https://img.shields.io/badge/risc64-supported-success">
   <br><br>
   <a target="_blank" rel="noopener noreferrer" href="https://x.com/intent/follow?screen_name=FlUxIuS" title="Follow"><img src="https://img.shields.io/twitter/follow/_nwodtuhs?label=FlUxIuS&style=social" alt="Twitter FlUxIuS"></a>
   <a target="_blank" rel="noopener noreferrer" href="https://x.com/intent/follow?screen_name=Penthertz" title="Follow"><img src="https://img.shields.io/twitter/follow/_nwodtuhs?label=Penthertz&style=social" alt="Twitter Dramelac"></a>
