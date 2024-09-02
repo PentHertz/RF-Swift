@@ -17,7 +17,7 @@ all: linux windows
 
 # Targets for Linux
 .PHONY: linux
-linux: linux_amd64 linux_arm64
+linux: linux_amd64 linux_arm64 linux_riscv64
 
 .PHONY: linux_amd64
 linux_amd64:
@@ -26,6 +26,10 @@ linux_amd64:
 .PHONY: linux_arm64
 linux_arm64:
 	GOOS=linux GOARCH=arm64 CGO_ENABLED=0 $(GO_BUILD) -tags '$(STATIC_BUILD_TAG)' -o $(OUT_DIR)/$(BIN)_linux_arm64 $(SRC)
+
+.PHONY: linux_riscv64
+linux_riscv64:
+	GOOS=linux GOARCH=riscv64 CGO_ENABLED=0 $(GO_BUILD) -tags '$(STATIC_BUILD_TAG)' -o $(OUT_DIR)/$(BIN)_linux_riscv64 $(SRC)
 
 # Targets for Windows
 .PHONY: windows

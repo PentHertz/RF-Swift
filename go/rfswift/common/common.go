@@ -2,10 +2,13 @@ package common
 
 import (
 	"fmt"
-  	"strings"
+	"os"
+	"path/filepath"
+	"runtime"
+	"strings"
 )
 
-var Version = "0.4.8"
+var Version = "0.4.9"
 var Branch = "main"
 var ascii_art = `                                                                                                    
                                                                                                                                                       
@@ -53,33 +56,50 @@ var ascii_art = `
 `
 
 func PrintASCII() {
-  colors := []string{
-    "\033[31m", // Red
-    "\033[33m", // Yellow
-    "\033[32m", // Green
-    "\033[36m", // Cyan
-    "\033[34m", // Blue
-    "\033[35m", // Magenta
-  }
-  reset := "\033[0m"
+	colors := []string{
+		"\033[31m", // Red
+		"\033[33m", // Yellow
+		"\033[32m", // Green
+		"\033[36m", // Cyan
+		"\033[34m", // Blue
+		"\033[35m", // Magenta
+	}
+	reset := "\033[0m"
 
-  lines := strings.Split(ascii_art, "\n")
-  for i, line := range lines {
-    color := colors[i%len(colors)]
-    fmt.Println(color + line + reset)
-  }
+	lines := strings.Split(ascii_art, "\n")
+	for i, line := range lines {
+		color := colors[i%len(colors)]
+		fmt.Println(color + line + reset)
+	}
 }
 
 func PrintErrorMessage(err error) {
-  red := "\033[31m"
-  white := "\033[37m"
-  reset := "\033[0m"
-  fmt.Printf("%s[!] %s%s%s\n", red, white, err.Error(), reset)
+	red := "\033[31m"
+	white := "\033[37m"
+	reset := "\033[0m"
+	fmt.Printf("%s[!] %s%s%s\n", red, white, err.Error(), reset)
 }
 
 func PrintSuccessMessage(message string) {
-  green := "\033[32m"
-  white := "\033[37m"
-  reset := "\033[0m"
-  fmt.Printf("%s[+] %s%s%s\n", green, white, message, reset)
+	green := "\033[32m"
+	white := "\033[37m"
+	reset := "\033[0m"
+	fmt.Printf("%s[+] %s%s%s\n", green, white, message, reset)
+}
+
+func ConfigFileByPlatform() string {
+	var configPath string
+
+	// Determine the platform-specific directory
+	switch runtime.GOOS {
+	case "windows":
+		configPath = filepath.Join(os.Getenv("APPDATA"), "rfswift", "config.ini")
+	case "darwin":
+		configPath = filepath.Join(os.Getenv("HOME"), "Library", "Application Support", "rfswift", "config.ini")
+	case "linux":
+		configPath = filepath.Join(os.Getenv("HOME"), ".config", "rfswift", "config.ini")
+	default:
+		configPath = "config.ini"
+	}
+	return configPath
 }

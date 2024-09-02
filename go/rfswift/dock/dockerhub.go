@@ -8,8 +8,8 @@ import (
 	"os"
 	"runtime"
 	"sort"
-	"time"
 	"strings"
+	"time"
 
 	"golang.org/x/crypto/ssh/terminal"
 	rfutils "penthertz/rfswift/rfutils"
@@ -134,91 +134,91 @@ func getLatestDockerHubTags(repo string, architecture string) ([]Tag, error) {
 }
 
 func ListDockerImagesRepo() {
-    repo := "penthertz/rfswift"
-    architecture := getArchitecture()
-    if architecture == "" {
-        log.Fatalf("Unsupported architecture: %s", runtime.GOARCH)
-    }
-    tags, err := getLatestDockerHubTags(repo, architecture)
-    if err != nil {
-        log.Fatalf("Error getting tags: %v", err)
-    }
+	repo := "penthertz/rfswift"
+	architecture := getArchitecture()
+	if architecture == "" {
+		log.Fatalf("Unsupported architecture: %s", runtime.GOARCH)
+	}
+	tags, err := getLatestDockerHubTags(repo, architecture)
+	if err != nil {
+		log.Fatalf("Error getting tags: %v", err)
+	}
 
-    rfutils.ClearScreen()
+	rfutils.ClearScreen()
 
-    headers := []string{"Tag", "Pushed Date", "Image", "Architecture"}
-    tableData := [][]string{}
+	headers := []string{"Tag", "Pushed Date", "Image", "Architecture"}
+	tableData := [][]string{}
 
-    for _, tag := range tags {
-        for _, image := range tag.Images {
-            if image.Architecture == architecture {
-                tableData = append(tableData, []string{
-                    tag.Name,
-                    tag.TagLastPushed.Format(time.RFC3339),
-                    fmt.Sprintf("%s:%s", repo, tag.Name),
-                    image.Architecture,
-                })
-                break
-            }
-        }
-    }
+	for _, tag := range tags {
+		for _, image := range tag.Images {
+			if image.Architecture == architecture {
+				tableData = append(tableData, []string{
+					tag.Name,
+					tag.TagLastPushed.Format(time.RFC3339),
+					fmt.Sprintf("%s:%s", repo, tag.Name),
+					image.Architecture,
+				})
+				break
+			}
+		}
+	}
 
-    width, _, err := terminal.GetSize(int(os.Stdout.Fd()))
-    if err != nil {
-        width = 80 // default width if terminal size cannot be determined
-    }
+	width, _, err := terminal.GetSize(int(os.Stdout.Fd()))
+	if err != nil {
+		width = 80 // default width if terminal size cannot be determined
+	}
 
-    columnWidths := make([]int, len(headers))
-    for i, header := range headers {
-        columnWidths[i] = len(header)
-    }
-    for _, row := range tableData {
-        for i, col := range row {
-            if len(col) > columnWidths[i] {
-                columnWidths[i] = len(col)
-            }
-        }
-    }
+	columnWidths := make([]int, len(headers))
+	for i, header := range headers {
+		columnWidths[i] = len(header)
+	}
+	for _, row := range tableData {
+		for i, col := range row {
+			if len(col) > columnWidths[i] {
+				columnWidths[i] = len(col)
+			}
+		}
+	}
 
-    // Adjust column widths to fit the terminal width
-    totalWidth := len(headers) + 1 // Adding 1 for the left border
-    for _, w := range columnWidths {
-        totalWidth += w + 2 // Adding 2 for padding
-    }
+	// Adjust column widths to fit the terminal width
+	totalWidth := len(headers) + 1 // Adding 1 for the left border
+	for _, w := range columnWidths {
+		totalWidth += w + 2 // Adding 2 for padding
+	}
 
-    if totalWidth > width {
-        excess := totalWidth - width
-        for i := range columnWidths {
-            reduction := excess / len(columnWidths)
-            if columnWidths[i] > reduction {
-                columnWidths[i] -= reduction
-                excess -= reduction
-            }
-        }
-        totalWidth = width
-    }
+	if totalWidth > width {
+		excess := totalWidth - width
+		for i := range columnWidths {
+			reduction := excess / len(columnWidths)
+			if columnWidths[i] > reduction {
+				columnWidths[i] -= reduction
+				excess -= reduction
+			}
+		}
+		totalWidth = width
+	}
 
-    blue := "\033[34m"
-    white := "\033[37m"
-    reset := "\033[0m"
-    title := "💿 Official Images"
+	blue := "\033[34m"
+	white := "\033[37m"
+	reset := "\033[0m"
+	title := "💿 Official Images"
 
-    fmt.Printf("%s%s%s%s%s\n", blue, strings.Repeat(" ", 2), title, strings.Repeat(" ", totalWidth-2-len(title)), reset)
-    fmt.Print(white)
+	fmt.Printf("%s%s%s%s%s\n", blue, strings.Repeat(" ", 2), title, strings.Repeat(" ", totalWidth-2-len(title)), reset)
+	fmt.Print(white)
 
-    printHorizontalBorder(columnWidths, "┌", "┬", "┐")
-    printRow(headers, columnWidths, "│")
-    printHorizontalBorder(columnWidths, "├", "┼", "┤")
+	printHorizontalBorder(columnWidths, "┌", "┬", "┐")
+	printRow(headers, columnWidths, "│")
+	printHorizontalBorder(columnWidths, "├", "┼", "┤")
 
-    for i, row := range tableData {
-        printRow(row, columnWidths, "│")
-        if i < len(tableData)-1 {
-            printHorizontalBorder(columnWidths, "├", "┼", "┤")
-        }
-    }
+	for i, row := range tableData {
+		printRow(row, columnWidths, "│")
+		if i < len(tableData)-1 {
+			printHorizontalBorder(columnWidths, "├", "┼", "┤")
+		}
+	}
 
-    printHorizontalBorder(columnWidths, "└", "┴", "┘")
+	printHorizontalBorder(columnWidths, "└", "┴", "┘")
 
-    fmt.Print(reset)
-    fmt.Println()
+	fmt.Print(reset)
+	fmt.Println()
 }

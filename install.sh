@@ -173,8 +173,7 @@ build_docker_image() {
     echo "1) amd64"
     echo "2) arm64/v8"
     echo "3) riscv64"
-    echo "4) all"
-    read -p "Choose an option (1, 2, 3, or 4): " arch_option
+    read -p "Choose an option (1, 2, or 3): " arch_option
 
     case "$arch_option" in
         1)
@@ -185,9 +184,6 @@ build_docker_image() {
             ;;
         3)
             PLATFORM="linux/riscv64"
-            ;;
-        4)
-            PLATFORM="linux/amd64,linux/arm64/v8,linux/riscv64"
             ;;
         *)
             echo -e "${RED}Invalid option. Exiting.${NC}"
@@ -279,6 +275,10 @@ export PATH=$PATH:/usr/local/go/bin
 echo -e "${YELLOW}[+] Building RF Switch Go Project${NC}"
 building_rfswift
 
+
+# Ask the user if they want to create an alias after the installation
+install_binary_alias
+
 # Prompt the user if they want to build a Docker container, pull an image, or exit
 echo "Do you want to build a Docker container, pull an existing image, or exit?"
 echo "1) Build Docker container"
@@ -297,8 +297,5 @@ else
     echo -e "${RED}Invalid option. Exiting.${NC}"
     exit 1
 fi
-
-# Ask the user if they want to create an alias after the installation
-install_binary_alias
 
 echo -e "${GREEN}Installation and setup completed.${NC}"

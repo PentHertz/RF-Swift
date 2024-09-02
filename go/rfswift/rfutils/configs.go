@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"path/filepath"
 )
 
 type Config struct {
@@ -12,13 +13,13 @@ type Config struct {
 		ImageName string
 	}
 	Container struct {
-		Shell       string
-		Bindings    []string
-		Network     string
-		X11Forward  string
-		XDisplay    string
-		ExtraHost   string
-		ExtraEnv    string
+		Shell      string
+		Bindings   []string
+		Network    string
+		X11Forward string
+		XDisplay   string
+		ExtraHost  string
+		ExtraEnv   string
 	}
 	Audio struct {
 		PulseServer string
@@ -38,7 +39,7 @@ func ReadOrCreateConfig(filename string) (*Config, error) {
 	config := &Config{}
 
 	if _, err := os.Stat(filename); os.IsNotExist(err) {
-		printOrange("Config file not found. Would you like to create one with default values? (y/n)")
+		printOrange("Config file not found in your user profile. Would you like to create one with default values? (y/n)")
 		reader := bufio.NewReader(os.Stdin)
 		response, _ := reader.ReadString('\n')
 		if strings.ToLower(strings.TrimSpace(response)) == "y" {
@@ -59,7 +60,7 @@ func ReadOrCreateConfig(filename string) (*Config, error) {
 
 	scanner := bufio.NewScanner(file)
 	currentSection := ""
-            
+
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
 		if line == "" || strings.HasPrefix(line, "#") {
@@ -166,6 +167,12 @@ extraenv = ""
 [audio]
 pulse_server = tcp:localhost:34567
 `
+
+	dir := filepath.Dir(filename)
+	if err := os.MkdirAll(dir, os.ModePerm); err != nil {
+		return fmt.Errorf("failed to create directory %s: %w", dir, err)
+	}
+
 	return os.WriteFile(filename, []byte(content), 0644)
 }
 

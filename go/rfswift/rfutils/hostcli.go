@@ -7,12 +7,12 @@ package rfutils
 import (
 	"bufio"
 	"fmt"
+	"net"
 	"os"
 	"os/exec"
-	"strings"
-	"net"
-	"time"
 	"runtime"
+	"strings"
+	"time"
 
 	"github.com/lawl/pulseaudio"
 )
@@ -250,31 +250,30 @@ func AutoUnbindDetachUSB_Windows() {
 }
 
 func checkPulseServer(address string, port string) {
-    // Combine address and port to create the endpoint
-    endpoint := net.JoinHostPort(address, port)
+	// Combine address and port to create the endpoint
+	endpoint := net.JoinHostPort(address, port)
 
-    // Attempt to establish a connection
-    conn, err := net.DialTimeout("tcp", endpoint, 5*time.Second)
-    if err != nil {
-        // Connection failed, prepare the error message
-        message := fmt.Sprintf("\033[33mWarning: Unable to connect to Pulse server at %s\033[0m\n", endpoint)
-        message += retInstallationInstructions()
-        
-        // Display the notification
-        DisplayNotification(" Warning", message, "warning")
-        return
-    }
+	// Attempt to establish a connection
+	conn, err := net.DialTimeout("tcp", endpoint, 5*time.Second)
+	if err != nil {
+		// Connection failed, prepare the error message
+		message := fmt.Sprintf("\033[33mWarning: Unable to connect to Pulse server at %s\033[0m\n", endpoint)
+		message += retInstallationInstructions()
 
-    // Close the connection if successful
-    conn.Close()
+		// Display the notification
+		DisplayNotification(" Warning", message, "warning")
+		return
+	}
 
-    // Prepare success message
-    successMessage := fmt.Sprintf("Pulse server found at %s", endpoint)
+	// Close the connection if successful
+	conn.Close()
 
-    // Display success notification
-    DisplayNotification(" Audio", successMessage, "info")
+	// Prepare success message
+	successMessage := fmt.Sprintf("Pulse server found at %s", endpoint)
+
+	// Display success notification
+	DisplayNotification(" Audio", successMessage, "info")
 }
-
 
 func retInstallationInstructions() string {
 	var retstring strings.Builder
@@ -311,17 +310,17 @@ func retInstallationInstructions() string {
 
 // isArchLinux checks if the current Linux distribution is Arch Linux
 func isArchLinux() bool {
-    // This function checks if /etc/arch-release exists to determine if the system is Arch Linux
-    if _, err := os.Stat("/etc/arch-release"); err == nil {
-        return true
-    }
-    return false
+	// This function checks if /etc/arch-release exists to determine if the system is Arch Linux
+	if _, err := os.Stat("/etc/arch-release"); err == nil {
+		return true
+	}
+	return false
 }
 
 func SetPulseCTL(address string) error {
 	/*
 	*	Use PACTL in command line to accept connection in TCP with defined port
-	*/
+	 */
 	parts := strings.Split(address, ":")
 	if len(parts) != 3 {
 		return fmt.Errorf("invalid address format, expected format 'protocol:ip:port'")
@@ -353,7 +352,7 @@ func SetPulseCTL(address string) error {
 func UnloadPulseCTL() error {
 	/*
 	*	Unload pulseaudio TCP module
-	*/
+	 */
 	cmd := exec.Command("pactl", "list", "modules")
 	output, err := cmd.CombinedOutput()
 	if err != nil {

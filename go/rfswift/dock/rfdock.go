@@ -5,11 +5,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"os"
+	"regexp"
 	"strings"
 	"time"
-	"log"
-	"regexp"
 
 	"context"
 	"github.com/docker/docker/api/types"
@@ -22,8 +22,8 @@ import (
 	"github.com/moby/term"
 	"golang.org/x/crypto/ssh/terminal"
 
-	rfutils "penthertz/rfswift/rfutils"
 	common "penthertz/rfswift/common"
+	rfutils "penthertz/rfswift/rfutils"
 )
 
 var inout chan []byte
@@ -64,7 +64,7 @@ func init() {
 }
 
 func updateDockerObjFromConfig() {
-	config, err := rfutils.ReadOrCreateConfig("config.ini")
+	config, err := rfutils.ReadOrCreateConfig(common.ConfigFileByPlatform())
 	if err != nil {
 		log.Printf("Error reading config: %v. Using default values.", err)
 		return
@@ -140,7 +140,6 @@ func parseImageName(imageName string) (string, string) {
 	}
 	return repo, tag
 }
-
 
 func getLocalImageCreationDate(ctx context.Context, cli *client.Client, imageName string) (time.Time, error) {
 	localImage, _, err := cli.ImageInspectWithRaw(ctx, imageName)
@@ -467,7 +466,6 @@ func truncateString(s string, maxLength int) string {
 	return s[:maxLength-3] + "..."
 }
 
-
 func latestDockerID(labelKey string, labelValue string) string {
 	/* Get latest Docker container ID by image label
 	   in(1): string label key
@@ -531,15 +529,15 @@ func getContainerProperties(ctx context.Context, cli *client.Client, containerID
 	imageSize := fmt.Sprintf("%.2f MB", float64(imageInfo.Size)/1024/1024)
 
 	props := map[string]string{
-		"XDisplay":      xdisplay,
-		"Shell":         containerJSON.Path,
-		"Privileged":    fmt.Sprintf("%v", containerJSON.HostConfig.Privileged),
-		"NetworkMode":   string(containerJSON.HostConfig.NetworkMode),
-		"ImageName":     containerJSON.Config.Image,
-		"ImageHash":     imageInfo.ID,
-		"Bindings":      strings.Join(containerJSON.HostConfig.Binds, ","),
-		"ExtraHosts":    strings.Join(containerJSON.HostConfig.ExtraHosts, ","),
-		"Size":          imageSize,
+		"XDisplay":    xdisplay,
+		"Shell":       containerJSON.Path,
+		"Privileged":  fmt.Sprintf("%v", containerJSON.HostConfig.Privileged),
+		"NetworkMode": string(containerJSON.HostConfig.NetworkMode),
+		"ImageName":   containerJSON.Config.Image,
+		"ImageHash":   imageInfo.ID,
+		"Bindings":    strings.Join(containerJSON.HostConfig.Binds, ","),
+		"ExtraHosts":  strings.Join(containerJSON.HostConfig.ExtraHosts, ","),
+		"Size":        imageSize,
 	}
 
 	return props, nil
