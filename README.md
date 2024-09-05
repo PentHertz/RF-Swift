@@ -15,7 +15,7 @@ Welcome to the RF Swift project! 🎉 Our mission is to provide all the essentia
   <img alt="risc64" src="https://img.shields.io/badge/risc64-supported-success">
   <br><br>
   <a target="_blank" rel="noopener noreferrer" href="https://x.com/intent/follow?screen_name=FlUxIuS" title="Follow"><img src="https://img.shields.io/twitter/follow/_nwodtuhs?label=FlUxIuS&style=social" alt="Twitter FlUxIuS"></a>
-  <a target="_blank" rel="noopener noreferrer" href="https://x.com/intent/follow?screen_name=Penthertz" title="Follow"><img src="https://img.shields.io/twitter/follow/_nwodtuhs?label=Penthertz&style=social" alt="Twitter Dramelac"></a>
+  <a target="_blank" rel="noopener noreferrer" href="https://x.com/intent/follow?screen_name=Penthertz" title="Follow"><img src="https://img.shields.io/twitter/follow/_nwodtuhs?label=Penthertz&style=social" alt="Twitter Penthertz"></a>
   <br><br>
   <a target="_blank" rel="noopener noreferrer" href="https://discord.gg/NS3HayKrpA" title="Join us on Discord"><img src="https://github.com/PentHertz/RF-Swift-docs/blob/main/.assets/discord_join_us.png?raw=true" width="150" alt="Join us on Discord"></a>
   <br><br>
@@ -34,9 +34,9 @@ Our philosophy is straightforward: maintain the integrity of your Linux or Windo
 
 ## Documentation
 
-We have a new [documentation that will guide you through the different steps](https://rf-swift.readthedocs.io/index.html).
+We have a new [documentation that will guide you through the different steps](https://rfswift.io/).
 
-A list of included tools can be also seen [here](https://rf-swift.readthedocs.io/getting-started/tools_per_tag.html).
+A list of included tools can be also seen [here](https://rfswift.io/docs/guide/list-of-tools/).
 
 ## Quick overview
 
