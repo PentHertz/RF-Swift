@@ -196,6 +196,7 @@ build_docker_image() {
     DEFAULT_DOCKERFILE="Dockerfile"
 
     # Prompt the user for input with default values
+    read -p "Enter you ressources directory (where configs, and scripts are placed): " ressourcesdir
     read -p "Enter image tag value (default: $DEFAULT_IMAGE): " imagename
     read -p "Enter value for Dockerfile to use (default: $DEFAULT_DOCKERFILE): " dockerfile
 
@@ -204,7 +205,7 @@ build_docker_image() {
     dockerfile=${dockerfile:-$DEFAULT_DOCKERFILE}
 
     echo -e "${YELLOW}[+] Building the Docker container for $PLATFORM${NC}"
-    sudo docker buildx build --platform $PLATFORM -t $imagename -f $dockerfile .
+    sudo docker buildx build --platform $PLATFORM -t $imagename -f $dockerfile ressourcesdir
 }
 
 pull_docker_image() {

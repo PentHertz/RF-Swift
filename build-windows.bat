@@ -62,17 +62,21 @@ if "%option%" == "1" (
     REM Set default values
     set "DEFAULT_IMAGE=myrfswift:latest"
     set "DEFAULT_DOCKERFILE=Dockerfile"
+    set "DEFAULT_REDIR=."
 
     REM Prompt the user for input with default values
+
+    set /p ressourcesdir="Enter ressources directory where configuration and scripts are placed (default: !DEFAULT_REDIR!): "
     set /p imagename="Enter image tag value (default: !DEFAULT_IMAGE!): "
     set /p dockerfile="Enter value for Dockerfile to use (default: !DEFAULT_DOCKERFILE!): "
 
     REM Use default values if variables are empty
+    if "!ressourcesdir!" == "" set "imagename=!DEFAULT_REDIR!"
     if "!imagename!" == "" set "imagename=!DEFAULT_IMAGE!"
-    if "!dockerfile!" == "" set "dockerfile=!DEFAULT_DOCKERFILE!"
+    if "!ressourcesdir!" == "" set "dockerfile=!DEFAULT_DOCKERFILE!"
 
     echo Building the Docker container
-    docker build . -t !imagename! -f !dockerfile!
+    docker build !imagename! -t !imagename! -f !dockerfile!
 ) else if "%option%" == "2" (
     set "DEFAULT_PULL_IMAGE=penthertz/rfswift:latest"
     set /p pull_image="Enter the image tag to pull (default: !DEFAULT_PULL_IMAGE!): "
