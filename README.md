@@ -34,9 +34,9 @@ Our philosophy is straightforward: maintain the integrity of your Linux or Windo
 
 ## Documentation
 
-We have a new [documentation that will guide you through the different steps](https://rf-swift.readthedocs.io/index.html).
+We have a new [documentation that will guide you through the different steps](https://rfswift.io/).
 
-A list of included tools can be also seen [here](https://rf-swift.readthedocs.io/getting-started/tools_per_tag.html).
+A list of included tools can be also seen [here](https://rfswift.io/docs/guide/list-of-tools/).
 
 ## Quick overview
 
