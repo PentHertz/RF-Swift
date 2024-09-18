@@ -53,7 +53,7 @@ var runCmd = &cobra.Command{
 		}
 		rfdock.DockerSetXDisplay(XDisplay)
 		rfdock.DockerSetShell(ExecCmd)
-		rfdock.DockerAddBiding(ExtraBind)
+		rfdock.DockerAddBinding(ExtraBind)
 		rfdock.DockerSetImage(DImage)
 		rfdock.DockerSetExtraHosts(ExtraHost)
 		rfdock.DockerSetPulse(PulseServer)
