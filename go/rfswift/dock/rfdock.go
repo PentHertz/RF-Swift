@@ -10,6 +10,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
+	"os/signal"
+    "syscall"
 
 	"context"
 	"github.com/docker/docker/api/types"
@@ -544,59 +546,140 @@ func getContainerProperties(ctx context.Context, cli *client.Client, containerID
 }
 
 func DockerExec(containerIdentifier string, WorkingDir string) {
-	/*
-	 *   Start last or specified container ID/name and execute a program inside
-	 *    in(1): string container ID or name
-	 */
+    ctx := context.Background()
+    cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
+    if err != nil {
+        common.PrintErrorMessage(err)
+        return
+    }
+    defer cli.Close()
 
-	ctx := context.Background()
-	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
-	if err != nil {
-		common.PrintErrorMessage(err)
-		return
-	}
-	defer cli.Close()
+    if containerIdentifier == "" {
+        labelKey := "org.container.project"
+        labelValue := "rfswift"
+        containerIdentifier = latestDockerID(labelKey, labelValue)
+    }
 
-	if containerIdentifier == "" {
-		labelKey := "org.container.project"
-		labelValue := "rfswift"
-		containerIdentifier = latestDockerID(labelKey, labelValue)
-	}
+    if err := cli.ContainerStart(ctx, containerIdentifier, container.StartOptions{}); err != nil {
+        common.PrintErrorMessage(err)
+        return
+    }
 
-	if err := cli.ContainerStart(ctx, containerIdentifier, container.StartOptions{}); err != nil {
-		common.PrintErrorMessage(err)
-		return
-	}
+    common.PrintSuccessMessage(fmt.Sprintf("Container '%s' started successfully", containerIdentifier))
 
-	common.PrintSuccessMessage(fmt.Sprintf("Container '%s' started successfully", containerIdentifier))
+    // Get container properties and name
+    props, err := getContainerProperties(ctx, cli, containerIdentifier)
+    if err != nil {
+        common.PrintErrorMessage(err)
+        return
+    }
 
-	// Get container properties
-	props, err := getContainerProperties(ctx, cli, containerIdentifier)
-	if err != nil {
-		common.PrintErrorMessage(err)
-		return
-	}
+    containerJSON, err := cli.ContainerInspect(ctx, containerIdentifier)
+    if err != nil {
+        common.PrintErrorMessage(err)
+        return
+    }
+    containerName := strings.TrimPrefix(containerJSON.Name, "/")
 
-	// Get the container name
-	containerJSON, err := cli.ContainerInspect(ctx, containerIdentifier)
-	if err != nil {
-		common.PrintErrorMessage(err)
-		return
-	}
-	containerName := containerJSON.Name
-	if containerName[0] == '/' {
-		containerName = containerName[1:]
-	}
+    size := props["Size"]
+    printContainerProperties(ctx, cli, containerName, props, size)
 
-	// Placeholder size, as it would require additional API calls
-	size := props["Size"]
-	printContainerProperties(ctx, cli, containerName, props, size)
+    // Create exec configuration
+    execConfig := types.ExecConfig{
+        AttachStdin:  true,
+        AttachStdout: true,
+        AttachStderr: true,
+        Tty:          true,
+        Cmd:          []string{dockerObj.shell},
+        WorkingDir:   WorkingDir,
+    }
 
-	if dockerObj.shell == dockerObj.shell {
-		attachAndInteract(ctx, cli, containerIdentifier)
-	} else {
-		execCommandInContainer(ctx, cli, containerIdentifier, WorkingDir)
-	}
+    // Create exec instance
+    execID, err := cli.ContainerExecCreate(ctx, containerIdentifier, execConfig)
+    if err != nil {
+        common.PrintErrorMessage(fmt.Errorf("failed to create exec instance: %v", err))
+        return
+    }
+
+    // Attach to the exec instance
+    attachResp, err := cli.ContainerExecAttach(ctx, execID.ID, types.ExecStartCheck{Tty: true})
+    if err != nil {
+        common.PrintErrorMessage(fmt.Errorf("failed to attach to exec instance: %v", err))
+        return
+    }
+    defer attachResp.Close()
+
+    // Setup raw terminal
+    inFd, inIsTerminal := term.GetFdInfo(os.Stdin)
+    outFd, outIsTerminal := term.GetFdInfo(os.Stdout)
+
+    if inIsTerminal {
+        state, err := term.SetRawTerminal(inFd)
+        if err != nil {
+            common.PrintErrorMessage(fmt.Errorf("failed to set raw terminal: %v", err))
+            return
+        }
+        defer term.RestoreTerminal(inFd, state)
+    }
+
+    // Start the exec instance
+    if err := cli.ContainerExecStart(ctx, execID.ID, types.ExecStartCheck{Tty: true}); err != nil {
+        common.PrintErrorMessage(fmt.Errorf("failed to start exec instance: %v", err))
+        return
+    }
+
+    // Handle terminal resize
+    go func() {
+        sigchan := make(chan os.Signal, 1)
+        signal.Notify(sigchan, syscall.SIGWINCH)
+        defer signal.Stop(sigchan)
+
+        for range sigchan {
+            if outIsTerminal {
+                if size, err := term.GetWinsize(outFd); err == nil {
+                    cli.ContainerExecResize(ctx, execID.ID, container.ResizeOptions{
+                        Height: uint(size.Height),
+                        Width:  uint(size.Width),
+                    })
+                }
+            }
+        }
+    }()
+
+    // Trigger initial resize
+    if outIsTerminal {
+        if size, err := term.GetWinsize(outFd); err == nil {
+            cli.ContainerExecResize(ctx, execID.ID, container.ResizeOptions{
+                Height: uint(size.Height),
+                Width:  uint(size.Width),
+            })
+        }
+    }
+
+    // Handle I/O
+    outputDone := make(chan error)
+    go func() {
+        _, err := io.Copy(os.Stdout, attachResp.Reader)
+        outputDone <- err
+    }()
+
+    go func() {
+        if inIsTerminal {
+            io.Copy(attachResp.Conn, os.Stdin)
+        } else {
+            io.Copy(attachResp.Conn, os.Stdin)
+        }
+        attachResp.CloseWrite()
+    }()
+
+    select {
+    case err := <-outputDone:
+        if err != nil {
+            common.PrintErrorMessage(fmt.Errorf("error in output processing: %v", err))
+        }
+    }
+
+    common.PrintSuccessMessage(fmt.Sprintf("Shell session in container '%s' ended", containerName))
 }
 
 func DockerRun(containerName string) {
