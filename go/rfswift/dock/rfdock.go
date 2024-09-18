@@ -1229,28 +1229,105 @@ func printRowWithColor(row []string, columnWidths []int, separator string) {
 	}
 	fmt.Println()
 }
+
 func stripAnsiCodes(s string) string {
 	ansi := regexp.MustCompile(`\x1b\[[0-9;]*m`)
 	return ansi.ReplaceAllString(s, "")
 }
 
 func DeleteImage(imageIDOrTag string) error {
-	/* Delete an image
-	   in(1): string image ID or tag
-	   out: error
-	*/
-	ctx := context.Background()
-	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
-	if err != nil {
-		return err
-	}
-	defer cli.Close()
+    ctx := context.Background()
+    cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
+    if err != nil {
+        common.PrintErrorMessage(fmt.Errorf("failed to create Docker client: %v", err))
+        return err
+    }
+    defer cli.Close()
 
-	_, err = cli.ImageRemove(ctx, imageIDOrTag, image.RemoveOptions{Force: true, PruneChildren: true})
-	if err != nil {
-		return err
-	}
+    common.PrintInfoMessage(fmt.Sprintf("Attempting to delete image: %s", imageIDOrTag))
 
-	fmt.Printf("Successfully deleted image: %s\n", imageIDOrTag)
-	return nil
+    // List all images
+    images, err := cli.ImageList(ctx, image.ListOptions{All: true})
+    if err != nil {
+        common.PrintErrorMessage(fmt.Errorf("failed to list images: %v", err))
+        return err
+    }
+
+    var imageToDelete image.Summary
+    imageFound := false
+
+    for _, img := range images {
+        // Check if the full image ID matches
+        if img.ID == "sha256:"+imageIDOrTag || img.ID == imageIDOrTag {
+            imageToDelete = img
+            imageFound = true
+            break
+        }
+
+        // Check if any RepoTags match exactly
+        for _, tag := range img.RepoTags {
+            if tag == imageIDOrTag {
+                imageToDelete = img
+                imageFound = true
+                break
+            }
+        }
+
+        // If image is found by tag, break the outer loop
+        if imageFound {
+            break
+        }
+    }
+
+    if !imageFound {
+        common.PrintErrorMessage(fmt.Errorf("image not found: %s", imageIDOrTag))
+        common.PrintInfoMessage("Available images:")
+        for _, img := range images {
+            common.PrintInfoMessage(fmt.Sprintf("ID: %s, Tags: %v", strings.TrimPrefix(img.ID, "sha256:"), img.RepoTags))
+        }
+        return fmt.Errorf("image not found: %s", imageIDOrTag)
+    }
+
+    imageID := imageToDelete.ID
+    common.PrintInfoMessage(fmt.Sprintf("Found image to delete: ID: %s, Tags: %v", strings.TrimPrefix(imageID, "sha256:"), imageToDelete.RepoTags))
+
+    // Ask for user confirmation
+    reader := bufio.NewReader(os.Stdin)
+    common.PrintWarningMessage(fmt.Sprintf("Are you sure you want to delete this image? (y/n): "))
+    response, err := reader.ReadString('\n')
+    if err != nil {
+        common.PrintErrorMessage(fmt.Errorf("failed to read user input: %v", err))
+        return err
+    }
+    response = strings.ToLower(strings.TrimSpace(response))
+    if response != "y" && response != "yes" {
+        common.PrintInfoMessage("Image deletion cancelled by user.")
+        return nil
+    }
+
+    // Find and remove containers using the image
+    containers, err := cli.ContainerList(ctx, container.ListOptions{All: true})
+    if err != nil {
+        common.PrintErrorMessage(fmt.Errorf("failed to list containers: %v", err))
+        return err
+    }
+
+    for _, icontainer := range containers {
+        if icontainer.ImageID == imageID {
+            common.PrintWarningMessage(fmt.Sprintf("Removing container: %s", icontainer.ID[:12]))
+            if err := cli.ContainerRemove(ctx, icontainer.ID, container.RemoveOptions{Force: true}); err != nil {
+                common.PrintWarningMessage(fmt.Sprintf("Failed to remove container %s: %v", icontainer.ID[:12], err))
+            }
+        }
+    }
+
+    // Attempt to delete the image
+    _, err = cli.ImageRemove(ctx, imageID, image.RemoveOptions{Force: true, PruneChildren: true})
+    if err != nil {
+        common.PrintErrorMessage(fmt.Errorf("failed to delete image %s: %v", imageIDOrTag, err))
+        return err
+    }
+
+    common.PrintSuccessMessage(fmt.Sprintf("Successfully deleted image: %s", imageIDOrTag))
+    return nil
 }

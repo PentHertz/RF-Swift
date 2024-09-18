@@ -3,6 +3,7 @@ package common
 import (
 	"fmt"
 	"os"
+	"os/user"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -87,17 +88,40 @@ func PrintSuccessMessage(message string) {
 	fmt.Printf("%s[+] %s%s%s\n", green, white, message, reset)
 }
 
+func PrintWarningMessage(message string) {
+	yellow := "\033[33m"  // Yellow color for warnings or notices
+	white := "\033[37m"
+	reset := "\033[0m"
+	fmt.Printf("%s[!] %s%s%s\n", yellow, white, message, reset)
+}
+
+func PrintInfoMessage(message interface{}) {
+    blue := "\033[34m"
+    reset := "\033[0m"
+    fmt.Printf("%s[i] %v%s\n", blue, message, reset)
+}
+
 func ConfigFileByPlatform() string {
 	var configPath string
+
+	// Get the current user, handling cases where sudo is used
+	homeDir := os.Getenv("HOME") // Default to the HOME environment variable
+	if sudoUser := os.Getenv("SUDO_USER"); sudoUser != "" {
+		// Use SUDO_USER to find the original user's home directory
+		userInfo, err := user.Lookup(sudoUser)
+		if err == nil {
+			homeDir = userInfo.HomeDir
+		}
+	}
 
 	// Determine the platform-specific directory
 	switch runtime.GOOS {
 	case "windows":
 		configPath = filepath.Join(os.Getenv("APPDATA"), "rfswift", "config.ini")
 	case "darwin":
-		configPath = filepath.Join(os.Getenv("HOME"), "Library", "Application Support", "rfswift", "config.ini")
+		configPath = filepath.Join(homeDir, "Library", "Application Support", "rfswift", "config.ini")
 	case "linux":
-		configPath = filepath.Join(os.Getenv("HOME"), ".config", "rfswift", "config.ini")
+		configPath = filepath.Join(homeDir, ".config", "rfswift", "config.ini")
 	default:
 		configPath = "config.ini"
 	}
