@@ -25,12 +25,17 @@ func DockerSetShell(shellcmd string) {
 	}
 }
 
-func DockerAddBiding(addbindings string) {
-	/* Add extra bindings to the Docker container to run
+func DockerAddBinding(addbindings string) {
+	/* Add extra bindings to the Docker container
 	   in(1): string of bindings separated by commas
 	*/
 	if addbindings != "" {
-		dockerObj.extrabinding = addbindings
+		// Check if extrabinding already has content, and append with a comma if it does
+		if dockerObj.extrabinding != "" {
+			dockerObj.extrabinding += "," + addbindings
+		} else {
+			dockerObj.extrabinding = addbindings
+		}
 	}
 }
 

@@ -53,7 +53,7 @@ var runCmd = &cobra.Command{
 		}
 		rfdock.DockerSetXDisplay(XDisplay)
 		rfdock.DockerSetShell(ExecCmd)
-		rfdock.DockerAddBiding(ExtraBind)
+		rfdock.DockerAddBinding(ExtraBind)
 		rfdock.DockerSetImage(DImage)
 		rfdock.DockerSetExtraHosts(ExtraHost)
 		rfdock.DockerSetPulse(PulseServer)
@@ -308,7 +308,7 @@ func init() {
 	HostPulseAudioCmd.AddCommand(HostPulseAudioUnloadCmd)
 	HostPulseAudioEnableCmd.Flags().StringVarP(&PulseServer, "pulseserver", "s", "tcp:127.0.0.1:34567", "pulse server address (by default: 'tcp:127.0.0.1:34567')")
 
-	DeleteCmd.Flags().StringVarP(&ContID, "image", "i", "", "image ID or tag")
+	DeleteCmd.Flags().StringVarP(&DImage, "image", "i", "", "image ID or tag")
 	removeCmd.Flags().StringVarP(&ContID, "container", "c", "", "container to remove")
 	installCmd.Flags().StringVarP(&ExecCmd, "install", "i", "", "function for installation")
 	installCmd.Flags().StringVarP(&ContID, "container", "c", "", "container to run")
