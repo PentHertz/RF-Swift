@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 	"os/signal"
-    "syscall"
+    "runtime"
 
 	"context"
 	"github.com/docker/docker/api/types"
@@ -630,17 +630,39 @@ func DockerExec(containerIdentifier string, WorkingDir string) {
 
     // Handle terminal resize
     go func() {
-        sigchan := make(chan os.Signal, 1)
-        signal.Notify(sigchan, syscall.SIGWINCH)
-        defer signal.Stop(sigchan)
+        switch runtime.GOOS {
+        case "linux", "darwin":
+            sigchan := make(chan os.Signal, 1)
+            signal.Notify(sigchan, syscallsigwin())
+            defer signal.Stop(sigchan)
 
-        for range sigchan {
-            if outIsTerminal {
-                if size, err := term.GetWinsize(outFd); err == nil {
-                    cli.ContainerExecResize(ctx, execID.ID, container.ResizeOptions{
-                        Height: uint(size.Height),
-                        Width:  uint(size.Width),
-                    })
+            for range sigchan {
+                if outIsTerminal {
+                    if size, err := term.GetWinsize(outFd); err == nil {
+                        cli.ContainerExecResize(ctx, execID.ID, container.ResizeOptions{
+                            Height: uint(size.Height),
+                            Width:  uint(size.Width),
+                        })
+                    }
+                }
+            }
+        case "windows":
+            ticker := time.NewTicker(500 * time.Millisecond)
+            defer ticker.Stop()
+
+            var lastHeight, lastWidth uint16
+            for range ticker.C {
+                if outIsTerminal {
+                    if size, err := term.GetWinsize(outFd); err == nil {
+                        if size.Height != lastHeight || size.Width != lastWidth {
+                            cli.ContainerExecResize(ctx, execID.ID, container.ResizeOptions{
+                                Height: uint(size.Height),
+                                Width:  uint(size.Width),
+                            })
+                            lastHeight = size.Height
+                            lastWidth = size.Width
+                        }
+                    }
                 }
             }
         }

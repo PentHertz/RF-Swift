@@ -1,6 +1,7 @@
 package dock
 
 import (
+	"os"
 	"golang.org/x/sys/windows"
 )
 
@@ -19,4 +20,8 @@ func getTerminalSize(fd int) (int, int, error) {
 	width := int(info.Window.Right - info.Window.Left + 1)
 	height := int(info.Window.Bottom - info.Window.Top + 1)
 	return width, height, nil
+}
+
+func syscallsigwin() os.Signal {
+    return nil // No signal equivalent for Windows
 }
