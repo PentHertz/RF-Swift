@@ -1353,3 +1353,109 @@ func DeleteImage(imageIDOrTag string) error {
     common.PrintSuccessMessage(fmt.Sprintf("Successfully deleted image: %s", imageIDOrTag))
     return nil
 }
+
+func DockerInstallScript(containerIdentifier, scriptName, functionScript string) error {
+    ctx := context.Background()
+    cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
+    if err != nil {
+        return fmt.Errorf("failed to create Docker client: %v", err)
+    }
+    defer cli.Close()
+
+    // Check if the container is running; if not, start it
+    containerJSON, err := cli.ContainerInspect(ctx, containerIdentifier)
+    if err != nil {
+        return fmt.Errorf("failed to inspect container: %v", err)
+    }
+
+    if containerJSON.State.Status != "running" {
+        if err := cli.ContainerStart(ctx, containerIdentifier, container.StartOptions{}); err != nil {
+            return fmt.Errorf("failed to start container: %v", err)
+        }
+    }
+
+    // Step 1: Run "apt update" with clock-based loading indicator
+    common.PrintInfoMessage("Running 'apt update'...")
+    if err := showLoadingIndicator(ctx, func() error {
+        return execCommand(ctx, cli, containerIdentifier, []string{"/bin/bash", "-c", "apt update"})
+    }, "apt update"); err != nil {
+        return err
+    }
+
+    // Step 2: Run "apt --fix-broken install" with clock-based loading indicator
+    common.PrintInfoMessage("Running 'apt --fix-broken install'...")
+    if err := showLoadingIndicator(ctx, func() error {
+        return execCommand(ctx, cli, containerIdentifier, []string{"/bin/bash", "-c", "apt --fix-broken install -y"})
+    }, "apt --fix-broken install"); err != nil {
+        return err
+    }
+
+    // Step 3: Run the provided script with clock-based loading indicator
+    common.PrintInfoMessage(fmt.Sprintf("Running script './%s %s'...", scriptName, functionScript))
+    if err := showLoadingIndicator(ctx, func() error {
+        return execCommand(ctx, cli, containerIdentifier, []string{"/bin/bash", "-c", fmt.Sprintf("./%s %s", scriptName, functionScript)}, "/root/scripts")
+    }, fmt.Sprintf("script './%s %s'", scriptName, functionScript)); err != nil {
+        return err
+    }
+
+    return nil
+}
+
+// execCommand executes a command in the container, capturing only errors if any
+func execCommand(ctx context.Context, cli *client.Client, containerID string, cmd []string, workingDir ...string) error {
+    execConfig := types.ExecConfig{
+        AttachStdout: true,
+        AttachStderr: true,
+        Cmd:          cmd,
+    }
+
+    // Optional working directory
+    if len(workingDir) > 0 {
+        execConfig.WorkingDir = workingDir[0]
+    }
+
+    execID, err := cli.ContainerExecCreate(ctx, containerID, execConfig)
+    if err != nil {
+        return fmt.Errorf("failed to create exec instance: %v", err)
+    }
+
+    attachResp, err := cli.ContainerExecAttach(ctx, execID.ID, types.ExecStartCheck{})
+    if err != nil {
+        return fmt.Errorf("failed to attach to exec instance: %v", err)
+    }
+    defer attachResp.Close()
+
+    // Capture only error messages, suppressing standard output
+    _, err = io.Copy(io.Discard, attachResp.Reader)
+    return err
+}
+
+// showLoadingIndicator displays a loading animation with a rotating clock icon while the command runs
+func showLoadingIndicator(ctx context.Context, commandFunc func() error, stepName string) error {
+    done := make(chan error)
+    go func() {
+        done <- commandFunc()
+    }()
+
+    // Clock emojis to create the rotating clock animation
+    clockEmojis := []string{"🕛", "🕐", "🕑", "🕒", "🕓", "🕔", "🕕", "🕖", "🕗", "🕘", "🕙", "🕚"}
+    i := 0
+    ticker := time.NewTicker(500 * time.Millisecond)
+    defer ticker.Stop()
+
+    for {
+        select {
+        case err := <-done:
+            if err != nil {
+                common.PrintErrorMessage(fmt.Errorf("Error during %s: %v", stepName, err))
+                return err
+            }
+            fmt.Printf("\n")
+            common.PrintSuccessMessage(fmt.Sprintf("%s completed", stepName))
+            return nil
+        case <-ticker.C:
+            fmt.Printf("\r%s %s", clockEmojis[i%len(clockEmojis)], stepName)
+            i++
+        }
+    }
+}

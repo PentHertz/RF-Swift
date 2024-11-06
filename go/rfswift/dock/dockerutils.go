@@ -3,10 +3,6 @@
  */
 package dock
 
-import (
-	"fmt"
-)
-
 func DockerSetx11(x11forward string) {
 	/* Sets the shell to use in the Docker container
 	   in(1): string command shell to use
@@ -89,8 +85,5 @@ func DockerInstallFromScript(contid string) {
 	/* Hot install inside a created Docker container
 	   in(1): string function script to use
 	*/
-	s := fmt.Sprintf("./entrypoint.sh %s", dockerObj.shell)
-	fmt.Println(s)
-	dockerObj.shell = s
-	DockerExec(contid, "/root/scripts")
+	DockerInstallScript(contid, "entrypoint.sh", dockerObj.shell)
 }

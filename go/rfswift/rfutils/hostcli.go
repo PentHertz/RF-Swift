@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/lawl/pulseaudio"
+	common "penthertz/rfswift/common"
 )
 
 // USBDevice represents a USB device information
@@ -344,8 +345,7 @@ func SetPulseCTL(address string) error {
 	if err != nil {
 		return fmt.Errorf("failed to load module-native-protocol-tcp: %w", err)
 	}
-
-	fmt.Printf("[+] Successfully loaded module-native-protocol-tcp with index %d\n", moduleIndex)
+	common.PrintSuccessMessage(fmt.Sprintf("Successfully loaded module-native-protocol-tcp with index %d", moduleIndex))
 	return nil
 }
 
@@ -387,6 +387,6 @@ func UnloadPulseCTL() error {
 	}
 	fmt.Printf("Command output: %s\n", string(unloadOutput))
 
-	fmt.Printf("[+] Successfully unloaded module-native-protocol-tcp with index %s\n", moduleIndex)
+	common.PrintSuccessMessage(fmt.Sprintf("Successfully unloaded module-native-protocol-tcp with index %s", moduleIndex))
 	return nil
 }
