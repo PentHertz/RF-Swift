@@ -1600,18 +1600,36 @@ func UpdateMountBinding(containerName string, source string, target string, add 
 	// Stop the container
 	cli, err := client.NewClientWithOpts(client.FromEnv)
 	if err != nil {
-		common.PrintErrorMessage(fmt.Errorf("Error when instanciating a client"))
+		common.PrintErrorMessage(fmt.Errorf("Error when instantiating a client"))
 		os.Exit(1)
 	}
 	common.PrintInfoMessage("Stopping the container...")
 
+	// Attempt graceful stop
 	err = cli.ContainerStop(ctx, containerID, container.StopOptions{Timeout: &timeout})
-    if err != nil {
-    	common.PrintErrorMessage(fmt.Errorf("Failed to stop the container"))
-        os.Exit(1)
-    }
-	common.PrintSuccessMessage(fmt.Sprintf("Container '%s' stopped", containerID))
+	if err != nil {
+		common.PrintErrorMessage(fmt.Errorf("Failed to stop the container gracefully: %v", err))
+	}
 
+	// Check if the container is still running
+	containerJSON, err := cli.ContainerInspect(ctx, containerID)
+	if err != nil {
+		common.PrintErrorMessage(fmt.Errorf("Error inspecting container: %v", err))
+		os.Exit(1)
+	}
+	if containerJSON.State.Running {
+		common.PrintWarningMessage("Container is still running. Forcing stop...")
+		err = cli.ContainerKill(ctx, containerID, "SIGKILL")
+		if err != nil {
+			common.PrintErrorMessage(fmt.Errorf("Failed to force stop the container: %v", err))
+			os.Exit(1)
+		}
+		common.PrintSuccessMessage("Container forcibly stopped.")
+	} else {
+		common.PrintSuccessMessage(fmt.Sprintf("Container '%s' stopped", containerID))
+	}
+
+	// The rest of your function logic continues here
 	common.PrintInfoMessage("Determining hostconfig.json path...")
 	configPath, err := GetHostConfigPath(containerID)
 	if err != nil {
