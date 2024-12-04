@@ -11,7 +11,7 @@ version: 2
 before:
   hooks:
     # You may remove this if you don't use go modules.
-    - cd go/rfswift && go mod tidy
+    - go mod tidy -C go/rfswift
 
 builds:
   - env:
