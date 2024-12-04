@@ -1586,6 +1586,7 @@ func showLoadingIndicator(ctx context.Context, commandFunc func() error, stepNam
 }
 
 func UpdateMountBinding(containerName string, source string, target string, add bool) {
+	var timeout = 10
 	ctx := context.Background()
 
 	common.PrintInfoMessage("Fetching container ID...")
@@ -1603,7 +1604,8 @@ func UpdateMountBinding(containerName string, source string, target string, add 
 		os.Exit(1)
 	}
 	common.PrintInfoMessage("Stopping the container...")
-	err = cli.ContainerStop(ctx, containerID, container.StopOptions{})
+
+	err = cli.ContainerStop(ctx, containerID, container.StopOptions{Timeout: &timeout})
     if err != nil {
     	common.PrintErrorMessage(fmt.Errorf("Failed to stop the container"))
         os.Exit(1)
