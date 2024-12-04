@@ -132,7 +132,7 @@ func ReadOrCreateConfig(filename string) (*Config, error) {
 	}
 	if len(config.Container.Bindings) == 0 {
 		printOrange("Bindings are missing in the config file.")
-		bindings := promptForValue("Bindings (comma-separated)", "/dev/bus/usb:/dev/bus/usb,/run/dbus/system_bus_socket:/run/dbus/system_bus_socket,/dev/snd:/dev/snd,/dev/dri:/dev/dri")
+		bindings := promptForValue("Bindings (comma-separated)", "/dev/bus/usb:/dev/bus/usb,/run/dbus/system_bus_socket:/run/dbus/system_bus_socket,/dev/snd:/dev/snd,/dev/dri:/dev/dri,/dev/vhci:/dev/vhci")
 		config.Container.Bindings = strings.Split(bindings, ",")
 	}
 	if config.Container.Network == "" {
@@ -166,7 +166,7 @@ repotag = penthertz/rfswift
 
 [container]
 shell = /bin/zsh
-bindings = /dev/bus/usb:/dev/bus/usb,/run/dbus/system_bus_socket:/run/dbus/system_bus_socket,/dev/snd:/dev/snd,/dev/dri:/dev/dri,/dev/input:/dev/input
+bindings = /dev/bus/usb:/dev/bus/usb,/run/dbus/system_bus_socket:/run/dbus/system_bus_socket,/dev/snd:/dev/snd,/dev/dri:/dev/dri,/dev/input:/dev/input,/dev/vhci:/dev/vhci
 network = host
 x11forward = /tmp/.X11-unix:/tmp/.X11-unix
 xdisplay = "DISPLAY=:0"
