@@ -29,6 +29,5 @@ jobs:
           distribution: goreleaser
           version: "~> v2"
           args: release --clean
-          workdir: go/rfswift
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

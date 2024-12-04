@@ -16,6 +16,7 @@ before:
 builds:
   - env:
       - CGO_ENABLED=0
+    dir: go/rfswift
     goos:
       - linux
       - windows
