@@ -4,14 +4,14 @@ import (
 	"bufio"
 	"fmt"
 	"os"
-	"strings"
 	"path/filepath"
+	"strings"
 )
 
 type Config struct {
 	General struct {
 		ImageName string
-		RepoTag string
+		RepoTag   string
 	}
 	Container struct {
 		Shell      string

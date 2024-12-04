@@ -1,8 +1,8 @@
 package dock
 
 import (
-	"os"
 	"golang.org/x/sys/windows"
+	"os"
 )
 
 func getTerminalSize(fd int) (int, int, error) {
@@ -23,5 +23,5 @@ func getTerminalSize(fd int) (int, int, error) {
 }
 
 func syscallsigwin() os.Signal {
-    return nil // No signal equivalent for Windows
+	return nil // No signal equivalent for Windows
 }

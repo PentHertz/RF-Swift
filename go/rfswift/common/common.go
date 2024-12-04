@@ -89,16 +89,16 @@ func PrintSuccessMessage(message string) {
 }
 
 func PrintWarningMessage(message string) {
-	yellow := "\033[33m"  // Yellow color for warnings or notices
+	yellow := "\033[33m" // Yellow color for warnings or notices
 	white := "\033[37m"
 	reset := "\033[0m"
 	fmt.Printf("%s[!] %s%s%s\n", yellow, white, message, reset)
 }
 
 func PrintInfoMessage(message interface{}) {
-    blue := "\033[34m"
-    reset := "\033[0m"
-    fmt.Printf("%s[i] %v%s\n", blue, message, reset)
+	blue := "\033[34m"
+	reset := "\033[0m"
+	fmt.Printf("%s[i] %v%s\n", blue, message, reset)
 }
 
 func ConfigFileByPlatform() string {

@@ -5,14 +5,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"log"
 	"os"
+	"os/signal"
 	"regexp"
+	"runtime"
 	"strings"
 	"time"
-	"os/signal"
-    "runtime"
-    "io/ioutil"
 
 	"context"
 	"github.com/docker/docker/api/types"
@@ -30,69 +30,69 @@ import (
 )
 
 type HostConfigFull struct {
-	Binds               []string               `json:"Binds"`
-	ContainerIDFile     string                 `json:"ContainerIDFile"`
-	LogConfig           LogConfig              `json:"LogConfig"`
-	NetworkMode         string                 `json:"NetworkMode"`
-	PortBindings        map[string][]PortBinding `json:"PortBindings"`
-	RestartPolicy       RestartPolicy          `json:"RestartPolicy"`
-	AutoRemove          bool                   `json:"AutoRemove"`
-	VolumeDriver        string                 `json:"VolumeDriver"`
-	VolumesFrom         []string               `json:"VolumesFrom"`
-	ConsoleSize         []int                  `json:"ConsoleSize"`
-	CapAdd              []string               `json:"CapAdd"`
-	CapDrop             []string               `json:"CapDrop"`
-	CgroupnsMode        string                 `json:"CgroupnsMode"`
-	Dns                 []string               `json:"Dns"`
-	DnsOptions          []string               `json:"DnsOptions"`
-	DnsSearch           []string               `json:"DnsSearch"`
-	ExtraHosts          []string               `json:"ExtraHosts"`
-	GroupAdd            []string               `json:"GroupAdd"`
-	IpcMode             string                 `json:"IpcMode"`
-	Cgroup              string                 `json:"Cgroup"`
-	Links               []string               `json:"Links"`
-	OomScoreAdj         int                    `json:"OomScoreAdj"`
-	PidMode             string                 `json:"PidMode"`
-	Privileged          bool                   `json:"Privileged"`
-	PublishAllPorts     bool                   `json:"PublishAllPorts"`
-	ReadonlyRootfs      bool                   `json:"ReadonlyRootfs"`
-	SecurityOpt         []string               `json:"SecurityOpt"`
-	UTSMode             string                 `json:"UTSMode"`
-	UsernsMode          string                 `json:"UsernsMode"`
-	ShmSize             int64                  `json:"ShmSize"`
-	Runtime             string                 `json:"Runtime"`
-	Isolation           string                 `json:"Isolation"`
-	CpuShares           int64                  `json:"CpuShares"`
-	Memory              int64                  `json:"Memory"`
-	NanoCpus            int64                  `json:"NanoCpus"`
-	CgroupParent        string                 `json:"CgroupParent"`
-	BlkioWeight         uint16                 `json:"BlkioWeight"`
-	BlkioWeightDevice   []ThrottleDevice       `json:"BlkioWeightDevice"`
-	BlkioDeviceReadBps  []ThrottleDevice       `json:"BlkioDeviceReadBps"`
-	BlkioDeviceWriteBps []ThrottleDevice       `json:"BlkioDeviceWriteBps"`
-	BlkioDeviceReadIOps []ThrottleDevice       `json:"BlkioDeviceReadIOps"`
-	BlkioDeviceWriteIOps []ThrottleDevice      `json:"BlkioDeviceWriteIOps"`
-	CpuPeriod           int64                  `json:"CpuPeriod"`
-	CpuQuota            int64                  `json:"CpuQuota"`
-	CpuRealtimePeriod   int64                  `json:"CpuRealtimePeriod"`
-	CpuRealtimeRuntime  int64                  `json:"CpuRealtimeRuntime"`
-	CpusetCpus          string                 `json:"CpusetCpus"`
-	CpusetMems          string                 `json:"CpusetMems"`
-	Devices             []DeviceMapping        `json:"Devices"`
-	DeviceCgroupRules   []string               `json:"DeviceCgroupRules"`
-	DeviceRequests      []DeviceRequest        `json:"DeviceRequests"`
-	MemoryReservation   int64                  `json:"MemoryReservation"`
-	MemorySwap          int64                  `json:"MemorySwap"`
-	MemorySwappiness    *int                   `json:"MemorySwappiness"`
-	OomKillDisable      *bool                  `json:"OomKillDisable"`
-	PidsLimit           *int64                 `json:"PidsLimit"`
-	Ulimits             []Ulimit               `json:"Ulimits"`
-	CpuCount            int64                  `json:"CpuCount"`
-	CpuPercent          int64                  `json:"CpuPercent"`
-	IOMaximumIOps       int64                  `json:"IOMaximumIOps"`
-	IOMaximumBandwidth  int64                  `json:"IOMaximumBandwidth"`
-	MaskedPaths         []string               `json:"MaskedPaths"`
-	ReadonlyPaths       []string               `json:"ReadonlyPaths"`
+	Binds                []string                 `json:"Binds"`
+	ContainerIDFile      string                   `json:"ContainerIDFile"`
+	LogConfig            LogConfig                `json:"LogConfig"`
+	NetworkMode          string                   `json:"NetworkMode"`
+	PortBindings         map[string][]PortBinding `json:"PortBindings"`
+	RestartPolicy        RestartPolicy            `json:"RestartPolicy"`
+	AutoRemove           bool                     `json:"AutoRemove"`
+	VolumeDriver         string                   `json:"VolumeDriver"`
+	VolumesFrom          []string                 `json:"VolumesFrom"`
+	ConsoleSize          []int                    `json:"ConsoleSize"`
+	CapAdd               []string                 `json:"CapAdd"`
+	CapDrop              []string                 `json:"CapDrop"`
+	CgroupnsMode         string                   `json:"CgroupnsMode"`
+	Dns                  []string                 `json:"Dns"`
+	DnsOptions           []string                 `json:"DnsOptions"`
+	DnsSearch            []string                 `json:"DnsSearch"`
+	ExtraHosts           []string                 `json:"ExtraHosts"`
+	GroupAdd             []string                 `json:"GroupAdd"`
+	IpcMode              string                   `json:"IpcMode"`
+	Cgroup               string                   `json:"Cgroup"`
+	Links                []string                 `json:"Links"`
+	OomScoreAdj          int                      `json:"OomScoreAdj"`
+	PidMode              string                   `json:"PidMode"`
+	Privileged           bool                     `json:"Privileged"`
+	PublishAllPorts      bool                     `json:"PublishAllPorts"`
+	ReadonlyRootfs       bool                     `json:"ReadonlyRootfs"`
+	SecurityOpt          []string                 `json:"SecurityOpt"`
+	UTSMode              string                   `json:"UTSMode"`
+	UsernsMode           string                   `json:"UsernsMode"`
+	ShmSize              int64                    `json:"ShmSize"`
+	Runtime              string                   `json:"Runtime"`
+	Isolation            string                   `json:"Isolation"`
+	CpuShares            int64                    `json:"CpuShares"`
+	Memory               int64                    `json:"Memory"`
+	NanoCpus             int64                    `json:"NanoCpus"`
+	CgroupParent         string                   `json:"CgroupParent"`
+	BlkioWeight          uint16                   `json:"BlkioWeight"`
+	BlkioWeightDevice    []ThrottleDevice         `json:"BlkioWeightDevice"`
+	BlkioDeviceReadBps   []ThrottleDevice         `json:"BlkioDeviceReadBps"`
+	BlkioDeviceWriteBps  []ThrottleDevice         `json:"BlkioDeviceWriteBps"`
+	BlkioDeviceReadIOps  []ThrottleDevice         `json:"BlkioDeviceReadIOps"`
+	BlkioDeviceWriteIOps []ThrottleDevice         `json:"BlkioDeviceWriteIOps"`
+	CpuPeriod            int64                    `json:"CpuPeriod"`
+	CpuQuota             int64                    `json:"CpuQuota"`
+	CpuRealtimePeriod    int64                    `json:"CpuRealtimePeriod"`
+	CpuRealtimeRuntime   int64                    `json:"CpuRealtimeRuntime"`
+	CpusetCpus           string                   `json:"CpusetCpus"`
+	CpusetMems           string                   `json:"CpusetMems"`
+	Devices              []DeviceMapping          `json:"Devices"`
+	DeviceCgroupRules    []string                 `json:"DeviceCgroupRules"`
+	DeviceRequests       []DeviceRequest          `json:"DeviceRequests"`
+	MemoryReservation    int64                    `json:"MemoryReservation"`
+	MemorySwap           int64                    `json:"MemorySwap"`
+	MemorySwappiness     *int                     `json:"MemorySwappiness"`
+	OomKillDisable       *bool                    `json:"OomKillDisable"`
+	PidsLimit            *int64                   `json:"PidsLimit"`
+	Ulimits              []Ulimit                 `json:"Ulimits"`
+	CpuCount             int64                    `json:"CpuCount"`
+	CpuPercent           int64                    `json:"CpuPercent"`
+	IOMaximumIOps        int64                    `json:"IOMaximumIOps"`
+	IOMaximumBandwidth   int64                    `json:"IOMaximumBandwidth"`
+	MaskedPaths          []string                 `json:"MaskedPaths"`
+	ReadonlyPaths        []string                 `json:"ReadonlyPaths"`
 }
 
 // Supporting structs
@@ -657,162 +657,162 @@ func getContainerProperties(ctx context.Context, cli *client.Client, containerID
 }
 
 func DockerExec(containerIdentifier string, WorkingDir string) {
-    ctx := context.Background()
-    cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
-    if err != nil {
-        common.PrintErrorMessage(err)
-        return
-    }
-    defer cli.Close()
+	ctx := context.Background()
+	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
+	if err != nil {
+		common.PrintErrorMessage(err)
+		return
+	}
+	defer cli.Close()
 
-    if containerIdentifier == "" {
-        labelKey := "org.container.project"
-        labelValue := "rfswift"
-        containerIdentifier = latestDockerID(labelKey, labelValue)
-    }
+	if containerIdentifier == "" {
+		labelKey := "org.container.project"
+		labelValue := "rfswift"
+		containerIdentifier = latestDockerID(labelKey, labelValue)
+	}
 
-    if err := cli.ContainerStart(ctx, containerIdentifier, container.StartOptions{}); err != nil {
-        common.PrintErrorMessage(err)
-        return
-    }
+	if err := cli.ContainerStart(ctx, containerIdentifier, container.StartOptions{}); err != nil {
+		common.PrintErrorMessage(err)
+		return
+	}
 
-    common.PrintSuccessMessage(fmt.Sprintf("Container '%s' started successfully", containerIdentifier))
+	common.PrintSuccessMessage(fmt.Sprintf("Container '%s' started successfully", containerIdentifier))
 
-    // Get container properties and name
-    props, err := getContainerProperties(ctx, cli, containerIdentifier)
-    if err != nil {
-        common.PrintErrorMessage(err)
-        return
-    }
+	// Get container properties and name
+	props, err := getContainerProperties(ctx, cli, containerIdentifier)
+	if err != nil {
+		common.PrintErrorMessage(err)
+		return
+	}
 
-    containerJSON, err := cli.ContainerInspect(ctx, containerIdentifier)
-    if err != nil {
-        common.PrintErrorMessage(err)
-        return
-    }
-    containerName := strings.TrimPrefix(containerJSON.Name, "/")
+	containerJSON, err := cli.ContainerInspect(ctx, containerIdentifier)
+	if err != nil {
+		common.PrintErrorMessage(err)
+		return
+	}
+	containerName := strings.TrimPrefix(containerJSON.Name, "/")
 
-    size := props["Size"]
-    printContainerProperties(ctx, cli, containerName, props, size)
+	size := props["Size"]
+	printContainerProperties(ctx, cli, containerName, props, size)
 
-    // Create exec configuration
-    execConfig := types.ExecConfig{
-        AttachStdin:  true,
-        AttachStdout: true,
-        AttachStderr: true,
-        Tty:          true,
-        Cmd:          []string{dockerObj.shell},
-        WorkingDir:   WorkingDir,
-    }
+	// Create exec configuration
+	execConfig := types.ExecConfig{
+		AttachStdin:  true,
+		AttachStdout: true,
+		AttachStderr: true,
+		Tty:          true,
+		Cmd:          []string{dockerObj.shell},
+		WorkingDir:   WorkingDir,
+	}
 
-    // Create exec instance
-    execID, err := cli.ContainerExecCreate(ctx, containerIdentifier, execConfig)
-    if err != nil {
-        common.PrintErrorMessage(fmt.Errorf("failed to create exec instance: %v", err))
-        return
-    }
+	// Create exec instance
+	execID, err := cli.ContainerExecCreate(ctx, containerIdentifier, execConfig)
+	if err != nil {
+		common.PrintErrorMessage(fmt.Errorf("failed to create exec instance: %v", err))
+		return
+	}
 
-    // Attach to the exec instance
-    attachResp, err := cli.ContainerExecAttach(ctx, execID.ID, types.ExecStartCheck{Tty: true})
-    if err != nil {
-        common.PrintErrorMessage(fmt.Errorf("failed to attach to exec instance: %v", err))
-        return
-    }
-    defer attachResp.Close()
+	// Attach to the exec instance
+	attachResp, err := cli.ContainerExecAttach(ctx, execID.ID, types.ExecStartCheck{Tty: true})
+	if err != nil {
+		common.PrintErrorMessage(fmt.Errorf("failed to attach to exec instance: %v", err))
+		return
+	}
+	defer attachResp.Close()
 
-    // Setup raw terminal
-    inFd, inIsTerminal := term.GetFdInfo(os.Stdin)
-    outFd, outIsTerminal := term.GetFdInfo(os.Stdout)
+	// Setup raw terminal
+	inFd, inIsTerminal := term.GetFdInfo(os.Stdin)
+	outFd, outIsTerminal := term.GetFdInfo(os.Stdout)
 
-    if inIsTerminal {
-        state, err := term.SetRawTerminal(inFd)
-        if err != nil {
-            common.PrintErrorMessage(fmt.Errorf("failed to set raw terminal: %v", err))
-            return
-        }
-        defer term.RestoreTerminal(inFd, state)
-    }
+	if inIsTerminal {
+		state, err := term.SetRawTerminal(inFd)
+		if err != nil {
+			common.PrintErrorMessage(fmt.Errorf("failed to set raw terminal: %v", err))
+			return
+		}
+		defer term.RestoreTerminal(inFd, state)
+	}
 
-    // Start the exec instance
-    if err := cli.ContainerExecStart(ctx, execID.ID, types.ExecStartCheck{Tty: true}); err != nil {
-        common.PrintErrorMessage(fmt.Errorf("failed to start exec instance: %v", err))
-        return
-    }
+	// Start the exec instance
+	if err := cli.ContainerExecStart(ctx, execID.ID, types.ExecStartCheck{Tty: true}); err != nil {
+		common.PrintErrorMessage(fmt.Errorf("failed to start exec instance: %v", err))
+		return
+	}
 
-    // Handle terminal resize
-    go func() {
-        switch runtime.GOOS {
-        case "linux", "darwin":
-            sigchan := make(chan os.Signal, 1)
-            signal.Notify(sigchan, syscallsigwin())
-            defer signal.Stop(sigchan)
+	// Handle terminal resize
+	go func() {
+		switch runtime.GOOS {
+		case "linux", "darwin":
+			sigchan := make(chan os.Signal, 1)
+			signal.Notify(sigchan, syscallsigwin())
+			defer signal.Stop(sigchan)
 
-            for range sigchan {
-                if outIsTerminal {
-                    if size, err := term.GetWinsize(outFd); err == nil {
-                        cli.ContainerExecResize(ctx, execID.ID, container.ResizeOptions{
-                            Height: uint(size.Height),
-                            Width:  uint(size.Width),
-                        })
-                    }
-                }
-            }
-        case "windows":
-            ticker := time.NewTicker(500 * time.Millisecond)
-            defer ticker.Stop()
+			for range sigchan {
+				if outIsTerminal {
+					if size, err := term.GetWinsize(outFd); err == nil {
+						cli.ContainerExecResize(ctx, execID.ID, container.ResizeOptions{
+							Height: uint(size.Height),
+							Width:  uint(size.Width),
+						})
+					}
+				}
+			}
+		case "windows":
+			ticker := time.NewTicker(500 * time.Millisecond)
+			defer ticker.Stop()
 
-            var lastHeight, lastWidth uint16
-            for range ticker.C {
-                if outIsTerminal {
-                    if size, err := term.GetWinsize(outFd); err == nil {
-                        if size.Height != lastHeight || size.Width != lastWidth {
-                            cli.ContainerExecResize(ctx, execID.ID, container.ResizeOptions{
-                                Height: uint(size.Height),
-                                Width:  uint(size.Width),
-                            })
-                            lastHeight = size.Height
-                            lastWidth = size.Width
-                        }
-                    }
-                }
-            }
-        }
-    }()
+			var lastHeight, lastWidth uint16
+			for range ticker.C {
+				if outIsTerminal {
+					if size, err := term.GetWinsize(outFd); err == nil {
+						if size.Height != lastHeight || size.Width != lastWidth {
+							cli.ContainerExecResize(ctx, execID.ID, container.ResizeOptions{
+								Height: uint(size.Height),
+								Width:  uint(size.Width),
+							})
+							lastHeight = size.Height
+							lastWidth = size.Width
+						}
+					}
+				}
+			}
+		}
+	}()
 
-    // Trigger initial resize
-    if outIsTerminal {
-        if size, err := term.GetWinsize(outFd); err == nil {
-            cli.ContainerExecResize(ctx, execID.ID, container.ResizeOptions{
-                Height: uint(size.Height),
-                Width:  uint(size.Width),
-            })
-        }
-    }
+	// Trigger initial resize
+	if outIsTerminal {
+		if size, err := term.GetWinsize(outFd); err == nil {
+			cli.ContainerExecResize(ctx, execID.ID, container.ResizeOptions{
+				Height: uint(size.Height),
+				Width:  uint(size.Width),
+			})
+		}
+	}
 
-    // Handle I/O
-    outputDone := make(chan error)
-    go func() {
-        _, err := io.Copy(os.Stdout, attachResp.Reader)
-        outputDone <- err
-    }()
+	// Handle I/O
+	outputDone := make(chan error)
+	go func() {
+		_, err := io.Copy(os.Stdout, attachResp.Reader)
+		outputDone <- err
+	}()
 
-    go func() {
-        if inIsTerminal {
-            io.Copy(attachResp.Conn, os.Stdin)
-        } else {
-            io.Copy(attachResp.Conn, os.Stdin)
-        }
-        attachResp.CloseWrite()
-    }()
+	go func() {
+		if inIsTerminal {
+			io.Copy(attachResp.Conn, os.Stdin)
+		} else {
+			io.Copy(attachResp.Conn, os.Stdin)
+		}
+		attachResp.CloseWrite()
+	}()
 
-    select {
-    case err := <-outputDone:
-        if err != nil {
-            common.PrintErrorMessage(fmt.Errorf("error in output processing: %v", err))
-        }
-    }
+	select {
+	case err := <-outputDone:
+		if err != nil {
+			common.PrintErrorMessage(fmt.Errorf("error in output processing: %v", err))
+		}
+	}
 
-    common.PrintSuccessMessage(fmt.Sprintf("Shell session in container '%s' ended", containerName))
+	common.PrintSuccessMessage(fmt.Sprintf("Shell session in container '%s' ended", containerName))
 }
 
 func DockerRun(containerName string) {
@@ -1383,210 +1383,216 @@ func stripAnsiCodes(s string) string {
 }
 
 func DeleteImage(imageIDOrTag string) error {
-    ctx := context.Background()
-    cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
-    if err != nil {
-        common.PrintErrorMessage(fmt.Errorf("failed to create Docker client: %v", err))
-        return err
-    }
-    defer cli.Close()
+	ctx := context.Background()
+	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
+	if err != nil {
+		common.PrintErrorMessage(fmt.Errorf("failed to create Docker client: %v", err))
+		return err
+	}
+	defer cli.Close()
 
-    common.PrintInfoMessage(fmt.Sprintf("Attempting to delete image: %s", imageIDOrTag))
+	common.PrintInfoMessage(fmt.Sprintf("Attempting to delete image: %s", imageIDOrTag))
 
-    // List all images
-    images, err := cli.ImageList(ctx, image.ListOptions{All: true})
-    if err != nil {
-        common.PrintErrorMessage(fmt.Errorf("failed to list images: %v", err))
-        return err
-    }
+	// List all images
+	images, err := cli.ImageList(ctx, image.ListOptions{All: true})
+	if err != nil {
+		common.PrintErrorMessage(fmt.Errorf("failed to list images: %v", err))
+		return err
+	}
 
-    var imageToDelete image.Summary
-    imageFound := false
+	var imageToDelete image.Summary
+	imageFound := false
 
-    for _, img := range images {
-        // Check if the full image ID matches
-        if img.ID == "sha256:"+imageIDOrTag || img.ID == imageIDOrTag {
-            imageToDelete = img
-            imageFound = true
-            break
-        }
+	for _, img := range images {
+		// Check if the full image ID matches
+		if img.ID == "sha256:"+imageIDOrTag || img.ID == imageIDOrTag {
+			imageToDelete = img
+			imageFound = true
+			break
+		}
 
-        // Check if any RepoTags match exactly
-        for _, tag := range img.RepoTags {
-            if tag == imageIDOrTag {
-                imageToDelete = img
-                imageFound = true
-                break
-            }
-        }
+		// Check if any RepoTags match exactly
+		for _, tag := range img.RepoTags {
+			if tag == imageIDOrTag {
+				imageToDelete = img
+				imageFound = true
+				break
+			}
+		}
 
-        // If image is found by tag, break the outer loop
-        if imageFound {
-            break
-        }
-    }
+		// If image is found by tag, break the outer loop
+		if imageFound {
+			break
+		}
+	}
 
-    if !imageFound {
-        common.PrintErrorMessage(fmt.Errorf("image not found: %s", imageIDOrTag))
-        common.PrintInfoMessage("Available images:")
-        for _, img := range images {
-            common.PrintInfoMessage(fmt.Sprintf("ID: %s, Tags: %v", strings.TrimPrefix(img.ID, "sha256:"), img.RepoTags))
-        }
-        return fmt.Errorf("image not found: %s", imageIDOrTag)
-    }
+	if !imageFound {
+		common.PrintErrorMessage(fmt.Errorf("image not found: %s", imageIDOrTag))
+		common.PrintInfoMessage("Available images:")
+		for _, img := range images {
+			common.PrintInfoMessage(fmt.Sprintf("ID: %s, Tags: %v", strings.TrimPrefix(img.ID, "sha256:"), img.RepoTags))
+		}
+		return fmt.Errorf("image not found: %s", imageIDOrTag)
+	}
 
-    imageID := imageToDelete.ID
-    common.PrintInfoMessage(fmt.Sprintf("Found image to delete: ID: %s, Tags: %v", strings.TrimPrefix(imageID, "sha256:"), imageToDelete.RepoTags))
+	imageID := imageToDelete.ID
+	common.PrintInfoMessage(fmt.Sprintf("Found image to delete: ID: %s, Tags: %v", strings.TrimPrefix(imageID, "sha256:"), imageToDelete.RepoTags))
 
-    // Ask for user confirmation
-    reader := bufio.NewReader(os.Stdin)
-    common.PrintWarningMessage(fmt.Sprintf("Are you sure you want to delete this image? (y/n): "))
-    response, err := reader.ReadString('\n')
-    if err != nil {
-        common.PrintErrorMessage(fmt.Errorf("failed to read user input: %v", err))
-        return err
-    }
-    response = strings.ToLower(strings.TrimSpace(response))
-    if response != "y" && response != "yes" {
-        common.PrintInfoMessage("Image deletion cancelled by user.")
-        return nil
-    }
+	// Ask for user confirmation
+	reader := bufio.NewReader(os.Stdin)
+	common.PrintWarningMessage(fmt.Sprintf("Are you sure you want to delete this image? (y/n): "))
+	response, err := reader.ReadString('\n')
+	if err != nil {
+		common.PrintErrorMessage(fmt.Errorf("failed to read user input: %v", err))
+		return err
+	}
+	response = strings.ToLower(strings.TrimSpace(response))
+	if response != "y" && response != "yes" {
+		common.PrintInfoMessage("Image deletion cancelled by user.")
+		return nil
+	}
 
-    // Find and remove containers using the image
-    containers, err := cli.ContainerList(ctx, container.ListOptions{All: true})
-    if err != nil {
-        common.PrintErrorMessage(fmt.Errorf("failed to list containers: %v", err))
-        return err
-    }
+	// Find and remove containers using the image
+	containers, err := cli.ContainerList(ctx, container.ListOptions{All: true})
+	if err != nil {
+		common.PrintErrorMessage(fmt.Errorf("failed to list containers: %v", err))
+		return err
+	}
 
-    for _, icontainer := range containers {
-        if icontainer.ImageID == imageID {
-            common.PrintWarningMessage(fmt.Sprintf("Removing container: %s", icontainer.ID[:12]))
-            if err := cli.ContainerRemove(ctx, icontainer.ID, container.RemoveOptions{Force: true}); err != nil {
-                common.PrintWarningMessage(fmt.Sprintf("Failed to remove container %s: %v", icontainer.ID[:12], err))
-            }
-        }
-    }
+	for _, icontainer := range containers {
+		if icontainer.ImageID == imageID {
+			common.PrintWarningMessage(fmt.Sprintf("Removing container: %s", icontainer.ID[:12]))
+			if err := cli.ContainerRemove(ctx, icontainer.ID, container.RemoveOptions{Force: true}); err != nil {
+				common.PrintWarningMessage(fmt.Sprintf("Failed to remove container %s: %v", icontainer.ID[:12], err))
+			}
+		}
+	}
 
-    // Attempt to delete the image
-    _, err = cli.ImageRemove(ctx, imageID, image.RemoveOptions{Force: true, PruneChildren: true})
-    if err != nil {
-        common.PrintErrorMessage(fmt.Errorf("failed to delete image %s: %v", imageIDOrTag, err))
-        return err
-    }
+	// Attempt to delete the image
+	_, err = cli.ImageRemove(ctx, imageID, image.RemoveOptions{Force: true, PruneChildren: true})
+	if err != nil {
+		common.PrintErrorMessage(fmt.Errorf("failed to delete image %s: %v", imageIDOrTag, err))
+		return err
+	}
 
-    common.PrintSuccessMessage(fmt.Sprintf("Successfully deleted image: %s", imageIDOrTag))
-    return nil
+	common.PrintSuccessMessage(fmt.Sprintf("Successfully deleted image: %s", imageIDOrTag))
+	return nil
 }
 
 func DockerInstallScript(containerIdentifier, scriptName, functionScript string) error {
-    ctx := context.Background()
-    cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
-    if err != nil {
-        return fmt.Errorf("failed to create Docker client: %v", err)
-    }
-    defer cli.Close()
+	ctx := context.Background()
+	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
+	if err != nil {
+		return fmt.Errorf("failed to create Docker client: %v", err)
+	}
+	defer cli.Close()
 
-    // Check if the container is running; if not, start it
-    containerJSON, err := cli.ContainerInspect(ctx, containerIdentifier)
-    if err != nil {
-        return fmt.Errorf("failed to inspect container: %v", err)
-    }
+	// Check if the container is running; if not, start it
+	containerJSON, err := cli.ContainerInspect(ctx, containerIdentifier)
+	if err != nil {
+		return fmt.Errorf("failed to inspect container: %v", err)
+	}
 
-    if containerJSON.State.Status != "running" {
-        if err := cli.ContainerStart(ctx, containerIdentifier, container.StartOptions{}); err != nil {
-            return fmt.Errorf("failed to start container: %v", err)
-        }
-    }
+	if containerJSON.State.Status != "running" {
+		if err := cli.ContainerStart(ctx, containerIdentifier, container.StartOptions{}); err != nil {
+			return fmt.Errorf("failed to start container: %v", err)
+		}
+	}
 
-    // Step 1: Run "apt update" with clock-based loading indicator
-    common.PrintInfoMessage("Running 'apt update'...")
-    if err := showLoadingIndicator(ctx, func() error {
-        return execCommand(ctx, cli, containerIdentifier, []string{"/bin/bash", "-c", "apt update"})
-    }, "apt update"); err != nil {
-        return err
-    }
+	// Step 1: Run "apt update" with clock-based loading indicator
+	common.PrintInfoMessage("Running 'apt update'...")
+	if err := showLoadingIndicator(ctx, func() error {
+		return execCommand(ctx, cli, containerIdentifier, []string{"/bin/bash", "-c", "apt update"})
+	}, "apt update"); err != nil {
+		return err
+	}
 
-    // Step 2: Run "apt --fix-broken install" with clock-based loading indicator
-    common.PrintInfoMessage("Running 'apt --fix-broken install'...")
-    if err := showLoadingIndicator(ctx, func() error {
-        return execCommand(ctx, cli, containerIdentifier, []string{"/bin/bash", "-c", "apt --fix-broken install -y"})
-    }, "apt --fix-broken install"); err != nil {
-        return err
-    }
+	// Step 2: Run "apt --fix-broken install" with clock-based loading indicator
+	common.PrintInfoMessage("Running 'apt --fix-broken install'...")
+	if err := showLoadingIndicator(ctx, func() error {
+		return execCommand(ctx, cli, containerIdentifier, []string{"/bin/bash", "-c", "apt --fix-broken install -y"})
+	}, "apt --fix-broken install"); err != nil {
+		return err
+	}
 
-    // Step 3: Run the provided script with clock-based loading indicator
-    common.PrintInfoMessage(fmt.Sprintf("Running script './%s %s'...", scriptName, functionScript))
-    if err := showLoadingIndicator(ctx, func() error {
-        return execCommand(ctx, cli, containerIdentifier, []string{"/bin/bash", "-c", fmt.Sprintf("./%s %s", scriptName, functionScript)}, "/root/scripts")
-    }, fmt.Sprintf("script './%s %s'", scriptName, functionScript)); err != nil {
-        return err
-    }
+	// Step 3: Run the provided script with clock-based loading indicator
+	common.PrintInfoMessage(fmt.Sprintf("Running script './%s %s'...", scriptName, functionScript))
+	if err := showLoadingIndicator(ctx, func() error {
+		return execCommand(ctx, cli, containerIdentifier, []string{"/bin/bash", "-c", fmt.Sprintf("./%s %s", scriptName, functionScript)}, "/root/scripts")
+	}, fmt.Sprintf("script './%s %s'", scriptName, functionScript)); err != nil {
+		return err
+	}
 
-    return nil
+	return nil
 }
 
 // execCommand executes a command in the container, capturing only errors if any
 func execCommand(ctx context.Context, cli *client.Client, containerID string, cmd []string, workingDir ...string) error {
-    execConfig := types.ExecConfig{
-        AttachStdout: true,
-        AttachStderr: true,
-        Cmd:          cmd,
-    }
+	execConfig := types.ExecConfig{
+		AttachStdout: true,
+		AttachStderr: true,
+		Cmd:          cmd,
+	}
 
-    // Optional working directory
-    if len(workingDir) > 0 {
-        execConfig.WorkingDir = workingDir[0]
-    }
+	// Optional working directory
+	if len(workingDir) > 0 {
+		execConfig.WorkingDir = workingDir[0]
+	}
 
-    execID, err := cli.ContainerExecCreate(ctx, containerID, execConfig)
-    if err != nil {
-        return fmt.Errorf("failed to create exec instance: %v", err)
-    }
+	execID, err := cli.ContainerExecCreate(ctx, containerID, execConfig)
+	if err != nil {
+		return fmt.Errorf("failed to create exec instance: %v", err)
+	}
 
-    attachResp, err := cli.ContainerExecAttach(ctx, execID.ID, types.ExecStartCheck{})
-    if err != nil {
-        return fmt.Errorf("failed to attach to exec instance: %v", err)
-    }
-    defer attachResp.Close()
+	attachResp, err := cli.ContainerExecAttach(ctx, execID.ID, types.ExecStartCheck{})
+	if err != nil {
+		return fmt.Errorf("failed to attach to exec instance: %v", err)
+	}
+	defer attachResp.Close()
 
-    // Capture only error messages, suppressing standard output
-    _, err = io.Copy(io.Discard, attachResp.Reader)
-    return err
+	// Capture only error messages, suppressing standard output
+	_, err = io.Copy(io.Discard, attachResp.Reader)
+	return err
 }
 
 // showLoadingIndicator displays a loading animation with a rotating clock icon while the command runs
 func showLoadingIndicator(ctx context.Context, commandFunc func() error, stepName string) error {
-    done := make(chan error)
-    go func() {
-        done <- commandFunc()
-    }()
+	done := make(chan error)
+	go func() {
+		done <- commandFunc()
+	}()
 
-    // Clock emojis to create the rotating clock animation
-    clockEmojis := []string{"🕛", "🕐", "🕑", "🕒", "🕓", "🕔", "🕕", "🕖", "🕗", "🕘", "🕙", "🕚"}
-    i := 0
-    ticker := time.NewTicker(500 * time.Millisecond)
-    defer ticker.Stop()
+	// Clock emojis to create the rotating clock animation
+	clockEmojis := []string{"🕛", "🕐", "🕑", "🕒", "🕓", "🕔", "🕕", "🕖", "🕗", "🕘", "🕙", "🕚"}
+	i := 0
+	ticker := time.NewTicker(500 * time.Millisecond)
+	defer ticker.Stop()
 
-    for {
-        select {
-        case err := <-done:
-            if err != nil {
-                common.PrintErrorMessage(fmt.Errorf("Error during %s: %v", stepName, err))
-                return err
-            }
-            fmt.Printf("\n")
-            common.PrintSuccessMessage(fmt.Sprintf("%s completed", stepName))
-            return nil
-        case <-ticker.C:
-            fmt.Printf("\r%s %s", clockEmojis[i%len(clockEmojis)], stepName)
-            i++
-        }
-    }
+	for {
+		select {
+		case err := <-done:
+			if err != nil {
+				common.PrintErrorMessage(fmt.Errorf("Error during %s: %v", stepName, err))
+				return err
+			}
+			fmt.Printf("\n")
+			common.PrintSuccessMessage(fmt.Sprintf("%s completed", stepName))
+			return nil
+		case <-ticker.C:
+			fmt.Printf("\r%s %s", clockEmojis[i%len(clockEmojis)], stepName)
+			i++
+		}
+	}
 }
 
 func UpdateMountBinding(containerName string, source string, target string, add bool) {
-	var timeout = 10
+	var timeout = 10 // Stop timeout
+
+	if source == "" {
+		source = target
+		common.PrintWarningMessage(fmt.Sprintf("Source is empty. Defaulting source to target: %s", target))
+	}
+
 	ctx := context.Background()
 
 	common.PrintInfoMessage("Fetching container ID...")

@@ -366,16 +366,14 @@ func init() {
 	BindingsCmd.AddCommand(BindingsAddCmd)
 	BindingsCmd.AddCommand(BindingsRmCmd)
 	BindingsAddCmd.Flags().StringVarP(&ContID, "container", "c", "", "container to run")
-	BindingsAddCmd.Flags().StringVarP(&Bsource, "source", "s", "", "source binding")
+	BindingsAddCmd.Flags().StringVarP(&Bsource, "source", "s", "", "source binding (by default: source=target)")
 	BindingsAddCmd.Flags().StringVarP(&Btarget, "target", "t", "", "target binding")
 	BindingsAddCmd.MarkFlagRequired("container")
-	BindingsAddCmd.MarkFlagRequired("source")
 	BindingsAddCmd.MarkFlagRequired("target")
 	BindingsRmCmd.Flags().StringVarP(&ContID, "container", "c", "", "container to run")
-	BindingsRmCmd.Flags().StringVarP(&Bsource, "source", "s", "", "source binding")
+	BindingsRmCmd.Flags().StringVarP(&Bsource, "source", "s", "", "source binding (by default: source=target)")
 	BindingsRmCmd.Flags().StringVarP(&Btarget, "target", "t", "", "target binding")
 	BindingsRmCmd.MarkFlagRequired("container")
-	BindingsRmCmd.MarkFlagRequired("source")
 	BindingsRmCmd.MarkFlagRequired("target")
 
 }
