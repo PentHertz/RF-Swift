@@ -3,6 +3,13 @@
  */
 package dock
 
+import (
+	"fmt"
+	"os"
+	"os/exec"
+	"runtime"
+)
+
 func DockerSetx11(x11forward string) {
 	/* Sets the shell to use in the Docker container
 	   in(1): string command shell to use
@@ -86,4 +93,41 @@ func DockerInstallFromScript(contid string) {
 	   in(1): string function script to use
 	*/
 	DockerInstallScript(contid, "entrypoint.sh", dockerObj.shell)
+}
+
+func RestartDockerService() error {
+	switch runtime.GOOS {
+	case "linux":
+		return exec.Command("sudo", "systemctl", "restart", "docker").Run()
+	case "darwin":
+		return exec.Command("osascript", "-e", `do shell script "brew services restart docker" with administrator privileges`).Run()
+	case "windows":
+		return exec.Command("powershell", "Restart-Service", "Docker").Run()
+	default:
+		return fmt.Errorf("unsupported operating system: %s", runtime.GOOS)
+	}
+}
+
+func GetHostConfigPath(containerID string) (string, error) {
+	var configPath string
+
+	switch runtime.GOOS {
+	case "linux":
+		configPath = fmt.Sprintf("/var/lib/docker/containers/%s/hostconfig.json", containerID)
+	case "darwin": // macOS
+		configPath = fmt.Sprintf("/var/lib/docker/containers/%s/hostconfig.json", containerID)
+	case "windows":
+		configPath = fmt.Sprintf("C:\\ProgramData\\docker\\containers\\%s\\hostconfig.json", containerID)
+	default:
+		return "", fmt.Errorf("unsupported operating system: %s", runtime.GOOS)
+	}
+
+	// Check if the file exists
+	if _, err := os.Stat(configPath); os.IsNotExist(err) {
+		return "", fmt.Errorf("file not found: %s", configPath)
+	} else if err != nil {
+		return "", fmt.Errorf("error checking file: %v", err)
+	}
+
+	return configPath, nil
 }

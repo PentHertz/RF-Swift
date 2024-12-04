@@ -12,6 +12,7 @@ import (
 	"time"
 	"os/signal"
     "runtime"
+    "io/ioutil"
 
 	"context"
 	"github.com/docker/docker/api/types"
@@ -27,6 +28,113 @@ import (
 	common "penthertz/rfswift/common"
 	rfutils "penthertz/rfswift/rfutils"
 )
+
+type HostConfigFull struct {
+	Binds               []string               `json:"Binds"`
+	ContainerIDFile     string                 `json:"ContainerIDFile"`
+	LogConfig           LogConfig              `json:"LogConfig"`
+	NetworkMode         string                 `json:"NetworkMode"`
+	PortBindings        map[string][]PortBinding `json:"PortBindings"`
+	RestartPolicy       RestartPolicy          `json:"RestartPolicy"`
+	AutoRemove          bool                   `json:"AutoRemove"`
+	VolumeDriver        string                 `json:"VolumeDriver"`
+	VolumesFrom         []string               `json:"VolumesFrom"`
+	ConsoleSize         []int                  `json:"ConsoleSize"`
+	CapAdd              []string               `json:"CapAdd"`
+	CapDrop             []string               `json:"CapDrop"`
+	CgroupnsMode        string                 `json:"CgroupnsMode"`
+	Dns                 []string               `json:"Dns"`
+	DnsOptions          []string               `json:"DnsOptions"`
+	DnsSearch           []string               `json:"DnsSearch"`
+	ExtraHosts          []string               `json:"ExtraHosts"`
+	GroupAdd            []string               `json:"GroupAdd"`
+	IpcMode             string                 `json:"IpcMode"`
+	Cgroup              string                 `json:"Cgroup"`
+	Links               []string               `json:"Links"`
+	OomScoreAdj         int                    `json:"OomScoreAdj"`
+	PidMode             string                 `json:"PidMode"`
+	Privileged          bool                   `json:"Privileged"`
+	PublishAllPorts     bool                   `json:"PublishAllPorts"`
+	ReadonlyRootfs      bool                   `json:"ReadonlyRootfs"`
+	SecurityOpt         []string               `json:"SecurityOpt"`
+	UTSMode             string                 `json:"UTSMode"`
+	UsernsMode          string                 `json:"UsernsMode"`
+	ShmSize             int64                  `json:"ShmSize"`
+	Runtime             string                 `json:"Runtime"`
+	Isolation           string                 `json:"Isolation"`
+	CpuShares           int64                  `json:"CpuShares"`
+	Memory              int64                  `json:"Memory"`
+	NanoCpus            int64                  `json:"NanoCpus"`
+	CgroupParent        string                 `json:"CgroupParent"`
+	BlkioWeight         uint16                 `json:"BlkioWeight"`
+	BlkioWeightDevice   []ThrottleDevice       `json:"BlkioWeightDevice"`
+	BlkioDeviceReadBps  []ThrottleDevice       `json:"BlkioDeviceReadBps"`
+	BlkioDeviceWriteBps []ThrottleDevice       `json:"BlkioDeviceWriteBps"`
+	BlkioDeviceReadIOps []ThrottleDevice       `json:"BlkioDeviceReadIOps"`
+	BlkioDeviceWriteIOps []ThrottleDevice      `json:"BlkioDeviceWriteIOps"`
+	CpuPeriod           int64                  `json:"CpuPeriod"`
+	CpuQuota            int64                  `json:"CpuQuota"`
+	CpuRealtimePeriod   int64                  `json:"CpuRealtimePeriod"`
+	CpuRealtimeRuntime  int64                  `json:"CpuRealtimeRuntime"`
+	CpusetCpus          string                 `json:"CpusetCpus"`
+	CpusetMems          string                 `json:"CpusetMems"`
+	Devices             []DeviceMapping        `json:"Devices"`
+	DeviceCgroupRules   []string               `json:"DeviceCgroupRules"`
+	DeviceRequests      []DeviceRequest        `json:"DeviceRequests"`
+	MemoryReservation   int64                  `json:"MemoryReservation"`
+	MemorySwap          int64                  `json:"MemorySwap"`
+	MemorySwappiness    *int                   `json:"MemorySwappiness"`
+	OomKillDisable      *bool                  `json:"OomKillDisable"`
+	PidsLimit           *int64                 `json:"PidsLimit"`
+	Ulimits             []Ulimit               `json:"Ulimits"`
+	CpuCount            int64                  `json:"CpuCount"`
+	CpuPercent          int64                  `json:"CpuPercent"`
+	IOMaximumIOps       int64                  `json:"IOMaximumIOps"`
+	IOMaximumBandwidth  int64                  `json:"IOMaximumBandwidth"`
+	MaskedPaths         []string               `json:"MaskedPaths"`
+	ReadonlyPaths       []string               `json:"ReadonlyPaths"`
+}
+
+// Supporting structs
+type LogConfig struct {
+	Type   string            `json:"Type"`
+	Config map[string]string `json:"Config"`
+}
+
+type RestartPolicy struct {
+	Name              string `json:"Name"`
+	MaximumRetryCount int    `json:"MaximumRetryCount"`
+}
+
+type PortBinding struct {
+	HostIP   string `json:"HostIp"`
+	HostPort string `json:"HostPort"`
+}
+
+type ThrottleDevice struct {
+	Path string `json:"Path"`
+	Rate uint64 `json:"Rate"`
+}
+
+type DeviceMapping struct {
+	PathOnHost        string `json:"PathOnHost"`
+	PathInContainer   string `json:"PathInContainer"`
+	CgroupPermissions string `json:"CgroupPermissions"`
+}
+
+type DeviceRequest struct {
+	Driver       string            `json:"Driver"`
+	Count        int               `json:"Count"`
+	DeviceIDs    []string          `json:"DeviceIDs"`
+	Capabilities [][]string        `json:"Capabilities"`
+	Options      map[string]string `json:"Options"`
+}
+
+type Ulimit struct {
+	Name string `json:"Name"`
+	Hard int64  `json:"Hard"`
+	Soft int64  `json:"Soft"`
+}
 
 var inout chan []byte
 
@@ -1477,64 +1585,106 @@ func showLoadingIndicator(ctx context.Context, commandFunc func() error, stepNam
     }
 }
 
-func UpdateMountBinding(containerID string, source string, target string, add bool) {
+func UpdateMountBinding(containerName string, source string, target string, add bool) {
 	ctx := context.Background()
 
-	// Create a Docker client
-	cli, err := client.NewClientWithOpts(client.FromEnv)
-	if err != nil {
-		rfutils.DisplayNotification("Error", fmt.Sprintf("Failed to create Docker client: %v", err), "error")
+	common.PrintInfoMessage("Fetching container ID...")
+	containerID := getContainerIDByName(ctx, containerName)
+	if containerID == "" {
+		common.PrintErrorMessage(fmt.Errorf("container %s not found", containerName))
 		os.Exit(1)
 	}
-	defer cli.Close()
+	common.PrintSuccessMessage(fmt.Sprintf("Container ID: %s", containerID))
 
-	// Inspect the current container configuration
-	containerJSON, err := cli.ContainerInspect(ctx, containerID)
+	common.PrintInfoMessage("Determining hostconfig.json path...")
+	configPath, err := GetHostConfigPath(containerID)
 	if err != nil {
-		rfutils.DisplayNotification("Error", fmt.Sprintf("Failed to inspect container: %v", err), "error")
+		common.PrintErrorMessage(err)
 		os.Exit(1)
 	}
+	common.PrintSuccessMessage(fmt.Sprintf("HostConfig path: %s", configPath))
 
-	// Get existing mounts
-	mounts := containerJSON.HostConfig.Binds
-	if mounts == nil {
-		mounts = []string{}
+	common.PrintInfoMessage("Loading hostconfig.json...")
+	var hostConfig HostConfigFull
+	if err := loadJSON(configPath, &hostConfig); err != nil {
+		common.PrintErrorMessage(fmt.Errorf("failed to load hostconfig.json: %v", err))
+		os.Exit(1)
 	}
+	common.PrintSuccessMessage("HostConfig loaded successfully.")
 
-	// Prepare the new mount string
+	common.PrintInfoMessage("Updating mounts...")
 	newMount := fmt.Sprintf("%s:%s", source, target)
-
 	if add {
-		// Add the new mount
-		mounts = append(mounts, newMount)
-		rfutils.DisplayNotification("Info", fmt.Sprintf("Adding mount: %s", newMount), "info")
+		if !ocontains(hostConfig.Binds, newMount) {
+			hostConfig.Binds = append(hostConfig.Binds, newMount)
+			common.PrintSuccessMessage(fmt.Sprintf("Added mount: %s", newMount))
+		} else {
+			common.PrintWarningMessage("Mount already exists.")
+		}
 	} else {
-		// Remove the mount that matches the target
-		updatedMounts := []string{}
-		for _, mount := range mounts {
-			// Check if the target matches
-			mountParts := strings.Split(mount, ":")
-			if len(mountParts) < 2 || mountParts[1] != target {
-				updatedMounts = append(updatedMounts, mount)
+		hostConfig.Binds = removeFromSlice(hostConfig.Binds, newMount)
+		common.PrintSuccessMessage(fmt.Sprintf("Removed mount: %s", newMount))
+	}
+
+	common.PrintInfoMessage("Saving updated hostconfig.json...")
+	if err := saveJSON(configPath, hostConfig); err != nil {
+		common.PrintErrorMessage(fmt.Errorf("failed to save hostconfig.json: %v", err))
+		os.Exit(1)
+	}
+	common.PrintSuccessMessage("hostconfig.json updated successfully.")
+
+	common.PrintInfoMessage("Restarting Docker service...")
+	if err := RestartDockerService(); err != nil {
+		common.PrintErrorMessage(fmt.Errorf("failed to restart Docker service: %v", err))
+		os.Exit(1)
+	}
+	common.PrintSuccessMessage("Docker service restarted successfully.")
+}
+
+func ocontains(slice []string, item string) bool {
+	for _, s := range slice {
+		if s == item {
+			return true
+		}
+	}
+	return false
+}
+
+func loadJSON(path string, v interface{}) error {
+	data, err := ioutil.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	return json.Unmarshal(data, v)
+}
+
+func saveJSON(path string, v interface{}) error {
+	data, err := json.MarshalIndent(v, "", "  ")
+	if err != nil {
+		return err
+	}
+	return ioutil.WriteFile(path, data, 0644)
+}
+
+func removeFromSlice(slice []string, item string) []string {
+	newSlice := []string{}
+	for _, s := range slice {
+		if s != item {
+			newSlice = append(newSlice, s)
+		}
+	}
+	return newSlice
+}
+
+func getContainerIDByName(ctx context.Context, containerName string) string {
+	cli, _ := client.NewClientWithOpts(client.FromEnv)
+	containers, _ := cli.ContainerList(ctx, container.ListOptions{All: true})
+	for _, container := range containers {
+		for _, name := range container.Names {
+			if strings.TrimPrefix(name, "/") == containerName {
+				return container.ID
 			}
 		}
-		mounts = updatedMounts
-		rfutils.DisplayNotification("Info", fmt.Sprintf("Removing mount with target: %s", target), "info")
 	}
-
-	// Restart the container to apply changes
-	stopOptions := container.StopOptions{} // Default options
-	err = cli.ContainerStop(ctx, containerID, stopOptions)
-	if err != nil {
-		rfutils.DisplayNotification("Error", fmt.Sprintf("Failed to stop container: %v", err), "error")
-		os.Exit(1)
-	}
-
-	err = cli.ContainerStart(ctx, containerID, container.StartOptions{})
-	if err != nil {
-		rfutils.DisplayNotification("Error", fmt.Sprintf("Failed to start container: %v", err), "error")
-		os.Exit(1)
-	}
-
-	rfutils.DisplayNotification("Success", fmt.Sprintf("Successfully updated container %s: add=%v, source=%s, target=%s", containerID, add, source, target), "info")
+	return ""
 }
