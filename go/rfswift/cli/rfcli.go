@@ -28,6 +28,8 @@ var UsbDevice string
 var PulseServer string
 var DockerName string
 var DockerNewName string
+var Bsource string
+var Btarget string
 
 var rootCmd = &cobra.Command{
 	Use:   "rfswift",
@@ -271,6 +273,30 @@ var UpdateCmd = &cobra.Command{
 	},
 }
 
+var BindingsCmd = &cobra.Command{
+	Use:   "bindings",
+	Short: "Manage bindings",
+	Long:  `Add, or remove, a binding for a container`,
+}
+
+var BindingsAddCmd = &cobra.Command{
+	Use:   "add",
+	Short: "Add a binding",
+	Long:  `Adding a new binding for a container ID`,
+	Run: func(cmd *cobra.Command, args []string) {
+		rfdock.UpdateMountBinding(ContID, Bsource, Btarget, true)
+	},
+}
+
+var BindingsRmCmd = &cobra.Command{
+	Use:   "rm",
+	Short: "Remove a binding",
+	Long:  `Remove a new binding for a container ID`,
+	Run: func(cmd *cobra.Command, args []string) {
+		rfdock.UpdateMountBinding(ContID, Bsource, Btarget, false)
+	},
+}
+
 func init() {
 	rootCmd.AddCommand(runCmd)
 	rootCmd.AddCommand(lastCmd)
@@ -284,6 +310,7 @@ func init() {
 	rootCmd.AddCommand(DeleteCmd)
 	rootCmd.AddCommand(HostCmd)
 	rootCmd.AddCommand(UpdateCmd)
+	rootCmd.AddCommand(BindingsCmd)
 
 	// Adding special commands for Windows
 	os := runtime.GOOS
@@ -335,6 +362,22 @@ func init() {
 	runCmd.Flags().StringVarP(&DockerName, "name", "n", "", "A docker name")
 	runCmd.MarkFlagRequired("name")
 	lastCmd.Flags().StringVarP(&FilterLast, "filter", "f", "", "filter by image name")
+
+	BindingsCmd.AddCommand(BindingsAddCmd)
+	BindingsCmd.AddCommand(BindingsRmCmd)
+	BindingsAddCmd.Flags().StringVarP(&ContID, "container", "c", "", "container to run")
+	BindingsAddCmd.Flags().StringVarP(&Bsource, "source", "s", "", "source binding")
+	BindingsAddCmd.Flags().StringVarP(&Btarget, "target", "t", "", "target binding")
+	BindingsAddCmd.MarkFlagRequired("container")
+	BindingsAddCmd.MarkFlagRequired("source")
+	BindingsAddCmd.MarkFlagRequired("target")
+	BindingsRmCmd.Flags().StringVarP(&ContID, "container", "c", "", "container to run")
+	BindingsRmCmd.Flags().StringVarP(&Bsource, "source", "s", "", "source binding")
+	BindingsRmCmd.Flags().StringVarP(&Btarget, "target", "t", "", "target binding")
+	BindingsRmCmd.MarkFlagRequired("container")
+	BindingsRmCmd.MarkFlagRequired("source")
+	BindingsRmCmd.MarkFlagRequired("target")
+
 }
 
 func Execute() {

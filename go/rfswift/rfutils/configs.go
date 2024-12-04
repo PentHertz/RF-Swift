@@ -11,6 +11,7 @@ import (
 type Config struct {
 	General struct {
 		ImageName string
+		RepoTag string
 	}
 	Container struct {
 		Shell      string
@@ -82,8 +83,11 @@ func ReadOrCreateConfig(filename string) (*Config, error) {
 
 		switch currentSection {
 		case "general":
-			if key == "imagename" {
+			switch key {
+			case "imagename":
 				config.General.ImageName = value
+			case "repotag":
+				config.General.RepoTag = value
 			}
 		case "container":
 			switch key {
@@ -117,6 +121,10 @@ func ReadOrCreateConfig(filename string) (*Config, error) {
 	if config.General.ImageName == "" {
 		printOrange("Image name is missing in the config file.")
 		config.General.ImageName = promptForValue("Image name", "myrfswift:latest")
+	}
+	if config.General.RepoTag == "" {
+		printOrange("Repository tag is missing in the config file.")
+		config.General.RepoTag = promptForValue("RepoTag", "penthertz/rfswift")
 	}
 	if config.Container.Shell == "" {
 		printOrange("Shell is missing in the config file.")
@@ -154,6 +162,7 @@ func ReadOrCreateConfig(filename string) (*Config, error) {
 func createDefaultConfig(filename string) error {
 	content := `[general]
 imagename = myrfswift:latest
+repotag = penthertz/rfswift
 
 [container]
 shell = /bin/zsh

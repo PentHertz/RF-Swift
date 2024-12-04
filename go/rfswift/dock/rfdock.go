@@ -39,6 +39,7 @@ type DockerInst struct {
 	usbdevice    string
 	shell        string
 	imagename    string
+	repotag      string
 	extrabinding string
 	entrypoint   string
 	extrahosts   string
@@ -55,6 +56,7 @@ var dockerObj = DockerInst{net: "host",
 	usbforward:   "/dev/bus/usb:/dev/bus/usb",
 	extrabinding: "/dev/ttyACM0:/dev/ttyACM0,/run/dbus/system_bus_socket:/run/dbus/system_bus_socket,/dev/snd:/dev/snd,/dev/dri:/dev/dri,/dev/input:/dev/input", // Some more if needed /run/dbus/system_bus_socket:/run/dbus/system_bus_socket,/dev/snd:/dev/snd,/dev/dri:/dev/dri
 	imagename:    "myrfswift:latest",
+	repotag:      "penthertz/rfswift",
 	extrahosts:   "",
 	extraenv:     "",
 	network_mode: "host",
@@ -74,6 +76,7 @@ func updateDockerObjFromConfig() {
 
 	// Update dockerObj with values from config
 	dockerObj.imagename = config.General.ImageName
+	dockerObj.repotag = config.General.RepoTag
 	dockerObj.shell = config.Container.Shell
 	dockerObj.network_mode = config.Container.Network
 	dockerObj.x11forward = config.Container.X11Forward
@@ -716,6 +719,11 @@ func DockerRun(containerName string) {
 	}
 	defer cli.Close()
 
+	if !strings.Contains(dockerObj.imagename, "/") {
+		// Prepend Config.General.RepoTag if the format is missing
+		dockerObj.imagename = fmt.Sprintf("%s:%s", dockerObj.repotag, dockerObj.imagename)
+	}
+
 	bindings := combineBindings(dockerObj.x11forward, dockerObj.usbforward, dockerObj.extrabinding)
 	extrahosts := splitAndCombine(dockerObj.extrahosts)
 	dockerenv := combineEnv(dockerObj.xdisplay, dockerObj.pulse_server, dockerObj.extraenv)
@@ -931,9 +939,16 @@ func DockerPull(imageref string, imagetag string) {
 	   in(2): string Image tag target
 	*/
 
+	if !strings.Contains(imageref, "/") {
+		// Prepend Config.General.RepoTag if the format is missing
+		imageref = fmt.Sprintf("%s:%s", dockerObj.repotag, imageref)
+	}
+
 	if imagetag == "" { // if tag is empty, keep same tag
 		imagetag = imageref
 	}
+
+	common.PrintInfoMessage(fmt.Sprintf("Pulling image from: %s", imageref))
 
 	ctx := context.Background()
 	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
@@ -969,6 +984,8 @@ func DockerPull(imageref string, imagetag string) {
 	err = cli.ImageTag(ctx, imageref, imagetag)
 	if err != nil {
 		panic(err)
+	} else {
+		common.PrintSuccessMessage(fmt.Sprintf("Image '%s' installed successfully", imagetag))
 	}
 }
 
@@ -1458,4 +1475,66 @@ func showLoadingIndicator(ctx context.Context, commandFunc func() error, stepNam
             i++
         }
     }
+}
+
+func UpdateMountBinding(containerID string, source string, target string, add bool) {
+	ctx := context.Background()
+
+	// Create a Docker client
+	cli, err := client.NewClientWithOpts(client.FromEnv)
+	if err != nil {
+		rfutils.DisplayNotification("Error", fmt.Sprintf("Failed to create Docker client: %v", err), "error")
+		os.Exit(1)
+	}
+	defer cli.Close()
+
+	// Inspect the current container configuration
+	containerJSON, err := cli.ContainerInspect(ctx, containerID)
+	if err != nil {
+		rfutils.DisplayNotification("Error", fmt.Sprintf("Failed to inspect container: %v", err), "error")
+		os.Exit(1)
+	}
+
+	// Get existing mounts
+	mounts := containerJSON.HostConfig.Binds
+	if mounts == nil {
+		mounts = []string{}
+	}
+
+	// Prepare the new mount string
+	newMount := fmt.Sprintf("%s:%s", source, target)
+
+	if add {
+		// Add the new mount
+		mounts = append(mounts, newMount)
+		rfutils.DisplayNotification("Info", fmt.Sprintf("Adding mount: %s", newMount), "info")
+	} else {
+		// Remove the mount that matches the target
+		updatedMounts := []string{}
+		for _, mount := range mounts {
+			// Check if the target matches
+			mountParts := strings.Split(mount, ":")
+			if len(mountParts) < 2 || mountParts[1] != target {
+				updatedMounts = append(updatedMounts, mount)
+			}
+		}
+		mounts = updatedMounts
+		rfutils.DisplayNotification("Info", fmt.Sprintf("Removing mount with target: %s", target), "info")
+	}
+
+	// Restart the container to apply changes
+	stopOptions := container.StopOptions{} // Default options
+	err = cli.ContainerStop(ctx, containerID, stopOptions)
+	if err != nil {
+		rfutils.DisplayNotification("Error", fmt.Sprintf("Failed to stop container: %v", err), "error")
+		os.Exit(1)
+	}
+
+	err = cli.ContainerStart(ctx, containerID, container.StartOptions{})
+	if err != nil {
+		rfutils.DisplayNotification("Error", fmt.Sprintf("Failed to start container: %v", err), "error")
+		os.Exit(1)
+	}
+
+	rfutils.DisplayNotification("Success", fmt.Sprintf("Successfully updated container %s: add=%v, source=%s, target=%s", containerID, add, source, target), "info")
 }
