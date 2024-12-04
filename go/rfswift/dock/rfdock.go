@@ -1596,6 +1596,20 @@ func UpdateMountBinding(containerName string, source string, target string, add 
 	}
 	common.PrintSuccessMessage(fmt.Sprintf("Container ID: %s", containerID))
 
+	// Stop the container
+	cli, err := client.NewClientWithOpts(client.FromEnv)
+	if err != nil {
+		common.PrintErrorMessage(fmt.Errorf("Error when instanciating a client"))
+		os.Exit(1)
+	}
+	common.PrintInfoMessage("Stopping the container...")
+	err = cli.ContainerStop(ctx, containerID, container.StopOptions{})
+    if err != nil {
+    	common.PrintErrorMessage(fmt.Errorf("Failed to stop the container"))
+        os.Exit(1)
+    }
+	common.PrintSuccessMessage(fmt.Sprintf("Container '%s' stopped", containerID))
+
 	common.PrintInfoMessage("Determining hostconfig.json path...")
 	configPath, err := GetHostConfigPath(containerID)
 	if err != nil {
