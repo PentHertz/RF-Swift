@@ -1635,50 +1635,104 @@ func UpdateMountBinding(containerName string, source string, target string, add 
 		common.PrintSuccessMessage(fmt.Sprintf("Container '%s' stopped", containerID))
 	}
 
-	// The rest of your function logic continues here
+	// Load and update hostconfig.json
 	common.PrintInfoMessage("Determining hostconfig.json path...")
-	configPath, err := GetHostConfigPath(containerID)
+	hostConfigPath, err := GetHostConfigPath(containerID)
 	if err != nil {
 		common.PrintErrorMessage(err)
 		os.Exit(1)
 	}
-	common.PrintSuccessMessage(fmt.Sprintf("HostConfig path: %s", configPath))
+	common.PrintSuccessMessage(fmt.Sprintf("HostConfig path: %s", hostConfigPath))
 
 	common.PrintInfoMessage("Loading hostconfig.json...")
 	var hostConfig HostConfigFull
-	if err := loadJSON(configPath, &hostConfig); err != nil {
+	if err := loadJSON(hostConfigPath, &hostConfig); err != nil {
 		common.PrintErrorMessage(fmt.Errorf("failed to load hostconfig.json: %v", err))
 		os.Exit(1)
 	}
 	common.PrintSuccessMessage("HostConfig loaded successfully.")
 
+	// Load and update config.v2.json
+	common.PrintInfoMessage("Determining config.v2.json path...")
+	configV2Path := strings.Replace(hostConfigPath, "hostconfig.json", "config.v2.json", 1)
+	common.PrintInfoMessage(fmt.Sprintf("Loading config.v2.json from: %s", configV2Path))
+	var configV2 map[string]interface{}
+	if err := loadJSON(configV2Path, &configV2); err != nil {
+		common.PrintErrorMessage(fmt.Errorf("failed to load config.v2.json: %v", err))
+		os.Exit(1)
+	}
+	common.PrintSuccessMessage("config.v2.json loaded successfully.")
+
+	// Update mounts in both files
 	common.PrintInfoMessage("Updating mounts...")
 	newMount := fmt.Sprintf("%s:%s", source, target)
 	if add {
 		if !ocontains(hostConfig.Binds, newMount) {
 			hostConfig.Binds = append(hostConfig.Binds, newMount)
+			addMountPoint(configV2, source, target)
 			common.PrintSuccessMessage(fmt.Sprintf("Added mount: %s", newMount))
 		} else {
 			common.PrintWarningMessage("Mount already exists.")
 		}
 	} else {
 		hostConfig.Binds = removeFromSlice(hostConfig.Binds, newMount)
+		removeMountPoint(configV2, target)
 		common.PrintSuccessMessage(fmt.Sprintf("Removed mount: %s", newMount))
 	}
 
+	// Save changes
 	common.PrintInfoMessage("Saving updated hostconfig.json...")
-	if err := saveJSON(configPath, hostConfig); err != nil {
+	if err := saveJSON(hostConfigPath, hostConfig); err != nil {
 		common.PrintErrorMessage(fmt.Errorf("failed to save hostconfig.json: %v", err))
 		os.Exit(1)
 	}
 	common.PrintSuccessMessage("hostconfig.json updated successfully.")
 
+	common.PrintInfoMessage("Saving updated config.v2.json...")
+	if err := saveJSON(configV2Path, configV2); err != nil {
+		common.PrintErrorMessage(fmt.Errorf("failed to save config.v2.json: %v", err))
+		os.Exit(1)
+	}
+	common.PrintSuccessMessage("config.v2.json updated successfully.")
+
+	// Restart the container
 	common.PrintInfoMessage("Restarting Docker service...")
 	if err := RestartDockerService(); err != nil {
 		common.PrintErrorMessage(fmt.Errorf("failed to restart Docker service: %v", err))
 		os.Exit(1)
 	}
 	common.PrintSuccessMessage("Docker service restarted successfully.")
+}
+
+func addMountPoint(config map[string]interface{}, source string, target string) {
+	mountPoints, ok := config["MountPoints"].(map[string]interface{})
+	if !ok {
+		mountPoints = make(map[string]interface{})
+		config["MountPoints"] = mountPoints
+	}
+
+	mountPoints[target] = map[string]interface{}{
+		"Source":                  source,
+		"Destination":             target,
+		"RW":                      true,
+		"Type":                    "bind",
+		"Propagation":             "rprivate",
+		"Spec": map[string]string{
+			"Type":   "bind",
+			"Source": source,
+			"Target": target,
+		},
+		"SkipMountpointCreation": false,
+	}
+}
+
+func removeMountPoint(config map[string]interface{}, target string) {
+	mountPoints, ok := config["MountPoints"].(map[string]interface{})
+	if !ok {
+		return
+	}
+
+	delete(mountPoints, target)
 }
 
 func ocontains(slice []string, item string) bool {

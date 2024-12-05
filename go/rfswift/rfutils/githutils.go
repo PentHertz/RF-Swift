@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -12,6 +11,9 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"archive/tar"
+	"archive/zip"
+	"compress/gzip"
 
 	"github.com/cheggaaa/pb/v3"
 	"github.com/go-resty/resty/v2"
@@ -137,29 +139,111 @@ func VersionCompare(v1, v2 string) int {
 	return 0
 }
 
+// Extract .tar.gz files
+func ExtractTarGz(src, destDir string) error {
+	file, err := os.Open(src)
+	if err != nil {
+		return fmt.Errorf("error opening tar.gz file: %v", err)
+	}
+	defer file.Close()
+
+	gzr, err := gzip.NewReader(file)
+	if err != nil {
+		return fmt.Errorf("error creating gzip reader: %v", err)
+	}
+	defer gzr.Close()
+
+	tarReader := tar.NewReader(gzr)
+
+	for {
+		header, err := tarReader.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return fmt.Errorf("error reading tar header: %v", err)
+		}
+
+		targetPath := filepath.Join(destDir, header.Name)
+
+		switch header.Typeflag {
+		case tar.TypeDir:
+			if err := os.MkdirAll(targetPath, os.FileMode(header.Mode)); err != nil {
+				return fmt.Errorf("error creating directory: %v", err)
+			}
+		case tar.TypeReg:
+			outFile, err := os.Create(targetPath)
+			if err != nil {
+				return fmt.Errorf("error creating file: %v", err)
+			}
+			if _, err := io.Copy(outFile, tarReader); err != nil {
+				return fmt.Errorf("error writing file: %v", err)
+			}
+			outFile.Close()
+		}
+	}
+	return nil
+}
+
+// Extract .zip files
+func ExtractZip(src, destDir string) error {
+	r, err := zip.OpenReader(src)
+	if err != nil {
+		return fmt.Errorf("error opening zip file: %v", err)
+	}
+	defer r.Close()
+
+	for _, file := range r.File {
+		targetPath := filepath.Join(destDir, file.Name)
+		if file.FileInfo().IsDir() {
+			if err := os.MkdirAll(targetPath, file.Mode()); err != nil {
+				return fmt.Errorf("error creating directory: %v", err)
+			}
+			continue
+		}
+
+		fileReader, err := file.Open()
+		if err != nil {
+			return fmt.Errorf("error opening file in zip: %v", err)
+		}
+		defer fileReader.Close()
+
+		outFile, err := os.Create(targetPath)
+		if err != nil {
+			return fmt.Errorf("error creating file: %v", err)
+		}
+		if _, err := io.Copy(outFile, fileReader); err != nil {
+			return fmt.Errorf("error writing file: %v", err)
+		}
+		outFile.Close()
+	}
+	return nil
+}
+
 func GetLatestRFSwift() {
 	owner := "PentHertz"
 	repo := "RF-Swift"
 
 	release, err := GetLatestRelease(owner, repo)
 	if err != nil {
-		log.Fatalf("Error getting latest release: %v", err)
+		common.PrintErrorMessage(err)
+		return
 	}
 
 	compareResult := VersionCompare(common.Version, release.TagName)
 	if compareResult >= 0 {
-		fmt.Printf("\033[35m[+]\033[0m \033[37mYou already have the latest version: \033[33m%s\033[0m\n", common.Version)
+		common.PrintSuccessMessage(fmt.Sprintf("You already have the latest version: %s", common.Version))
 		return
-	} else if compareResult < 0 {
-		fmt.Printf("\033[31m[!]\033[0m \033[37mYour current version (\033[33m%s\033[37m) is obsolete. Please update to version (\033[33m%s\033[37m).\n", common.Version, release.TagName)
+	} else {
+		common.PrintWarningMessage(fmt.Sprintf("Your current version is obsolete. Please update to version: %s", release.TagName))
 	}
 
-	fmt.Printf("\033[35m[+]\033[0m Do you want to update to the latest version? (yes/no): ")
+	common.PrintInfoMessage("Do you want to update to the latest version? (yes/no): ")
 	var updateResponse string
 	fmt.Scanln(&updateResponse)
 
 	if strings.ToLower(updateResponse) != "yes" {
-		fmt.Println("Update aborted.")
+		common.PrintInfoMessage("Update aborted.")
 		return
 	}
 
@@ -172,65 +256,70 @@ func GetLatestRFSwift() {
 	case "linux":
 		switch arch {
 		case "amd64":
-			fileName = "rfswift_linux_amd64"
+			fileName = "rfswift_Linux_x86_64.tar.gz"
 		case "arm64":
-			fileName = "rfswift_linux_arm64"
+			fileName = "rfswift_Linux_arm64.tar.gz"
 		default:
-			log.Fatalf("Unsupported architecture: %s", arch)
+			common.PrintErrorMessage(fmt.Errorf("Unsupported architecture: %s", arch))
+			return
 		}
 	case "windows":
 		switch arch {
 		case "amd64":
-			fileName = "rfswift_windows_amd64.exe"
+			fileName = "rfswift_Windows_x86_64.zip"
 		case "arm64":
-			fileName = "rfswift_windows_arm64.exe"
+			fileName = "rfswift_Windows_arm64.zip"
 		default:
-			log.Fatalf("Unsupported architecture: %s", arch)
+			common.PrintErrorMessage(fmt.Errorf("Unsupported architecture: %s", arch))
+			return
 		}
 	default:
-		log.Fatalf("Unsupported operating system: %s", goos)
+		common.PrintErrorMessage(fmt.Errorf("Unsupported operating system: %s", goos))
+		return
 	}
 
 	downloadURL := ConstructDownloadURL(owner, repo, release.TagName, fileName)
-	fmt.Printf("Latest release download URL: %s\n", downloadURL)
-
-	fmt.Printf("\033[35m[+]\033[0m Do you want to replace the existing binary with this new release? (yes/no): ")
-	var response string
-	fmt.Scanln(&response)
+	common.PrintInfoMessage(fmt.Sprintf("Latest release download URL: %s", downloadURL))
 
 	currentBinaryPath, err := os.Executable()
 	if err != nil {
-		log.Fatalf("Error determining the current executable path: %v", err)
+		common.PrintErrorMessage(fmt.Errorf("Error determining the current executable path: %v", err))
+		return
 	}
 
-	if response == "yes" {
-		tempDest := filepath.Join(os.TempDir(), fileName)
-		err = DownloadFile(downloadURL, tempDest)
-		if err != nil {
-			log.Fatalf("Error downloading file: %v", err)
-		}
+	tempDest := filepath.Join(os.TempDir(), fileName)
+	err = DownloadFile(downloadURL, tempDest)
+	if err != nil {
+		common.PrintErrorMessage(fmt.Errorf("Error downloading file: %v", err))
+		return
+	}
 
-		err = ReplaceBinary(tempDest, currentBinaryPath)
-		if err != nil {
-			log.Fatalf("Error replacing binary: %v", err)
-		}
+	extractDir := filepath.Join(os.TempDir(), "rfswift_extracted")
+	if err := os.MkdirAll(extractDir, 0755); err != nil {
+		common.PrintErrorMessage(fmt.Errorf("Error creating extraction directory: %v", err))
+		return
+	}
 
-		fmt.Println("File downloaded and replaced successfully.")
+	// Extract the file based on extension
+	if strings.HasSuffix(fileName, ".tar.gz") {
+		err = ExtractTarGz(tempDest, extractDir)
+	} else if strings.HasSuffix(fileName, ".zip") {
+		err = ExtractZip(tempDest, extractDir)
 	} else {
-		var dest string
-		ext := filepath.Ext(fileName)
-		dest = filepath.Join(filepath.Dir(currentBinaryPath), fmt.Sprintf("%s_%s%s", strings.TrimSuffix(fileName, ext), release.TagName, ext))
-
-		err = DownloadFile(downloadURL, dest)
-		if err != nil {
-			log.Fatalf("Error downloading file: %v", err)
-		}
-
-		err = MakeExecutable(dest)
-		if err != nil {
-			log.Fatalf("Error making binary executable: %v", err)
-		}
-
-		fmt.Printf("File downloaded and saved at %s\n", dest)
+		common.PrintErrorMessage(fmt.Errorf("Unsupported file format: %s", fileName))
+		return
 	}
+	if err != nil {
+		common.PrintErrorMessage(fmt.Errorf("Error extracting file: %v", err))
+		return
+	}
+
+	newBinaryPath := filepath.Join(extractDir, "rfswift") // Adjust if the binary name differs
+	err = ReplaceBinary(newBinaryPath, currentBinaryPath)
+	if err != nil {
+		common.PrintErrorMessage(fmt.Errorf("Error replacing binary: %v", err))
+		return
+	}
+
+	common.PrintSuccessMessage("File downloaded, extracted, and replaced successfully.")
 }
