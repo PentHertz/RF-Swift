@@ -827,7 +827,7 @@ func DockerRun(containerName string) {
 	}
 	defer cli.Close()
 
-	if !strings.Contains(dockerObj.imagename, "/") {
+	if !strings.Contains(dockerObj.imagename, ":") {
 		// Prepend Config.General.RepoTag if the format is missing
 		dockerObj.imagename = fmt.Sprintf("%s:%s", dockerObj.repotag, dockerObj.imagename)
 	}
@@ -1047,7 +1047,7 @@ func DockerPull(imageref string, imagetag string) {
 	   in(2): string Image tag target
 	*/
 
-	if !strings.Contains(imageref, "/") {
+	if !strings.Contains(imageref, ":") {
 		// Prepend Config.General.RepoTag if the format is missing
 		imageref = fmt.Sprintf("%s:%s", dockerObj.repotag, imageref)
 	}
@@ -1588,6 +1588,19 @@ func showLoadingIndicator(ctx context.Context, commandFunc func() error, stepNam
 func UpdateMountBinding(containerName string, source string, target string, add bool) {
 	var timeout = 10 // Stop timeout
 
+	// Check if the system is Windows
+	if runtime.GOOS == "windows" {
+		title := "Unsupported on Windows"
+		message := `This function is not supported on Windows.
+However, you can achieve similar functionality by using the following commands:
+- "rfswift commit" to create a new image with a new tag.
+- "rfswift remove" to remove the existing container.
+- "rfswift run" to run a container with new bindings.`
+
+		rfutils.DisplayNotification(title, message, "warning")
+		os.Exit(1) // Exit since this function is not supported on Windows
+	}
+
 	if source == "" {
 		source = target
 		common.PrintWarningMessage(fmt.Sprintf("Source is empty. Defaulting source to target: %s", target))
@@ -1612,9 +1625,11 @@ func UpdateMountBinding(containerName string, source string, target string, add 
 	common.PrintInfoMessage("Stopping the container...")
 
 	// Attempt graceful stop
-	err = cli.ContainerStop(ctx, containerID, container.StopOptions{Timeout: &timeout})
-	if err != nil {
+	if err := showLoadingIndicator(ctx, func() error {
+		return cli.ContainerStop(ctx, containerID, container.StopOptions{Timeout: &timeout})
+	}, "Stopping the container..."); err != nil {
 		common.PrintErrorMessage(fmt.Errorf("Failed to stop the container gracefully: %v", err))
+		os.Exit(1)
 	}
 
 	// Check if the container is still running
@@ -1696,8 +1711,9 @@ func UpdateMountBinding(containerName string, source string, target string, add 
 	common.PrintSuccessMessage("config.v2.json updated successfully.")
 
 	// Restart the container
-	common.PrintInfoMessage("Restarting Docker service...")
-	if err := RestartDockerService(); err != nil {
+	if err := showLoadingIndicator(ctx, func() error {
+		return RestartDockerService()
+	}, "Restarting Docker service..."); err != nil {
 		common.PrintErrorMessage(fmt.Errorf("failed to restart Docker service: %v", err))
 		os.Exit(1)
 	}

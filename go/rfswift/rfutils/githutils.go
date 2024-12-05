@@ -92,6 +92,12 @@ func DownloadFile(url, dest string) error {
 }
 
 func MakeExecutable(path string) error {
+	if runtime.GOOS == "windows" {
+		// No action needed on Windows
+		return nil
+	}
+
+	// Set executable bit on Unix-like systems
 	err := os.Chmod(path, 0755)
 	if err != nil {
 		return err
@@ -139,7 +145,6 @@ func VersionCompare(v1, v2 string) int {
 	return 0
 }
 
-// Extract .tar.gz files
 func ExtractTarGz(src, destDir string) error {
 	file, err := os.Open(src)
 	if err != nil {
@@ -185,7 +190,6 @@ func ExtractTarGz(src, destDir string) error {
 	return nil
 }
 
-// Extract .zip files
 func ExtractZip(src, destDir string) error {
 	r, err := zip.OpenReader(src)
 	if err != nil {
