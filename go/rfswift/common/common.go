@@ -9,7 +9,7 @@ import (
 	"strings"
 )
 
-var Version = "0.5.2"
+var Version = "0.5.3"
 var Branch = "main"
 var ascii_art = `                                                                                                    
                                                                                                                                                       
