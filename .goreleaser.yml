@@ -38,10 +38,16 @@ archives:
       {{- else if eq .Arch "riscv64" }}riscv64
       {{- else }}{{ .Arch }}{{ end }}
       {{- if .Arm }}v{{ .Arm }}{{ end }}
+    files:
+      - README.md
+      - LICENSE
     # Use zip for Windows archives
     format_overrides:
       - goos: windows
         format: zip
+        files:
+          - README.md
+          - LICENSE
 
 changelog:
   sort: asc
