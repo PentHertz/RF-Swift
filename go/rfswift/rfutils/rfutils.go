@@ -77,9 +77,20 @@ func XHostEnable() {
 		return
 	}
 
-	// Adding local hostname in ACLs
-	s := "xhost local:root"
-	HostCmdExec(s)
+	if runtime.GOOS == "darwin" {
+		// macOS-specific command
+		ip, err := exec.Command("ipconfig", "getifaddr", "en0").Output()
+		if err != nil {
+			fmt.Println("Error getting IP address on macOS:", err)
+			return
+		}
+		cmd := fmt.Sprintf("xhost + %s", strings.TrimSpace(string(ip)))
+		HostCmdExec(cmd)
+	} else {
+		// Default command for other OS
+		s := "xhost local:root"
+		HostCmdExec(s)
+	}
 }
 
 func displayEnv() (string, error) {
@@ -92,13 +103,42 @@ func displayEnv() (string, error) {
 
 func GetDisplayEnv() string {
 	var dispenv string
-	display, err := displayEnv()
-	if err != nil {
-		fmt.Println("Error (using default 'DISPLAY=:0 value'):", err)
-		dispenv = "DISPLAY=:0"
+
+	if runtime.GOOS == "darwin" {
+		// macOS-specific handling
+		currentDisplay := os.Getenv("DISPLAY")
+		var displayNumber string
+
+		// Extract the display number (e.g., ":0" from "path:0")
+		if currentDisplay != "" {
+			parts := strings.Split(currentDisplay, ":")
+			if len(parts) > 1 {
+				displayNumber = ":" + parts[1] // Retain the display number
+			} else {
+				displayNumber = ":0" // Fallback if the format is unexpected
+			}
+		} else {
+			displayNumber = ":0" // Default if DISPLAY is not set
+		}
+
+		// Get the IP address and append the display number
+		ip, err := exec.Command("ipconfig", "getifaddr", "en0").Output()
+		if err != nil {
+			fmt.Println("Error determining IP address (using default 'DISPLAY=:0'):", err)
+			return "DISPLAY=:0"
+		}
+		dispenv = "DISPLAY=" + strings.TrimSpace(string(ip)) + displayNumber
 	} else {
-		dispenv = "DISPLAY=" + display
+		// Default behavior for other OS
+		display, err := displayEnv()
+		if err != nil {
+			fmt.Println("Error (using default 'DISPLAY=:0'):", err)
+			dispenv = "DISPLAY=:0"
+		} else {
+			dispenv = "DISPLAY=" + display
+		}
 	}
+
 	return dispenv
 }
 

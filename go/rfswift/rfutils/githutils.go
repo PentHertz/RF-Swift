@@ -267,6 +267,16 @@ func GetLatestRFSwift() {
 			common.PrintErrorMessage(fmt.Errorf("Unsupported architecture: %s", arch))
 			return
 		}
+	case "darwin":
+		switch arch {
+		case "amd64":
+			fileName = "rfswift_Darwin_x86_64.tar.gz"
+		case "arm64":
+			fileName = "rfswift_Darwin_arm64.tar.gz"
+		default:
+			common.PrintErrorMessage(fmt.Errorf("Unsupported architecture: %s", arch))
+			return
+		}
 	case "windows":
 		switch arch {
 		case "amd64":
