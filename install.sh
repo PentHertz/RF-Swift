@@ -12,36 +12,76 @@ YELLOW='\033[0;33m'
 NC='\033[0m' # No Color
 
 check_docker() {
-    echo -e "${YELLOW}Are you installing on a Steam Deck? (yes/no)${NC}"
-    read -p "Choose an option: " steamdeck_install
-    if [ "$steamdeck_install" == "yes" ]; then
-        install_docker_steamdeck
-    else
-        if ! command -v docker &> /dev/null; then
-            echo -e "${RED}Docker is not installed. Do you want to install it now? (yes/no)${NC}"
-            read -p "Choose an option: " install_docker
-            if [ "$install_docker" == "yes" ]; then
-                install_docker_standard
-            else
-                echo -e "${RED}Docker is required to proceed. Exiting.${NC}"
-                exit 1
-            fi
-        else
-            echo -e "${GREEN}Docker is already installed. Moving on.${NC}"
-            install_buildx
-            install_docker_compose
+    # Check if the system is Linux and not Darwin (macOS)
+    if [ "$(uname -s)" == "Linux" ]; then
+        echo -e "${YELLOW}Are you installing on a Steam Deck? (yes/no)${NC}"
+        read -p "Choose an option: " steamdeck_install
+        if [ "$steamdeck_install" == "yes" ]; then
+            install_docker_steamdeck
+            return
         fi
+    fi
+
+    # Check if Docker is installed
+    if ! command -v docker &> /dev/null; then
+        echo -e "${RED}Docker is not installed. Do you want to install it now? (yes/no)${NC}"
+        read -p "Choose an option: " install_docker
+        if [ "$install_docker" == "yes" ]; then
+            install_docker_standard
+        else
+            echo -e "${RED}Docker is required to proceed. Exiting.${NC}"
+            exit 1
+        fi
+    else
+        echo -e "${GREEN}Docker is already installed. Moving on.${NC}"
+        install_buildx
+        install_docker_compose
     fi
 }
 
 install_docker_standard() {
-    # Install Docker for all Linux distributions
-    curl -fsSL "https://get.docker.com/" | sh
-    sudo systemctl start docker
-    sudo systemctl enable docker
-    echo -e "${GREEN}Docker installed successfully.${NC}"
-    install_buildx
-    install_docker_compose
+    arch=$(uname -m)
+    os=$(uname -s)
+
+    if [ "$os" == "Darwin" ]; then
+        # macOS installation using Homebrew
+        if ! command -v brew &> /dev/null; then
+            echo -e "${RED}Homebrew is not installed. Please install Homebrew first.${NC}"
+            echo "Visit https://brew.sh/ for installation instructions."
+            exit 1
+        fi
+        echo -e "${YELLOW}Installing Docker using Homebrew...${NC}"
+        brew install --cask docker
+        echo -e "${GREEN}Docker installed successfully on macOS.${NC}"
+        echo -e "${YELLOW}Please launch Docker from Applications to start the Docker daemon.${NC}"
+    elif [ "$os" == "Linux" ]; then
+        if [ "$arch" == "riscv64" ]; then
+            # riscv64 installation using apt
+            if command -v apt &> /dev/null; then
+                echo -e "${YELLOW}Installing Docker for riscv64 using apt...${NC}"
+                sudo apt update
+                sudo apt install -y docker.io
+                sudo systemctl start docker
+                sudo systemctl enable docker
+                echo -e "${GREEN}Docker installed successfully on riscv64.${NC}"
+            else
+                echo -e "${RED}apt is not available on this system. Unable to install Docker for riscv64.${NC}"
+                exit 1
+            fi
+        else
+            # Standard Linux installation
+            echo -e "${YELLOW}Installing Docker for Linux...${NC}"
+            curl -fsSL "https://get.docker.com/" | sh
+            sudo systemctl start docker
+            sudo systemctl enable docker
+            echo -e "${GREEN}Docker installed successfully.${NC}"
+        fi
+        install_buildx
+        install_docker_compose
+    else
+        echo -e "${RED}Unsupported operating system: $os${NC}"
+        exit 1
+    fi
 }
 
 install_docker_steamdeck() {
@@ -77,22 +117,43 @@ install_docker_compose_steamdeck() {
 
 install_buildx() {
     arch=$(uname -m)
-    version="v0.16.2"
+    os=$(uname -s | tr '[:upper:]' '[:lower:]') # Convert OS to lowercase
+    version="v0.19.2"
 
+    # Map architecture to buildx naming convention
     case "$arch" in
         x86_64|amd64)
             arch="amd64";;
         arm64|aarch64)
             arch="arm64";;
+        riscv64)
+            arch="riscv64";;
         *)
-            printf "${RED}Unsupported architecture: \"%s\" -> Download or build Go instead${NC}\n" "$arch" >&2; exit 2;;
+            printf "${RED}Unsupported architecture: \"%s\" -> Unable to install Buildx${NC}\n" "$arch" >&2; exit 2;;
     esac
+
+    # Check if Buildx is already installed
     if ! docker buildx version &> /dev/null; then
         echo -e "${YELLOW}[+] Installing Docker Buildx${NC}"
-        docker run --privileged --rm tonistiigi/binfmt --install all
+
+        # Additional setup for Linux
+        if [ "$os" = "linux" ]; then
+            docker run --privileged --rm tonistiigi/binfmt --install all
+        fi
+
+        # Create CLI plugins directory if it doesn't exist
         mkdir -p ~/.docker/cli-plugins/
-        curl -sSL https://github.com/docker/buildx/releases/download/${version}/buildx-${version}.linux-${arch} -o "${HOME}/.docker/cli-plugins/docker-buildx"
+
+        # Determine the Buildx binary URL based on OS and architecture
+        buildx_url="https://github.com/docker/buildx/releases/download/${version}/buildx-${version}.${os}-${arch}"
+
+        # Download the Buildx binary
+        echo -e "${YELLOW}[+] Downloading Buildx from ${buildx_url}${NC}"
+        curl -sSL "$buildx_url" -o "${HOME}/.docker/cli-plugins/docker-buildx"
+
+        # Make the binary executable
         chmod +x "${HOME}/.docker/cli-plugins/docker-buildx"
+
         echo -e "${GREEN}Docker Buildx installed successfully.${NC}"
     else
         echo -e "${GREEN}Docker Buildx is already installed. Moving on.${NC}"
@@ -101,22 +162,39 @@ install_buildx() {
 
 install_docker_compose() {
     arch=$(uname -m)
-    version="v2.29.2"
+    os=$(uname -s | tr '[:upper:]' '[:lower:]') # Convert OS to lowercase
+    version="v2.31.0"
 
+    # Map architecture to Docker Compose naming convention
     case "$arch" in
         x86_64|amd64)
             arch="x86_64";;
         arm64|aarch64)
             arch="aarch64";;
+        riscv64)
+            arch="riscv64";;
         *)
-            printf "${RED}Unsupported architecture: \"%s\" -> Download or build Go instead${NC}\n" "$arch" >&2; exit 2;;
+            printf "${RED}Unsupported architecture: \"%s\" -> Unable to install Docker Compose${NC}\n" "$arch" >&2; exit 2;;
     esac
+
+    # Check if Docker Compose is already installed
     if ! docker compose version &> /dev/null; then
         echo -e "${YELLOW}[+] Installing Docker Compose v2${NC}"
+
+        # Determine the Docker Compose binary URL based on OS and architecture
+        compose_url="https://github.com/docker/compose/releases/download/${version}/docker-compose-${os}-${arch}"
+
+        # Set the Docker CLI plugins directory
         DOCKER_CONFIG=${DOCKER_CONFIG:-$HOME/.docker}
         mkdir -p $DOCKER_CONFIG/cli-plugins
-        curl -SL https://github.com/docker/compose/releases/download/v2.29.2/docker-compose-linux-$(uname -m) -o $DOCKER_CONFIG/cli-plugins/docker-compose
-        chmod +x $DOCKER_CONFIG/cli-plugins/docker-compose
+
+        # Download the Docker Compose binary
+        echo -e "${YELLOW}[+] Downloading Docker Compose from ${compose_url}${NC}"
+        curl -sSL "$compose_url" -o "$DOCKER_CONFIG/cli-plugins/docker-compose"
+
+        # Make the binary executable
+        chmod +x "$DOCKER_CONFIG/cli-plugins/docker-compose"
+
         echo -e "${GREEN}Docker Compose v2 installed successfully.${NC}"
     else
         echo -e "${GREEN}Docker Compose v2 is already installed. Moving on.${NC}"
@@ -138,24 +216,38 @@ install_go() {
     [ -d thirdparty ] || mkdir thirdparty
     cd thirdparty
     arch=$(uname -m)
-    prog="" # default Go binary tar.gz
-    version="1.22.5"
+    os=$(uname -s | tr '[:upper:]' '[:lower:]') # Normalize OS name to lowercase
+    prog=""
+    version="1.23.3"
 
+    # Map architecture and OS to Go binary tar.gz naming convention
     case "$arch" in
         x86_64|amd64)
-            prog="go${version}.linux-amd64.tar.gz";;
+            arch="amd64";;
         i?86)
-            prog="go${version}.linux-386.tar.gz";;
+            arch="386";;
         arm64|aarch64)
-            prog="go${version}.linux-arm64.tar.gz";;
+            arch="arm64";;
+        riscv64)
+            arch="riscv64";;
         *)
-            printf "${RED}Unsupported architecture: \"%s\" -> Download or build Go instead${NC}\n" "$arch" >&2; exit 2;;
+            printf "${RED}Unsupported architecture: \"%s\" -> Unable to install Go${NC}\n" "$arch" >&2; exit 2;;
     esac
-    wget "https://go.dev/dl/$prog"
+
+    case "$os" in
+        linux|darwin)
+            prog="go${version}.${os}-${arch}.tar.gz";;
+        *)
+            printf "${RED}Unsupported OS: \"%s\" -> Unable to install Go${NC}\n" "$os" >&2; exit 2;;
+    esac
+
+    # Download and install Go
+    echo -e "${YELLOW}[+] Downloading Go from https://go.dev/dl/${prog}${NC}"
+    wget "https://go.dev/dl/${prog}"
     sudo rm -rf /usr/local/go && sudo tar -C /usr/local -xzf $prog
     export PATH=$PATH:/usr/local/go/bin
     cd ..
-    rm -R thirdparty
+    rm -rf thirdparty
     echo -e "${GREEN}Go installed successfully.${NC}"
 }
 
@@ -228,30 +320,42 @@ install_binary_alias() {
         if [ -f "$BINARY_PATH" ]; then
             echo -e "${YELLOW}[+] Installing alias '${alias_name}' for the binary${NC}"
 
-            # Detecting the user's shell
-            SHELL_NAME=$(basename "$SHELL")
+            # Detect the current user and home directory
+            if [ -n "$SUDO_USER" ]; then
+                CURRENT_USER="$SUDO_USER"
+                HOME_DIR=$(eval echo "~$SUDO_USER")
+            else
+                CURRENT_USER=$(whoami)
+                HOME_DIR=$HOME
+            fi
 
+            # Detect the shell for the current user
+            SHELL_NAME=$(basename "$(getent passwd "$CURRENT_USER" | cut -d: -f7)")
+
+            # Choose the alias file based on the detected shell
             case "$SHELL_NAME" in
                 bash)
-                    ALIAS_FILE="$HOME/.bashrc"
+                    ALIAS_FILE="$HOME_DIR/.bashrc"
                     ;;
                 zsh)
-                    ALIAS_FILE="$HOME/.zshrc"
+                    ALIAS_FILE="$HOME_DIR/.zshrc"
                     ;;
                 *)
-                    ALIAS_FILE="$HOME/.${SHELL_NAME}rc"
+                    ALIAS_FILE="$HOME_DIR/.${SHELL_NAME}rc"
                     ;;
             esac
 
+            # Add the alias to the appropriate shell configuration file
             echo "alias $alias_name='$BINARY_PATH'" >> "$ALIAS_FILE"
 
-            # Source the appropriate shell config file, avoiding errors
-            if [ -f "$ALIAS_FILE" ]; then
-                if [ "$SHELL_NAME" = "zsh" ] || [ "$SHELL_NAME" = "bash" ]; then
-                    source "$ALIAS_FILE"
-                else
-                    echo -e "${YELLOW}Please restart your terminal or source the ${ALIAS_FILE} manually to apply the alias.${NC}"
-                fi
+            # Skip sourcing for Zsh and inform the user
+            if [ "$SHELL_NAME" = "zsh" ]; then
+                echo -e "${YELLOW}Zsh configuration updated. Please restart your terminal or run 'exec zsh' to apply the changes.${NC}"
+            elif [ "$SHELL_NAME" = "bash" ]; then
+                # Source the Bash configuration file
+                sudo -u "$CURRENT_USER" bash -c "source $ALIAS_FILE"
+            else
+                echo -e "${YELLOW}Please restart your terminal or source the ${ALIAS_FILE} manually to apply the alias.${NC}"
             fi
 
             echo -e "${GREEN}Alias '${alias_name}' installed successfully in $ALIAS_FILE.${NC}"
