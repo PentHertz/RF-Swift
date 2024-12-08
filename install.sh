@@ -321,7 +321,7 @@ install_binary_alias() {
             echo -e "${YELLOW}[+] Installing alias '${alias_name}' for the binary${NC}"
 
             # Detect the current user and home directory
-            if [ -n "$SUDO_USER" ]; then
+            if [ -n "${SUDO_USER-}" ]; then
                 CURRENT_USER="$SUDO_USER"
                 HOME_DIR=$(eval echo "~$SUDO_USER")
             else
@@ -330,7 +330,7 @@ install_binary_alias() {
             fi
 
             # Detect the shell for the current user
-            SHELL_NAME=$(basename "$(getent passwd "$CURRENT_USER" | cut -d: -f7)")
+            SHELL_NAME=$(basename "$(getent passwd "$CURRENT_USER" | cut -d: -f7 2>/dev/null || echo "$SHELL")")
 
             # Choose the alias file based on the detected shell
             case "$SHELL_NAME" in
@@ -353,7 +353,9 @@ install_binary_alias() {
                 echo -e "${YELLOW}Zsh configuration updated. Please restart your terminal or run 'exec zsh' to apply the changes.${NC}"
             elif [ "$SHELL_NAME" = "bash" ]; then
                 # Source the Bash configuration file
-                sudo -u "$CURRENT_USER" bash -c "source $ALIAS_FILE"
+                if [ -f "$ALIAS_FILE" ]; then
+                    source "$ALIAS_FILE"
+                fi
             else
                 echo -e "${YELLOW}Please restart your terminal or source the ${ALIAS_FILE} manually to apply the alias.${NC}"
             fi
