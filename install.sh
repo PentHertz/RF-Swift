@@ -301,6 +301,7 @@ build_docker_image() {
 }
 
 pull_docker_image() {
+    sudo ./rfswift images remote
     read -p "Enter the image tag to pull (default: penthertz/rfswift:latest): " pull_image
     pull_image=${pull_image:-penthertz/rfswift:latest}
 

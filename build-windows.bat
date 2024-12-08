@@ -4,6 +4,7 @@ REM Author(s): Sébastien Dudek (@FlUxIuS)
 
 setlocal enabledelayedexpansion
 
+echo [i] Checking if Docker is installed
 REM Function to check and activate Docker if installed
 :check_docker
 docker --version >nul 2>&1
@@ -11,7 +12,9 @@ if %errorlevel% neq 0 (
     echo Docker is not installed. Please install Docker to proceed. Exiting.
     exit /b 1
 ) 
+echo [+] Docker is installed!
 
+echo [i] Checking if Go is installed
 REM Function to install Go
 :install_go
 where go >nul 2>&1
@@ -20,23 +23,31 @@ if %errorlevel% == 0 (
     goto building_rfswift
 )
 
-if not exist thirdparty mkdir thirdparty
-cd thirdparty
+REM Provide link to download the MSI installer based on architecture
 set "arch=%PROCESSOR_ARCHITECTURE%"
-set "prog="
-set "version=1.22.5"
+set "version=1.23.3"
 
 if "%arch%" == "AMD64" (
-    set "prog=go%version%.windows-amd64.zip"
+    echo [i] Unsupported architecture detected or Go not installed.
+    echo [!] Please download the Go MSI installer manually from the following link:
+    echo [!] https://go.dev/dl/go%version%.windows-amd64.msi
+    echo Press any key to open the download page in your browser...
+    pause >nul
+    start https://go.dev/dl/go%version%.windows-amd64.msi
+    exit /b 1
 ) else if "%arch%" == "x86" (
-    set "prog=go%version%.windows-386.zip"
+    echo [i] Unsupported architecture detected or Go not installed.
+    echo [!] Please download the Go MSI installer manually from the following link:
+    echo [!] https://go.dev/dl/go%version%.windows-386.msi
+    echo Press any key to open the download page in your browser...
+    pause >nul
+    start https://go.dev/dl/go%version%.windows-386.msi
+    exit /b 1
 ) else (
-    echo Unsupported architecture: "%arch%" -> Download or build Go instead
+    echo [!] Unsupported architecture: "%arch%"
+    echo [!] Please visit https://go.dev/dl/ to download an appropriate installer for your system.
     exit /b 2
 )
-
-powershell -Command "Invoke-WebRequest -OutFile %prog% https://go.dev/dl/%prog%"
-powershell -Command "Expand-Archive -Path %prog% -DestinationPath C:\"
 setx PATH "%PATH%;C:\Go\bin"
 cd ..
 rmdir /s /q thirdparty
@@ -78,6 +89,7 @@ if "%option%" == "1" (
     echo Building the Docker container
     docker build !imagename! -t !imagename! -f !dockerfile!
 ) else if "%option%" == "2" (
+    rfswift.exe images remote
     set "DEFAULT_PULL_IMAGE=penthertz/rfswift:latest"
     set /p pull_image="Enter the image tag to pull (default: !DEFAULT_PULL_IMAGE!): "
     if "!pull_image!" == "" set "pull_image=!DEFAULT_PULL_IMAGE!"
