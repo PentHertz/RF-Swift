@@ -288,16 +288,16 @@ func retInstallationInstructions() string {
 	case "darwin":
 		retstring.WriteString("To install Pulse server on macOS, follow these steps:\n")
 		retstring.WriteString("1. Install Homebrew if you haven't already: /bin/bash -c \"$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)\"\n")
-		retstring.WriteString("2. Install Pulse server using Homebrew: brew install pulse-server\n")
+		retstring.WriteString("2. Install Pulse server using Homebrew: brew install pulseaudio\n")
 	case "linux":
 		if isArchLinux() {
 			retstring.WriteString("\nTo install Pulse server on Arch Linux, follow these steps:\n")
 			retstring.WriteString("1. Update your package database: sudo pacman -Syu\n")
-			retstring.WriteString("2. Install Pulse server: sudo pacman -S pulse-server\n")
+			retstring.WriteString("2. Install Pulse server: sudo pacman -S pulseaudio\n")
 		} else {
 			retstring.WriteString("To install Pulse server on Linux, follow these steps:\n")
 			retstring.WriteString("1. Update your package manager: sudo apt update (for Debian-based) or sudo yum update (for Red Hat-based).\n")
-			retstring.WriteString("2. Install Pulse server: sudo apt install pulse-server (for Debian-based) or sudo yum install pulse-server (for Red Hat-based).\n")
+			retstring.WriteString("2. Install Pulse server: sudo apt install pulseaudio (for Debian-based) or sudo yum install pulseaudio (for Red Hat-based).\n")
 		}
 	default:
 		retstring.WriteString("\nPlease refer to the official Pulse server documentation for installation instructions.\n")
@@ -318,35 +318,55 @@ func isArchLinux() bool {
 	return false
 }
 
+// ensurePulseAudioRunning checks if PulseAudio is running and starts it if not.
+func ensurePulseAudioRunning() error {
+    cmd := exec.Command("pulseaudio", "--check")
+    if err := cmd.Run(); err != nil {
+        // If PulseAudio is not running, start it
+        startCmd := exec.Command("pulseaudio", "--start")
+        if startErr := startCmd.Run(); startErr != nil {
+            return fmt.Errorf("failed to start PulseAudio: %w", startErr)
+        }
+        fmt.Println("PulseAudio started successfully.")
+    } else {
+        fmt.Println("PulseAudio is already running.")
+    }
+    return nil
+}
+
 func SetPulseCTL(address string) error {
-	/*
-	*	Use PACTL in command line to accept connection in TCP with defined port
-	 */
-	parts := strings.Split(address, ":")
-	if len(parts) != 3 {
-		return fmt.Errorf("invalid address format, expected format 'protocol:ip:port'")
-	}
-	port := parts[2]
-	ip := parts[1]
-	checkPulseServer(ip, port)
+    /*
+    * Use PACTL in command line to accept connection in TCP with defined port
+    */
+    parts := strings.Split(address, ":")
+    if len(parts) != 3 {
+        return fmt.Errorf("invalid address format, expected format 'protocol:ip:port'")
+    }
+    port := parts[2]
+    ip := parts[1]
 
-	// Connect to PulseAudio
-	client, err := pulseaudio.NewClient()
-	if err != nil {
-		return fmt.Errorf("failed to connect to PulseAudio: %w", err)
-	}
-	defer client.Close()
+    // Ensure PulseAudio is running
+    if err := ensurePulseAudioRunning(); err != nil {
+        return fmt.Errorf("failed to ensure PulseAudio is running: %w", err)
+    }
 
-	// Construct the module arguments string
-	moduleArgs := fmt.Sprintf("port=%s auth-ip-acl=%s", port, ip)
+    // Connect to PulseAudio
+    client, err := pulseaudio.NewClient()
+    if err != nil {
+        return fmt.Errorf("failed to connect to PulseAudio: %w", err)
+    }
+    defer client.Close()
 
-	// Load module-native-protocol-tcp with the specified IP and port
-	moduleIndex, err := client.LoadModule("module-native-protocol-tcp", moduleArgs)
-	if err != nil {
-		return fmt.Errorf("failed to load module-native-protocol-tcp: %w", err)
-	}
-	common.PrintSuccessMessage(fmt.Sprintf("Successfully loaded module-native-protocol-tcp with index %d", moduleIndex))
-	return nil
+    // Construct the module arguments string
+    moduleArgs := fmt.Sprintf("port=%s auth-ip-acl=%s", port, ip)
+
+    // Load module-native-protocol-tcp with the specified IP and port
+    moduleIndex, err := client.LoadModule("module-native-protocol-tcp", moduleArgs)
+    if err != nil {
+        return fmt.Errorf("failed to load module-native-protocol-tcp: %w", err)
+    }
+    common.PrintSuccessMessage(fmt.Sprintf("Successfully loaded module-native-protocol-tcp with index %d", moduleIndex))
+    return nil
 }
 
 func UnloadPulseCTL() error {
