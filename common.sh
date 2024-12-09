@@ -145,7 +145,7 @@ check_docker() {
 install_docker_standard() {
     arch=$(uname -m)
     os=$(uname -s)
-    distro=$(grep "^ID_LIKE=" /etc/os-release | cut -d= -f2 | tr -d '"')
+    distro=$(grep "^ID=" /etc/os-release | cut -d= -f2 | tr -d '"')
 
     if [ "$os" == "Darwin" ]; then
         # macOS installation using Homebrew
@@ -166,7 +166,7 @@ install_docker_standard() {
             sudo systemctl start docker
             sudo systemctl enable docker
             echo -e "${GREEN}Docker installed successfully on Arch Linux.${NC}"
-        elif command -v apt &> /dev/null && [ "$distro" == "debian" ] || [ "$distro" == "ubuntu" ]; then
+        elif command -v apt &> /dev/null && [ "$distro" == "debian" ] || [ "$distro" == "ubuntu" ] || [ "$distro" == "kali" ]; then
             # Debian-based installation using apt
             echo -e "${YELLOW}Installing Docker for Debian-based systems using apt...${NC}"
             sudo apt update
