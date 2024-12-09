@@ -328,6 +328,7 @@ func ensurePulseAudioRunning() error {
             return fmt.Errorf("failed to start PulseAudio: %w", startErr)
         }
         fmt.Println("PulseAudio started successfully.")
+        time.Sleep(2 * time.Second) // Wait for 2 seconds
     } else {
         fmt.Println("PulseAudio is already running.")
     }
