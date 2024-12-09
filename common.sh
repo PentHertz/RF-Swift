@@ -423,6 +423,11 @@ install_binary_alias() {
         if [ -f "$BINARY_PATH" ]; then
             echo -e "${YELLOW}[+] Installing alias '${alias_name}' for the binary${NC}"
 
+            # Copy binary to /usr/local/bin for system-wide access
+            echo -e "${YELLOW}[+] Copying binary to /usr/local/bin for system-wide access...${NC}"
+            sudo cp "$BINARY_PATH" /usr/local/bin/
+            sudo chmod +x /usr/local/bin/rfswift
+
             # Detect the current user and home directory
             if [ -n "${SUDO_USER-}" ]; then
                 CURRENT_USER="$SUDO_USER"
@@ -449,10 +454,10 @@ install_binary_alias() {
             esac
 
             # Add the alias to the appropriate shell configuration file
-            echo "alias $alias_name='$BINARY_PATH'" >> "$ALIAS_FILE"
+            echo "alias $alias_name='/usr/local/bin/rfswift'" >> "$ALIAS_FILE"
 
             # Add the alias for the root user to use with sudo
-            echo "alias $alias_name='$BINARY_PATH'" | sudo tee -a /root/.bashrc > /dev/null
+            echo "alias $alias_name='/usr/local/bin/rfswift'" | sudo tee -a /root/.bashrc > /dev/null
 
             # Skip sourcing for Zsh and inform the user
             if [ "$SHELL_NAME" = "zsh" ]; then
@@ -466,7 +471,7 @@ install_binary_alias() {
                 echo -e "${YELLOW}Please restart your terminal or source the ${ALIAS_FILE} manually to apply the alias.${NC}"
             fi
 
-            echo -e "${GREEN}Alias '${alias_name}' installed successfully in $ALIAS_FILE.${NC}"
+            echo -e "${GREEN}Alias '${alias_name}' installed successfully.${NC}"
         else
             echo -e "${RED}Binary not found at $BINARY_PATH. Make sure the binary is built correctly.${NC}"
             exit 1
