@@ -452,7 +452,7 @@ install_binary_alias() {
             echo "alias $alias_name='$BINARY_PATH'" >> "$ALIAS_FILE"
 
             # Add the alias for the root user to use with sudo
-            echo "alias $alias_name='/usr/local/bin/rfswift'" | sudo tee -a /root/.bashrc > /dev/null
+            echo "alias $alias_name='$BINARY_PATH'" | sudo tee -a /root/.bashrc > /dev/null
 
             # Skip sourcing for Zsh and inform the user
             if [ "$SHELL_NAME" = "zsh" ]; then
