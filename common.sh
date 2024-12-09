@@ -37,7 +37,18 @@ check_xhost() {
 check_pulseaudio() {
     if ! command -v pulseaudio &> /dev/null; then
         echo -e "${RED}PulseAudio is not installed on this system.${NC}"
-        if command -v pacman &> /dev/null; then
+        
+        if [[ "$OSTYPE" == "darwin"* ]]; then
+            echo -e "${YELLOW}Detected macOS. Checking for Homebrew...${NC}"
+            if ! command -v brew &> /dev/null; then
+                echo -e "${RED}Homebrew is not installed. Please install Homebrew first.${NC}"
+                echo -e "${YELLOW}You can install Homebrew by running:${NC}"
+                echo -e "${BLUE}/bin/bash -c \"\$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)\"${NC}"
+                exit 1
+            fi
+            echo -e "${YELLOW}Installing PulseAudio using Homebrew...${NC}"
+            brew install pulseaudio
+        elif command -v pacman &> /dev/null; then
             echo -e "${YELLOW}Installing PulseAudio using pacman...${NC}"
             sudo pacman -Syu --noconfirm pulseaudio pulseaudio-alsa
         elif command -v apt &> /dev/null; then
@@ -51,9 +62,15 @@ check_pulseaudio() {
             echo -e "${RED}Unsupported package manager. Please install PulseAudio manually.${NC}"
             exit 1
         fi
+        
         echo -e "${GREEN}PulseAudio installed successfully.${NC}"
     else
         echo -e "${GREEN}PulseAudio is already installed. Moving on.${NC}"
+    fi
+
+    if [[ "$OSTYPE" == "darwin"* ]]; then
+        echo -e "${YELLOW}Detected macOS. PulseAudio server will not be started.${NC}"
+        return
     fi
 
     echo -e "${YELLOW}Starting PulseAudio...${NC}"
@@ -438,12 +455,16 @@ install_binary_alias() {
             fi
 
             # Detect the shell for the current user
-            SHELL_NAME=$(basename "$(getent passwd "$CURRENT_USER" | cut -d: -f7 2>/dev/null || echo "$SHELL")")
+            SHELL_NAME=$(basename "$SHELL")
 
             # Choose the alias file based on the detected shell
             case "$SHELL_NAME" in
                 bash)
-                    ALIAS_FILE="$HOME_DIR/.bashrc"
+                    if [[ "$OSTYPE" == "darwin"* ]]; then
+                        ALIAS_FILE="$HOME_DIR/.bash_profile"  # macOS
+                    else
+                        ALIAS_FILE="$HOME_DIR/.bashrc"        # Linux
+                    fi
                     ;;
                 zsh)
                     ALIAS_FILE="$HOME_DIR/.zshrc"
@@ -453,13 +474,16 @@ install_binary_alias() {
                     ;;
             esac
 
-            # Add the alias to the appropriate shell configuration file
+            # Create the alias file if it doesn't exist
+            if [[ ! -f "$ALIAS_FILE" ]]; then
+                echo -e "${YELLOW}[+] Alias file $ALIAS_FILE does not exist. Creating it...${NC}"
+                touch "$ALIAS_FILE"
+            fi
+
+            # Add the alias to the appropriate shell configuration file for the user
             echo "alias $alias_name='/usr/local/bin/rfswift'" >> "$ALIAS_FILE"
 
-            # Add the alias for the root user to use with sudo
-            echo "alias $alias_name='/usr/local/bin/rfswift'" | sudo tee -a /root/.bashrc > /dev/null
-
-            # Skip sourcing for Zsh and inform the user
+            # Provide instructions to apply changes
             if [ "$SHELL_NAME" = "zsh" ]; then
                 echo -e "${YELLOW}Zsh configuration updated. Please restart your terminal or run 'exec zsh' to apply the changes.${NC}"
             elif [ "$SHELL_NAME" = "bash" ]; then
