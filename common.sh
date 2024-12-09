@@ -149,6 +149,14 @@ install_docker_standard() {
             sudo systemctl start docker
             sudo systemctl enable docker
             echo -e "${GREEN}Docker installed successfully on Arch Linux.${NC}"
+        elif command -v apt &> /dev/null && [ "$distro" == "debian" ] || [ "$distro" == "ubuntu" ]; then
+            # Debian-based installation using apt
+            echo -e "${YELLOW}Installing Docker for Debian-based systems using apt...${NC}"
+            sudo apt update
+            sudo apt install -y docker.io
+            sudo systemctl start docker
+            sudo systemctl enable docker
+            echo -e "${GREEN}Docker installed successfully on Debian-based system.${NC}"
         elif [ "$arch" == "riscv64" ]; then
             # riscv64 installation using apt
             if command -v apt &> /dev/null; then
