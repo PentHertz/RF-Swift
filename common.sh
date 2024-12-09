@@ -145,7 +145,7 @@ check_docker() {
 install_docker_standard() {
     arch=$(uname -m)
     os=$(uname -s)
-    distro=$(grep "^ID=" /etc/os-release | cut -d= -f2 | tr -d '"')
+    distro=$(grep "^ID_LIKE=" /etc/os-release | cut -d= -f2 | tr -d '"')
 
     if [ "$os" == "Darwin" ]; then
         # macOS installation using Homebrew
