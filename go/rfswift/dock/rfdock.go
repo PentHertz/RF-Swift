@@ -1617,7 +1617,7 @@ However, you can achieve similar functionality by using the following commands:
 	common.PrintSuccessMessage(fmt.Sprintf("Container ID: %s", containerID))
 
 	// Stop the container
-	cli, err := client.NewClientWithOpts(client.FromEnv)
+	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
 	if err != nil {
 		common.PrintErrorMessage(fmt.Errorf("Error when instantiating a client"))
 		os.Exit(1)
@@ -1787,7 +1787,7 @@ func removeFromSlice(slice []string, item string) []string {
 }
 
 func getContainerIDByName(ctx context.Context, containerName string) string {
-	cli, _ := client.NewClientWithOpts(client.FromEnv)
+	cli, _ := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
 	containers, _ := cli.ContainerList(ctx, container.ListOptions{All: true})
 	for _, container := range containers {
 		for _, name := range container.Names {

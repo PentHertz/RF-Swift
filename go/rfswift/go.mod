@@ -1,19 +1,19 @@
 module penthertz/rfswift
 
-go 1.22.5
+go 1.23.3
 
 require (
 	github.com/cheggaaa/pb/v3 v3.1.5
-	github.com/docker/docker v27.3.1+incompatible
+	github.com/docker/docker v27.4.0+incompatible
 	github.com/fatih/color v1.18.0
 	github.com/go-resty/resty/v2 v2.16.2
 	github.com/lawl/pulseaudio v0.0.0-20220626105240-976bed5e247c
 	github.com/mattn/go-runewidth v0.0.16
 	github.com/moby/term v0.5.0
 	github.com/spf13/cobra v1.8.1
-	golang.org/x/crypto v0.29.0
-	golang.org/x/sys v0.27.0
-	golang.org/x/term v0.26.0
+	golang.org/x/crypto v0.30.0
+	golang.org/x/sys v0.28.0
+	golang.org/x/term v0.27.0
 )
 
 require (
