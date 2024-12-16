@@ -13,13 +13,24 @@ import (
 	rfutils "penthertz/rfswift/rfutils"
 )
 
+func promptUserForUpdate() bool {
+	fmt.Printf("\033[35m[+]\033[0m Do you want to update to the latest version? (yes/no): ")
+	var response string
+	fmt.Scanln(&response)
+	return strings.ToLower(response) == "yes"
+}
+
 func DisplayVersion() {
 	owner := "PentHertz"
 	repo := "RF-Swift"
 
 	release, err := rfutils.GetLatestRelease(owner, repo)
 	if err != nil {
-		fmt.Printf("Error getting latest release: %v\n", err)
+		rfutils.DisplayNotification(
+			"Error",
+			fmt.Sprintf("Unable to fetch the latest release.\nDetails: %v", err),
+			"error",
+		)
 		return
 	}
 
@@ -28,20 +39,17 @@ func DisplayVersion() {
 
 	compareResult := rfutils.VersionCompare(currentVersion, latestVersion)
 	if compareResult >= 0 {
-		fmt.Printf("\033[35m[+]\033[0m \033[37mYou are running version: \033[33m%s\033[37m (Up to date)\033[0m\n", currentVersion)
-	} else {
-		fmt.Printf("\033[31m[!]\033[0m \033[37mYou are running version: \033[33m%s\033[37m (\033[31mObsolete\033[37m)\033[0m\n", currentVersion)
-		fmt.Printf("\033[35m[+]\033[0m Do you want to update to the latest version? (yes/no): ")
-		var updateResponse string
-		fmt.Scanln(&updateResponse)
-
-		if strings.ToLower(updateResponse) != "yes" {
-			fmt.Println("Update aborted.")
-			return
-		}
-
-		rfutils.GetLatestRFSwift()
+		rfutils.DisplayNotification(
+			" Up-to-date",
+			fmt.Sprintf("You are running the latest version: %s", currentVersion),
+			"info",
+		)
+		return
 	}
+
+	common.PrintWarningMessage(fmt.Sprintf("Current version: %s\nLatest version: %s", currentVersion, latestVersion))
+
+	rfutils.GetLatestRFSwift()
 }
 
 func main() {
