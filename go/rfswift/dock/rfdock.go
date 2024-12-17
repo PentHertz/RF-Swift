@@ -20,9 +20,9 @@ import (
 	"github.com/docker/docker/api/types/filters"
 	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/api/types/network"
-	"github.com/docker/go-connections/nat"
 	"github.com/docker/docker/client"
 	"github.com/docker/docker/pkg/jsonmessage"
+	"github.com/docker/go-connections/nat"
 	"github.com/moby/term"
 	"golang.org/x/crypto/ssh/terminal"
 
@@ -140,41 +140,41 @@ type Ulimit struct {
 var inout chan []byte
 
 type DockerInst struct {
-	net          string
-	privileged   bool
-	xdisplay     string
-	x11forward   string
-	usbforward   string
-	usbdevice    string
-	shell        string
-	imagename    string
-	repotag      string
-	extrabinding string
-	entrypoint   string
-	extrahosts   string
-	extraenv     string
-	pulse_server string
-	network_mode string
+	net           string
+	privileged    bool
+	xdisplay      string
+	x11forward    string
+	usbforward    string
+	usbdevice     string
+	shell         string
+	imagename     string
+	repotag       string
+	extrabinding  string
+	entrypoint    string
+	extrahosts    string
+	extraenv      string
+	pulse_server  string
+	network_mode  string
 	exposed_ports string
-	binded_ports string
+	binded_ports  string
 }
 
 var dockerObj = DockerInst{net: "host",
-	privileged:   true,
-	xdisplay:     "DISPLAY=:0",
-	entrypoint:   "/bin/bash",
-	x11forward:   "/tmp/.X11-unix:/tmp/.X11-unix",
-	usbforward:   "/dev/bus/usb:/dev/bus/usb",
-	extrabinding: "/dev/ttyACM0:/dev/ttyACM0,/run/dbus/system_bus_socket:/run/dbus/system_bus_socket,/dev/snd:/dev/snd,/dev/dri:/dev/dri,/dev/input:/dev/input", // Some more if needed /run/dbus/system_bus_socket:/run/dbus/system_bus_socket,/dev/snd:/dev/snd,/dev/dri:/dev/dri
-	imagename:    "myrfswift:latest",
-	repotag:      "penthertz/rfswift",
-	extrahosts:   "",
-	extraenv:     "",
-	network_mode: "host",
+	privileged:    true,
+	xdisplay:      "DISPLAY=:0",
+	entrypoint:    "/bin/bash",
+	x11forward:    "/tmp/.X11-unix:/tmp/.X11-unix",
+	usbforward:    "/dev/bus/usb:/dev/bus/usb",
+	extrabinding:  "/dev/ttyACM0:/dev/ttyACM0,/run/dbus/system_bus_socket:/run/dbus/system_bus_socket,/dev/snd:/dev/snd,/dev/dri:/dev/dri,/dev/input:/dev/input", // Some more if needed /run/dbus/system_bus_socket:/run/dbus/system_bus_socket,/dev/snd:/dev/snd,/dev/dri:/dev/dri
+	imagename:     "myrfswift:latest",
+	repotag:       "penthertz/rfswift",
+	extrahosts:    "",
+	extraenv:      "",
+	network_mode:  "host",
 	exposed_ports: "",
-	binded_ports: "",
-	pulse_server: "tcp:localhost:34567",
-	shell:        "/bin/bash"} // Instance with default values
+	binded_ports:  "",
+	pulse_server:  "tcp:localhost:34567",
+	shell:         "/bin/bash"} // Instance with default values
 
 func init() {
 	updateDockerObjFromConfig()
@@ -676,17 +676,17 @@ func getContainerProperties(ctx context.Context, cli *client.Client, containerID
 	imageSize := fmt.Sprintf("%.2f MB", float64(imageInfo.Size)/1024/1024)
 
 	props := map[string]string{
-		"XDisplay":    xdisplay,
-		"Shell":       containerJSON.Path,
-		"Privileged":  fmt.Sprintf("%v", containerJSON.HostConfig.Privileged),
-		"NetworkMode": string(containerJSON.HostConfig.NetworkMode),
+		"XDisplay":     xdisplay,
+		"Shell":        containerJSON.Path,
+		"Privileged":   fmt.Sprintf("%v", containerJSON.HostConfig.Privileged),
+		"NetworkMode":  string(containerJSON.HostConfig.NetworkMode),
 		"ExposedPorts": convertExposedPortsToString(containerJSON.Config.ExposedPorts),
 		"PortBindings": convertPortBindingsToString(containerJSON.HostConfig.PortBindings),
-		"ImageName":   containerJSON.Config.Image,
-		"ImageHash":   imageInfo.ID,
-		"Bindings":    strings.Join(containerJSON.HostConfig.Binds, ","),
-		"ExtraHosts":  strings.Join(containerJSON.HostConfig.ExtraHosts, ","),
-		"Size":        imageSize,
+		"ImageName":    containerJSON.Config.Image,
+		"ImageHash":    imageInfo.ID,
+		"Bindings":     strings.Join(containerJSON.HostConfig.Binds, ","),
+		"ExtraHosts":   strings.Join(containerJSON.HostConfig.ExtraHosts, ","),
+		"Size":         imageSize,
 	}
 
 	return props, nil
@@ -876,7 +876,7 @@ func ParseExposedPorts(exposedPortsStr string) nat.PortSet {
 func ParseBindedPorts(bindedPortsStr string) nat.PortMap {
 	portBindings := nat.PortMap{}
 
-	if (bindedPortsStr == "" || bindedPortsStr == "\"\"") {
+	if bindedPortsStr == "" || bindedPortsStr == "\"\"" {
 		return portBindings
 	}
 	common.PrintSuccessMessage(fmt.Sprintf("Binded: '%s'", bindedPortsStr))
@@ -896,11 +896,11 @@ func ParseBindedPorts(bindedPortsStr string) nat.PortMap {
 		// Handle the optional hostAddress
 		if len(parts) == 3 {
 			containerPortProto = strings.TrimSpace(parts[0]) // e.g., 80
-			hostAddress = strings.TrimSpace(parts[1])       // e.g., 127.0.0.1
-			hostPort = strings.TrimSpace(parts[2])          // e.g., 8080/tcp
+			hostAddress = strings.TrimSpace(parts[1])        // e.g., 127.0.0.1
+			hostPort = strings.TrimSpace(parts[2])           // e.g., 8080/tcp
 		} else {
 			containerPortProto = strings.TrimSpace(parts[0]) // e.g., 80
-			hostPort = strings.TrimSpace(parts[1])          // e.g., 8080/tcp
+			hostPort = strings.TrimSpace(parts[1])           // e.g., 8080/tcp
 		}
 
 		// Split hostPort into hostPort and protocol
@@ -911,7 +911,7 @@ func ParseBindedPorts(bindedPortsStr string) nat.PortMap {
 		}
 
 		hostPortValue := strings.TrimSpace(hostPortParts[0]) // e.g., 8080
-		protocol := strings.TrimSpace(hostPortParts[1])     // e.g., tcp
+		protocol := strings.TrimSpace(hostPortParts[1])      // e.g., tcp
 
 		// Rearrange to containerPort/protocol (e.g., 80/tcp)
 		portKey := nat.Port(containerPortProto)
@@ -964,10 +964,10 @@ func DockerRun(containerName string) {
 			"org.container.project": "rfswift",
 		},
 	}, &container.HostConfig{
-		NetworkMode: container.NetworkMode(dockerObj.network_mode),
-		Binds:       bindings,
-		Privileged:  true,
-		ExtraHosts:  extrahosts,
+		NetworkMode:  container.NetworkMode(dockerObj.network_mode),
+		Binds:        bindings,
+		Privileged:   true,
+		ExtraHosts:   extrahosts,
 		PortBindings: bindedPorts,
 	}, &network.NetworkingConfig{}, nil, containerName)
 	if err != nil {
@@ -1843,11 +1843,11 @@ func addMountPoint(config map[string]interface{}, source string, target string) 
 	}
 
 	mountPoints[target] = map[string]interface{}{
-		"Source":                  source,
-		"Destination":             target,
-		"RW":                      true,
-		"Type":                    "bind",
-		"Propagation":             "rprivate",
+		"Source":      source,
+		"Destination": target,
+		"RW":          true,
+		"Type":        "bind",
+		"Propagation": "rprivate",
 		"Spec": map[string]string{
 			"Type":   "bind",
 			"Source": source,
@@ -1915,46 +1915,46 @@ func getContainerIDByName(ctx context.Context, containerName string) string {
 }
 
 func DockerStop(containerIdentifier string) {
-    ctx := context.Background()
+	ctx := context.Background()
 
-    // Initialize Docker client
-    cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
-    if err != nil {
-        common.PrintErrorMessage(err)
-        return
-    }
-    defer cli.Close()
+	// Initialize Docker client
+	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
+	if err != nil {
+		common.PrintErrorMessage(err)
+		return
+	}
+	defer cli.Close()
 
-    // Retrieve the latest container if no identifier is provided
-    if containerIdentifier == "" {
-        labelKey := "org.container.project"
-        labelValue := "rfswift"
-        containerIdentifier = latestDockerID(labelKey, labelValue)
-        if containerIdentifier == "" {
-            common.PrintErrorMessage(fmt.Errorf("no running containers found with label %s=%s", labelKey, labelValue))
-            return
-        }
-    }
+	// Retrieve the latest container if no identifier is provided
+	if containerIdentifier == "" {
+		labelKey := "org.container.project"
+		labelValue := "rfswift"
+		containerIdentifier = latestDockerID(labelKey, labelValue)
+		if containerIdentifier == "" {
+			common.PrintErrorMessage(fmt.Errorf("no running containers found with label %s=%s", labelKey, labelValue))
+			return
+		}
+	}
 
-    // Inspect the container to get its current state
-    containerJSON, err := cli.ContainerInspect(ctx, containerIdentifier)
-    if err != nil {
-        common.PrintErrorMessage(fmt.Errorf("failed to inspect container: %v", err))
-        return
-    }
+	// Inspect the container to get its current state
+	containerJSON, err := cli.ContainerInspect(ctx, containerIdentifier)
+	if err != nil {
+		common.PrintErrorMessage(fmt.Errorf("failed to inspect container: %v", err))
+		return
+	}
 
-    containerName := strings.TrimPrefix(containerJSON.Name, "/")
-    if !containerJSON.State.Running {
-        common.PrintSuccessMessage(fmt.Sprintf("Container '%s' is already stopped", containerName))
-        return
-    }
+	containerName := strings.TrimPrefix(containerJSON.Name, "/")
+	if !containerJSON.State.Running {
+		common.PrintSuccessMessage(fmt.Sprintf("Container '%s' is already stopped", containerName))
+		return
+	}
 
-    // Stop the container
-    timeout := 10 // Grace period in seconds before force stop
-    if err := cli.ContainerStop(ctx, containerIdentifier, container.StopOptions{Timeout: &timeout}); err != nil {
-        common.PrintErrorMessage(fmt.Errorf("failed to stop container: %v", err))
-        return
-    }
+	// Stop the container
+	timeout := 10 // Grace period in seconds before force stop
+	if err := cli.ContainerStop(ctx, containerIdentifier, container.StopOptions{Timeout: &timeout}); err != nil {
+		common.PrintErrorMessage(fmt.Errorf("failed to stop container: %v", err))
+		return
+	}
 
-    common.PrintSuccessMessage(fmt.Sprintf("Container '%s' stopped successfully", containerName))
+	common.PrintSuccessMessage(fmt.Sprintf("Container '%s' stopped successfully", containerName))
 }

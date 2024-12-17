@@ -14,15 +14,15 @@ type Config struct {
 		RepoTag   string
 	}
 	Container struct {
-		Shell      string
-		Bindings   []string
-		Network    string
+		Shell        string
+		Bindings     []string
+		Network      string
 		ExposedPorts string
 		PortBindings string
-		X11Forward string
-		XDisplay   string
-		ExtraHost  string
-		ExtraEnv   string
+		X11Forward   string
+		XDisplay     string
+		ExtraHost    string
+		ExtraEnv     string
 	}
 	Audio struct {
 		PulseServer string
@@ -169,7 +169,6 @@ func ReadOrCreateConfig(filename string) (*Config, error) {
 		printOrange("PulseAudio server is missing in the config file.")
 		config.Audio.PulseServer = promptForValue("PulseAudio server", "tcp:localhost:34567")
 	}
-
 
 	return config, nil
 }

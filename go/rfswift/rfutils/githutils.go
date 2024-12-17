@@ -1,6 +1,9 @@
 package rfutils
 
 import (
+	"archive/tar"
+	"archive/zip"
+	"compress/gzip"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -11,9 +14,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-	"archive/tar"
-	"archive/zip"
-	"compress/gzip"
 
 	"github.com/cheggaaa/pb/v3"
 	"github.com/go-resty/resty/v2"

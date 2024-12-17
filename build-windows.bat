@@ -25,7 +25,7 @@ if %errorlevel% == 0 (
 
 REM Provide link to download the MSI installer based on architecture
 set "arch=%PROCESSOR_ARCHITECTURE%"
-set "version=1.23.3"
+set "version=1.23.4"
 
 if "%arch%" == "AMD64" (
     echo [i] Unsupported architecture detected or Go not installed.

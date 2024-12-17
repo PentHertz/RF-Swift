@@ -9,8 +9,8 @@ import (
 	"strings"
 )
 
-var Version = "0.5.7-dev"
-var Branch = "dev"
+var Version = "0.5.7"
+var Branch = "main"
 var ascii_art = `                                                                                                    
                                                                                                                                                       
                   -%@%-                     :==-.                                                                                                     
