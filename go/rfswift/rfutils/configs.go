@@ -17,6 +17,8 @@ type Config struct {
 		Shell      string
 		Bindings   []string
 		Network    string
+		ExposedPorts string
+		PortBindings string
 		X11Forward string
 		XDisplay   string
 		ExtraHost  string
@@ -97,6 +99,10 @@ func ReadOrCreateConfig(filename string) (*Config, error) {
 				config.Container.Bindings = strings.Split(value, ",")
 			case "network":
 				config.Container.Network = value
+			case "exposedports":
+				config.Container.ExposedPorts = value
+			case "portbindings":
+				config.Container.PortBindings = value
 			case "x11forward":
 				config.Container.X11Forward = value
 			case "xdisplay":
@@ -139,6 +145,14 @@ func ReadOrCreateConfig(filename string) (*Config, error) {
 		printOrange("Network is missing in the config file.")
 		config.Container.Network = promptForValue("Network", "host")
 	}
+	if config.Container.ExposedPorts == "" {
+		printOrange("ExposedPorts is missing in the config file.")
+		config.Container.ExposedPorts = promptForValue("ExposedPorts", "")
+	}
+	if config.Container.PortBindings == "" {
+		printOrange("PortBindings is missing in the config file.")
+		config.Container.PortBindings = promptForValue("PortBindings", "")
+	}
 	if config.Container.X11Forward == "" {
 		printOrange("X11 forwarding is missing in the config file.")
 		config.Container.X11Forward = promptForValue("X11 forwarding", "/tmp/.X11-unix:/tmp/.X11-unix")
@@ -156,6 +170,7 @@ func ReadOrCreateConfig(filename string) (*Config, error) {
 		config.Audio.PulseServer = promptForValue("PulseAudio server", "tcp:localhost:34567")
 	}
 
+
 	return config, nil
 }
 
@@ -168,6 +183,8 @@ repotag = penthertz/rfswift
 shell = /bin/zsh
 bindings = /dev/bus/usb:/dev/bus/usb,/run/dbus/system_bus_socket:/run/dbus/system_bus_socket,/dev/snd:/dev/snd,/dev/dri:/dev/dri,/dev/input:/dev/input,/dev/vhci:/dev/vhci
 network = host
+exposedports = ""
+portbindings = ""
 x11forward = /tmp/.X11-unix:/tmp/.X11-unix
 xdisplay = "DISPLAY=:0"
 extrahost = pluto.local:192.168.2.1

@@ -20,6 +20,7 @@ import (
 	"github.com/docker/docker/api/types/filters"
 	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/api/types/network"
+	"github.com/docker/go-connections/nat"
 	"github.com/docker/docker/client"
 	"github.com/docker/docker/pkg/jsonmessage"
 	"github.com/moby/term"
@@ -154,6 +155,8 @@ type DockerInst struct {
 	extraenv     string
 	pulse_server string
 	network_mode string
+	exposed_ports string
+	binded_ports string
 }
 
 var dockerObj = DockerInst{net: "host",
@@ -168,6 +171,8 @@ var dockerObj = DockerInst{net: "host",
 	extrahosts:   "",
 	extraenv:     "",
 	network_mode: "host",
+	exposed_ports: "",
+	binded_ports: "",
 	pulse_server: "tcp:localhost:34567",
 	shell:        "/bin/bash"} // Instance with default values
 
@@ -187,6 +192,8 @@ func updateDockerObjFromConfig() {
 	dockerObj.repotag = config.General.RepoTag
 	dockerObj.shell = config.Container.Shell
 	dockerObj.network_mode = config.Container.Network
+	dockerObj.exposed_ports = config.Container.ExposedPorts
+	dockerObj.binded_ports = config.Container.PortBindings
 	dockerObj.x11forward = config.Container.X11Forward
 	dockerObj.xdisplay = config.Container.XDisplay
 	dockerObj.extrahosts = config.Container.ExtraHost
@@ -329,6 +336,8 @@ func printContainerProperties(ctx context.Context, cli *client.Client, container
 		{"Shell", props["Shell"]},
 		{"Privileged Mode", props["Privileged"]},
 		{"Network Mode", props["NetworkMode"]},
+		{"Exposed Ports", props["ExposedPorts"]},
+		{"Port Bindings", props["PortBindings"]},
 		{"Image Name", imageStatus},
 		{"Size on Disk", size},
 		{"Bindings", props["Bindings"]},
@@ -619,6 +628,31 @@ func latestDockerID(labelKey string, labelValue string) string {
 	return latestContainer.ID
 }
 
+func convertPortBindingsToString(portBindings nat.PortMap) string {
+	var result []string
+
+	for port, bindings := range portBindings {
+		for _, binding := range bindings {
+			// Format: HostIP:HostPort -> ContainerPort/Protocol
+			entry := fmt.Sprintf("%s:%s -> %s", binding.HostIP, binding.HostPort, port)
+			result = append(result, entry)
+		}
+	}
+
+	return strings.Join(result, ", ")
+}
+
+func convertExposedPortsToString(exposedPorts nat.PortSet) string {
+	var result []string
+
+	// Iterate through the PortSet (a map where keys are the exposed ports)
+	for port := range exposedPorts {
+		result = append(result, string(port)) // Convert the nat.Port to string
+	}
+
+	return strings.Join(result, ", ")
+}
+
 func getContainerProperties(ctx context.Context, cli *client.Client, containerID string) (map[string]string, error) {
 	containerJSON, err := cli.ContainerInspect(ctx, containerID)
 	if err != nil {
@@ -646,6 +680,8 @@ func getContainerProperties(ctx context.Context, cli *client.Client, containerID
 		"Shell":       containerJSON.Path,
 		"Privileged":  fmt.Sprintf("%v", containerJSON.HostConfig.Privileged),
 		"NetworkMode": string(containerJSON.HostConfig.NetworkMode),
+		"ExposedPorts": convertExposedPortsToString(containerJSON.Config.ExposedPorts),
+		"PortBindings": convertPortBindingsToString(containerJSON.HostConfig.PortBindings),
 		"ImageName":   containerJSON.Config.Image,
 		"ImageHash":   imageInfo.ID,
 		"Bindings":    strings.Join(containerJSON.HostConfig.Binds, ","),
@@ -815,6 +851,81 @@ func DockerExec(containerIdentifier string, WorkingDir string) {
 	common.PrintSuccessMessage(fmt.Sprintf("Shell session in container '%s' ended", containerName))
 }
 
+func ParseExposedPorts(exposedPortsStr string) nat.PortSet {
+	exposedPorts := nat.PortSet{}
+
+	if exposedPortsStr == "" {
+		return exposedPorts
+	}
+
+	// Split by commas to get individual ports
+	portEntries := strings.Split(exposedPortsStr, ",")
+	for _, entry := range portEntries {
+		port := strings.TrimSpace(entry) // Remove extra spaces
+		if port == "" {
+			continue
+		}
+
+		// Add to nat.PortSet (e.g., "80/tcp")
+		exposedPorts[nat.Port(port)] = struct{}{}
+	}
+
+	return exposedPorts
+}
+
+func ParseBindedPorts(bindedPortsStr string) nat.PortMap {
+	portBindings := nat.PortMap{}
+
+	if (bindedPortsStr == "" || bindedPortsStr == "\"\"") {
+		return portBindings
+	}
+	common.PrintSuccessMessage(fmt.Sprintf("Binded: '%s'", bindedPortsStr))
+
+	// Split the input by ',' to get individual bindings
+	portEntries := strings.Split(bindedPortsStr, ",")
+	for _, entry := range portEntries {
+		// Expected format: containerPort[:hostAddress:]hostPort/protocol (e.g., 80:127.0.0.1:8080/tcp)
+		parts := strings.Split(entry, ":")
+		if len(parts) < 2 || len(parts) > 3 {
+			fmt.Printf("Invalid binded port format: %s (expected containerPort[:hostAddress:]hostPort/protocol)\n", entry)
+			continue
+		}
+
+		var containerPortProto, hostPort, hostAddress string
+
+		// Handle the optional hostAddress
+		if len(parts) == 3 {
+			containerPortProto = strings.TrimSpace(parts[0]) // e.g., 80
+			hostAddress = strings.TrimSpace(parts[1])       // e.g., 127.0.0.1
+			hostPort = strings.TrimSpace(parts[2])          // e.g., 8080/tcp
+		} else {
+			containerPortProto = strings.TrimSpace(parts[0]) // e.g., 80
+			hostPort = strings.TrimSpace(parts[1])          // e.g., 8080/tcp
+		}
+
+		// Split hostPort into hostPort and protocol
+		hostPortParts := strings.Split(hostPort, "/")
+		if len(hostPortParts) != 2 {
+			fmt.Printf("Invalid port format: %s (expected hostPort/protocol)\n", hostPort)
+			continue
+		}
+
+		hostPortValue := strings.TrimSpace(hostPortParts[0]) // e.g., 8080
+		protocol := strings.TrimSpace(hostPortParts[1])     // e.g., tcp
+
+		// Rearrange to containerPort/protocol (e.g., 80/tcp)
+		portKey := nat.Port(containerPortProto)
+
+		// Add the binding to the PortMap
+		portBindings[portKey] = append(portBindings[portKey], nat.PortBinding{
+			HostIP:   hostAddress, // Optional host address
+			HostPort: fmt.Sprintf("%s/%s", hostPortValue, protocol),
+		})
+	}
+
+	return portBindings
+}
+
 func DockerRun(containerName string) {
 	/*
 	 *   Create a container with a specific name and run it
@@ -835,11 +946,14 @@ func DockerRun(containerName string) {
 	bindings := combineBindings(dockerObj.x11forward, dockerObj.usbforward, dockerObj.extrabinding)
 	extrahosts := splitAndCombine(dockerObj.extrahosts)
 	dockerenv := combineEnv(dockerObj.xdisplay, dockerObj.pulse_server, dockerObj.extraenv)
+	exposedPorts := ParseExposedPorts(dockerObj.exposed_ports)
+	bindedPorts := ParseBindedPorts(dockerObj.binded_ports)
 
 	resp, err := cli.ContainerCreate(ctx, &container.Config{
 		Image:        dockerObj.imagename,
 		Cmd:          []string{dockerObj.shell},
 		Env:          dockerenv,
+		ExposedPorts: exposedPorts,
 		OpenStdin:    true,
 		StdinOnce:    false,
 		AttachStdin:  true,
@@ -854,6 +968,7 @@ func DockerRun(containerName string) {
 		Binds:       bindings,
 		Privileged:  true,
 		ExtraHosts:  extrahosts,
+		PortBindings: bindedPorts,
 	}, &network.NetworkingConfig{}, nil, containerName)
 	if err != nil {
 		common.PrintErrorMessage(err)
@@ -1797,4 +1912,49 @@ func getContainerIDByName(ctx context.Context, containerName string) string {
 		}
 	}
 	return ""
+}
+
+func DockerStop(containerIdentifier string) {
+    ctx := context.Background()
+
+    // Initialize Docker client
+    cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
+    if err != nil {
+        common.PrintErrorMessage(err)
+        return
+    }
+    defer cli.Close()
+
+    // Retrieve the latest container if no identifier is provided
+    if containerIdentifier == "" {
+        labelKey := "org.container.project"
+        labelValue := "rfswift"
+        containerIdentifier = latestDockerID(labelKey, labelValue)
+        if containerIdentifier == "" {
+            common.PrintErrorMessage(fmt.Errorf("no running containers found with label %s=%s", labelKey, labelValue))
+            return
+        }
+    }
+
+    // Inspect the container to get its current state
+    containerJSON, err := cli.ContainerInspect(ctx, containerIdentifier)
+    if err != nil {
+        common.PrintErrorMessage(fmt.Errorf("failed to inspect container: %v", err))
+        return
+    }
+
+    containerName := strings.TrimPrefix(containerJSON.Name, "/")
+    if !containerJSON.State.Running {
+        common.PrintSuccessMessage(fmt.Sprintf("Container '%s' is already stopped", containerName))
+        return
+    }
+
+    // Stop the container
+    timeout := 10 // Grace period in seconds before force stop
+    if err := cli.ContainerStop(ctx, containerIdentifier, container.StopOptions{Timeout: &timeout}); err != nil {
+        common.PrintErrorMessage(fmt.Errorf("failed to stop container: %v", err))
+        return
+    }
+
+    common.PrintSuccessMessage(fmt.Sprintf("Container '%s' stopped successfully", containerName))
 }

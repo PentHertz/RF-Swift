@@ -87,6 +87,24 @@ func DockerSetExtraHosts(extrahosts string) {
 	}
 }
 
+func DockerSetNetworkMode(networkmode string) {
+	if networkmode != "" {
+		dockerObj.network_mode = networkmode
+	}
+}
+
+func DockerSetExposedPorts(exposedports string) {
+	if exposedports != "" {
+		dockerObj.exposed_ports = exposedports
+	}
+}
+
+func DockerSetBindexPorts(bindedports string) {
+	if bindedports != "" {
+		dockerObj.binded_ports = bindedports
+	}
+}
+
 // TODO: Optimize it and handle errors
 func DockerInstallFromScript(contid string) {
 	/* Hot install inside a created Docker container

@@ -30,6 +30,9 @@ var DockerName string
 var DockerNewName string
 var Bsource string
 var Btarget string
+var NetMode string
+var NetExporsedPorts string
+var NetBindedPorts string
 
 var rootCmd = &cobra.Command{
 	Use:   "rfswift",
@@ -59,6 +62,9 @@ var runCmd = &cobra.Command{
 		rfdock.DockerSetImage(DImage)
 		rfdock.DockerSetExtraHosts(ExtraHost)
 		rfdock.DockerSetPulse(PulseServer)
+		rfdock.DockerSetNetworkMode(NetMode)
+		rfdock.DockerSetExposedPorts(NetExporsedPorts)
+		rfdock.DockerSetBindexPorts(NetBindedPorts)
 		if os == "linux" { // use pactl to configure ACLs
 			rfutils.SetPulseCTL(PulseServer)
 		}
@@ -110,6 +116,15 @@ var commitCmd = &cobra.Command{
 	Run: func(cmd *cobra.Command, args []string) {
 		rfdock.DockerSetImage(DImage)
 		rfdock.DockerCommit(ContID)
+	},
+}
+
+var stopCmd = &cobra.Command{
+	Use:   "stop",
+	Short: "Stop a container",
+	Long:  `Stop last or a particular container running`,
+	Run: func(cmd *cobra.Command, args []string) {
+		rfdock.DockerStop(ContID)
 	},
 }
 
@@ -311,6 +326,7 @@ func init() {
 	rootCmd.AddCommand(HostCmd)
 	rootCmd.AddCommand(UpdateCmd)
 	rootCmd.AddCommand(BindingsCmd)
+	rootCmd.AddCommand(stopCmd)
 
 	// Adding special commands for Windows
 	os := runtime.GOOS
@@ -360,8 +376,14 @@ func init() {
 	runCmd.Flags().StringVarP(&DImage, "image", "i", "", "image (default: 'myrfswift:latest')")
 	runCmd.Flags().StringVarP(&PulseServer, "pulseserver", "p", "tcp:127.0.0.1:34567", "PULSE SERVER TCP address (by default: tcp:127.0.0.1:34567)")
 	runCmd.Flags().StringVarP(&DockerName, "name", "n", "", "A docker name")
+	runCmd.Flags().StringVarP(&NetMode, "network", "t", "", "Network mode (default: 'host')")
 	runCmd.MarkFlagRequired("name")
+
+	runCmd.Flags().StringVarP(&NetExporsedPorts, "exposedports", "z", "", "Exposed ports")
+	runCmd.Flags().StringVarP(&NetBindedPorts, "bindedports", "w", "", "Exposed ports")
 	lastCmd.Flags().StringVarP(&FilterLast, "filter", "f", "", "filter by image name")
+
+	stopCmd.Flags().StringVarP(&ContID, "container", "c", "", "container to stop")
 
 	BindingsCmd.AddCommand(BindingsAddCmd)
 	BindingsCmd.AddCommand(BindingsRmCmd)
