@@ -7,12 +7,19 @@ Welcome to the RF Swift project! 🎉 Our mission is to provide all the essentia
   <br><br>
   <img alt="linux supported" src="https://img.shields.io/badge/linux-supported-success">
   <img alt="windows supported" src="https://img.shields.io/badge/windows-supported-success">
-  <img alt="windows supported" src="https://img.shields.io/badge/macos-pending-orange">
+  <img alt="macOS supported" src="https://img.shields.io/badge/macos-supported-success">
 	
   <br>
   <img alt="amd64" src="https://img.shields.io/badge/amd64%20(x86__64)-supported-success">
   <img alt="arm64" src="https://img.shields.io/badge/arm64%20(aarch64)-supported-success">
   <img alt="risc64" src="https://img.shields.io/badge/risc64-supported-success">
+  <br><br>
+   <a target="_blank" rel="noopener noreferrer" href="https://www.blackhat.com/eu-24/arsenal/schedule/index.html#rf-swift-a-swifty-toolbox-for-all-wireless-assessments-41157" title="Schedule">
+   <img alt="Black Hat Europe 2024" src="https://img.shields.io/badge/Black%20Hat%20Arsenal-Europe%202024-blueviolet">
+  </a>
+  <a target="_blank" rel="noopener noreferrer" href="https://spectrum-conference.org/24/schedule" title="Schedule">
+   <img alt="Spectrum 24" src="https://img.shields.io/badge/Spectrum-2024-yellow">
+  </a>
   <br><br>
   <a target="_blank" rel="noopener noreferrer" href="https://x.com/intent/follow?screen_name=FlUxIuS" title="Follow"><img src="https://img.shields.io/twitter/follow/_nwodtuhs?label=FlUxIuS&style=social" alt="Twitter FlUxIuS"></a>
   <a target="_blank" rel="noopener noreferrer" href="https://x.com/intent/follow?screen_name=Penthertz" title="Follow"><img src="https://img.shields.io/twitter/follow/_nwodtuhs?label=Penthertz&style=social" alt="Twitter Penthertz"></a>
