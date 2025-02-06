@@ -11,7 +11,7 @@ import (
 
 var Version = "0.5.7"
 var Branch = "main"
-var old_ascii_art = `                                                                                                    
+var ascii_art = `                                                                                                    
                                                                                                                                                       
                   -%@%-                     :==-.                                                                                                     
                 :%:*+=:+%.             .%@%#%+-:-=%@*                                                                                                 
@@ -44,9 +44,8 @@ var old_ascii_art = `
             .@*%@@*.                        .-+=:.:@@@* -#=.                                                                                          
              *@%=                                          .:                                                                                         
               :                                                                                                                                                                                                    
-`
+                                     
 
-var ascii_art = `
 	888~-_   888~~        ,d88~~\                ,e,   88~\   d8   
 	888   \  888___       8888    Y88b    e    /  "  _888__ _d88__ 
 	888    | 888          'Y88b    Y88b  d8b  /  888  888    888   
