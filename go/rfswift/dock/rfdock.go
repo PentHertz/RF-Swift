@@ -1157,59 +1157,65 @@ func DockerCommit(contid string) {
 }
 
 func DockerPull(imageref string, imagetag string) {
-	/* Pulls an image from a registry
-	   in(1): string Image reference
-	   in(2): string Image tag target
-	*/
+    ctx := context.Background()
+    cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
+    if err != nil {
+        common.PrintErrorMessage(err)
+        return
+    }
+    defer cli.Close()
 
-	if !strings.Contains(imageref, ":") {
-		// Prepend Config.General.RepoTag if the format is missing
-		imageref = fmt.Sprintf("%s:%s", dockerObj.repotag, imageref)
-	}
+    if !strings.Contains(imageref, ":") {
+        imageref = fmt.Sprintf("%s:%s", dockerObj.repotag, imageref)
+    }
+    if imagetag == "" {
+        imagetag = imageref
+    }
 
-	if imagetag == "" { // if tag is empty, keep same tag
-		imagetag = imageref
-	}
+    _, _, err = cli.ImageInspectWithRaw(ctx, imageref)
+    if err == nil {
+        currentTime := time.Now()
+        dateTag := fmt.Sprintf("%s-%02d%02d%d", imagetag, currentTime.Day(), currentTime.Month(), currentTime.Year())
+        err = cli.ImageTag(ctx, imageref, dateTag)
+        if err != nil {
+            common.PrintErrorMessage(err)
+            return
+        }
+        common.PrintSuccessMessage(fmt.Sprintf("Image '%s' retagged as '%s'", imagetag, dateTag))
+        return
+    }
 
-	common.PrintInfoMessage(fmt.Sprintf("Pulling image from: %s", imageref))
+    common.PrintInfoMessage(fmt.Sprintf("Pulling image from: %s", imageref))
+    out, err := cli.ImagePull(ctx, imageref, image.PullOptions{})
+    if err != nil {
+        common.PrintErrorMessage(err)
+        return
+    }
+    defer out.Close()
 
-	ctx := context.Background()
-	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
-	if err != nil {
-		panic(err)
-	}
-	defer cli.Close()
+    fd, isTerminal := term.GetFdInfo(os.Stdout)
+    jsonDecoder := json.NewDecoder(out)
+    for {
+        var msg jsonmessage.JSONMessage
+        if err := jsonDecoder.Decode(&msg); err == io.EOF {
+            break
+        } else if err != nil {
+            common.PrintErrorMessage(err)
+            return
+        }
+        if isTerminal {
+            _ = jsonmessage.DisplayJSONMessagesStream(out, os.Stdout, fd, isTerminal, nil)
+        } else {
+            fmt.Println(msg)
+        }
+    }
 
-	out, err := cli.ImagePull(ctx, imageref, image.PullOptions{})
-	if err != nil {
-		panic(err)
-	}
-	defer out.Close()
-
-	fd, isTerminal := term.GetFdInfo(os.Stdout)
-	jsonDecoder := json.NewDecoder(out)
-
-	for {
-		var msg jsonmessage.JSONMessage
-		if err := jsonDecoder.Decode(&msg); err == io.EOF {
-			break
-		} else if err != nil {
-			panic(err)
-		}
-
-		if isTerminal {
-			_ = jsonmessage.DisplayJSONMessagesStream(out, os.Stdout, fd, isTerminal, nil)
-		} else {
-			fmt.Println(msg)
-		}
-	}
-
-	err = cli.ImageTag(ctx, imageref, imagetag)
-	if err != nil {
-		panic(err)
-	} else {
-		common.PrintSuccessMessage(fmt.Sprintf("Image '%s' installed successfully", imagetag))
-	}
+    err = cli.ImageTag(ctx, imageref, imagetag)
+    if err != nil {
+        common.PrintErrorMessage(err)
+        return
+    }
+    common.PrintSuccessMessage(fmt.Sprintf("Image '%s' installed successfully", imagetag))
 }
 
 func DockerTag(imageref string, imagetag string) {
