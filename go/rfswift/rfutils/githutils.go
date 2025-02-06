@@ -26,7 +26,9 @@ type Release struct {
 }
 
 func GetLatestRelease(owner string, repo string) (Release, error) {
-	client := resty.New()
+	client := resty.New().
+       SetTimeout(2 * time.Second).
+       SetRetryCount(0)
 
 	resp, err := client.R().
 		SetHeader("Accept", "application/vnd.github.v3+json").

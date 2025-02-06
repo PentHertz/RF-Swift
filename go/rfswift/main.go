@@ -48,8 +48,6 @@ func DisplayVersion() {
 	}
 
 	common.PrintWarningMessage(fmt.Sprintf("Current version: %s\nLatest version: %s", currentVersion, latestVersion))
-
-	rfutils.GetLatestRFSwift()
 }
 
 func main() {
