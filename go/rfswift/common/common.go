@@ -9,9 +9,9 @@ import (
 	"strings"
 )
 
-var Version = "0.5.7"
+var Version = "0.5.8"
 var Branch = "main"
-var ascii_art = `                                                                                                    
+var ascii_art_old = `                                                                                                    
                                                                                                                                                       
                   -%@%-                     :==-.                                                                                                     
                 :%:*+=:+%.             .%@%#%+-:-=%@*                                                                                                 
@@ -45,6 +45,8 @@ var ascii_art = `
              *@%=                                          .:                                                                                         
               :                                                                                                                                                                                                    
                                      
+`
+var ascii_art = `
 
 	888~-_   888~~        ,d88~~\                ,e,   88~\   d8   
 	888   \  888___       8888    Y88b    e    /  "  _888__ _d88__ 
