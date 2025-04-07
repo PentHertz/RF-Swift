@@ -455,7 +455,8 @@ func DockerLast(ifilter string, labelKey string, labelValue string) {
 		panic(err)
 	}
 	defer cli.Close()
-
+	
+	// Set up container filters
 	containerFilters := filters.NewArgs()
 	if ifilter != "" {
 		containerFilters.Add("ancestor", ifilter)
@@ -463,43 +464,119 @@ func DockerLast(ifilter string, labelKey string, labelValue string) {
 	if labelKey != "" && labelValue != "" {
 		containerFilters.Add("label", fmt.Sprintf("%s=%s", labelKey, labelValue))
 	}
-
+	
+	// Get container list
 	containers, err := cli.ContainerList(ctx, container.ListOptions{
 		All:     true,
-		Limit:   10,
+		Limit:   15,
 		Filters: containerFilters,
 	})
 	if err != nil {
 		panic(err)
 	}
-
+	
+	// Create maps to store image mappings
+	imageIDToNames := make(map[string][]string)
+	hashToNames := make(map[string][]string)
+	
+	// Get all images to build a mapping of image IDs to all their tags
+	images, err := cli.ImageList(ctx, image.ListOptions{All: true})
+	if err != nil {
+		panic(err)
+	}
+	
+	// Build image ID to names mapping
+	for _, img := range images {
+		shortID := img.ID[7:19] // Get a shortened version of the SHA256 hash
+		fullHash := img.ID[7:]  // Remove "sha256:" prefix but keep full hash
+		
+		// Store mappings if image has tags
+		if len(img.RepoTags) > 0 {
+			imageIDToNames[img.ID] = img.RepoTags
+			imageIDToNames[shortID] = img.RepoTags
+			hashToNames[fullHash] = img.RepoTags
+		}
+	}
+	
 	//rfutils.ClearScreen()
-
 	tableData := [][]string{}
 	for _, container := range containers {
 		created := time.Unix(container.Created, 0).Format(time.RFC3339)
+		
+		// Get the container image ID and associate with tags
+		containerImageID := container.ImageID
+		shortImageID := containerImageID[7:19] // shortened SHA256
+		
+		// Get the display image name
 		imageTag := container.Image
+		
+		// Check if this is a SHA256 hash
+		isSHA256 := strings.HasPrefix(imageTag, "sha256:")
+		
+		// If this is a SHA256 hash, try to find a friendly name
+		if isSHA256 {
+			hashPart := imageTag[7:] // Remove "sha256:" prefix
+			// Check if we have a friendly name for this hash
+			if tags, ok := hashToNames[hashPart]; ok && len(tags) > 0 {
+				imageTag = tags[0] // Use the first tag
+			} else if tags, ok := imageIDToNames[containerImageID]; ok && len(tags) > 0 {
+				imageTag = tags[0] // Fallback to container image ID mapping
+			}
+		}
+		
+		// Check if this is a renamed image (date format: -DDMMYYYY)
+		isRenamed := false
+		if len(imageTag) > 9 { // Make sure string is long enough before checking suffix
+			suffix := imageTag[len(imageTag)-9:]
+			if len(suffix) > 0 && suffix[0] == '-' {
+				// Check if the rest is a date format
+				datePattern := true
+				for i := 1; i < 9; i++ {
+					if i < 9 && (suffix[i] < '0' || suffix[i] > '9') {
+						datePattern = false
+						break
+					}
+				}
+				isRenamed = datePattern
+			}
+		}
+		
+		// Prepare the display string
+		imageDisplay := imageTag
+		
+		// For SHA256 or renamed images, show hash for clarity
+		if isSHA256 || isRenamed {
+			imageDisplay = fmt.Sprintf("%s (%s)", imageTag, shortImageID)
+		}
+		
 		containerName := container.Names[0]
 		if containerName[0] == '/' {
 			containerName = containerName[1:]
 		}
 		containerID := container.ID[:12]
 		command := container.Command
+		
+		// Truncate command if too long
+		if len(command) > 30 {
+			command = command[:27] + "..."
+		}
+		
 		tableData = append(tableData, []string{
 			created,
-			imageTag,
+			imageDisplay,
 			containerName,
 			containerID,
 			command,
 		})
 	}
-
-	headers := []string{"Created", "Image Tag", "Container Name", "Container ID", "Command"}
+	
+	headers := []string{"Created", "Image Tag (ID)", "Container Name", "Container ID", "Command"}
 	width, _, err := terminal.GetSize(int(os.Stdout.Fd()))
 	if err != nil {
 		width = 80
 	}
-
+	
+	// Calculate column widths
 	columnWidths := make([]int, len(headers))
 	for i, header := range headers {
 		columnWidths[i] = len(header)
@@ -511,12 +588,12 @@ func DockerLast(ifilter string, labelKey string, labelValue string) {
 			}
 		}
 	}
-
+	
+	// Adjust column widths to fit terminal
 	totalWidth := len(headers) + 1
 	for _, w := range columnWidths {
 		totalWidth += w + 2
 	}
-
 	if totalWidth > width {
 		excess := totalWidth - width
 		for i := range columnWidths {
@@ -528,28 +605,24 @@ func DockerLast(ifilter string, labelKey string, labelValue string) {
 		}
 		totalWidth = width
 	}
-
+	
+	// Print fancy table
 	pink := "\033[35m"
 	white := "\033[37m"
 	reset := "\033[0m"
 	title := "🤖 Last Run Containers"
-
 	fmt.Printf("%s%s%s%s%s\n", pink, strings.Repeat(" ", 2), title, strings.Repeat(" ", totalWidth-2-len(title)), reset)
 	fmt.Print(white)
-
 	printHorizontalBorder(columnWidths, "┌", "┬", "┐")
 	printRow(headers, columnWidths, "│")
 	printHorizontalBorder(columnWidths, "├", "┼", "┤")
-
 	for i, row := range tableData {
 		printRow(row, columnWidths, "│")
 		if i < len(tableData)-1 {
 			printHorizontalBorder(columnWidths, "├", "┼", "┤")
 		}
 	}
-
 	printHorizontalBorder(columnWidths, "└", "┴", "┘")
-
 	fmt.Print(reset)
 	fmt.Println()
 }
@@ -1171,27 +1244,23 @@ func DockerPull(imageref string, imagetag string) {
         return
     }
     defer cli.Close()
-
+    
     if !strings.Contains(imageref, ":") {
         imageref = fmt.Sprintf("%s:%s", dockerObj.repotag, imageref)
     }
     if imagetag == "" {
         imagetag = imageref
     }
-
-    _, _, err = cli.ImageInspectWithRaw(ctx, imageref)
-    if err == nil {
-        currentTime := time.Now()
-        dateTag := fmt.Sprintf("%s-%02d%02d%d", imagetag, currentTime.Day(), currentTime.Month(), currentTime.Year())
-        err = cli.ImageTag(ctx, imageref, dateTag)
-        if err != nil {
-            common.PrintErrorMessage(err)
-            return
-        }
-        common.PrintSuccessMessage(fmt.Sprintf("Image '%s' retagged as '%s'", imagetag, dateTag))
-        return
+    
+    // Check if the image exists locally
+    localInspect, _, err := cli.ImageInspectWithRaw(ctx, imageref)
+    localExists := err == nil
+    localDigest := ""
+    if localExists {
+        localDigest = localInspect.ID
     }
-
+    
+    // Pull the image from remote
     common.PrintInfoMessage(fmt.Sprintf("Pulling image from: %s", imageref))
     out, err := cli.ImagePull(ctx, imageref, image.PullOptions{})
     if err != nil {
@@ -1199,7 +1268,8 @@ func DockerPull(imageref string, imagetag string) {
         return
     }
     defer out.Close()
-
+    
+    // Process pull output
     fd, isTerminal := term.GetFdInfo(os.Stdout)
     jsonDecoder := json.NewDecoder(out)
     for {
@@ -1216,12 +1286,44 @@ func DockerPull(imageref string, imagetag string) {
             fmt.Println(msg)
         }
     }
-
-    err = cli.ImageTag(ctx, imageref, imagetag)
+    
+    // Get information about the pulled image
+    remoteInspect, _, err := cli.ImageInspectWithRaw(ctx, imageref)
     if err != nil {
         common.PrintErrorMessage(err)
         return
     }
+    
+    // Compare local and remote images
+    if localExists && localDigest != remoteInspect.ID {
+        common.PrintInfoMessage("The pulled image is different from the local one.")
+        reader := bufio.NewReader(os.Stdin)
+        fmt.Print("Do you want to rename the old image with a date tag? (y/n): ")
+        response, _ := reader.ReadString('\n')
+        response = strings.TrimSpace(strings.ToLower(response))
+        
+        if response == "y" || response == "yes" {
+            currentTime := time.Now()
+            dateTag := fmt.Sprintf("%s-%02d%02d%d", imagetag, currentTime.Day(), currentTime.Month(), currentTime.Year())
+            err = cli.ImageTag(ctx, localDigest, dateTag)
+            if err != nil {
+                common.PrintErrorMessage(err)
+                return
+            }
+            common.PrintSuccessMessage(fmt.Sprintf("Old image '%s' retagged as '%s'", imagetag, dateTag))
+        }
+    }
+    
+    // Tag the new image if needed
+    if imagetag != imageref {
+        err = cli.ImageTag(ctx, imageref, imagetag)
+        if err != nil {
+            common.PrintErrorMessage(err)
+            return
+        }
+        common.PrintSuccessMessage(fmt.Sprintf("Image tagged as '%s'", imagetag))
+    }
+    
     common.PrintSuccessMessage(fmt.Sprintf("Image '%s' installed successfully", imagetag))
 }
 
