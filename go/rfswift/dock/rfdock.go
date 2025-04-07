@@ -274,6 +274,10 @@ func getLocalImageCreationDate(ctx context.Context, cli *client.Client, imageNam
 }
 
 func checkImageStatus(ctx context.Context, cli *client.Client, repo, tag string) (bool, bool, error) {
+	const DefaultMessage = "test"
+		if common.Disconnected {
+		return false, true, nil
+	}
 	architecture := getArchitecture()
 
 	// Get the local image creation date
@@ -319,6 +323,9 @@ func printContainerProperties(ctx context.Context, cli *client.Client, container
 	}
 
 	imageStatus := fmt.Sprintf("%s (Custom)", props["ImageName"])
+	if common.Disconnected {
+		imageStatus = fmt.Sprintf("%s (No network)", props["ImageName"])
+	}
 	imageStatusColor := yellow
 	if !isCustom {
 		if isUpToDate {
@@ -1385,6 +1392,9 @@ func PrintImagesTable(labelKey string, labelValue string) {
 				status = "Error"
 			} else if isCustom {
 				status = "Custom"
+				if common.Disconnected {
+					status = "Not network"
+				}
 			} else if isUpToDate {
 				status = "Up to date"
 			} else {

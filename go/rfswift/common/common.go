@@ -9,8 +9,14 @@ import (
 	"strings"
 )
 
+// RF Swift repo
 var Version = "0.5.8"
 var Branch = "main"
+var Owner = "PentHertz"
+var Repo = "RF-Swift"
+
+var Disconnected bool = false // variable avoiding checks for updates
+
 var ascii_art_old = `                                                                                                    
                                                                                                                                                       
                   -%@%-                     :==-.                                                                                                     

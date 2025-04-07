@@ -10,6 +10,8 @@ import (
 	"os/exec"
 	"runtime"
 	"strings"
+
+	common "penthertz/rfswift/common"
 )
 
 // isCommandAvailable checks if a command is available in the system
@@ -146,4 +148,38 @@ func ClearScreen() {
 	cmd := exec.Command("clear")
 	cmd.Stdout = os.Stdout
 	cmd.Run()
+}
+
+func DisplayVersion() {
+	if common.Disconnected {
+		return
+	}
+
+	owner := common.Owner
+	repo := common.Repo
+
+	release, err := GetLatestRelease(owner, repo)
+	if err != nil {
+		DisplayNotification(
+			"Error",
+			fmt.Sprintf("Unable to fetch the latest release.\nDetails: %v", err),
+			"error",
+		)
+		return
+	}
+
+	currentVersion := common.Version
+	latestVersion := release.TagName
+
+	compareResult := VersionCompare(currentVersion, latestVersion)
+	if compareResult >= 0 {
+		DisplayNotification(
+			" Up-to-date",
+			fmt.Sprintf("You are running the latest version: %s", currentVersion),
+			"info",
+		)
+		return
+	}
+
+	common.PrintWarningMessage(fmt.Sprintf("Current version: %s\nLatest version: %s", currentVersion, latestVersion))
 }
