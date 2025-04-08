@@ -433,18 +433,14 @@ install_binary_alias() {
     if [ "$create_alias" == "yes" ]; then
         read -p "Enter the alias name for the binary (default: rfswift): " alias_name
         alias_name=${alias_name:-rfswift}
-
         # Assuming the binary is in the root of the project
         BINARY_PATH=$(pwd)/rfswift
-
         if [ -f "$BINARY_PATH" ]; then
             echo -e "${YELLOW}[+] Installing alias '${alias_name}' for the binary${NC}"
-
             # Copy binary to /usr/local/bin for system-wide access
             echo -e "${YELLOW}[+] Copying binary to /usr/local/bin for system-wide access...${NC}"
             sudo cp "$BINARY_PATH" /usr/local/bin/
             sudo chmod +x /usr/local/bin/rfswift
-
             # Detect the current user and home directory
             if [ -n "${SUDO_USER-}" ]; then
                 CURRENT_USER="$SUDO_USER"
@@ -453,10 +449,8 @@ install_binary_alias() {
                 CURRENT_USER=$(whoami)
                 HOME_DIR=$HOME
             fi
-
             # Detect the shell for the current user
             SHELL_NAME=$(basename "$SHELL")
-
             # Choose the alias file based on the detected shell
             case "$SHELL_NAME" in
                 bash)
@@ -473,16 +467,50 @@ install_binary_alias() {
                     ALIAS_FILE="$HOME_DIR/.${SHELL_NAME}rc"
                     ;;
             esac
-
             # Create the alias file if it doesn't exist
             if [[ ! -f "$ALIAS_FILE" ]]; then
                 echo -e "${YELLOW}[+] Alias file $ALIAS_FILE does not exist. Creating it...${NC}"
                 touch "$ALIAS_FILE"
             fi
-
-            # Add the alias to the appropriate shell configuration file for the user
-            echo "alias $alias_name='/usr/local/bin/rfswift'" >> "$ALIAS_FILE"
-
+            
+            # Check if the alias already exists in the config file
+            ALIAS_EXISTS=false
+            ALIAS_NEEDS_UPDATE=false
+            if [ -f "$ALIAS_FILE" ]; then
+                # Extract the current path if the alias already exists
+                EXISTING_ALIAS=$(grep "^alias $alias_name=" "$ALIAS_FILE" 2>/dev/null)
+                if [ -n "$EXISTING_ALIAS" ]; then
+                    ALIAS_EXISTS=true
+                    # Extract the path from the existing alias
+                    EXISTING_PATH=$(echo "$EXISTING_ALIAS" | sed -E "s/^alias $alias_name='?([^']*)'?$/\1/")
+                    if [ "$EXISTING_PATH" != "/usr/local/bin/rfswift" ]; then
+                        ALIAS_NEEDS_UPDATE=true
+                        echo -e "${YELLOW}[!] Alias '$alias_name' already exists but points to a different path:${NC}"
+                        echo -e "${YELLOW}    Current: $EXISTING_PATH${NC}"
+                        echo -e "${YELLOW}    New: /usr/local/bin/rfswift${NC}"
+                        read -p "Do you want to update the alias to the new path? (yes/no): " update_alias
+                        if [ "$update_alias" == "yes" ]; then
+                            # Remove the existing alias line
+                            sed -i.bak "/^alias $alias_name=/d" "$ALIAS_FILE"
+                            # Add the new alias
+                            echo "alias $alias_name='/usr/local/bin/rfswift'" >> "$ALIAS_FILE"
+                            echo -e "${GREEN}Alias '$alias_name' updated successfully.${NC}"
+                        else
+                            echo -e "${GREEN}Keeping existing alias configuration.${NC}"
+                        fi
+                    else
+                        echo -e "${GREEN}Alias '$alias_name' already exists with the correct path.${NC}"
+                    fi
+                fi
+            fi
+            
+            # Only add the alias if it doesn't exist and doesn't need an update
+            if [ "$ALIAS_EXISTS" = false ] && [ "$ALIAS_NEEDS_UPDATE" = false ]; then
+                # Add the alias to the appropriate shell configuration file for the user
+                echo "alias $alias_name='/usr/local/bin/rfswift'" >> "$ALIAS_FILE"
+                echo -e "${GREEN}Alias '$alias_name' installed successfully.${NC}"
+            fi
+            
             # Provide instructions to apply changes
             if [ "$SHELL_NAME" = "zsh" ]; then
                 echo -e "${YELLOW}Zsh configuration updated. Please restart your terminal or run 'exec zsh' to apply the changes.${NC}"
@@ -494,8 +522,6 @@ install_binary_alias() {
             else
                 echo -e "${YELLOW}Please restart your terminal or source the ${ALIAS_FILE} manually to apply the alias.${NC}"
             fi
-
-            echo -e "${GREEN}Alias '${alias_name}' installed successfully.${NC}"
         else
             echo -e "${RED}Binary not found at $BINARY_PATH. Make sure the binary is built correctly.${NC}"
             exit 1
