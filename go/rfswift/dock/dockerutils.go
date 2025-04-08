@@ -42,12 +42,49 @@ func DockerAddBinding(addbindings string) {
 	}
 }
 
+func DockerAddDevices(adddevices string) {
+	/* Add extra devices to the Docker container
+	   in(1): string of devices separated by commas
+	*/
+	if adddevices != "" {
+		// Check if extrabinding already has content, and append with a comma if it does
+		if dockerObj.devices != "" {
+			dockerObj.devices += "," + adddevices
+		} else {
+			dockerObj.devices = adddevices
+		}
+	}
+}
+
+func DockerAddCaps(addcaps string) {
+	/* Add extra caps to the Docker container
+	   in(1): string of caps separated by commas
+	*/
+	if addcaps != "" {
+		// Check if extracap already has content, and append with a comma if it does
+		if dockerObj.caps != "" {
+			dockerObj.caps += "," + addcaps
+		} else {
+			dockerObj.caps = addcaps
+		}
+	}
+}
+
 func DockerSetImage(imagename string) {
 	/* Set image name to use if the default one is not used
 	   in(1): string image name
 	*/
 	if imagename != "" {
 		dockerObj.imagename = imagename
+	}
+}
+
+func DockerSetUnprivileges(privilege bool) {
+	/* Set privilege mode to use on the container
+	   in(1): bool privileged? True or False
+	*/
+	if privilege {
+		dockerObj.privileged = !privilege
 	}
 }
 

@@ -23,6 +23,10 @@ type Config struct {
 		XDisplay     string
 		ExtraHost    string
 		ExtraEnv     string
+		Devices		 string
+		Privileged   string
+		Caps		 string
+		Seccomp		 string
 	}
 	Audio struct {
 		PulseServer string
@@ -111,6 +115,14 @@ func ReadOrCreateConfig(filename string) (*Config, error) {
 				config.Container.ExtraHost = value
 			case "extraenv":
 				config.Container.ExtraEnv = value
+			case "devices":
+				config.Container.Devices = value
+			case "privileged":
+        		config.Container.Privileged = value
+        	case "caps":
+        		config.Container.Caps = value
+        	case "seccomp":
+        		config.Container.Seccomp = value
 			}
 		case "audio":
 			if key == "pulse_server" {
@@ -169,6 +181,22 @@ func ReadOrCreateConfig(filename string) (*Config, error) {
 		printOrange("PulseAudio server is missing in the config file.")
 		config.Audio.PulseServer = promptForValue("PulseAudio server", "tcp:localhost:34567")
 	}
+	if config.Container.Devices == "" {
+		printOrange("Devices value is missing in the config file.")
+		config.Container.Devices = promptForValue("Devices", "/dev/snd:/dev/snd,/dev/dri:/dev/dri,/dev/input:/dev/input")
+	}
+	if config.Container.Privileged == "" {
+		printOrange("Privileged value is missing in the config file.")
+		config.Container.Privileged = promptForValue("Privileged mode (true/false)", "true")
+	}
+	if config.Container.Caps == "" {
+		printOrange("Capabilities are missing in the config file.")
+		config.Container.Caps = promptForValue("Capabilities", "SYS_RAWIO,NET_ADMIN,SYS_TTY_CONFIG,SYS_ADMIN")
+	}
+	if config.Container.Seccomp == "" {
+		printOrange("Seccomp value is missing in the config file.")
+		config.Container.Seccomp = promptForValue("Seccomp", "unconfined")
+	}
 
 	return config, nil
 }
@@ -180,7 +208,7 @@ repotag = penthertz/rfswift
 
 [container]
 shell = /bin/zsh
-bindings = /dev/bus/usb:/dev/bus/usb,/run/dbus/system_bus_socket:/run/dbus/system_bus_socket,/dev/snd:/dev/snd,/dev/dri:/dev/dri,/dev/input:/dev/input,/dev/vhci:/dev/vhci
+bindings = /run/dbus/system_bus_socket:/run/dbus/system_bus_socket
 network = host
 exposedports = ""
 portbindings = ""
@@ -188,6 +216,10 @@ x11forward = /tmp/.X11-unix:/tmp/.X11-unix
 xdisplay = "DISPLAY=:0"
 extrahost = pluto.local:192.168.2.1
 extraenv = ""
+devices = /dev/bus/usb:/dev/bus/usb,/dev/snd:/dev/snd,/dev/dri:/dev/dri,/dev/input:/dev/input,/dev/vhci:/dev/vhci,/dev/console:/dev/console,/dev/vcsa:/dev/vcsa,/dev/tty:/dev/tty,/dev/tty0:/dev/tty0,/dev/tty1:/dev/tty1,/dev/tty2:/dev/tty2,/dev/uinput:/dev/uinput
+privileged = true
+caps = SYS_RAWIO,NET_ADMIN,SYS_TTY_CONFIG,SYS_ADMIN
+seccomp = unconfined
 
 [audio]
 pulse_server = tcp:localhost:34567

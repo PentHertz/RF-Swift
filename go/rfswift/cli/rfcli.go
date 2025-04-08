@@ -34,6 +34,9 @@ var Btarget string
 var NetMode string
 var NetExporsedPorts string
 var NetBindedPorts string
+var Devices string
+var Privileged bool
+var Caps string
 
 var rootCmd = &cobra.Command{
 	Use:   "rfswift",
@@ -66,6 +69,9 @@ var runCmd = &cobra.Command{
 		rfdock.DockerSetNetworkMode(NetMode)
 		rfdock.DockerSetExposedPorts(NetExporsedPorts)
 		rfdock.DockerSetBindexPorts(NetBindedPorts)
+		rfdock.DockerAddDevices(Devices)
+		rfdock.DockerAddCaps(Caps)
+		rfdock.DockerSetUnprivileges(Privileged)
 		if os == "linux" { // use pactl to configure ACLs
 			rfutils.SetPulseCTL(PulseServer)
 		}
@@ -384,6 +390,10 @@ func init() {
 	runCmd.Flags().StringVarP(&PulseServer, "pulseserver", "p", "tcp:127.0.0.1:34567", "PULSE SERVER TCP address (by default: tcp:127.0.0.1:34567)")
 	runCmd.Flags().StringVarP(&DockerName, "name", "n", "", "A docker name")
 	runCmd.Flags().StringVarP(&NetMode, "network", "t", "", "Network mode (default: 'host')")
+	runCmd.Flags().StringVarP(&Devices, "devices", "s", "", "extra devices mapping (separate them with commas)")
+	runCmd.Flags().BoolVarP(&Privileged, "privileged", "u", false, "run container in unprivileged mode")
+	runCmd.Flags().StringVarP(&Caps, "capabilities", "a", "", "extra capabilities (separate them with commas)")
+
 	runCmd.MarkFlagRequired("name")
 
 	runCmd.Flags().StringVarP(&NetExporsedPorts, "exposedports", "z", "", "Exposed ports")

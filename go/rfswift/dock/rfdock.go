@@ -157,15 +157,18 @@ type DockerInst struct {
 	network_mode  string
 	exposed_ports string
 	binded_ports  string
+	devices 	  string
+	caps  		  string
+	seccomp		  string
 }
 
 var dockerObj = DockerInst{net: "host",
-	privileged:    true,
+	privileged:    false,
 	xdisplay:      "DISPLAY=:0",
 	entrypoint:    "/bin/bash",
 	x11forward:    "/tmp/.X11-unix:/tmp/.X11-unix",
 	usbforward:    "/dev/bus/usb:/dev/bus/usb",
-	extrabinding:  "/dev/ttyACM0:/dev/ttyACM0,/run/dbus/system_bus_socket:/run/dbus/system_bus_socket,/dev/snd:/dev/snd,/dev/dri:/dev/dri,/dev/input:/dev/input", // Some more if needed /run/dbus/system_bus_socket:/run/dbus/system_bus_socket,/dev/snd:/dev/snd,/dev/dri:/dev/dri
+	extrabinding:  "/run/dbus/system_bus_socket:/run/dbus/system_bus_socket", // Some more if needed /run/dbus/system_bus_socket:/run/dbus/system_bus_socket,/dev/snd:/dev/snd,/dev/dri:/dev/dri
 	imagename:     "myrfswift:latest",
 	repotag:       "penthertz/rfswift",
 	extrahosts:    "",
@@ -174,6 +177,9 @@ var dockerObj = DockerInst{net: "host",
 	exposed_ports: "",
 	binded_ports:  "",
 	pulse_server:  "tcp:localhost:34567",
+	devices:	   "/dev/snd:/dev/snd,/dev/dri:/dev/dri,/dev/input:/dev/input",
+	caps:		   "SYS_RAWIO,NET_ADMIN,SYS_TTY_CONFIG,SYS_ADMIN",
+	seccomp:	   "unconfined",
 	shell:         "/bin/bash"} // Instance with default values
 
 func init() {
@@ -198,7 +204,11 @@ func updateDockerObjFromConfig() {
 	dockerObj.xdisplay = config.Container.XDisplay
 	dockerObj.extrahosts = config.Container.ExtraHost
 	dockerObj.extraenv = config.Container.ExtraEnv
+	dockerObj.devices = config.Container.Devices
 	dockerObj.pulse_server = config.Audio.PulseServer
+	dockerObj.privileged = strings.ToLower(config.Container.Privileged) == "true"
+	dockerObj.caps = config.Container.Caps
+	dockerObj.seccomp = config.Container.Seccomp
 
 	// Handle bindings
 	var bindings []string
@@ -349,6 +359,9 @@ func printContainerProperties(ctx context.Context, cli *client.Client, container
 		{"Size on Disk", size},
 		{"Bindings", props["Bindings"]},
 		{"Extra Hosts", props["ExtraHosts"]},
+		{"Devices", props["Devices"]},
+		{"Capabilities", props["Caps"]},
+		{"Seccomp profile", props["Seccomp"]},
 	}
 
 	width, _, err := terminal.GetSize(int(os.Stdout.Fd()))
@@ -733,6 +746,38 @@ func convertExposedPortsToString(exposedPorts nat.PortSet) string {
 	return strings.Join(result, ", ")
 }
 
+func convertDevicesToString(devices []container.DeviceMapping) string {
+    deviceStrings := make([]string, len(devices))
+    for i, device := range devices {
+        deviceStrings[i] = fmt.Sprintf("%s:%s", device.PathOnHost, device.PathInContainer)
+    }
+    return strings.Join(deviceStrings, ",")
+}
+
+func convertCapsToString(caps []string) string {
+    if len(caps) == 0 {
+        return ""
+    }
+    return strings.Join(caps, ",")
+}
+
+func convertSecurityOptToString(securityOpts []string) string {
+    if len(securityOpts) == 0 {
+        return ""
+    }
+    
+    // Look specifically for seccomp profile
+    for _, opt := range securityOpts {
+        if strings.HasPrefix(opt, "seccomp=") {
+            // Extract just the profile value after "seccomp="
+            return strings.TrimPrefix(opt, "seccomp=")
+        }
+    }
+    
+    // If no seccomp profile found, return empty string or join all options
+    return ""
+}
+
 func getContainerProperties(ctx context.Context, cli *client.Client, containerID string) (map[string]string, error) {
 	containerJSON, err := cli.ContainerInspect(ctx, containerID)
 	if err != nil {
@@ -767,6 +812,9 @@ func getContainerProperties(ctx context.Context, cli *client.Client, containerID
 		"Bindings":     strings.Join(containerJSON.HostConfig.Binds, ","),
 		"ExtraHosts":   strings.Join(containerJSON.HostConfig.ExtraHosts, ","),
 		"Size":         imageSize,
+		"Devices":      convertDevicesToString(containerJSON.HostConfig.Devices),
+		"Caps":    convertCapsToString(containerJSON.HostConfig.CapAdd),
+		"Seccomp": convertSecurityOptToString(containerJSON.HostConfig.SecurityOpt),
 	}
 
 	return props, nil
@@ -1006,6 +1054,29 @@ func ParseBindedPorts(bindedPortsStr string) nat.PortMap {
 	return portBindings
 }
 
+func getDeviceMappingsFromString(devicesStr string) []container.DeviceMapping {
+    var devices []container.DeviceMapping
+    
+    if devicesStr == "" {
+        return devices
+    }
+    
+    devicesList := strings.Split(devicesStr, ",")
+    for _, deviceMapping := range devicesList {
+        parts := strings.Split(deviceMapping, ":")
+        if len(parts) == 2 {
+            devices = append(devices, container.DeviceMapping{
+                PathOnHost:        parts[0],
+                PathInContainer:   parts[1],
+                CgroupPermissions: "rwm",
+            })
+        }
+    }
+    
+    return devices
+}
+
+
 func DockerRun(containerName string) {
 	/*
 	 *   Create a container with a specific name and run it
@@ -1017,18 +1088,68 @@ func DockerRun(containerName string) {
 		return
 	}
 	defer cli.Close()
-
+	
 	if !strings.Contains(dockerObj.imagename, ":") {
 		// Prepend Config.General.RepoTag if the format is missing
 		dockerObj.imagename = fmt.Sprintf("%s:%s", dockerObj.repotag, dockerObj.imagename)
 	}
-
-	bindings := combineBindings(dockerObj.x11forward, dockerObj.usbforward, dockerObj.extrabinding)
+	
+	bindings := combineBindings(dockerObj.x11forward, dockerObj.extrabinding)
 	extrahosts := splitAndCombine(dockerObj.extrahosts)
 	dockerenv := combineEnv(dockerObj.xdisplay, dockerObj.pulse_server, dockerObj.extraenv)
 	exposedPorts := ParseExposedPorts(dockerObj.exposed_ports)
 	bindedPorts := ParseBindedPorts(dockerObj.binded_ports)
+	
+	// Prepare host config based on privileged flag
+	hostConfig := &container.HostConfig{
+		NetworkMode:  container.NetworkMode(dockerObj.network_mode),
+		Binds:        bindings,
+		ExtraHosts:   extrahosts,
+		PortBindings: bindedPorts,
+		Privileged:   dockerObj.privileged,
+	}
 
+	// If not in privileged mode, add device permissions
+	if !dockerObj.privileged {
+		// Add device cgroup rules for additional permissions
+		deviceCgroupRules := []string{
+			"c 189:* rwm",  // USB serial devices (ttyACM)
+			"c 188:* rwm",  // USB serial devices (ttyUSB)
+			"c 166:* rwm",  // USB raw access
+			"c 2:* rwm",    // Standard PTY slaves
+		}
+		
+		devices := getDeviceMappingsFromString(dockerObj.devices)
+
+		if dockerObj.usbforward != "" {
+		    parts := strings.Split(dockerObj.usbforward, ":")
+		    if len(parts) == 2 {
+		        devices = append(devices, container.DeviceMapping{
+		            PathOnHost:        parts[0],
+		            PathInContainer:   parts[1],
+		            CgroupPermissions: "rwm",
+		        })
+		    }
+		}
+		
+		// Update host config with device-specific permissions
+		hostConfig.Devices = devices
+		hostConfig.DeviceCgroupRules = deviceCgroupRules
+
+	    if dockerObj.seccomp != "\"\"" {
+		    seccompOpts := strings.Split(dockerObj.seccomp, ",")
+		    for i, opt := range seccompOpts {
+		        // Make sure each option has the right format
+		        if !strings.Contains(opt, "=") {
+		            // If there's no equals sign, assume it's a seccomp value
+		            seccompOpts[i] = "seccomp=" + opt
+		        }
+		    }
+		    hostConfig.SecurityOpt = seccompOpts
+		}
+		hostConfig.CapAdd = strings.Split(dockerObj.caps, ",")
+	}
+	
 	resp, err := cli.ContainerCreate(ctx, &container.Config{
 		Image:        dockerObj.imagename,
 		Cmd:          []string{dockerObj.shell},
@@ -1043,18 +1164,13 @@ func DockerRun(containerName string) {
 		Labels: map[string]string{
 			"org.container.project": "rfswift",
 		},
-	}, &container.HostConfig{
-		NetworkMode:  container.NetworkMode(dockerObj.network_mode),
-		Binds:        bindings,
-		Privileged:   true,
-		ExtraHosts:   extrahosts,
-		PortBindings: bindedPorts,
-	}, &network.NetworkingConfig{}, nil, containerName)
+	}, hostConfig, &network.NetworkingConfig{}, nil, containerName)
+	
 	if err != nil {
 		common.PrintErrorMessage(err)
 		return
 	}
-
+	
 	waiter, err := cli.ContainerAttach(ctx, resp.ID, container.AttachOptions{
 		Stderr: true,
 		Stdout: true,
@@ -1066,12 +1182,12 @@ func DockerRun(containerName string) {
 		return
 	}
 	defer waiter.Close()
-
+	
 	if err := cli.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
 		common.PrintErrorMessage(err)
 		return
 	}
-
+	
 	props, err := getContainerProperties(ctx, cli, resp.ID)
 	if err != nil {
 		common.PrintErrorMessage(err)
@@ -1079,11 +1195,9 @@ func DockerRun(containerName string) {
 	}
 	size := props["Size"]
 	printContainerProperties(ctx, cli, containerName, props, size)
-
 	common.PrintSuccessMessage(fmt.Sprintf("Container '%s' started successfully", containerName))
-
+	
 	handleIOStreams(waiter)
-
 	fd := int(os.Stdin.Fd())
 	if terminal.IsTerminal(fd) {
 		oldState, err := terminal.MakeRaw(fd)
@@ -1092,11 +1206,10 @@ func DockerRun(containerName string) {
 			return
 		}
 		defer terminal.Restore(fd, oldState)
-
 		go resizeTty(ctx, cli, resp.ID, fd)
 		go readAndWriteInput(waiter)
 	}
-
+	
 	waitForContainer(ctx, cli, resp.ID)
 }
 
@@ -1194,10 +1307,14 @@ func waitForContainer(ctx context.Context, cli *client.Client, contid string) {
 	}
 }
 
-func combineBindings(x11forward, usbforward, extrabinding string) []string {
-	bindings := append(strings.Split(x11forward, ","), strings.Split(usbforward, ",")...)
+func combineBindings(x11forward, extrabinding string) []string {
+	var bindings []string
+	
 	if extrabinding != "" {
 		bindings = append(bindings, strings.Split(extrabinding, ",")...)
+	}
+	if x11forward != "" {
+		bindings = append(bindings, strings.Split(x11forward, ",")...)
 	}
 	return bindings
 }
