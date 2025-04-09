@@ -865,7 +865,7 @@ func DockerExec(containerIdentifier string, WorkingDir string) {
 	printContainerProperties(ctx, cli, containerName, props, size)
 
 	// Create exec configuration
-	execConfig := types.ExecConfig{
+	execConfig := container.ExecOptions{
 		AttachStdin:  true,
 		AttachStdout: true,
 		AttachStderr: true,
@@ -882,7 +882,7 @@ func DockerExec(containerIdentifier string, WorkingDir string) {
 	}
 
 	// Attach to the exec instance
-	attachResp, err := cli.ContainerExecAttach(ctx, execID.ID, types.ExecStartCheck{Tty: true})
+	attachResp, err := cli.ContainerExecAttach(ctx, execID.ID, container.ExecStartOptions{Tty: true})
 	if err != nil {
 		common.PrintErrorMessage(fmt.Errorf("failed to attach to exec instance: %v", err))
 		return
@@ -903,7 +903,7 @@ func DockerExec(containerIdentifier string, WorkingDir string) {
 	}
 
 	// Start the exec instance
-	if err := cli.ContainerExecStart(ctx, execID.ID, types.ExecStartCheck{Tty: true}); err != nil {
+	if err := cli.ContainerExecStart(ctx, execID.ID, container.ExecStartOptions{Tty: true}); err != nil {
 		common.PrintErrorMessage(fmt.Errorf("failed to start exec instance: %v", err))
 		return
 	}
@@ -1221,7 +1221,7 @@ func execCommandInContainer(ctx context.Context, cli *client.Client, contid, Wor
 		execShell = append(execShell, strings.Split(dockerObj.shell, " ")...)
 	}
 
-	optionsCreate := types.ExecConfig{
+	optionsCreate := container.ExecOptions{
 		WorkingDir:   WorkingDir,
 		AttachStdin:  true,
 		AttachStdout: true,
@@ -1237,7 +1237,7 @@ func execCommandInContainer(ctx context.Context, cli *client.Client, contid, Wor
 		panic(err)
 	}
 
-	optionsStartCheck := types.ExecStartCheck{
+	optionsStartCheck := container.ExecStartOptions{
 		Detach: false,
 		Tty:    true,
 	}
@@ -1884,7 +1884,7 @@ func DockerInstallScript(containerIdentifier, scriptName, functionScript string)
 
 // execCommand executes a command in the container, capturing only errors if any
 func execCommand(ctx context.Context, cli *client.Client, containerID string, cmd []string, workingDir ...string) error {
-	execConfig := types.ExecConfig{
+	execConfig := container.ExecOptions{
 		AttachStdout: true,
 		AttachStderr: true,
 		Cmd:          cmd,
@@ -1900,7 +1900,7 @@ func execCommand(ctx context.Context, cli *client.Client, containerID string, cm
 		return fmt.Errorf("failed to create exec instance: %v", err)
 	}
 
-	attachResp, err := cli.ContainerExecAttach(ctx, execID.ID, types.ExecStartCheck{})
+	attachResp, err := cli.ContainerExecAttach(ctx, execID.ID, container.ExecStartOptions{})
 	if err != nil {
 		return fmt.Errorf("failed to attach to exec instance: %v", err)
 	}

@@ -4,7 +4,7 @@ go 1.24.2
 
 require (
 	github.com/cheggaaa/pb/v3 v3.1.7
-	github.com/docker/docker v27.5.1+incompatible
+	github.com/docker/docker v28.0.4+incompatible
 	github.com/docker/go-connections v0.5.0
 	github.com/fatih/color v1.18.0
 	github.com/go-resty/resty/v2 v2.16.5
