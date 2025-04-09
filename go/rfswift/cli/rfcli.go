@@ -10,9 +10,9 @@ import (
 	"runtime"
 
 	"github.com/spf13/cobra"
+	common "penthertz/rfswift/common"
 	rfdock "penthertz/rfswift/dock"
 	rfutils "penthertz/rfswift/rfutils"
-	common "penthertz/rfswift/common"
 )
 
 var DImage string
@@ -337,11 +337,11 @@ func init() {
 	rootCmd.AddCommand(BindingsCmd)
 	rootCmd.AddCommand(stopCmd)
 	rootCmd.PersistentPreRun = func(cmd *cobra.Command, args []string) {
-        rfutils.DisplayVersion()
-    }
-    
-    // Add other commands and flags as you already have
-    rootCmd.PersistentFlags().BoolVarP(&common.Disconnected, "disconnect", "q", false, "Don't query updates (disconnected mode)")
+		rfutils.DisplayVersion()
+	}
+
+	// Add other commands and flags as you already have
+	rootCmd.PersistentFlags().BoolVarP(&common.Disconnected, "disconnect", "q", false, "Don't query updates (disconnected mode)")
 
 	// Adding special commands for Windows
 	os := runtime.GOOS

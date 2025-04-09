@@ -23,11 +23,11 @@ type Config struct {
 		XDisplay     string
 		ExtraHost    string
 		ExtraEnv     string
-		Devices		 string
+		Devices      string
 		Privileged   string
-		Caps		 string
-		Seccomp		 string
-		Cgroups		 string
+		Caps         string
+		Seccomp      string
+		Cgroups      string
 	}
 	Audio struct {
 		PulseServer string
@@ -136,13 +136,13 @@ func ReadOrCreateConfig(filename string) (*Config, error) {
 			case "devices":
 				config.Container.Devices = value
 			case "privileged":
-        		config.Container.Privileged = value
-        	case "caps":
-        		config.Container.Caps = value
-        	case "seccomp":
-        		config.Container.Seccomp = value
-        	case "cgroups":
-        		config.Container.Cgroups = value
+				config.Container.Privileged = value
+			case "caps":
+				config.Container.Caps = value
+			case "seccomp":
+				config.Container.Seccomp = value
+			case "cgroups":
+				config.Container.Cgroups = value
 			}
 		case "audio":
 			if key == "pulse_server" {

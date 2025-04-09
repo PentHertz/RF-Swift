@@ -157,10 +157,10 @@ type DockerInst struct {
 	network_mode  string
 	exposed_ports string
 	binded_ports  string
-	devices 	  string
-	caps  		  string
-	seccomp		  string
-	cgroups 		  string
+	devices       string
+	caps          string
+	seccomp       string
+	cgroups       string
 }
 
 var dockerObj = DockerInst{net: "host",
@@ -178,10 +178,10 @@ var dockerObj = DockerInst{net: "host",
 	exposed_ports: "",
 	binded_ports:  "",
 	pulse_server:  "tcp:localhost:34567",
-	devices:	   "/dev/snd:/dev/snd,/dev/dri:/dev/dri,/dev/input:/dev/input",
-	caps:		   "SYS_RAWIO,NET_ADMIN,SYS_TTY_CONFIG,SYS_ADMIN",
-	seccomp:	   "unconfined",
-	cgroups:	   "c *:* rmw",
+	devices:       "/dev/snd:/dev/snd,/dev/dri:/dev/dri,/dev/input:/dev/input",
+	caps:          "SYS_RAWIO,NET_ADMIN,SYS_TTY_CONFIG,SYS_ADMIN",
+	seccomp:       "unconfined",
+	cgroups:       "c *:* rmw",
 	shell:         "/bin/bash"} // Instance with default values
 
 func init() {
@@ -288,7 +288,7 @@ func getLocalImageCreationDate(ctx context.Context, cli *client.Client, imageNam
 
 func checkImageStatus(ctx context.Context, cli *client.Client, repo, tag string) (bool, bool, error) {
 	const DefaultMessage = "test"
-		if common.Disconnected {
+	if common.Disconnected {
 		return false, true, nil
 	}
 	architecture := getArchitecture()
@@ -472,7 +472,7 @@ func DockerLast(ifilter string, labelKey string, labelValue string) {
 		panic(err)
 	}
 	defer cli.Close()
-	
+
 	// Set up container filters
 	containerFilters := filters.NewArgs()
 	if ifilter != "" {
@@ -481,7 +481,7 @@ func DockerLast(ifilter string, labelKey string, labelValue string) {
 	if labelKey != "" && labelValue != "" {
 		containerFilters.Add("label", fmt.Sprintf("%s=%s", labelKey, labelValue))
 	}
-	
+
 	// Get container list
 	containers, err := cli.ContainerList(ctx, container.ListOptions{
 		All:     true,
@@ -491,22 +491,22 @@ func DockerLast(ifilter string, labelKey string, labelValue string) {
 	if err != nil {
 		panic(err)
 	}
-	
+
 	// Create maps to store image mappings
 	imageIDToNames := make(map[string][]string)
 	hashToNames := make(map[string][]string)
-	
+
 	// Get all images to build a mapping of image IDs to all their tags
 	images, err := cli.ImageList(ctx, image.ListOptions{All: true})
 	if err != nil {
 		panic(err)
 	}
-	
+
 	// Build image ID to names mapping
 	for _, img := range images {
 		shortID := img.ID[7:19] // Get a shortened version of the SHA256 hash
 		fullHash := img.ID[7:]  // Remove "sha256:" prefix but keep full hash
-		
+
 		// Store mappings if image has tags
 		if len(img.RepoTags) > 0 {
 			imageIDToNames[img.ID] = img.RepoTags
@@ -514,22 +514,22 @@ func DockerLast(ifilter string, labelKey string, labelValue string) {
 			hashToNames[fullHash] = img.RepoTags
 		}
 	}
-	
+
 	//rfutils.ClearScreen()
 	tableData := [][]string{}
 	for _, container := range containers {
 		created := time.Unix(container.Created, 0).Format(time.RFC3339)
-		
+
 		// Get the container image ID and associate with tags
 		containerImageID := container.ImageID
 		shortImageID := containerImageID[7:19] // shortened SHA256
-		
+
 		// Get the display image name
 		imageTag := container.Image
-		
+
 		// Check if this is a SHA256 hash
 		isSHA256 := strings.HasPrefix(imageTag, "sha256:")
-		
+
 		// If this is a SHA256 hash, try to find a friendly name
 		if isSHA256 {
 			hashPart := imageTag[7:] // Remove "sha256:" prefix
@@ -540,7 +540,7 @@ func DockerLast(ifilter string, labelKey string, labelValue string) {
 				imageTag = tags[0] // Fallback to container image ID mapping
 			}
 		}
-		
+
 		// Check if this is a renamed image (date format: -DDMMYYYY)
 		isRenamed := false
 		if len(imageTag) > 9 { // Make sure string is long enough before checking suffix
@@ -557,27 +557,27 @@ func DockerLast(ifilter string, labelKey string, labelValue string) {
 				isRenamed = datePattern
 			}
 		}
-		
+
 		// Prepare the display string
 		imageDisplay := imageTag
-		
+
 		// For SHA256 or renamed images, show hash for clarity
 		if isSHA256 || isRenamed {
 			imageDisplay = fmt.Sprintf("%s (%s)", imageTag, shortImageID)
 		}
-		
+
 		containerName := container.Names[0]
 		if containerName[0] == '/' {
 			containerName = containerName[1:]
 		}
 		containerID := container.ID[:12]
 		command := container.Command
-		
+
 		// Truncate command if too long
 		if len(command) > 30 {
 			command = command[:27] + "..."
 		}
-		
+
 		tableData = append(tableData, []string{
 			created,
 			imageDisplay,
@@ -586,13 +586,13 @@ func DockerLast(ifilter string, labelKey string, labelValue string) {
 			command,
 		})
 	}
-	
+
 	headers := []string{"Created", "Image Tag (ID)", "Container Name", "Container ID", "Command"}
 	width, _, err := terminal.GetSize(int(os.Stdout.Fd()))
 	if err != nil {
 		width = 80
 	}
-	
+
 	// Calculate column widths
 	columnWidths := make([]int, len(headers))
 	for i, header := range headers {
@@ -605,7 +605,7 @@ func DockerLast(ifilter string, labelKey string, labelValue string) {
 			}
 		}
 	}
-	
+
 	// Adjust column widths to fit terminal
 	totalWidth := len(headers) + 1
 	for _, w := range columnWidths {
@@ -622,7 +622,7 @@ func DockerLast(ifilter string, labelKey string, labelValue string) {
 		}
 		totalWidth = width
 	}
-	
+
 	// Print fancy table
 	pink := "\033[35m"
 	white := "\033[37m"
@@ -751,35 +751,35 @@ func convertExposedPortsToString(exposedPorts nat.PortSet) string {
 }
 
 func convertDevicesToString(devices []container.DeviceMapping) string {
-    deviceStrings := make([]string, len(devices))
-    for i, device := range devices {
-        deviceStrings[i] = fmt.Sprintf("%s:%s", device.PathOnHost, device.PathInContainer)
-    }
-    return strings.Join(deviceStrings, ",")
+	deviceStrings := make([]string, len(devices))
+	for i, device := range devices {
+		deviceStrings[i] = fmt.Sprintf("%s:%s", device.PathOnHost, device.PathInContainer)
+	}
+	return strings.Join(deviceStrings, ",")
 }
 
 func convertCapsToString(caps []string) string {
-    if len(caps) == 0 {
-        return ""
-    }
-    return strings.Join(caps, ",")
+	if len(caps) == 0 {
+		return ""
+	}
+	return strings.Join(caps, ",")
 }
 
 func convertSecurityOptToString(securityOpts []string) string {
-    if len(securityOpts) == 0 {
-        return ""
-    }
-    
-    // Look specifically for seccomp profile
-    for _, opt := range securityOpts {
-        if strings.HasPrefix(opt, "seccomp=") {
-            // Extract just the profile value after "seccomp="
-            return strings.TrimPrefix(opt, "seccomp=")
-        }
-    }
-    
-    // If no seccomp profile found, return empty string or join all options
-    return ""
+	if len(securityOpts) == 0 {
+		return ""
+	}
+
+	// Look specifically for seccomp profile
+	for _, opt := range securityOpts {
+		if strings.HasPrefix(opt, "seccomp=") {
+			// Extract just the profile value after "seccomp="
+			return strings.TrimPrefix(opt, "seccomp=")
+		}
+	}
+
+	// If no seccomp profile found, return empty string or join all options
+	return ""
 }
 
 func getContainerProperties(ctx context.Context, cli *client.Client, containerID string) (map[string]string, error) {
@@ -817,9 +817,9 @@ func getContainerProperties(ctx context.Context, cli *client.Client, containerID
 		"ExtraHosts":   strings.Join(containerJSON.HostConfig.ExtraHosts, ","),
 		"Size":         imageSize,
 		"Devices":      convertDevicesToString(containerJSON.HostConfig.Devices),
-		"Caps":    convertCapsToString(containerJSON.HostConfig.CapAdd),
-		"Seccomp": convertSecurityOptToString(containerJSON.HostConfig.SecurityOpt),
-		"Cgroups": strings.Join(containerJSON.HostConfig.DeviceCgroupRules, ","),
+		"Caps":         convertCapsToString(containerJSON.HostConfig.CapAdd),
+		"Seccomp":      convertSecurityOptToString(containerJSON.HostConfig.SecurityOpt),
+		"Cgroups":      strings.Join(containerJSON.HostConfig.DeviceCgroupRules, ","),
 	}
 
 	return props, nil
@@ -1060,27 +1060,26 @@ func ParseBindedPorts(bindedPortsStr string) nat.PortMap {
 }
 
 func getDeviceMappingsFromString(devicesStr string) []container.DeviceMapping {
-    var devices []container.DeviceMapping
-    
-    if devicesStr == "" {
-        return devices
-    }
-    
-    devicesList := strings.Split(devicesStr, ",")
-    for _, deviceMapping := range devicesList {
-        parts := strings.Split(deviceMapping, ":")
-        if len(parts) == 2 {
-            devices = append(devices, container.DeviceMapping{
-                PathOnHost:        parts[0],
-                PathInContainer:   parts[1],
-                CgroupPermissions: "rwm",
-            })
-        }
-    }
-    
-    return devices
-}
+	var devices []container.DeviceMapping
 
+	if devicesStr == "" {
+		return devices
+	}
+
+	devicesList := strings.Split(devicesStr, ",")
+	for _, deviceMapping := range devicesList {
+		parts := strings.Split(deviceMapping, ":")
+		if len(parts) == 2 {
+			devices = append(devices, container.DeviceMapping{
+				PathOnHost:        parts[0],
+				PathInContainer:   parts[1],
+				CgroupPermissions: "rwm",
+			})
+		}
+	}
+
+	return devices
+}
 
 func DockerRun(containerName string) {
 	/*
@@ -1093,18 +1092,18 @@ func DockerRun(containerName string) {
 		return
 	}
 	defer cli.Close()
-	
+
 	if !strings.Contains(dockerObj.imagename, ":") {
 		// Prepend Config.General.RepoTag if the format is missing
 		dockerObj.imagename = fmt.Sprintf("%s:%s", dockerObj.repotag, dockerObj.imagename)
 	}
-	
+
 	bindings := combineBindings(dockerObj.x11forward, dockerObj.extrabinding)
 	extrahosts := splitAndCombine(dockerObj.extrahosts)
 	dockerenv := combineEnv(dockerObj.xdisplay, dockerObj.pulse_server, dockerObj.extraenv)
 	exposedPorts := ParseExposedPorts(dockerObj.exposed_ports)
 	bindedPorts := ParseBindedPorts(dockerObj.binded_ports)
-	
+
 	// Prepare host config based on privileged flag
 	hostConfig := &container.HostConfig{
 		NetworkMode:  container.NetworkMode(dockerObj.network_mode),
@@ -1115,20 +1114,20 @@ func DockerRun(containerName string) {
 	}
 
 	// If not in privileged mode, add device permissions
-	if !dockerObj.privileged {		
+	if !dockerObj.privileged {
 		devices := getDeviceMappingsFromString(dockerObj.devices)
 
 		if dockerObj.usbforward != "" {
-		    parts := strings.Split(dockerObj.usbforward, ":")
-		    if len(parts) == 2 {
-		        devices = append(devices, container.DeviceMapping{
-		            PathOnHost:        parts[0],
-		            PathInContainer:   parts[1],
-		            CgroupPermissions: "rwm",
-		        })
-		    }
+			parts := strings.Split(dockerObj.usbforward, ":")
+			if len(parts) == 2 {
+				devices = append(devices, container.DeviceMapping{
+					PathOnHost:        parts[0],
+					PathInContainer:   parts[1],
+					CgroupPermissions: "rwm",
+				})
+			}
 		}
-		
+
 		// Update host config with device-specific permissions
 		hostConfig.Devices = devices
 
@@ -1137,22 +1136,22 @@ func DockerRun(containerName string) {
 			hostConfig.DeviceCgroupRules = strings.Split(dockerObj.cgroups, ",")
 		}
 
-	    if dockerObj.seccomp != "" {
-		    seccompOpts := strings.Split(dockerObj.seccomp, ",")
-		    for i, opt := range seccompOpts {
-		        // Make sure each option has the right format
-		        if !strings.Contains(opt, "=") {
-		            // If there's no equals sign, assume it's a seccomp value
-		            seccompOpts[i] = "seccomp=" + opt
-		        }
-		    }
-		    hostConfig.SecurityOpt = seccompOpts
+		if dockerObj.seccomp != "" {
+			seccompOpts := strings.Split(dockerObj.seccomp, ",")
+			for i, opt := range seccompOpts {
+				// Make sure each option has the right format
+				if !strings.Contains(opt, "=") {
+					// If there's no equals sign, assume it's a seccomp value
+					seccompOpts[i] = "seccomp=" + opt
+				}
+			}
+			hostConfig.SecurityOpt = seccompOpts
 		}
 		if dockerObj.caps != "" {
 			hostConfig.CapAdd = strings.Split(dockerObj.caps, ",")
 		}
 	}
-	
+
 	resp, err := cli.ContainerCreate(ctx, &container.Config{
 		Image:        dockerObj.imagename,
 		Cmd:          []string{dockerObj.shell},
@@ -1168,12 +1167,12 @@ func DockerRun(containerName string) {
 			"org.container.project": "rfswift",
 		},
 	}, hostConfig, &network.NetworkingConfig{}, nil, containerName)
-	
+
 	if err != nil {
 		common.PrintErrorMessage(err)
 		return
 	}
-	
+
 	waiter, err := cli.ContainerAttach(ctx, resp.ID, container.AttachOptions{
 		Stderr: true,
 		Stdout: true,
@@ -1185,12 +1184,12 @@ func DockerRun(containerName string) {
 		return
 	}
 	defer waiter.Close()
-	
+
 	if err := cli.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
 		common.PrintErrorMessage(err)
 		return
 	}
-	
+
 	props, err := getContainerProperties(ctx, cli, resp.ID)
 	if err != nil {
 		common.PrintErrorMessage(err)
@@ -1199,7 +1198,7 @@ func DockerRun(containerName string) {
 	size := props["Size"]
 	printContainerProperties(ctx, cli, containerName, props, size)
 	common.PrintSuccessMessage(fmt.Sprintf("Container '%s' started successfully", containerName))
-	
+
 	handleIOStreams(waiter)
 	fd := int(os.Stdin.Fd())
 	if terminal.IsTerminal(fd) {
@@ -1212,7 +1211,7 @@ func DockerRun(containerName string) {
 		go resizeTty(ctx, cli, resp.ID, fd)
 		go readAndWriteInput(waiter)
 	}
-	
+
 	waitForContainer(ctx, cli, resp.ID)
 }
 
@@ -1312,7 +1311,7 @@ func waitForContainer(ctx context.Context, cli *client.Client, contid string) {
 
 func combineBindings(x11forward, extrabinding string) []string {
 	var bindings []string
-	
+
 	if extrabinding != "" {
 		bindings = append(bindings, strings.Split(extrabinding, ",")...)
 	}
@@ -1357,94 +1356,94 @@ func DockerCommit(contid string) {
 }
 
 func DockerPull(imageref string, imagetag string) {
-    ctx := context.Background()
-    cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
-    if err != nil {
-        common.PrintErrorMessage(err)
-        return
-    }
-    defer cli.Close()
-    
-    if !strings.Contains(imageref, ":") {
-        imageref = fmt.Sprintf("%s:%s", dockerObj.repotag, imageref)
-    }
-    if imagetag == "" {
-        imagetag = imageref
-    }
-    
-    // Check if the image exists locally
-    localInspect, _, err := cli.ImageInspectWithRaw(ctx, imageref)
-    localExists := err == nil
-    localDigest := ""
-    if localExists {
-        localDigest = localInspect.ID
-    }
-    
-    // Pull the image from remote
-    common.PrintInfoMessage(fmt.Sprintf("Pulling image from: %s", imageref))
-    out, err := cli.ImagePull(ctx, imageref, image.PullOptions{})
-    if err != nil {
-        common.PrintErrorMessage(err)
-        return
-    }
-    defer out.Close()
-    
-    // Process pull output
-    fd, isTerminal := term.GetFdInfo(os.Stdout)
-    jsonDecoder := json.NewDecoder(out)
-    for {
-        var msg jsonmessage.JSONMessage
-        if err := jsonDecoder.Decode(&msg); err == io.EOF {
-            break
-        } else if err != nil {
-            common.PrintErrorMessage(err)
-            return
-        }
-        if isTerminal {
-            _ = jsonmessage.DisplayJSONMessagesStream(out, os.Stdout, fd, isTerminal, nil)
-        } else {
-            fmt.Println(msg)
-        }
-    }
-    
-    // Get information about the pulled image
-    remoteInspect, _, err := cli.ImageInspectWithRaw(ctx, imageref)
-    if err != nil {
-        common.PrintErrorMessage(err)
-        return
-    }
-    
-    // Compare local and remote images
-    if localExists && localDigest != remoteInspect.ID {
-        common.PrintInfoMessage("The pulled image is different from the local one.")
-        reader := bufio.NewReader(os.Stdin)
-        fmt.Print("Do you want to rename the old image with a date tag? (y/n): ")
-        response, _ := reader.ReadString('\n')
-        response = strings.TrimSpace(strings.ToLower(response))
-        
-        if response == "y" || response == "yes" {
-            currentTime := time.Now()
-            dateTag := fmt.Sprintf("%s-%02d%02d%d", imagetag, currentTime.Day(), currentTime.Month(), currentTime.Year())
-            err = cli.ImageTag(ctx, localDigest, dateTag)
-            if err != nil {
-                common.PrintErrorMessage(err)
-                return
-            }
-            common.PrintSuccessMessage(fmt.Sprintf("Old image '%s' retagged as '%s'", imagetag, dateTag))
-        }
-    }
-    
-    // Tag the new image if needed
-    if imagetag != imageref {
-        err = cli.ImageTag(ctx, imageref, imagetag)
-        if err != nil {
-            common.PrintErrorMessage(err)
-            return
-        }
-        common.PrintSuccessMessage(fmt.Sprintf("Image tagged as '%s'", imagetag))
-    }
-    
-    common.PrintSuccessMessage(fmt.Sprintf("Image '%s' installed successfully", imagetag))
+	ctx := context.Background()
+	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
+	if err != nil {
+		common.PrintErrorMessage(err)
+		return
+	}
+	defer cli.Close()
+
+	if !strings.Contains(imageref, ":") {
+		imageref = fmt.Sprintf("%s:%s", dockerObj.repotag, imageref)
+	}
+	if imagetag == "" {
+		imagetag = imageref
+	}
+
+	// Check if the image exists locally
+	localInspect, _, err := cli.ImageInspectWithRaw(ctx, imageref)
+	localExists := err == nil
+	localDigest := ""
+	if localExists {
+		localDigest = localInspect.ID
+	}
+
+	// Pull the image from remote
+	common.PrintInfoMessage(fmt.Sprintf("Pulling image from: %s", imageref))
+	out, err := cli.ImagePull(ctx, imageref, image.PullOptions{})
+	if err != nil {
+		common.PrintErrorMessage(err)
+		return
+	}
+	defer out.Close()
+
+	// Process pull output
+	fd, isTerminal := term.GetFdInfo(os.Stdout)
+	jsonDecoder := json.NewDecoder(out)
+	for {
+		var msg jsonmessage.JSONMessage
+		if err := jsonDecoder.Decode(&msg); err == io.EOF {
+			break
+		} else if err != nil {
+			common.PrintErrorMessage(err)
+			return
+		}
+		if isTerminal {
+			_ = jsonmessage.DisplayJSONMessagesStream(out, os.Stdout, fd, isTerminal, nil)
+		} else {
+			fmt.Println(msg)
+		}
+	}
+
+	// Get information about the pulled image
+	remoteInspect, _, err := cli.ImageInspectWithRaw(ctx, imageref)
+	if err != nil {
+		common.PrintErrorMessage(err)
+		return
+	}
+
+	// Compare local and remote images
+	if localExists && localDigest != remoteInspect.ID {
+		common.PrintInfoMessage("The pulled image is different from the local one.")
+		reader := bufio.NewReader(os.Stdin)
+		fmt.Print("Do you want to rename the old image with a date tag? (y/n): ")
+		response, _ := reader.ReadString('\n')
+		response = strings.TrimSpace(strings.ToLower(response))
+
+		if response == "y" || response == "yes" {
+			currentTime := time.Now()
+			dateTag := fmt.Sprintf("%s-%02d%02d%d", imagetag, currentTime.Day(), currentTime.Month(), currentTime.Year())
+			err = cli.ImageTag(ctx, localDigest, dateTag)
+			if err != nil {
+				common.PrintErrorMessage(err)
+				return
+			}
+			common.PrintSuccessMessage(fmt.Sprintf("Old image '%s' retagged as '%s'", imagetag, dateTag))
+		}
+	}
+
+	// Tag the new image if needed
+	if imagetag != imageref {
+		err = cli.ImageTag(ctx, imageref, imagetag)
+		if err != nil {
+			common.PrintErrorMessage(err)
+			return
+		}
+		common.PrintSuccessMessage(fmt.Sprintf("Image tagged as '%s'", imagetag))
+	}
+
+	common.PrintSuccessMessage(fmt.Sprintf("Image '%s' installed successfully", imagetag))
 }
 
 func DockerTag(imageref string, imagetag string) {
