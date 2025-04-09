@@ -160,6 +160,7 @@ type DockerInst struct {
 	devices 	  string
 	caps  		  string
 	seccomp		  string
+	cgroups 		  string
 }
 
 var dockerObj = DockerInst{net: "host",
@@ -180,6 +181,7 @@ var dockerObj = DockerInst{net: "host",
 	devices:	   "/dev/snd:/dev/snd,/dev/dri:/dev/dri,/dev/input:/dev/input",
 	caps:		   "SYS_RAWIO,NET_ADMIN,SYS_TTY_CONFIG,SYS_ADMIN",
 	seccomp:	   "unconfined",
+	cgroups:	   "c *:* rmw",
 	shell:         "/bin/bash"} // Instance with default values
 
 func init() {
@@ -209,6 +211,7 @@ func updateDockerObjFromConfig() {
 	dockerObj.privileged = strings.ToLower(config.Container.Privileged) == "true"
 	dockerObj.caps = config.Container.Caps
 	dockerObj.seccomp = config.Container.Seccomp
+	dockerObj.cgroups = config.Container.Cgroups
 
 	// Handle bindings
 	var bindings []string
@@ -362,6 +365,7 @@ func printContainerProperties(ctx context.Context, cli *client.Client, container
 		{"Devices", props["Devices"]},
 		{"Capabilities", props["Caps"]},
 		{"Seccomp profile", props["Seccomp"]},
+		{"Cgroup rules", props["Cgroups"]},
 	}
 
 	width, _, err := terminal.GetSize(int(os.Stdout.Fd()))
@@ -815,6 +819,7 @@ func getContainerProperties(ctx context.Context, cli *client.Client, containerID
 		"Devices":      convertDevicesToString(containerJSON.HostConfig.Devices),
 		"Caps":    convertCapsToString(containerJSON.HostConfig.CapAdd),
 		"Seccomp": convertSecurityOptToString(containerJSON.HostConfig.SecurityOpt),
+		"Cgroups": strings.Join(containerJSON.HostConfig.DeviceCgroupRules, ","),
 	}
 
 	return props, nil
@@ -1110,15 +1115,7 @@ func DockerRun(containerName string) {
 	}
 
 	// If not in privileged mode, add device permissions
-	if !dockerObj.privileged {
-		// Add device cgroup rules for additional permissions
-		deviceCgroupRules := []string{
-			"c 189:* rwm",  // USB serial devices (ttyACM)
-			"c 188:* rwm",  // USB serial devices (ttyUSB)
-			"c 166:* rwm",  // USB raw access
-			"c 2:* rwm",    // Standard PTY slaves
-		}
-		
+	if !dockerObj.privileged {		
 		devices := getDeviceMappingsFromString(dockerObj.devices)
 
 		if dockerObj.usbforward != "" {
@@ -1134,9 +1131,13 @@ func DockerRun(containerName string) {
 		
 		// Update host config with device-specific permissions
 		hostConfig.Devices = devices
-		hostConfig.DeviceCgroupRules = deviceCgroupRules
 
-	    if dockerObj.seccomp != "\"\"" {
+		// adding cgroup rules
+		if dockerObj.cgroups != "" {
+			hostConfig.DeviceCgroupRules = strings.Split(dockerObj.cgroups, ",")
+		}
+
+	    if dockerObj.seccomp != "" {
 		    seccompOpts := strings.Split(dockerObj.seccomp, ",")
 		    for i, opt := range seccompOpts {
 		        // Make sure each option has the right format
@@ -1147,7 +1148,9 @@ func DockerRun(containerName string) {
 		    }
 		    hostConfig.SecurityOpt = seccompOpts
 		}
-		hostConfig.CapAdd = strings.Split(dockerObj.caps, ",")
+		if dockerObj.caps != "" {
+			hostConfig.CapAdd = strings.Split(dockerObj.caps, ",")
+		}
 	}
 	
 	resp, err := cli.ContainerCreate(ctx, &container.Config{
@@ -1763,6 +1766,10 @@ func DeleteImage(imageIDOrTag string) error {
 
 		// Check if any RepoTags match exactly
 		for _, tag := range img.RepoTags {
+			if !strings.Contains(tag, ":") {
+				// Prepend Config.General.RepoTag if the format is missing
+				tag = fmt.Sprintf("%s:%s", dockerObj.repotag, tag)
+			}
 			if tag == imageIDOrTag {
 				imageToDelete = img
 				imageFound = true

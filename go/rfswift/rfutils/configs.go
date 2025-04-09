@@ -27,6 +27,7 @@ type Config struct {
 		Privileged   string
 		Caps		 string
 		Seccomp		 string
+		Cgroups		 string
 	}
 	Audio struct {
 		PulseServer string
@@ -67,6 +68,23 @@ func ReadOrCreateConfig(filename string) (*Config, error) {
 
 	scanner := bufio.NewScanner(file)
 	currentSection := ""
+
+	config.General.ImageName = "[missing]"
+	config.Container.Shell = "[missing]"
+	config.General.RepoTag = "[missing]"
+	config.Container.Shell = "[missing]"
+	config.Container.Network = "[missing]"
+	config.Container.ExposedPorts = "[missing]"
+	config.Container.PortBindings = "[missing]"
+	config.Container.X11Forward = "[missing]"
+	config.Container.XDisplay = "[missing]"
+	config.Container.ExtraHost = "[missing]"
+	config.Container.ExtraEnv = "[missing]"
+	config.Container.Devices = "[missing]"
+	config.Container.Privileged = "[missing]"
+	config.Container.Caps = "[missing]"
+	config.Container.Seccomp = "[missing]"
+	config.Container.Cgroups = "[missing]"
 
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
@@ -123,6 +141,8 @@ func ReadOrCreateConfig(filename string) (*Config, error) {
         		config.Container.Caps = value
         	case "seccomp":
         		config.Container.Seccomp = value
+        	case "cgroups":
+        		config.Container.Cgroups = value
 			}
 		case "audio":
 			if key == "pulse_server" {
@@ -136,15 +156,15 @@ func ReadOrCreateConfig(filename string) (*Config, error) {
 	}
 
 	// Check for missing values and prompt user
-	if config.General.ImageName == "" {
+	if config.General.ImageName == "[missing]" {
 		printOrange("Image name is missing in the config file.")
 		config.General.ImageName = promptForValue("Image name", "myrfswift:latest")
 	}
-	if config.General.RepoTag == "" {
+	if config.General.RepoTag == "[missing]" {
 		printOrange("Repository tag is missing in the config file.")
 		config.General.RepoTag = promptForValue("RepoTag", "penthertz/rfswift")
 	}
-	if config.Container.Shell == "" {
+	if config.Container.Shell == "[missing]" {
 		printOrange("Shell is missing in the config file.")
 		config.Container.Shell = promptForValue("Shell", "/bin/zsh")
 	}
@@ -153,49 +173,53 @@ func ReadOrCreateConfig(filename string) (*Config, error) {
 		bindings := promptForValue("Bindings (comma-separated)", "/dev/bus/usb:/dev/bus/usb,/run/dbus/system_bus_socket:/run/dbus/system_bus_socket,/dev/snd:/dev/snd,/dev/dri:/dev/dri,/dev/vhci:/dev/vhci")
 		config.Container.Bindings = strings.Split(bindings, ",")
 	}
-	if config.Container.Network == "" {
+	if config.Container.Network == "[missing]" {
 		printOrange("Network is missing in the config file.")
 		config.Container.Network = promptForValue("Network", "host")
 	}
-	if config.Container.ExposedPorts == "" {
+	if config.Container.ExposedPorts == "[missing]" {
 		printOrange("ExposedPorts is missing in the config file.")
 		config.Container.ExposedPorts = promptForValue("ExposedPorts", "")
 	}
-	if config.Container.PortBindings == "" {
+	if config.Container.PortBindings == "[missing]" {
 		printOrange("PortBindings is missing in the config file.")
 		config.Container.PortBindings = promptForValue("PortBindings", "")
 	}
-	if config.Container.X11Forward == "" {
+	if config.Container.X11Forward == "[missing]" {
 		printOrange("X11 forwarding is missing in the config file.")
 		config.Container.X11Forward = promptForValue("X11 forwarding", "/tmp/.X11-unix:/tmp/.X11-unix")
 	}
-	if config.Container.XDisplay == "" {
+	if config.Container.XDisplay == "[missing]" {
 		printOrange("X Display is missing in the config file.")
 		config.Container.XDisplay = promptForValue("X Display", "DISPLAY=:0")
 	}
-	if config.Container.ExtraHost == "" {
+	if config.Container.ExtraHost == "[missing]" {
 		printOrange("Extra host is missing in the config file.")
 		config.Container.ExtraHost = promptForValue("Extra host", "pluto.local:192.168.2.1")
 	}
-	if config.Audio.PulseServer == "" {
+	if config.Audio.PulseServer == "[missing]" {
 		printOrange("PulseAudio server is missing in the config file.")
 		config.Audio.PulseServer = promptForValue("PulseAudio server", "tcp:localhost:34567")
 	}
-	if config.Container.Devices == "" {
-		printOrange("Devices value is missing in the config file.")
+	if config.Container.Devices == "[missing]" {
+		printOrange("Devices field is missing in the config file.")
 		config.Container.Devices = promptForValue("Devices", "/dev/snd:/dev/snd,/dev/dri:/dev/dri,/dev/input:/dev/input")
 	}
-	if config.Container.Privileged == "" {
+	if config.Container.Privileged == "[missing]" {
 		printOrange("Privileged value is missing in the config file.")
 		config.Container.Privileged = promptForValue("Privileged mode (true/false)", "true")
 	}
-	if config.Container.Caps == "" {
+	if config.Container.Caps == "[missing]" {
 		printOrange("Capabilities are missing in the config file.")
 		config.Container.Caps = promptForValue("Capabilities", "SYS_RAWIO,NET_ADMIN,SYS_TTY_CONFIG,SYS_ADMIN")
 	}
-	if config.Container.Seccomp == "" {
-		printOrange("Seccomp value is missing in the config file.")
+	if config.Container.Seccomp == "[missing]" {
+		printOrange("Seccomp field is missing in the config file.")
 		config.Container.Seccomp = promptForValue("Seccomp", "unconfined")
+	}
+	if config.Container.Cgroups == "[missing]" {
+		printOrange("Cgroup field is missing in the config file.")
+		config.Container.Seccomp = promptForValue("Cgroups", "c *:* rmw")
 	}
 
 	return config, nil
@@ -208,18 +232,19 @@ repotag = penthertz/rfswift
 
 [container]
 shell = /bin/zsh
-bindings = /run/dbus/system_bus_socket:/run/dbus/system_bus_socket
+bindings = /run/dbus/system_bus_socket:/run/dbus/system_bus_socket,/var/run/dbus:/var/run/dbus
 network = host
-exposedports = ""
-portbindings = ""
+exposedports =
+portbindings =
 x11forward = /tmp/.X11-unix:/tmp/.X11-unix
 xdisplay = "DISPLAY=:0"
 extrahost = pluto.local:192.168.2.1
-extraenv = ""
+extraenv =
 devices = /dev/bus/usb:/dev/bus/usb,/dev/snd:/dev/snd,/dev/dri:/dev/dri,/dev/input:/dev/input,/dev/vhci:/dev/vhci,/dev/console:/dev/console,/dev/vcsa:/dev/vcsa,/dev/tty:/dev/tty,/dev/tty0:/dev/tty0,/dev/tty1:/dev/tty1,/dev/tty2:/dev/tty2,/dev/uinput:/dev/uinput
 privileged = true
-caps = SYS_RAWIO,NET_ADMIN,SYS_TTY_CONFIG,SYS_ADMIN
+caps = NET_ADMIN
 seccomp = unconfined
+cgroups = c *:* rmw
 
 [audio]
 pulse_server = tcp:localhost:34567

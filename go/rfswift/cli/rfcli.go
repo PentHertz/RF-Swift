@@ -37,6 +37,7 @@ var NetBindedPorts string
 var Devices string
 var Privileged bool
 var Caps string
+var Cgroups string
 
 var rootCmd = &cobra.Command{
 	Use:   "rfswift",
@@ -71,6 +72,7 @@ var runCmd = &cobra.Command{
 		rfdock.DockerSetBindexPorts(NetBindedPorts)
 		rfdock.DockerAddDevices(Devices)
 		rfdock.DockerAddCaps(Caps)
+		rfdock.DockerAddCgroups(Cgroups)
 		rfdock.DockerSetUnprivileges(Privileged)
 		if os == "linux" { // use pactl to configure ACLs
 			rfutils.SetPulseCTL(PulseServer)
@@ -393,6 +395,7 @@ func init() {
 	runCmd.Flags().StringVarP(&Devices, "devices", "s", "", "extra devices mapping (separate them with commas)")
 	runCmd.Flags().BoolVarP(&Privileged, "privileged", "u", false, "run container in unprivileged mode")
 	runCmd.Flags().StringVarP(&Caps, "capabilities", "a", "", "extra capabilities (separate them with commas)")
+	runCmd.Flags().StringVarP(&Cgroups, "cgroups", "g", "", "extra cgroup rules (separate them with commas)")
 
 	runCmd.MarkFlagRequired("name")
 

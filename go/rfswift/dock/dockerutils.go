@@ -42,6 +42,20 @@ func DockerAddBinding(addbindings string) {
 	}
 }
 
+func DockerAddCgroups(addcgroups string) {
+	/* Add extra cgroup rules to the Docker container
+	   in(1): string of cgroup rules separated by commas
+	*/
+	if addcgroups != "" {
+		// Check if cgroups already has content, and append with a comma if it does
+		if dockerObj.cgroups != "" {
+			dockerObj.cgroups += "," + addcgroups
+		} else {
+			dockerObj.cgroups = addcgroups
+		}
+	}
+}
+
 func DockerAddDevices(adddevices string) {
 	/* Add extra devices to the Docker container
 	   in(1): string of devices separated by commas
