@@ -545,15 +545,14 @@ check_config_file() {
     # Check if config file exists
     if [ ! -f "$CONFIG_FILE" ]; then
         echo -e "${YELLOW}Config file not found at $CONFIG_FILE${NC}"
-        echo -e "${GREEN}A new config file will be created when running rfswift the first time ;)${NC}"
+        echo -e "${GREEN}A new config file will be created on first run ;)${NC}"
         return 0
     fi
     
-    # Define required sections and keys
-    declare -A required_fields
-    required_fields["general"]="imagename repotag"
-    required_fields["container"]="shell bindings network exposedports portbindings x11forward xdisplay extrahost extraenv devices privileged caps seccomp cgroups"
-    required_fields["audio"]="pulse_server"
+    # Define required sections and keys - without using declare -A which is not supported in older bash
+    GENERAL_KEYS="imagename repotag"
+    CONTAINER_KEYS="shell bindings network exposedports portbindings x11forward xdisplay extrahost extraenv devices privileged caps seccomp cgroups"
+    AUDIO_KEYS="pulse_server"
     
     missing_fields=0
     current_section=""
@@ -583,33 +582,46 @@ check_config_file() {
             key="${BASH_REMATCH[1]}"
             echo -e "${GREEN}Found key: $key in section [$current_section]${NC}"
             
-            # Check if this key is in our required list for this section
-            if [[ "${required_fields[$current_section]}" == *"$key"* ]]; then
-                # Remove the key from the required fields list by replacing the key with spaces
-                # This uses a more precise replacement approach
-                required_fields[$current_section]=$(echo "${required_fields[$current_section]}" | sed "s/\<$key\>//g")
+            # Remove the key from the required keys list based on section
+            if [[ "$current_section" == "general" ]]; then
+                GENERAL_KEYS=$(echo "$GENERAL_KEYS" | sed -E "s/(^| )$key( |$)/ /g" | tr -s ' ' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
+            elif [[ "$current_section" == "container" ]]; then
+                CONTAINER_KEYS=$(echo "$CONTAINER_KEYS" | sed -E "s/(^| )$key( |$)/ /g" | tr -s ' ' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
+            elif [[ "$current_section" == "audio" ]]; then
+                AUDIO_KEYS=$(echo "$AUDIO_KEYS" | sed -E "s/(^| )$key( |$)/ /g" | tr -s ' ' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
             fi
         fi
     done < "$CONFIG_FILE"
     
-    # Debug: show remaining required fields after parsing
-    for section in "${!required_fields[@]}"; do
-        echo -e "${YELLOW}Remaining required keys in [$section]: ${required_fields[$section]}${NC}"
-    done
+    # Debug: show remaining required keys after parsing
+    echo -e "${YELLOW}Remaining required keys in [general]: ${GENERAL_KEYS}${NC}"
+    echo -e "${YELLOW}Remaining required keys in [container]: ${CONTAINER_KEYS}${NC}"
+    echo -e "${YELLOW}Remaining required keys in [audio]: ${AUDIO_KEYS}${NC}"
     
     # Check for missing fields in each section
-    for section in "${!required_fields[@]}"; do
-        # Clean up the remaining list (remove extra spaces)
-        remaining=$(echo "${required_fields[$section]}" | tr -s ' ' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
-        
-        if [[ -n "$remaining" ]]; then
-            echo -e "${RED}Missing keys in [$section] section:${NC}"
-            for field in $remaining; do
-                echo -e "  - ${YELLOW}$field${NC}"
-                missing_fields=$((missing_fields + 1))
-            done
-        fi
-    done
+    if [[ -n "$GENERAL_KEYS" ]]; then
+        echo -e "${RED}Missing keys in [general] section:${NC}"
+        for field in $GENERAL_KEYS; do
+            echo -e "  - ${YELLOW}$field${NC}"
+            missing_fields=$((missing_fields + 1))
+        done
+    fi
+    
+    if [[ -n "$CONTAINER_KEYS" ]]; then
+        echo -e "${RED}Missing keys in [container] section:${NC}"
+        for field in $CONTAINER_KEYS; do
+            echo -e "  - ${YELLOW}$field${NC}"
+            missing_fields=$((missing_fields + 1))
+        done
+    fi
+    
+    if [[ -n "$AUDIO_KEYS" ]]; then
+        echo -e "${RED}Missing keys in [audio] section:${NC}"
+        for field in $AUDIO_KEYS; do
+            echo -e "  - ${YELLOW}$field${NC}"
+            missing_fields=$((missing_fields + 1))
+        done
+    fi
     
     if [ $missing_fields -gt 0 ]; then
         echo -e "${RED}WARNING: $missing_fields required keys are missing from your config file.${NC}"
