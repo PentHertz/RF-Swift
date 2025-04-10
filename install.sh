@@ -23,5 +23,8 @@ install_go
 # Ensure Go binary is in the PATH for the current script session
 export PATH=$PATH:/usr/local/go/bin
 
+# Check config file
+check_config_file
+
 # Ask the user if they want to create an alias after the installation
 install_binary_alias

@@ -530,3 +530,102 @@ install_binary_alias() {
         echo -e "${GREEN}Skipping alias creation.${NC}"
     fi
 }
+
+check_config_file() {
+    # Determine config file location based on OS
+    if [[ "$OSTYPE" == "darwin"* ]]; then
+        CONFIG_DIR="$HOME/Library/Application Support/rfswift"
+    else
+        CONFIG_DIR="$HOME/.config/rfswift"
+    fi
+    CONFIG_FILE="$CONFIG_DIR/config.ini"
+    
+    echo -e "${YELLOW}Checking configuration file at: $CONFIG_FILE${NC}"
+    
+    # Check if config file exists
+    if [ ! -f "$CONFIG_FILE" ]; then
+        echo -e "${YELLOW}Config file not found at $CONFIG_FILE${NC}"
+        echo -e "${GREEN}A new config file will be created when running rfswift the first time ;)${NC}"
+        return 0
+    fi
+    
+    # Define required sections and keys
+    declare -A required_fields
+    required_fields["general"]="imagename repotag"
+    required_fields["container"]="shell bindings network exposedports portbindings x11forward xdisplay extrahost extraenv devices privileged caps seccomp cgroups"
+    required_fields["audio"]="pulse_server"
+    
+    missing_fields=0
+    current_section=""
+    
+    # For debugging
+    echo -e "${YELLOW}Scanning config file for keys...${NC}"
+    
+    # Read config file line by line
+    while IFS= read -r line || [ -n "$line" ]; do
+        # Trim leading/trailing whitespace
+        line=$(echo "$line" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
+        
+        # Skip empty lines and comments
+        if [[ -z "$line" || "$line" == \#* ]]; then
+            continue
+        fi
+        
+        # Check if line is a section header
+        if [[ "$line" =~ ^\[([a-zA-Z0-9_]+)\]$ ]]; then
+            current_section="${BASH_REMATCH[1]}"
+            echo -e "${YELLOW}Found section: [$current_section]${NC}"
+            continue
+        fi
+        
+        # Check if line contains a key (regardless of value)
+        if [[ "$line" =~ ^([a-zA-Z0-9_]+)[[:space:]]*= ]]; then
+            key="${BASH_REMATCH[1]}"
+            echo -e "${GREEN}Found key: $key in section [$current_section]${NC}"
+            
+            # Check if this key is in our required list for this section
+            if [[ "${required_fields[$current_section]}" == *"$key"* ]]; then
+                # Remove the key from the required fields list by replacing the key with spaces
+                # This uses a more precise replacement approach
+                required_fields[$current_section]=$(echo "${required_fields[$current_section]}" | sed "s/\<$key\>//g")
+            fi
+        fi
+    done < "$CONFIG_FILE"
+    
+    # Debug: show remaining required fields after parsing
+    for section in "${!required_fields[@]}"; do
+        echo -e "${YELLOW}Remaining required keys in [$section]: ${required_fields[$section]}${NC}"
+    done
+    
+    # Check for missing fields in each section
+    for section in "${!required_fields[@]}"; do
+        # Clean up the remaining list (remove extra spaces)
+        remaining=$(echo "${required_fields[$section]}" | tr -s ' ' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
+        
+        if [[ -n "$remaining" ]]; then
+            echo -e "${RED}Missing keys in [$section] section:${NC}"
+            for field in $remaining; do
+                echo -e "  - ${YELLOW}$field${NC}"
+                missing_fields=$((missing_fields + 1))
+            done
+        fi
+    done
+    
+    if [ $missing_fields -gt 0 ]; then
+        echo -e "${RED}WARNING: $missing_fields required keys are missing from your config file.${NC}"
+        echo -e "${YELLOW}You should either:${NC}"
+        echo -e "  1. Add the missing keys to $CONFIG_FILE (values can be empty)"
+        echo -e "  2. Rename or delete $CONFIG_FILE to generate a fresh config with defaults"
+        return 1
+    else
+        echo -e "${GREEN}Config file validation successful! All required keys present.${NC}"
+        return 0
+    fi
+    
+    # Add option to show the config file content for debugging
+    if [ "$1" = "--debug" ]; then
+        echo -e "${YELLOW}=== Config File Content ====${NC}"
+        cat "$CONFIG_FILE"
+        echo -e "${YELLOW}==========================${NC}"
+    fi
+}
