@@ -241,7 +241,7 @@ xdisplay = "DISPLAY=:0"
 extrahost = pluto.local:192.168.2.1
 extraenv =
 devices = /dev/bus/usb:/dev/bus/usb,/dev/snd:/dev/snd,/dev/dri:/dev/dri,/dev/input:/dev/input,/dev/vhci:/dev/vhci,/dev/console:/dev/console,/dev/vcsa:/dev/vcsa,/dev/tty:/dev/tty,/dev/tty0:/dev/tty0,/dev/tty1:/dev/tty1,/dev/tty2:/dev/tty2,/dev/uinput:/dev/uinput
-privileged = true
+privileged = false
 caps =
 seccomp =
 cgroups = c 189:* rwm,c 166:* rwm,c 188:* rwm

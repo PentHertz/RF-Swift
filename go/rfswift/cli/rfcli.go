@@ -35,7 +35,7 @@ var NetMode string
 var NetExporsedPorts string
 var NetBindedPorts string
 var Devices string
-var Privileged bool
+var Privileged int
 var Caps string
 var Cgroups string
 var isADevice bool
@@ -73,7 +73,7 @@ var runCmd = &cobra.Command{
 		rfdock.DockerAddDevices(Devices)
 		rfdock.DockerAddCaps(Caps)
 		rfdock.DockerAddCgroups(Cgroups)
-		rfdock.DockerSetUnprivileges(Privileged)
+		rfdock.DockerSetPrivileges(Privileged)
 		rfdock.DockerSetSeccomp(Seccomp)
 		if os == "linux" { // use pactl to configure ACLs
 			rfutils.SetPulseCTL(PulseServer)
@@ -401,11 +401,10 @@ func init() {
 	runCmd.Flags().StringVarP(&DockerName, "name", "n", "", "A docker name")
 	runCmd.Flags().StringVarP(&NetMode, "network", "t", "", "Network mode (default: 'host')")
 	runCmd.Flags().StringVarP(&Devices, "devices", "s", "", "extra devices mapping (separate them with commas)")
-	runCmd.Flags().BoolVarP(&Privileged, "privileged", "u", false, "run container in unprivileged mode")
+	runCmd.Flags().IntVarP(&Privileged, "privileged", "u", 0, "Set privilege level (1: privileged, 0: unprivileged)")
 	runCmd.Flags().StringVarP(&Caps, "capabilities", "a", "", "extra capabilities (separate them with commas)")
 	runCmd.Flags().StringVarP(&Cgroups, "cgroups", "g", "", "extra cgroup rules (separate them with commas)")
 	runCmd.Flags().StringVarP(&Seccomp, "seccomp", "m", "", "Set Seccomp profile ('default' one used by default)")
-
 	runCmd.MarkFlagRequired("name")
 
 	runCmd.Flags().StringVarP(&NetExporsedPorts, "exposedports", "z", "", "Exposed ports")

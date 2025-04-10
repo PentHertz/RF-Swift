@@ -102,12 +102,13 @@ func DockerSetImage(imagename string) {
 	}
 }
 
-func DockerSetUnprivileges(privilege bool) {
+func DockerSetPrivileges(privilege int) {
 	/* Set privilege mode to use on the container
-	   in(1): bool privileged? True or False
+	   in(1): int privileged (1: True, 0:False)
 	*/
-	if privilege {
-		dockerObj.privileged = !privilege
+	dockerObj.privileged = false
+	if privilege == 1 {
+		dockerObj.privileged = true
 	}
 }
 
