@@ -168,7 +168,7 @@ var dockerObj = DockerInst{net: "host",
 	xdisplay:      "DISPLAY=:0",
 	entrypoint:    "/bin/bash",
 	x11forward:    "/tmp/.X11-unix:/tmp/.X11-unix",
-	usbforward:    "/dev/bus/usb:/dev/bus/usb",
+	usbforward:    "",
 	extrabinding:  "/run/dbus/system_bus_socket:/run/dbus/system_bus_socket", // Some more if needed /run/dbus/system_bus_socket:/run/dbus/system_bus_socket,/dev/snd:/dev/snd,/dev/dri:/dev/dri
 	imagename:     "myrfswift:latest",
 	repotag:       "penthertz/rfswift",
@@ -218,7 +218,7 @@ func updateDockerObjFromConfig() {
 	for _, binding := range config.Container.Bindings {
 		if strings.Contains(binding, "/dev/bus/usb") {
 			dockerObj.usbforward = binding
-			bindings = append(bindings, binding)
+			//bindings = append(bindings, binding)
 		} else if strings.Contains(binding, ".X11-unix") {
 			dockerObj.x11forward = binding
 		} else {
