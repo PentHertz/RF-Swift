@@ -218,6 +218,7 @@ func updateDockerObjFromConfig() {
 	for _, binding := range config.Container.Bindings {
 		if strings.Contains(binding, "/dev/bus/usb") {
 			dockerObj.usbforward = binding
+			bindings = append(bindings, binding)
 		} else if strings.Contains(binding, ".X11-unix") {
 			dockerObj.x11forward = binding
 		} else {
