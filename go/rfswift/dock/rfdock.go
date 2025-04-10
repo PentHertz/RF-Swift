@@ -350,6 +350,11 @@ func printContainerProperties(ctx context.Context, cli *client.Client, container
 		}
 	}
 
+	seccompValue := props["Seccomp"]
+	if seccompValue == "" {
+		seccompValue = "(Default)"
+	}
+
 	properties := [][]string{
 		{"Container Name", containerName},
 		{"X Display", props["XDisplay"]},
@@ -364,7 +369,7 @@ func printContainerProperties(ctx context.Context, cli *client.Client, container
 		{"Extra Hosts", props["ExtraHosts"]},
 		{"Devices", props["Devices"]},
 		{"Capabilities", props["Caps"]},
-		{"Seccomp profile", props["Seccomp"]},
+		{"Seccomp profile", seccompValue},
 		{"Cgroup rules", props["Cgroups"]},
 	}
 
@@ -2105,6 +2110,235 @@ func removeMountPoint(config map[string]interface{}, target string) {
 	}
 
 	delete(mountPoints, target)
+}
+
+func UpdateDeviceBinding(containerName string, deviceHost string, deviceContainer string, add bool) {
+	var timeout = 10 // Stop timeout
+
+	// Check if the system is Windows
+	if runtime.GOOS == "windows" {
+		title := "Unsupported on Windows"
+		message := `This function is not supported on Windows.
+However, you can achieve similar functionality by using the following commands:
+- "rfswift commit" to create a new image with a new tag.
+- "rfswift remove" to remove the existing container.
+- "rfswift run" to run a container with new device bindings.`
+
+		rfutils.DisplayNotification(title, message, "warning")
+		os.Exit(1) // Exit since this function is not supported on Windows
+	}
+
+	if deviceHost == "" {
+		deviceHost = deviceContainer
+		common.PrintWarningMessage(fmt.Sprintf("Host device path is empty. Defaulting to container device path: %s", deviceContainer))
+	}
+
+	ctx := context.Background()
+
+	common.PrintInfoMessage("Fetching container ID...")
+	containerID := getContainerIDByName(ctx, containerName)
+	if containerID == "" {
+		common.PrintErrorMessage(fmt.Errorf("container %s not found", containerName))
+		os.Exit(1)
+	}
+	common.PrintSuccessMessage(fmt.Sprintf("Container ID: %s", containerID))
+
+	// Stop the container
+	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
+	if err != nil {
+		common.PrintErrorMessage(fmt.Errorf("Error when instantiating a client"))
+		os.Exit(1)
+	}
+	common.PrintInfoMessage("Stopping the container...")
+
+	// Attempt graceful stop
+	if err := showLoadingIndicator(ctx, func() error {
+		return cli.ContainerStop(ctx, containerID, container.StopOptions{Timeout: &timeout})
+	}, "Stopping the container..."); err != nil {
+		common.PrintErrorMessage(fmt.Errorf("Failed to stop the container gracefully: %v", err))
+		os.Exit(1)
+	}
+
+	// Check if the container is still running
+	containerJSON, err := cli.ContainerInspect(ctx, containerID)
+	if err != nil {
+		common.PrintErrorMessage(fmt.Errorf("Error inspecting container: %v", err))
+		os.Exit(1)
+	}
+	if containerJSON.State.Running {
+		common.PrintWarningMessage("Container is still running. Forcing stop...")
+		err = cli.ContainerKill(ctx, containerID, "SIGKILL")
+		if err != nil {
+			common.PrintErrorMessage(fmt.Errorf("Failed to force stop the container: %v", err))
+			os.Exit(1)
+		}
+		common.PrintSuccessMessage("Container forcibly stopped.")
+	} else {
+		common.PrintSuccessMessage(fmt.Sprintf("Container '%s' stopped", containerID))
+	}
+
+	// Load and update hostconfig.json
+	common.PrintInfoMessage("Determining hostconfig.json path...")
+	hostConfigPath, err := GetHostConfigPath(containerID)
+	if err != nil {
+		common.PrintErrorMessage(err)
+		os.Exit(1)
+	}
+	common.PrintSuccessMessage(fmt.Sprintf("HostConfig path: %s", hostConfigPath))
+
+	common.PrintInfoMessage("Loading hostconfig.json...")
+	var hostConfig HostConfigFull
+	if err := loadJSON(hostConfigPath, &hostConfig); err != nil {
+		common.PrintErrorMessage(fmt.Errorf("failed to load hostconfig.json: %v", err))
+		os.Exit(1)
+	}
+	common.PrintSuccessMessage("HostConfig loaded successfully.")
+
+	// Load and update config.v2.json
+	common.PrintInfoMessage("Determining config.v2.json path...")
+	configV2Path := strings.Replace(hostConfigPath, "hostconfig.json", "config.v2.json", 1)
+	common.PrintInfoMessage(fmt.Sprintf("Loading config.v2.json from: %s", configV2Path))
+	var configV2 map[string]interface{}
+	if err := loadJSON(configV2Path, &configV2); err != nil {
+		common.PrintErrorMessage(fmt.Errorf("failed to load config.v2.json: %v", err))
+		os.Exit(1)
+	}
+	common.PrintSuccessMessage("config.v2.json loaded successfully.")
+
+	// Update devices in both files
+	common.PrintInfoMessage("Updating devices...")
+	if add {
+		if !deviceExists(hostConfig.Devices, deviceHost, deviceContainer) {
+			newDevice := DeviceMapping{
+				PathOnHost:        deviceHost,
+				PathInContainer:   deviceContainer,
+				CgroupPermissions: "rwm", // Default to read, write, mknod permissions
+			}
+			hostConfig.Devices = append(hostConfig.Devices, newDevice)
+			addDeviceMapping(configV2, deviceHost, deviceContainer)
+			common.PrintSuccessMessage(fmt.Sprintf("Added device: %s to %s", deviceHost, deviceContainer))
+		} else {
+			common.PrintWarningMessage("Device mapping already exists.")
+		}
+	} else {
+		hostConfig.Devices = removeDeviceFromSlice(hostConfig.Devices, deviceHost, deviceContainer)
+		removeDeviceMapping(configV2, deviceHost, deviceContainer)
+		common.PrintSuccessMessage(fmt.Sprintf("Removed device: %s from %s", deviceHost, deviceContainer))
+	}
+
+	// Save changes
+	common.PrintInfoMessage("Saving updated hostconfig.json...")
+	if err := saveJSON(hostConfigPath, hostConfig); err != nil {
+		common.PrintErrorMessage(fmt.Errorf("failed to save hostconfig.json: %v", err))
+		os.Exit(1)
+	}
+	common.PrintSuccessMessage("hostconfig.json updated successfully.")
+
+	common.PrintInfoMessage("Saving updated config.v2.json...")
+	if err := saveJSON(configV2Path, configV2); err != nil {
+		common.PrintErrorMessage(fmt.Errorf("failed to save config.v2.json: %v", err))
+		os.Exit(1)
+	}
+	common.PrintSuccessMessage("config.v2.json updated successfully.")
+
+	// Restart the container
+	if err := showLoadingIndicator(ctx, func() error {
+		return RestartDockerService()
+	}, "Restarting Docker service..."); err != nil {
+		common.PrintErrorMessage(fmt.Errorf("failed to restart Docker service: %v", err))
+		os.Exit(1)
+	}
+	common.PrintSuccessMessage("Docker service restarted successfully.")
+}
+
+// Check if a device mapping already exists
+func deviceExists(devices []DeviceMapping, hostPath string, containerPath string) bool {
+	for _, device := range devices {
+		if device.PathOnHost == hostPath && device.PathInContainer == containerPath {
+			return true
+		}
+	}
+	return false
+}
+
+// Remove a device mapping from a slice
+func removeDeviceFromSlice(devices []DeviceMapping, hostPath string, containerPath string) []DeviceMapping {
+	var result []DeviceMapping
+	for _, device := range devices {
+		if device.PathOnHost != hostPath || device.PathInContainer != containerPath {
+			result = append(result, device)
+		}
+	}
+	return result
+}
+
+// Add a device mapping to config.v2.json
+func addDeviceMapping(config map[string]interface{}, hostPath string, containerPath string) {
+	// Check if "HostConfig" exists in the config
+	hostConfig, ok := config["HostConfig"].(map[string]interface{})
+	if !ok {
+		// Create HostConfig if it doesn't exist
+		hostConfig = make(map[string]interface{})
+		config["HostConfig"] = hostConfig
+	}
+
+	// Get existing devices or create new devices array
+	devices, ok := hostConfig["Devices"].([]interface{})
+	if !ok {
+		devices = make([]interface{}, 0)
+	}
+
+	// Create a new device mapping
+	newDevice := map[string]interface{}{
+		"PathOnHost":        hostPath,
+		"PathInContainer":   containerPath,
+		"CgroupPermissions": "rwm", // Default permissions
+	}
+
+	// Check if the device already exists
+	exists := false
+	for _, device := range devices {
+		if deviceMap, ok := device.(map[string]interface{}); ok {
+			if deviceMap["PathOnHost"] == hostPath && deviceMap["PathInContainer"] == containerPath {
+				exists = true
+				break
+			}
+		}
+	}
+
+	// Add the new device mapping if it doesn't exist
+	if !exists {
+		devices = append(devices, newDevice)
+		hostConfig["Devices"] = devices
+	}
+}
+
+// Remove a device mapping from config.v2.json
+func removeDeviceMapping(config map[string]interface{}, hostPath string, containerPath string) {
+	// Check if "HostConfig" exists in the config
+	hostConfig, ok := config["HostConfig"].(map[string]interface{})
+	if !ok {
+		return // No host config
+	}
+
+	// Get existing devices
+	devices, ok := hostConfig["Devices"].([]interface{})
+	if !ok {
+		return // No devices
+	}
+
+	// Filter out the device to remove
+	var updatedDevices []interface{}
+	for _, device := range devices {
+		if deviceMap, ok := device.(map[string]interface{}); ok {
+			if deviceMap["PathOnHost"] != hostPath || deviceMap["PathInContainer"] != containerPath {
+				updatedDevices = append(updatedDevices, device)
+			}
+		}
+	}
+
+	// Update the devices list
+	hostConfig["Devices"] = updatedDevices
 }
 
 func ocontains(slice []string, item string) bool {

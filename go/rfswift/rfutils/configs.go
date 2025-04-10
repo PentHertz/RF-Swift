@@ -232,7 +232,7 @@ repotag = penthertz/rfswift
 
 [container]
 shell = /bin/zsh
-bindings = /run/dbus/system_bus_socket:/run/dbus/system_bus_socket,/var/run/dbus:/var/run/dbus
+bindings = /run/dbus/system_bus_socket:/run/dbus/system_bus_socket,/var/run/dbus:/var/run/dbus,/dev/bus/usb:/dev/bus/usb
 network = host
 exposedports =
 portbindings =
@@ -243,7 +243,7 @@ extraenv =
 devices = /dev/bus/usb:/dev/bus/usb,/dev/snd:/dev/snd,/dev/dri:/dev/dri,/dev/input:/dev/input,/dev/vhci:/dev/vhci,/dev/console:/dev/console,/dev/vcsa:/dev/vcsa,/dev/tty:/dev/tty,/dev/tty0:/dev/tty0,/dev/tty1:/dev/tty1,/dev/tty2:/dev/tty2,/dev/uinput:/dev/uinput
 privileged = true
 caps = NET_ADMIN
-seccomp = unconfined
+seccomp =
 cgroups = c *:* rmw
 
 [audio]

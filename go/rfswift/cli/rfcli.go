@@ -38,13 +38,13 @@ var Devices string
 var Privileged bool
 var Caps string
 var Cgroups string
+var isADevice bool
+var Seccomp string
 
 var rootCmd = &cobra.Command{
 	Use:   "rfswift",
-	Short: "rfswift - a simple CLI to transform and inspect strings",
-	Long: `rfswift is a super fancy CLI (kidding)
-   
-One can use stringer to modify or inspect strings straight from the terminal`,
+	Short: "rfswift - you RF & HW swiss army",
+	Long: `rfswift is THE toolbox for any HAM & radiocommunications and hardware professionals`,
 	Run: func(cmd *cobra.Command, args []string) {
 		fmt.Println("Use '-h' for help")
 	},
@@ -74,6 +74,7 @@ var runCmd = &cobra.Command{
 		rfdock.DockerAddCaps(Caps)
 		rfdock.DockerAddCgroups(Cgroups)
 		rfdock.DockerSetUnprivileges(Privileged)
+		rfdock.DockerSetSeccomp(Seccomp)
 		if os == "linux" { // use pactl to configure ACLs
 			rfutils.SetPulseCTL(PulseServer)
 		}
@@ -299,7 +300,7 @@ var UpdateCmd = &cobra.Command{
 
 var BindingsCmd = &cobra.Command{
 	Use:   "bindings",
-	Short: "Manage bindings",
+	Short: "Manage devices and volumes bindings",
 	Long:  `Add, or remove, a binding for a container`,
 }
 
@@ -308,7 +309,11 @@ var BindingsAddCmd = &cobra.Command{
 	Short: "Add a binding",
 	Long:  `Adding a new binding for a container ID`,
 	Run: func(cmd *cobra.Command, args []string) {
-		rfdock.UpdateMountBinding(ContID, Bsource, Btarget, true)
+		if isADevice == true {
+			rfdock.UpdateDeviceBinding(ContID, Bsource, Btarget, true)
+		} else {
+			rfdock.UpdateMountBinding(ContID, Bsource, Btarget, true)
+		}
 	},
 }
 
@@ -317,7 +322,11 @@ var BindingsRmCmd = &cobra.Command{
 	Short: "Remove a binding",
 	Long:  `Remove a new binding for a container ID`,
 	Run: func(cmd *cobra.Command, args []string) {
-		rfdock.UpdateMountBinding(ContID, Bsource, Btarget, false)
+		if isADevice == true {
+			rfdock.UpdateDeviceBinding(ContID, Bsource, Btarget, false)
+		} else {
+			rfdock.UpdateMountBinding(ContID, Bsource, Btarget, false)
+		}
 	},
 }
 
@@ -340,7 +349,6 @@ func init() {
 		rfutils.DisplayVersion()
 	}
 
-	// Add other commands and flags as you already have
 	rootCmd.PersistentFlags().BoolVarP(&common.Disconnected, "disconnect", "q", false, "Don't query updates (disconnected mode)")
 
 	// Adding special commands for Windows
@@ -396,6 +404,7 @@ func init() {
 	runCmd.Flags().BoolVarP(&Privileged, "privileged", "u", false, "run container in unprivileged mode")
 	runCmd.Flags().StringVarP(&Caps, "capabilities", "a", "", "extra capabilities (separate them with commas)")
 	runCmd.Flags().StringVarP(&Cgroups, "cgroups", "g", "", "extra cgroup rules (separate them with commas)")
+	runCmd.Flags().StringVarP(&Seccomp, "seccomp", "m", "", "Set Seccomp profile ('default' one used by default)")
 
 	runCmd.MarkFlagRequired("name")
 
@@ -406,6 +415,7 @@ func init() {
 	stopCmd.Flags().StringVarP(&ContID, "container", "c", "", "container to stop")
 
 	BindingsCmd.AddCommand(BindingsAddCmd)
+	BindingsCmd.PersistentFlags().BoolVarP(&isADevice, "devices", "d", false, "Manage a device rather than a volume")
 	BindingsCmd.AddCommand(BindingsRmCmd)
 	BindingsAddCmd.Flags().StringVarP(&ContID, "container", "c", "", "container to run")
 	BindingsAddCmd.Flags().StringVarP(&Bsource, "source", "s", "", "source binding (by default: source=target)")

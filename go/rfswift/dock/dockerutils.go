@@ -28,6 +28,15 @@ func DockerSetShell(shellcmd string) {
 	}
 }
 
+func DockerSetSeccomp(profile string) {
+	/* Sets the seccomp profile to use in the Docker container (empty => default profile)
+	   in(1): string indicating the profile to use
+	*/
+	if profile != "" {
+		dockerObj.seccomp = profile
+	}
+}
+
 func DockerAddBinding(addbindings string) {
 	/* Add extra bindings to the Docker container
 	   in(1): string of bindings separated by commas
