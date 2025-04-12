@@ -1,18 +1,16 @@
 # RF Swift
 
-Welcome to the RF Swift project! 🎉 Our mission is to provide all the essential tools for both HAM radio enthusiasts and RF professionals. 📡🔧
-
 <div align="center">
   <img alt="RF Swift logo" width="600" src="https://github.com/PentHertz/RF-Swift-docs/blob/main/.assets/logo.png?raw=true">
   <br><br>
   <img alt="linux supported" src="https://img.shields.io/badge/linux-supported-success">
   <img alt="windows supported" src="https://img.shields.io/badge/windows-supported-success">
   <img alt="macOS supported" src="https://img.shields.io/badge/macos-supported%20without%20USB%20forward-success">
-	
+  
   <br>
   <img alt="amd64" src="https://img.shields.io/badge/amd64%20(x86__64)-supported-success">
   <img alt="arm64" src="https://img.shields.io/badge/arm64%20(aarch64)-supported-success">
-  <img alt="risc64" src="https://img.shields.io/badge/risc64-supported-success">
+  <img alt="riscv64" src="https://img.shields.io/badge/riscv64-supported-success">
   <br><br>
    <a target="_blank" rel="noopener noreferrer" href="https://www.blackhat.com/eu-24/arsenal/schedule/index.html#rf-swift-a-swifty-toolbox-for-all-wireless-assessments-41157" title="Schedule">
    <img alt="Black Hat Europe 2024" src="https://img.shields.io/badge/Black%20Hat%20Arsenal-Europe%202024-blueviolet">
@@ -26,51 +24,159 @@ Welcome to the RF Swift project! 🎉 Our mission is to provide all the essentia
   <br><br>
   <a target="_blank" rel="noopener noreferrer" href="https://discord.gg/NS3HayKrpA" title="Join us on Discord"><img src="https://github.com/PentHertz/RF-Swift-docs/blob/main/.assets/discord_join_us.png?raw=true" width="150" alt="Join us on Discord"></a>
   <br><br>
-</div><div class="toctree-wrapper compound">
 </div>
 
-Introducing our Go and shell script-based toolbox, designed to streamline the deployment of Docker containers for your preferred RF tools. This evolving toolkit promises even more features in the near future, making it an essential asset for RF enthusiasts.
+## What is RF Swift?
 
-Currently, the scripts are still under development. However, we invite you to contribute by adding any tools you find necessary for large-scale deployment.
+RF Swift is a revolutionary toolbox that transforms any computer into a powerful RF testing laboratory without requiring a dedicated operating system. Unlike traditional approaches that force you to sacrifice your primary OS, RF Swift brings containerized RF tools to your existing environment.
 
-Inspired by the remarkable [Exegol project](https://github.com/ThePorgs/Exegol), our toolbox aims to integrate all essential tools for radio analysis without requiring you to uninstall your preferred operating system. It also offers special Docker file recipes to help you conserve space based on your specific needs.
+### Why RF Swift Outperforms Dedicated OS Solutions
 
-For those who prefer a single OS with all RF software, consider using [DragonOS](https://cemaxecuter.com/). But if your goal is to deploy tools within a container without affecting your host system, or saving space deploying specific recipes, this toolbox is your ideal solution.
+| Feature | RF Swift | Dedicated OS (Kali/DragonOS) |
+|---------|---------|------------------------------|
+| **Host OS Preservation** | ✅ Keep your existing OS | ❌ Requires dedicated partition or VM |
+| **Tool Isolation** | ✅ Tools contained without system impact | ❌ Tools can destabilize system |
+| **Deployment Speed** | ✅ Seconds to deploy | ❌ Hours for full installation |
+| **Disk Space** | ✅ Only install tools you need | ❌ Requires 20-50GB minimum |
+| **Updates** | ✅ Update individual tools without risk | ❌ System-wide updates can break functionality |
+| **Multi-architecture** | ✅ x86_64, ARM64, RISCV64 and more! | ❌ Limited architecture support |
+| **Device Binding** | ✅ Dynamic - add/remove without restart | ❌ Static - requires reboot for changes |
+| **Reproducibility** | ✅ Identical environments everywhere | ❌ System drift between installations |
+| **Work Environment** | ✅ Use alongside productivity tools | ❌ Switch contexts between systems |
 
-Our philosophy is straightforward: maintain the integrity of your Linux or Windows systems while enjoying unrestricted RF experimentation. Start exploring RF without boundaries today!
+## Key Features
+
+- **Non-disruptive Integration**: Run specialized RF tools while continuing to use your preferred OS for daily work
+- **Modular Tool Selection**: Deploy only the tools you need, when you need them
+- **Containerized Isolation**: Prevent RF tools from affecting system stability or security
+- **Cross-platform Compatibility**: Works seamlessly on Linux, Windows, and macOS
+- **Dynamic Hardware Integration**: Connect and disconnect USB devices without restarting
+- **Custom Environment Creation**: Build specialized images for specific assessment needs
+- **GPU Acceleration**: Dedicated images with OpenCL support for Intel and NVIDIA GPUs, and more
+- **Space Efficiency**: Use a fraction of the disk space required by dedicated OS solutions
+- **Version Control**: Maintain multiple tool versions simultaneously without conflicts
+
+## Quick Start
+
+### Installation
+
+#### Linux (Recommended)
+
+```bash
+# Clone the repository
+git clone https://github.com/PentHertz/RF-Swift.git
+cd RF-Swift
+
+# Run the installation script
+./install.sh
+```
+
+The script will:
+- Install Docker, BuildX, and Go (if needed)
+- Build the RF Swift binary
+- Configure audio and X11 forwarding
+- Create an alias for easy access
+
+#### Windows
+
+```powershell
+# Clone the repository
+git clone https://github.com/PentHertz/RF-Swift.git
+cd RF-Swift
+
+# Run the Windows build script
+.\build-windows.bat
+```
+
+Additionally, install:
+- [Docker Desktop](https://docs.docker.com/desktop/install/windows-install/) for Windows
+- [usbipd](https://learn.microsoft.com/en-us/windows/wsl/connect-usb) for USB device forwarding
+
+### Running Your First Container
+
+```bash
+# Pull a pre-built image
+rfswift images pull -i sdr_full
+
+# Create and run a container
+rfswift run -i penthertz/rfswift:sdr_full -n my_sdr_container
+```
+
+## Demo Videos
+
+### On Linux
+https://github.com/PentHertz/RF-Swift/assets/715195/bb2ccd96-b688-4106-8fba-d82f84ff1ea4
+
+### On Windows (With GQRX)
+https://github.com/PentHertz/RF-Swift/assets/715195/25a4a857-aa5a-4daa-9a08-28fa53d2f799
+
+### Using OpenCL with Intel or NVIDIA GPU
+![OpenCL recipe in action](https://github.com/PentHertz/RF-Swift/assets/715195/a29eedd5-b1df-40fc-97c0-4dc5323f36a8)
+
+## Available Specialized Images
+
+RF Swift's container approach allows for specialized environments optimized for specific tasks:
+
+| Category | Images | Description |
+|----------|--------|-------------|
+| SDR | `sdr_light`, `sdr_full` | Software-defined radio tools |
+| Telecom | `telecom_utils`, `telecom_2Gto3G`, `telecom_4G_5GNSA`, `telecom_5G` | Mobile network analysis |
+| Short-range | `bluetooth`, `wifi`, `rfid` | Bluetooth, Wi-Fi, and RFID tools |
+| Hardware | `hardware`, `reversing` | Hardware security tools |
+| Automotive | `automotive` | Vehicle communications |
+
+## Real-World Advantages
+
+### For Professionals
+
+- **Assessment Readiness**: Deploy an RF lab in minutes at a client site
+- **Tool Consistency**: Eliminate "works on my machine" issues with consistent environments
+- **Parallel Workflows**: Run multiple isolated assessments simultaneously
+- **Document Storage**: Keep reports and evidence separate from tools
+- **Custom Toolsets**: Create specialized containers for specific engagements
+
+### For Researchers
+
+- **Reproducible Research**: Share exact tool environments with colleagues
+- **Experiment Isolation**: Prevent experimental configurations from affecting other work
+- **Multi-platform Collaboration**: Collaborate across Linux, Windows, and macOS
+- **Version Control**: Test with specific tool versions without compatibility issues
+- **Resource Efficiency**: Optimize container resources for specific research tasks
+
+### For Educators
+
+- **Classroom Deployment**: Identical environments for all students
+- **No Reformatting**: Students keep their existing OS
+- **Low Hardware Requirements**: Works on standard lab computers
+- **Focused Learning**: Custom containers with only the tools needed for specific lessons
+- **Quick Reset**: Easily reset environments between classes
 
 ## Documentation
 
-We have a new [documentation that will guide you through the different steps](https://rfswift.io/).
+Comprehensive documentation is available at [rfswift.io](https://rfswift.io/), including:
 
-A list of included tools can be also seen [here](https://rfswift.io/docs/guide/list-of-tools/).
+- [Getting Started Guide](https://rfswift.io/docs/getting-started/)
+- [Quick Start Tutorial](https://rfswift.io/docs/quick-start/)
+- [User Guide](https://rfswift.io/docs/guide/)
+- [Development Documentation](https://rfswift.io/docs/development/)
+- [List of Included Tools](https://rfswift.io/docs/guide/list-of-tools/)
 
-## Quick overview
+## Community & Support
 
-## On Linux
+- [Join our Discord](https://discord.gg/NS3HayKrpA) for community support
+- [Report issues](https://github.com/PentHertz/RF-Swift/issues) on GitHub
+- Follow [FlUxIuS](https://x.com/intent/follow?screen_name=FlUxIuS) and [Penthertz](https://x.com/intent/follow?screen_name=Penthertz) on X (Twitter)
 
-https://github.com/PentHertz/RF-Swift/assets/715195/bb2ccd96-b688-4106-8fba-d82f84ff1ea4
+## Contributing
 
-## On Windows
+Contributions are welcome! Here's how you can help:
 
-With GQRX ;)
+- **Tool Integration**: Add new tools or improve existing ones
+- **Documentation**: Improve guides and examples
+- **Bug Reports**: Report issues you encounter
+- **Feature Requests**: Suggest new features or improvements
+- **Code Contributions**: Submit PRs to enhance functionality
 
-https://github.com/PentHertz/RF-Swift/assets/715195/25a4a857-aa5a-4daa-9a08-28fa53d2f799
+## License
 
-## Using OpenCL with Intel or Nvidia GPU
-
-![OpenCL recipe in action](https://github.com/PentHertz/RF-Swift/assets/715195/a29eedd5-b1df-40fc-97c0-4dc5323f36a8)
-
-## On Mac-OS - Apple Silicon M1/M2/M3
-
-Even if the Go program can build on any platform and Dockerfiles are compilable on macOS, the USB may be difficult to reach on this platform.
-
-For the moment, consider using the tool inside a VM that handles USB, such as VMware Fusion.
-
-You can directly pull a working container from our registry using the `penthertz/rfswift:sdr_full_aarch64` reference: [Docker Hub Link](https://hub.docker.com/layers/penthertz/rfswift/sdr_full_aarch64/images/sha256-3385e49c1369bad2465e85c75b74ae241a0e285f0666321620c73fc9ff260996?context=repo).
-
-## How to Contribute
-
-You are warmly welcomed to contribute and fill scripts with your desired tools.
-
-In the future, we will create a dedicated page for developers.
+RF Swift is released under GNU GPLv3 license. See LICENSE file for details.
