@@ -129,7 +129,7 @@ RF Swift's container approach allows for specialized environments optimized for 
 
 ### For Professionals
 
-- **Assessment Readiness**: Deploy an RF or hardware lab in minutes at a client site
+- **Assessment Readiness**: Deploy an RF and hardware lab in minutes at a client site
 - **Tool Consistency**: Eliminate "works on my machine" issues with consistent environments
 - **Parallel Workflows**: Run multiple isolated assessments simultaneously
 - **Document Storage**: Keep reports and evidence separate from tools
