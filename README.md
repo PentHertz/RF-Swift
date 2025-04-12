@@ -1,4 +1,4 @@
-# RF Swift
+# 🚀 RF Swift 📡
 
 <div align="center">
   <img alt="RF Swift logo" width="600" src="https://github.com/PentHertz/RF-Swift-docs/blob/main/.assets/logo.png?raw=true">
