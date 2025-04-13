@@ -479,11 +479,9 @@ func DockerLast(ifilter string, labelKey string, labelValue string) {
 	}
 	defer cli.Close()
 
-	// Set up container filters
+	// Set up container filters for labels only
+	// We'll handle image ancestor and name/ID filtering manually
 	containerFilters := filters.NewArgs()
-	if ifilter != "" {
-		containerFilters.Add("ancestor", ifilter)
-	}
 	if labelKey != "" && labelValue != "" {
 		containerFilters.Add("label", fmt.Sprintf("%s=%s", labelKey, labelValue))
 	}
@@ -523,7 +521,45 @@ func DockerLast(ifilter string, labelKey string, labelValue string) {
 
 	//rfutils.ClearScreen()
 	tableData := [][]string{}
-	for _, container := range containers {
+	
+	// Filter containers by image, name or ID (if ifilter is provided)
+	filteredContainers := []types.Container{}
+	
+	if ifilter != "" {
+		lowerFilter := strings.ToLower(ifilter)
+		for _, container := range containers {
+			// Check if image name contains the filter (original behavior)
+			if strings.Contains(strings.ToLower(container.Image), lowerFilter) {
+				filteredContainers = append(filteredContainers, container)
+				continue
+			}
+			
+			// Check if container ID (full or short) contains the filter
+			if strings.Contains(strings.ToLower(container.ID), lowerFilter) || 
+			   strings.Contains(strings.ToLower(container.ID[:12]), lowerFilter) {
+				filteredContainers = append(filteredContainers, container)
+				continue
+			}
+			
+			// Check if any container name contains the filter
+			for _, name := range container.Names {
+				// Remove leading slash from name if it exists
+				cleanName := name
+				if len(name) > 0 && name[0] == '/' {
+					cleanName = name[1:]
+				}
+				
+				if strings.Contains(strings.ToLower(cleanName), lowerFilter) {
+					filteredContainers = append(filteredContainers, container)
+					break
+				}
+			}
+		}
+	} else {
+		filteredContainers = containers
+	}
+	
+	for _, container := range filteredContainers {
 		created := time.Unix(container.Created, 0).Format(time.RFC3339)
 
 		// Get the container image ID and associate with tags
