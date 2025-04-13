@@ -9,22 +9,17 @@ import (
 	common "penthertz/rfswift/common"
 )
 
-func main() {
-	// Skip printing ASCII art during autocompletion
+func main() {	
 	isCompletion := false
-	
-	// Check if being used for completion
-	if len(os.Args) > 1 && os.Args[1] == "__complete" {
-		isCompletion = true
+
+	if len(os.Args) > 1 {
+		if (os.Args[1] == "completion") || (os.Args[1] == "__complete") {
+			isCompletion = true
+			
+		}
 	}
-	
-	// Skip for the completion command itself
-	if os.Args[1] == "completion" {
-		isCompletion = true
-	}
-	
-	// Only print ASCII art when not in completion mode
-	if !isCompletion {
+
+	if isCompletion == false {
 		common.PrintASCII()
 	}
 	

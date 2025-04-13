@@ -562,18 +562,14 @@ func init() {
 	rootCmd.AddCommand(BindingsCmd)
 	rootCmd.AddCommand(stopCmd)
 	rootCmd.PersistentPreRun = func(cmd *cobra.Command, args []string) {
-		// Check if being used for completion
-		if len(os.Args) > 1 && os.Args[1] == "__complete" {
-			isCompletion = true
+		if len(os.Args) > 1 {
+			if (os.Args[1] == "completion") || (os.Args[1] == "__complete") {
+				isCompletion = true
+				
+			}
 		}
 
-		// Skip for the completion command itself
-		if os.Args[1] == "completion" {
-			isCompletion = true
-		}
-		
-		// Only print ASCII art when not in completion mode
-		if !isCompletion {
+		if isCompletion == false {
 			rfutils.DisplayVersion()
 		}
 	}
