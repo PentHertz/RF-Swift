@@ -3,13 +3,25 @@
  */
 
 package main
-
 import (
+	"os"
 	cli "penthertz/rfswift/cli"
 	common "penthertz/rfswift/common"
 )
 
 func main() {
-	common.PrintASCII()
+	// Skip printing ASCII art during autocompletion
+	isCompletion := false
+	
+	// Check if being used for completion
+	if len(os.Args) > 1 && os.Args[1] == "__complete" {
+		isCompletion = true
+	}
+	
+	// Only print ASCII art when not in completion mode
+	if !isCompletion {
+		common.PrintASCII()
+	}
+	
 	cli.Execute()
 }

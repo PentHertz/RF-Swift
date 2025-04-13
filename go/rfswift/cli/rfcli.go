@@ -331,6 +331,7 @@ var BindingsRmCmd = &cobra.Command{
 }
 
 func init() {
+	isCompletion := false
 	rootCmd.AddCommand(runCmd)
 	rootCmd.AddCommand(lastCmd)
 	rootCmd.AddCommand(execCmd)
@@ -346,7 +347,15 @@ func init() {
 	rootCmd.AddCommand(BindingsCmd)
 	rootCmd.AddCommand(stopCmd)
 	rootCmd.PersistentPreRun = func(cmd *cobra.Command, args []string) {
-		rfutils.DisplayVersion()
+		// Check if being used for completion
+		if len(os.Args) > 1 && os.Args[1] == "__complete" {
+			isCompletion = true
+		}
+		
+		// Only print ASCII art when not in completion mode
+		if !isCompletion {
+			rfutils.DisplayVersion()
+		}
 	}
 
 	rootCmd.PersistentFlags().BoolVarP(&common.Disconnected, "disconnect", "q", false, "Don't query updates (disconnected mode)")
