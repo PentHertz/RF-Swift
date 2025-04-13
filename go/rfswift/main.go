@@ -18,6 +18,11 @@ func main() {
 		isCompletion = true
 	}
 	
+	// Skip for the completion command itself
+	if os.Args[1] == "completion" {
+		isCompletion = true
+	}
+	
 	// Only print ASCII art when not in completion mode
 	if !isCompletion {
 		common.PrintASCII()
