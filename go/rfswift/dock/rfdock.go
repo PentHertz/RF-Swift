@@ -1656,7 +1656,7 @@ func PrintImagesTable(labelKey string, labelValue string) {
 			} else if isCustom {
 				status = "Custom"
 				if common.Disconnected {
-					status = "Not network"
+					status = "No network"
 				}
 			} else if isUpToDate {
 				status = "Up to date"
