@@ -153,8 +153,7 @@ check_docker_user_only() {
 install_docker_standard() {
     arch=$(uname -m)
     os=$(uname -s)
-    distro=$(grep "^ID=" /etc/os-release | cut -d= -f2 | tr -d '"')
-
+    
     if [ "$os" == "Darwin" ]; then
         # macOS installation using Homebrew
         if ! command -v brew &> /dev/null; then
@@ -167,6 +166,20 @@ install_docker_standard() {
         echo -e "${GREEN}Docker installed successfully on macOS.${NC}"
         echo -e "${YELLOW}Please launch Docker from Applications to start the Docker daemon.${NC}"
     elif [ "$os" == "Linux" ]; then
+        # Make sure os-release exists
+        if [ ! -f /etc/os-release ]; then
+            echo -e "${YELLOW}Cannot determine Linux distribution. Using standard Docker installation.${NC}"
+            sudo curl -fsSL "https://get.docker.com/" | sh
+            sudo systemctl start docker
+            sudo systemctl enable docker
+            echo -e "${GREEN}Docker installed successfully.${NC}"
+            install_buildx
+            install_docker_compose
+            return
+        fi
+        
+        distro=$(grep "^ID=" /etc/os-release | cut -d= -f2 | tr -d '"')
+        
         if [ "$distro" == "arch" ] || [ "$distro" == "archlinux" ]; then
             # Arch Linux installation using pacman
             echo -e "${YELLOW}Installing Docker for Arch Linux using pacman...${NC}"
