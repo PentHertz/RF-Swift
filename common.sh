@@ -233,7 +233,7 @@ install_docker_compose_steamdeck() {
     echo -e "${YELLOW}[+] Installing Docker Compose v2 plugin${NC}"
     DOCKER_CONFIG=${DOCKER_CONFIG:-$HOME/.docker}
     mkdir -p $DOCKER_CONFIG/cli-plugins
-    sudo curl -SL https://github.com/docker/compose/releases/download/v2.28.1/docker-compose-linux-x86_64 -o $DOCKER_CONFIG/cli-plugins/docker-compose
+    sudo curl -SL https://github.com/docker/compose/releases/download/v2.36.0/docker-compose-linux-x86_64 -o $DOCKER_CONFIG/cli-plugins/docker-compose
     chmod +x $DOCKER_CONFIG/cli-plugins/docker-compose
 
     echo -e "${YELLOW}[+] Adding 'deck' user to Docker user group${NC}"
@@ -245,7 +245,7 @@ install_docker_compose_steamdeck() {
 install_buildx() {
     arch=$(uname -m)
     os=$(uname -s | tr '[:upper:]' '[:lower:]') # Convert OS to lowercase
-    version="v0.22.0"
+    version="v0.23.0"
 
     # Map architecture to buildx naming convention
     case "$arch" in
@@ -290,7 +290,7 @@ install_buildx() {
 install_docker_compose() {
     arch=$(uname -m)
     os=$(uname -s | tr '[:upper:]' '[:lower:]') # Convert OS to lowercase
-    version="v2.34.0"
+    version="v2.36.0"
 
     # Map architecture to Docker Compose naming convention
     case "$arch" in
@@ -345,7 +345,7 @@ install_go() {
     arch=$(uname -m)
     os=$(uname -s | tr '[:upper:]' '[:lower:]') # Normalize OS name to lowercase
     prog=""
-    version="1.24.2"
+    version="1.24.3"
 
     # Map architecture and OS to Go binary tar.gz naming convention
     case "$arch" in
