@@ -115,7 +115,7 @@ check_curl() {
 }
 
 check_docker() {
-    # Check if the system is Linux and not Darwin (macOS)
+    # Check if this is a Steam Deck installation (Linux only)
     if [ "$(uname -s)" == "Linux" ]; then
         echo -e "${YELLOW}Are you installing on a Steam Deck? (yes/no)${NC}"
         read -p "Choose an option: " steamdeck_install
@@ -124,7 +124,7 @@ check_docker() {
             return
         fi
     fi
-
+    
     # Check if Docker is installed
     if ! command -v docker &> /dev/null; then
         echo -e "${RED}Docker is not installed. Do you want to install it now? (yes/no)${NC}"
@@ -137,9 +137,17 @@ check_docker() {
         fi
     else
         echo -e "${GREEN}Docker is already installed. Moving on.${NC}"
-        install_buildx
-        install_docker_compose
+        # This part only runs in the full check_docker function
+        if [ "${FUNCNAME[0]}" == "check_docker" ]; then
+            install_buildx
+            install_docker_compose
+        fi
     fi
+}
+
+# Create an alias for the user-only version
+check_docker_user_only() {
+    check_docker
 }
 
 install_docker_standard() {

@@ -15,7 +15,13 @@ echo -e "${YELLOW}[+] Checking cURL installation${NC}"
 check_curl
 
 echo -e "${YELLOW}[+] Checking Docker installation${NC}"
-check_docker_user_only
+check_docker
+
+echo -e "${YELLOW}[+] Installing Go${NC}"
+install_go
+
+# Ensure Go binary is in the PATH for the current script session
+export PATH=$PATH:/usr/local/go/bin
 
 # Check config file
 check_config_file
