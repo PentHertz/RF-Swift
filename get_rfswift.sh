@@ -64,7 +64,7 @@ install_docker() {
   color_echo "blue" "🔍 Checking if Docker is installed..."
 
   if command_exists docker; then
-    color_echo "green" "🎉 Docker is already installed. You’re all set for RF-Swift!"
+    color_echo "green" "🎉 Docker is already installed. You're all set for RF-Swift!"
     return 0
   fi
 
@@ -104,7 +104,7 @@ install_docker() {
         sudo_cmd="sudo"
       else
         sudo_cmd=""
-        color_echo "yellow" "It seems like you don’t have 'sudo'. Installation might not work without root privileges."
+        color_echo "yellow" "It seems like you don't have 'sudo'. Installation might not work without root privileges."
       fi
 
       if command_exists curl; then
@@ -144,26 +144,42 @@ install_docker() {
 get_latest_release() {
   color_echo "blue" "🔍 Detecting the latest RF-Swift release..."
 
+  # Default version as fallback
   DEFAULT_VERSION="0.6.3"
-
+  VERSION="${DEFAULT_VERSION}"  # Initialize with default
+  
   if command_exists curl && command_exists jq; then
     LATEST_INFO=$(curl -s "https://api.github.com/repos/${GITHUB_REPO}/releases/latest" | tr -d '\000-\037')
 
     if ! echo "${LATEST_INFO}" | jq -e . >/dev/null 2>&1; then
-      color_echo "yellow" "Uh oh! Couldn’t parse the GitHub API response. Let’s try a fallback method..."
+      color_echo "yellow" "Uh oh! Couldn't parse the GitHub API response. Let's try a fallback method..."
       # Fallback method
       if command_exists curl && command_exists grep && command_exists sed; then
         RELEASES_PAGE=$(curl -s "https://github.com/${GITHUB_REPO}/releases/latest")
-        VERSION=$(echo "${RELEASES_PAGE}" | grep -o "${GITHUB_REPO}/releases/tag/v[0-9.]*" | head -1 | sed 's/.*tag\/v//')
-        RELEASE_URL="https://github.com/${GITHUB_REPO}/releases/tag/v${VERSION}"
-        DOWNLOAD_BASE_URL="https://github.com/${GITHUB_REPO}/releases/download/v${VERSION}"
+        DETECTED_VERSION=$(echo "${RELEASES_PAGE}" | grep -o "${GITHUB_REPO}/releases/tag/v[0-9.]*" | head -1 | sed 's/.*tag\/v//')
+        if [ -n "${DETECTED_VERSION}" ]; then
+          VERSION="${DETECTED_VERSION}"
+        fi
       fi
     else
-      VERSION=$(echo "${LATEST_INFO}" | jq -r .tag_name | sed 's/^v//')
-      RELEASE_URL=$(echo "${LATEST_INFO}" | jq -r .html_url)
-      DOWNLOAD_BASE_URL="https://github.com/${GITHUB_REPO}/releases/download/v${VERSION}"
+      # Successfully parsed JSON
+      DETECTED_VERSION=$(echo "${LATEST_INFO}" | jq -r .tag_name | sed 's/^v//')
+      if [ -n "${DETECTED_VERSION}" ]; then
+        VERSION="${DETECTED_VERSION}"
+      fi
+    fi
+  elif command_exists curl && command_exists grep && command_exists sed; then
+    # Direct fallback to grep method
+    RELEASES_PAGE=$(curl -s "https://github.com/${GITHUB_REPO}/releases/latest")
+    DETECTED_VERSION=$(echo "${RELEASES_PAGE}" | grep -o "${GITHUB_REPO}/releases/tag/v[0-9.]*" | head -1 | sed 's/.*tag\/v//')
+    if [ -n "${DETECTED_VERSION}" ]; then
+      VERSION="${DETECTED_VERSION}"
     fi
   fi
+  
+  # Set URLs based on the version
+  RELEASE_URL="https://github.com/${GITHUB_REPO}/releases/tag/v${VERSION}"
+  DOWNLOAD_BASE_URL="https://github.com/${GITHUB_REPO}/releases/download/v${VERSION}"
   
   color_echo "green" "📦 Using version: ${VERSION}"
 }
@@ -183,7 +199,12 @@ detect_system() {
     *) color_echo "red" "Unsupported architecture: $(uname -m)"; exit 1 ;;
   esac
 
+  # Set the download filename
+  FILENAME="rfswift_${OS}_${ARCH}.tar.gz"
+  DOWNLOAD_URL="${DOWNLOAD_BASE_URL}/${FILENAME}"
+  
   color_echo "blue" "🏠 Detected system: ${OS} ${ARCH}"
+  color_echo "blue" "📂 Will download: ${FILENAME}"
 }
 
 # Download the files
@@ -191,7 +212,7 @@ download_files() {
   color_echo "blue" "🌟 Preparing to download RF-Swift..."
 
   TMP_DIR=$(mktemp -d)
-  color_echo "blue" "🔽 Downloading RF-Swift binary..."
+  color_echo "blue" "🔽 Downloading RF-Swift binary from ${DOWNLOAD_URL}..."
   
   if command_exists curl; then
     curl -L -o "${TMP_DIR}/${FILENAME}" "${DOWNLOAD_URL}" --progress-bar
@@ -212,16 +233,24 @@ install_binary() {
     exit 1
   fi
   
+  color_echo "blue" "📦 Extracting archive..."
   tar -xzf "${TMP_DIR}/${FILENAME}" -C "${TMP_DIR}"
+  
   RFSWIFT_BIN=$(find "${TMP_DIR}" -name "rfswift" -type f)
   if [ -z "${RFSWIFT_BIN}" ]; then
-    color_echo "red" "🚨 Couldn’t find the binary in the archive."
+    color_echo "red" "🚨 Couldn't find the binary in the archive."
     exit 1
   fi
 
+  # Make sure installation directory exists
+  sudo mkdir -p "${INSTALL_DIR}"
+  
   color_echo "blue" "🚀 Moving RF-Swift to ${INSTALL_DIR}..."
   sudo cp "${RFSWIFT_BIN}" "${INSTALL_DIR}/rfswift"
   sudo chmod +x "${INSTALL_DIR}/rfswift"
+  
+  # Clean up
+  rm -rf "${TMP_DIR}"
   
   color_echo "green" "🎉 RF-Swift has been installed successfully!"
 }
@@ -230,12 +259,22 @@ install_binary() {
 main() {
   fun_welcome
   
+  # Detect system early to help with dependency checks
+  case "$(uname -s)" in
+    Linux*)  OS="Linux" ;;
+    Darwin*) OS="Darwin" ;;
+    *)       color_echo "red" "Unsupported operating system: $(uname -s)"; exit 1 ;;
+  esac
+  
   install_docker
   get_latest_release
   detect_system
   download_files
   install_binary
   thank_you_message
+  
+  color_echo "cyan" "🚀 You can now run RF-Swift by typing: ${INSTALL_DIR}/rfswift"
 }
 
+# Run the main function
 main
