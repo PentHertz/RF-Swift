@@ -136,15 +136,41 @@ install_docker() {
 }
 
 # Function to get the latest release information
+# Function to get the latest release information
 get_latest_release() {
   color_echo "blue" "Detecting latest release..."
   
   if command_exists curl && command_exists jq; then
-    # Using curl and jq (preferred method)
-    LATEST_INFO=$(curl -s "https://api.github.com/repos/${GITHUB_REPO}/releases/latest")
-    VERSION=$(echo "${LATEST_INFO}" | jq -r .tag_name | sed 's/^v//')
-    RELEASE_URL=$(echo "${LATEST_INFO}" | jq -r .html_url)
-    DOWNLOAD_BASE_URL="https://github.com/${GITHUB_REPO}/releases/download/v${VERSION}"
+    # Using curl and jq (preferred method) - Fixed to handle control characters
+    LATEST_INFO=$(curl -s "https://api.github.com/repos/${GITHUB_REPO}/releases/latest" | tr -d '\000-\037')
+    
+    # Check if the result is valid JSON
+    if ! echo "${LATEST_INFO}" | jq -e . > /dev/null 2>&1; then
+      color_echo "yellow" "Could not parse GitHub API response with jq, falling back to grep method."
+      # Fall back to grep method
+      if command_exists curl && command_exists grep && command_exists sed; then
+        RELEASES_PAGE=$(curl -s "https://github.com/${GITHUB_REPO}/releases/latest")
+        VERSION=$(echo "${RELEASES_PAGE}" | grep -o 'PentHertz/RF-Swift/releases/tag/v[0-9.]*' | head -1 | sed 's/.*tag\/v//')
+        RELEASE_URL="https://github.com/${GITHUB_REPO}/releases/tag/v${VERSION}"
+        DOWNLOAD_BASE_URL="https://github.com/${GITHUB_REPO}/releases/download/v${VERSION}"
+      elif command_exists wget && command_exists grep && command_exists sed; then
+        RELEASES_PAGE=$(wget -qO- "https://github.com/${GITHUB_REPO}/releases/latest")
+        VERSION=$(echo "${RELEASES_PAGE}" | grep -o 'PentHertz/RF-Swift/releases/tag/v[0-9.]*' | head -1 | sed 's/.*tag\/v//')
+        RELEASE_URL="https://github.com/${GITHUB_REPO}/releases/tag/v${VERSION}"
+        DOWNLOAD_BASE_URL="https://github.com/${GITHUB_REPO}/releases/download/v${VERSION}"
+      else
+        # Ask user for version
+        color_echo "yellow" "Falling back to manual version..."
+        read -p "Please enter the RF-Swift version to install (e.g., 0.6.3): " VERSION
+        RELEASE_URL="https://github.com/${GITHUB_REPO}/releases/tag/v${VERSION}"
+        DOWNLOAD_BASE_URL="https://github.com/${GITHUB_REPO}/releases/download/v${VERSION}"
+      fi
+    else
+      # Successfully parsed JSON, proceed with jq
+      VERSION=$(echo "${LATEST_INFO}" | jq -r .tag_name | sed 's/^v//')
+      RELEASE_URL=$(echo "${LATEST_INFO}" | jq -r .html_url)
+      DOWNLOAD_BASE_URL="https://github.com/${GITHUB_REPO}/releases/download/v${VERSION}"
+    }
   elif command_exists curl && command_exists grep && command_exists sed; then
     # Fallback method using curl and grep (less reliable)
     RELEASES_PAGE=$(curl -s "https://github.com/${GITHUB_REPO}/releases/latest")
@@ -172,37 +198,6 @@ get_latest_release() {
   fi
   
   color_echo "green" "Latest version: ${VERSION}"
-}
-
-# Function to detect OS and architecture
-detect_system() {
-  # Detect operating system
-  case "$(uname -s)" in
-    Linux*)  OS="Linux" ;;
-    Darwin*) OS="Darwin" ;;
-    *)       color_echo "red" "Unsupported operating system: $(uname -s)"; exit 1 ;;
-  esac
-
-  # Detect architecture
-  case "$(uname -m)" in
-    x86_64)  ARCH="x86_64" ;;
-    arm64|aarch64) ARCH="arm64" ;;
-    riscv64) ARCH="riscv64" ;;
-    *)       color_echo "red" "Unsupported architecture: $(uname -m)"; exit 1 ;;
-  esac
-
-  # Check if riscv64 is supported on this OS
-  if [ "$OS" = "Darwin" ] && [ "$ARCH" = "riscv64" ]; then
-    color_echo "red" "riscv64 architecture is not supported on macOS"
-    exit 1
-  fi
-
-  FILENAME="rfswift_${OS}_${ARCH}.tar.gz"
-  DOWNLOAD_URL="${DOWNLOAD_BASE_URL}/${FILENAME}"
-  CHECKSUM_URL="${DOWNLOAD_BASE_URL}/RF-Swift_${VERSION}_checksums.txt"
-  
-  color_echo "blue" "Detected system: ${OS} ${ARCH}"
-  color_echo "blue" "Will download: ${FILENAME}"
 }
 
 # Download the files
