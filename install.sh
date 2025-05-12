@@ -1,7 +1,7 @@
 #!/bin/bash
 # RF-Swift Installer Script
-# Usage: curl -fsSL "https://get.rfswift.io/" | sh
-# or: wget -qO- "https://get.rfswift.io/" | sh
+# Usage: curl -fsSL "https://get.rfswift.io/" | sudo sh
+# or: wget -qO- "https://get.rfswift.io/" | sudo sh
 
 set -e
 
@@ -45,11 +45,7 @@ create_alias() {
   USER_HOME=$(eval echo ~${REAL_USER})
   
   # Determine shell from the user's default shell
-  USER_SHELL=$(getent passwd "${REAL_USER}" 2>/dev/null | cut -d: -f7 | xargs basename)
-  if [ -z "${USER_SHELL}" ]; then
-    # macOS fallback for getent
-    USER_SHELL=$(dscl . -read /Users/${REAL_USER} UserShell 2>/dev/null | sed 's/UserShell: //' | xargs basename)
-  fi
+  USER_SHELL=$(getent passwd "${REAL_USER}" | cut -d: -f7 | xargs basename)
   if [ -z "${USER_SHELL}" ]; then
     USER_SHELL=$(basename "${SHELL}")
   fi
@@ -146,90 +142,33 @@ install_docker() {
     return 0
   fi
 
-  color_echo "yellow" "Oops! It looks like Docker is missing. Don't worry, I'll help you install it..."
+  color_echo "yellow" "Oops! It looks like Docker is missing. Don't worry, I'm installing it for you..."
 
   case "$(uname -s)" in
     Darwin*)
-      # For macOS, we need to be careful about sudo
-      if [ "$(id -u)" = "0" ]; then
-        # We're running as root (likely via sudo)
-        REAL_USER=$(get_real_user)
-        color_echo "yellow" "⚠️ Homebrew should not be run as root. Let's switch to user ${REAL_USER}..."
+      if command_exists brew; then
+        color_echo "blue" "🍏 Installing Docker via Homebrew..."
+        brew install --cask docker
         
-        if command_exists su; then
-          # Create a temporary script to run as the normal user
-          TMP_SCRIPT=$(mktemp)
-          cat > "${TMP_SCRIPT}" << EOF
-#!/bin/bash
-export PATH="/usr/local/bin:${PATH}" # Ensure brew is in PATH if it exists
-if command -v brew >/dev/null 2>&1; then
-  echo "brew exists"
-  brew install --cask docker
-else
-  echo "brew not found"
-  echo "Please run the following commands manually after this script completes:"
-  echo "/bin/bash -c \"\$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)\""
-  echo "brew install --cask docker"
-fi
-EOF
-          chmod +x "${TMP_SCRIPT}"
-          
-          # Run the script as the regular user
-          su - "${REAL_USER}" -c "${TMP_SCRIPT}"
-          BREW_RESULT=$?
-          rm "${TMP_SCRIPT}"
-          
-          if [ "${BREW_RESULT}" -ne 0 ]; then
-            color_echo "red" "🚨 Failed to install Docker through Homebrew."
-            color_echo "yellow" "Please install manually with these commands:"
-            color_echo "yellow" "/bin/bash -c \"\$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)\""
-            color_echo "yellow" "brew install --cask docker"
-            color_echo "yellow" "After installation, run the Docker application and then run this script again."
-            return 1
-          fi
-        else
-          color_echo "red" "🚨 Cannot switch to regular user mode. Please install Docker manually:"
-          color_echo "yellow" "1. Exit this sudo session"
-          color_echo "yellow" "2. Run: brew install --cask docker"
-          color_echo "yellow" "3. Open Docker from Applications"
-          color_echo "yellow" "4. Run this script again"
-          return 1
-        fi
-      else
-        # We're already running as a regular user
-        if command_exists brew; then
-          color_echo "blue" "🍏 Installing Docker via Homebrew..."
-          brew install --cask docker
-        else
-          color_echo "red" "🚨 Homebrew is not installed! Please install Homebrew first:"
-          color_echo "yellow" '/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"'
-          color_echo "yellow" "Then, run the script again!"
-          return 1
-        fi
-      fi
-      
-      # Launch Docker (as the real user, not root)
-      REAL_USER=$(get_real_user)
-      color_echo "blue" "🚀 Launching Docker now... Hold tight!"
-      
-      if [ "$(id -u)" = "0" ]; then
-        # If running as root, we need to launch Docker as the real user
-        su - "${REAL_USER}" -c "open -a Docker"
-      else
-        # Already running as regular user
+        color_echo "blue" "🚀 Launching Docker now... Hold tight!"
         open -a Docker
+        
+        color_echo "yellow" "⏳ Give it a moment, Docker is warming up!"
+        for i in {1..30}; do
+          if command_exists docker && docker info >/dev/null 2>&1; then
+            color_echo "green" "✅ Docker is up and running!"
+            return 0
+          fi
+          sleep 2
+        done
+        
+        color_echo "yellow" "Docker is installed but still starting. Please open Docker manually if needed."
+      else
+        color_echo "red" "🚨 Homebrew is not installed! Please install Homebrew first:"
+        color_echo "yellow" '/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"'
+        color_echo "yellow" "Then, run the script again!"
+        return 1
       fi
-      
-      color_echo "yellow" "⏳ Give it a moment, Docker is warming up!"
-      for i in {1..30}; do
-        if command_exists docker && docker info >/dev/null 2>&1; then
-          color_echo "green" "✅ Docker is up and running!"
-          return 0
-        fi
-        sleep 2
-      done
-      
-      color_echo "yellow" "Docker is installed but still starting. Please open Docker manually if needed."
       ;;
       
     Linux*)
@@ -378,7 +317,7 @@ download_files() {
 install_binary() {
   color_echo "blue" "🔧 Installing RF-Swift..."
   
-  if [ "$(id -u)" != "0" ] && ! have_sudo_access; then
+  if ! have_sudo_access; then
     color_echo "red" "🚨 This requires sudo. Please run with sudo or as root."
     exit 1
   fi
@@ -393,20 +332,11 @@ install_binary() {
   fi
 
   # Make sure installation directory exists
-  if [ "$(id -u)" = "0" ]; then
-    mkdir -p "${INSTALL_DIR}"
-  else
-    sudo mkdir -p "${INSTALL_DIR}"
-  fi
+  sudo mkdir -p "${INSTALL_DIR}"
   
   color_echo "blue" "🚀 Moving RF-Swift to ${INSTALL_DIR}..."
-  if [ "$(id -u)" = "0" ]; then
-    cp "${RFSWIFT_BIN}" "${INSTALL_DIR}/rfswift"
-    chmod +x "${INSTALL_DIR}/rfswift"
-  else
-    sudo cp "${RFSWIFT_BIN}" "${INSTALL_DIR}/rfswift"
-    sudo chmod +x "${INSTALL_DIR}/rfswift"
-  fi
+  sudo cp "${RFSWIFT_BIN}" "${INSTALL_DIR}/rfswift"
+  sudo chmod +x "${INSTALL_DIR}/rfswift"
   
   # Clean up
   rm -rf "${TMP_DIR}"
