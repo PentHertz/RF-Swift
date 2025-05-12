@@ -67,18 +67,18 @@ get_real_user() {
   fi
 }
 
-# Function to prompt user for yes/no with handling for piped scripts
 prompt_yes_no() {
   local prompt="$1"
   local default="$2"  # Optional default (y/n)
   local response
   
-  # Check if stdin is a terminal or if we're in a pipe
-  if [ -t 0 ]; then
-    # Terminal - interactive mode
+  # We need to check if the stdin is a terminal AND if it's available for reading
+  # This handles both pipe scenarios AND terminal redirects
+  if [ -t 0 ] && [ -t 1 ]; then
+    # Interactive terminal with stdin and stdout available
     while true; do
       printf "${YELLOW}%s (y/n): ${NC}" "${prompt}"
-      read -r response
+      read -r response < /dev/tty
       case "$response" in
         [Yy]* ) return 0 ;;
         [Nn]* ) return 1 ;;
@@ -86,7 +86,7 @@ prompt_yes_no() {
       esac
     done
   else
-    # We're in a pipe, use default answer or assume yes
+    # Non-interactive mode or pipe
     if [ "$default" = "n" ]; then
       echo "${YELLOW}${prompt} (y/n): Defaulting to no in non-interactive mode${NC}"
       return 1
