@@ -9,18 +9,18 @@ set -e
 GITHUB_REPO="PentHertz/RF-Swift"
 INSTALL_DIR="/usr/local/bin"  # Only install to system directory
 
-# Function to output colored text
+# Function to output colored text - fixed to work in sh
 color_echo() {
   local color=$1
   local text=$2
   case $color in
-    "red") echo -e "\033[31m${text}\033[0m" ;;
-    "green") echo -e "\033[32m${text}\033[0m" ;;
-    "yellow") echo -e "\033[33m${text}\033[0m" ;;
-    "blue") echo -e "\033[34m${text}\033[0m" ;;
-    "magenta") echo -e "\033[35m${text}\033[0m" ;;
-    "cyan") echo -e "\033[36m${text}\033[0m" ;;
-    *) echo "${text}" ;;
+    "red") printf "\033[31m%s\033[0m\n" "${text}" ;;
+    "green") printf "\033[32m%s\033[0m\n" "${text}" ;;
+    "yellow") printf "\033[33m%s\033[0m\n" "${text}" ;;
+    "blue") printf "\033[34m%s\033[0m\n" "${text}" ;;
+    "magenta") printf "\033[35m%s\033[0m\n" "${text}" ;;
+    "cyan") printf "\033[36m%s\033[0m\n" "${text}" ;;
+    *) printf "%s\n" "${text}" ;;
   esac
 }
 
