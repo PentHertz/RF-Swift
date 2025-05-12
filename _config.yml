@@ -1,6 +1,0 @@
-defaults:
-  -
-    scope:
-      path: "" # Apply this to all files
-    values:
-      layout: null
