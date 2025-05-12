@@ -67,34 +67,50 @@ get_real_user() {
   fi
 }
 
+# Function to prompt user for yes/no with terminal redirection solution
 prompt_yes_no() {
   local prompt="$1"
   local default="$2"  # Optional default (y/n)
   local response
   
-  # Special handling for curl | sh or similar piped execution
-  # In a pipe, stdin is not a terminal (not -t 0)
-  if [ ! -t 0 ]; then
-    # We're in a pipe (like curl | sh) - use defaults
+  # Try to use /dev/tty for interactive input even in pipe scenarios
+  if [ -t 0 ]; then
+    # Standard terminal input is available
+    tty_device="/dev/stdin"
+  elif [ -e "/dev/tty" ]; then
+    # We're in a pipe but /dev/tty might be available
+    tty_device="/dev/tty"
+  else
+    # No interactive terminal available, use defaults
     if [ "$default" = "n" ]; then
-      echo "${YELLOW}${prompt} (y/n): Defaulting to no in non-interactive mode${NC}"
+      echo "${YELLOW}${prompt} (y/n): Defaulting to no (no terminal available)${NC}"
       return 1
     else
-      echo "${YELLOW}${prompt} (y/n): Defaulting to yes in non-interactive mode${NC}"
+      echo "${YELLOW}${prompt} (y/n): Defaulting to yes (no terminal available)${NC}"
       return 0
     fi
-  else
-    # Normal interactive terminal
-    while true; do
-      printf "${YELLOW}%s (y/n): ${NC}" "${prompt}"
-      read -r response
+  fi
+  
+  # Try to read from the terminal
+  while true; do
+    printf "${YELLOW}%s (y/n): ${NC}" "${prompt}"
+    if read -r response < "$tty_device" 2>/dev/null; then
       case "$response" in
         [Yy]* ) return 0 ;;
         [Nn]* ) return 1 ;;
         * ) echo "Please answer yes (y) or no (n)." ;;
       esac
-    done
-  fi
+    else
+      # Failed to read from terminal, use default
+      if [ "$default" = "n" ]; then
+        echo "${YELLOW}${prompt} (y/n): Defaulting to no (couldn't read from terminal)${NC}"
+        return 1
+      else
+        echo "${YELLOW}${prompt} (y/n): Defaulting to yes (couldn't read from terminal)${NC}"
+        return 0
+      fi
+    fi
+  done
 }
 
 # Function to create an alias for RF-Swift in the user's shell configuration
