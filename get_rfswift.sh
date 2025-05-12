@@ -36,6 +36,80 @@ thank_you_message() {
   color_echo "magenta" "Thank you for installing. You've just taken the first step towards RF mastery! 🔧"
 }
 
+# Function to create an alias for RF-Swift in the user's shell configuration
+create_alias() {
+  color_echo "blue" "🔗 Setting up an alias for RF-Swift..."
+  
+  # Get the real user even when run with sudo
+  REAL_USER=$(get_real_user)
+  USER_HOME=$(eval echo ~${REAL_USER})
+  
+  # Determine shell from the user's default shell
+  USER_SHELL=$(getent passwd "${REAL_USER}" | cut -d: -f7 | xargs basename)
+  if [ -z "${USER_SHELL}" ]; then
+    USER_SHELL=$(basename "${SHELL}")
+  fi
+  
+  SHELL_RC=""
+  ALIAS_LINE="alias rfswift='${INSTALL_DIR}/rfswift'"
+  
+  # Determine the correct shell configuration file
+  case "${USER_SHELL}" in
+    bash)
+      # Check for .bash_profile first (macOS preference), then .bashrc (Linux preference)
+      if [ -f "${USER_HOME}/.bash_profile" ]; then
+        SHELL_RC="${USER_HOME}/.bash_profile"
+      elif [ -f "${USER_HOME}/.bashrc" ]; then
+        SHELL_RC="${USER_HOME}/.bashrc"
+      else
+        # Default to .bashrc if neither exists
+        SHELL_RC="${USER_HOME}/.bashrc"
+      fi
+      ;;
+    zsh)
+      SHELL_RC="${USER_HOME}/.zshrc"
+      ;;
+    fish)
+      SHELL_RC="${USER_HOME}/.config/fish/config.fish"
+      ALIAS_LINE="alias rfswift '${INSTALL_DIR}/rfswift'"  # fish has different syntax
+      ;;
+    *)
+      color_echo "yellow" "⚠️ Unsupported shell ${USER_SHELL}. Please manually add an alias for rfswift."
+      return 1
+      ;;
+  esac
+  
+  # Create the configuration file if it doesn't exist
+  if [ ! -f "${SHELL_RC}" ]; then
+    if [ "${USER_SHELL}" = "fish" ]; then
+      # For fish, ensure config directory exists
+      mkdir -p "$(dirname "${SHELL_RC}")"
+    fi
+    touch "${SHELL_RC}"
+    if [ $? -ne 0 ]; then
+      color_echo "yellow" "⚠️ Unable to create ${SHELL_RC}. Please manually add the alias."
+      return 1
+    fi
+  fi
+  
+  # Check if alias already exists
+  if grep -q "alias rfswift=" "${SHELL_RC}" 2>/dev/null; then
+    color_echo "green" "✅ RF-Swift alias already exists in ${SHELL_RC}"
+    return 0
+  fi
+  
+  # Add the alias to the shell configuration file
+  if echo "${ALIAS_LINE}" >> "${SHELL_RC}"; then
+    color_echo "green" "✅ Added RF-Swift alias to ${SHELL_RC}"
+    color_echo "yellow" "⚡ To use the alias immediately, run: source ${SHELL_RC}"
+    return 0
+  else
+    color_echo "yellow" "⚠️ Failed to add alias to ${SHELL_RC}. Please manually add the alias."
+    color_echo "blue" "💡 Run this command to add it manually: echo '${ALIAS_LINE}' >> ${SHELL_RC}"
+    return 1
+  fi
+}
+
 # Function to check if a command exists
 command_exists() {
   command -v "$1" >/dev/null 2>&1
@@ -140,7 +214,7 @@ install_docker() {
   esac
 }
 
-# Function to get the latest release information
+# Function to get the latest release information - FIXED
 get_latest_release() {
   color_echo "blue" "🔍 Detecting the latest RF-Swift release..."
 
@@ -148,32 +222,47 @@ get_latest_release() {
   DEFAULT_VERSION="0.6.3"
   VERSION="${DEFAULT_VERSION}"  # Initialize with default
   
-  if command_exists curl && command_exists jq; then
-    LATEST_INFO=$(curl -s "https://api.github.com/repos/${GITHUB_REPO}/releases/latest" | tr -d '\000-\037')
-
-    if ! echo "${LATEST_INFO}" | jq -e . >/dev/null 2>&1; then
-      color_echo "yellow" "Uh oh! Couldn't parse the GitHub API response. Let's try a fallback method..."
-      # Fallback method
-      if command_exists curl && command_exists grep && command_exists sed; then
-        RELEASES_PAGE=$(curl -s "https://github.com/${GITHUB_REPO}/releases/latest")
-        DETECTED_VERSION=$(echo "${RELEASES_PAGE}" | grep -o "${GITHUB_REPO}/releases/tag/v[0-9.]*" | head -1 | sed 's/.*tag\/v//')
-        if [ -n "${DETECTED_VERSION}" ]; then
-          VERSION="${DETECTED_VERSION}"
-        fi
-      fi
-    else
-      # Successfully parsed JSON
-      DETECTED_VERSION=$(echo "${LATEST_INFO}" | jq -r .tag_name | sed 's/^v//')
+  # First try: Use GitHub API with a proper User-Agent to avoid rate limiting issues
+  if command_exists curl; then
+    # First method: direct API call with proper headers to avoid throttling
+    LATEST_INFO=$(curl -s -H "User-Agent: RF-Swift-Installer" "https://api.github.com/repos/${GITHUB_REPO}/releases/latest")
+    
+    # Check if we got a proper response
+    if echo "${LATEST_INFO}" | grep -q "tag_name"; then
+      # Extract version, handle both with and without "v" prefix
+      DETECTED_VERSION=$(echo "${LATEST_INFO}" | grep -o '"tag_name": *"[^"]*"' | sed 's/.*: *"v\{0,1\}\([^"]*\)".*/\1/')
+      
       if [ -n "${DETECTED_VERSION}" ]; then
         VERSION="${DETECTED_VERSION}"
+        color_echo "green" "✅ Successfully retrieved latest version using GitHub API"
       fi
+    else
+      color_echo "yellow" "GitHub API query didn't return expected results. Trying alternative method..."
     fi
-  elif command_exists curl && command_exists grep && command_exists sed; then
-    # Direct fallback to grep method
-    RELEASES_PAGE=$(curl -s "https://github.com/${GITHUB_REPO}/releases/latest")
-    DETECTED_VERSION=$(echo "${RELEASES_PAGE}" | grep -o "${GITHUB_REPO}/releases/tag/v[0-9.]*" | head -1 | sed 's/.*tag\/v//')
+  fi
+  
+  # Second try: Parse the releases page directly if API method failed
+  if [ "${VERSION}" = "${DEFAULT_VERSION}" ] && command_exists curl; then
+    color_echo "blue" "Trying direct HTML parsing method..."
+    
+    RELEASES_PAGE=$(curl -s -L -H "User-Agent: RF-Swift-Installer" "https://github.com/${GITHUB_REPO}/releases/latest")
+    
+    # Look for version in the page title and URL
+    DETECTED_VERSION=$(echo "${RELEASES_PAGE}" | grep -o "${GITHUB_REPO}/releases/tag/v[0-9][0-9.]*" | head -1 | sed 's/.*tag\/v//')
+    
     if [ -n "${DETECTED_VERSION}" ]; then
       VERSION="${DETECTED_VERSION}"
+      color_echo "green" "✅ Retrieved version ${VERSION} by parsing GitHub releases page"
+    else
+      # One last attempt - look for version in the title
+      DETECTED_VERSION=$(echo "${RELEASES_PAGE}" | grep -o '<title>Release v[0-9][0-9.]*' | head -1 | sed 's/.*Release v//')
+      
+      if [ -n "${DETECTED_VERSION}" ]; then
+        VERSION="${DETECTED_VERSION}"
+        color_echo "green" "✅ Retrieved version ${VERSION} from page title"
+      else
+        color_echo "yellow" "⚠️ Using default version ${DEFAULT_VERSION} as a fallback"
+      fi
     fi
   fi
   
@@ -271,9 +360,18 @@ main() {
   detect_system
   download_files
   install_binary
+  create_alias
   thank_you_message
   
-  color_echo "cyan" "🚀 You can now run RF-Swift by typing: ${INSTALL_DIR}/rfswift"
+  # Check if alias was created successfully
+  if grep -q "alias rfswift=" "$(eval echo ~$(get_real_user))/.bash*" 2>/dev/null || \
+     grep -q "alias rfswift=" "$(eval echo ~$(get_real_user))/.zshrc" 2>/dev/null || \
+     grep -q "alias rfswift " "$(eval echo ~$(get_real_user))/.config/fish/config.fish" 2>/dev/null; then
+    color_echo "cyan" "🚀 You can now run RF-Swift by simply typing: rfswift"
+    color_echo "yellow" "   (You may need to restart your terminal or run 'source ~/.bashrc' or equivalent first)"
+  else
+    color_echo "cyan" "🚀 You can run RF-Swift by typing: ${INSTALL_DIR}/rfswift"
+  fi
 }
 
 # Run the main function
