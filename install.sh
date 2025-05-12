@@ -67,19 +67,34 @@ get_real_user() {
   fi
 }
 
-# Function to prompt user for yes/no
+# Function to prompt user for yes/no with handling for piped scripts
 prompt_yes_no() {
   local prompt="$1"
+  local default="$2"  # Optional default (y/n)
   local response
-  while true; do
-    printf "${YELLOW}%s (y/n): ${NC}" "${prompt}"
-    read -r response
-    case "$response" in
-      [Yy]* ) return 0 ;;
-      [Nn]* ) return 1 ;;
-      * ) echo "Please answer yes (y) or no (n)." ;;
-    esac
-  done
+  
+  # Check if stdin is a terminal or if we're in a pipe
+  if [ -t 0 ]; then
+    # Terminal - interactive mode
+    while true; do
+      printf "${YELLOW}%s (y/n): ${NC}" "${prompt}"
+      read -r response
+      case "$response" in
+        [Yy]* ) return 0 ;;
+        [Nn]* ) return 1 ;;
+        * ) echo "Please answer yes (y) or no (n)." ;;
+      esac
+    done
+  else
+    # We're in a pipe, use default answer or assume yes
+    if [ "$default" = "n" ]; then
+      echo "${YELLOW}${prompt} (y/n): Defaulting to no in non-interactive mode${NC}"
+      return 1
+    else
+      echo "${YELLOW}${prompt} (y/n): Defaulting to yes in non-interactive mode${NC}"
+      return 0
+    fi
+  fi
 }
 
 # Function to create an alias for RF-Swift in the user's shell configuration
@@ -142,7 +157,7 @@ create_alias() {
   # Check if alias already exists
   if grep -q "alias rfswift" "${SHELL_RC}" 2>/dev/null; then
     color_echo "yellow" "An existing rfswift alias was found in ${SHELL_RC}"
-    if prompt_yes_no "Do you want to replace the existing alias?"; then
+    if prompt_yes_no "Do you want to replace the existing alias?" "y"; then
       # Remove the existing alias line(s)
       if [ "${USER_SHELL}" = "fish" ]; then
         sed -i.bak '/alias rfswift /d' "${SHELL_RC}" 2>/dev/null || sed -i '' '/alias rfswift /d' "${SHELL_RC}" 2>/dev/null
@@ -198,7 +213,7 @@ check_docker() {
   color_echo "cyan" "   - Always pull container images from trusted sources"
   
   # Ask if the user wants to install Docker
-  if prompt_yes_no "Would you like to install Docker now?"; then
+  if prompt_yes_no "Would you like to install Docker now?" "n"; then
     install_docker
     return $?
   else
@@ -250,9 +265,9 @@ install_docker() {
       color_echo "blue" "Using sudo to install Docker..."
       
       if command_exists curl; then
-        curl -fsSL "https://get.docker.com/" | sh
+        curl -fsSL "https://get.docker.com/" | sudo sh
       elif command_exists wget; then
-        wget -qO- "https://get.docker.com/" | sh
+        wget -qO- "https://get.docker.com/" | sudo sh
       else
         color_echo "red" "🚨 Missing curl/wget. Please install one of them."
         return 1
@@ -364,69 +379,6 @@ detect_system() {
   color_echo "blue" "📂 Will download: ${FILENAME}"
 }
 
-# Function to get checksums from GitHub
-get_checksums() {
-  color_echo "blue" "🔒 Getting checksums for verification..."
-  local checksums_url="${DOWNLOAD_BASE_URL}/checksums.txt"
-  local checksums
-  
-  if command_exists curl; then
-    checksums=$(curl -s "$checksums_url")
-  elif command_exists wget; then
-    checksums=$(wget -qO- "$checksums_url")
-  else
-    color_echo "yellow" "⚠️ No curl or wget found. Skipping checksum verification."
-    return 1
-  fi
-  
-  if [ -z "$checksums" ]; then
-    color_echo "yellow" "⚠️ Could not download checksums. Skipping checksum verification."
-    return 1
-  fi
-  
-  # Extract the checksum for our specific file
-  expected_checksum=$(echo "$checksums" | grep "$FILENAME" | cut -d ' ' -f 1)
-  
-  if [ -z "$expected_checksum" ]; then
-    color_echo "yellow" "⚠️ Could not find checksum for $FILENAME. Skipping checksum verification."
-    return 1
-  fi
-  
-  echo "$expected_checksum"
-}
-
-# Function to verify checksums - just display info and ask to continue
-verify_checksum() {
-  local file="$1"
-  local expected_checksum="$2"
-  local shasum_cmd
-  
-  if command_exists shasum; then
-    shasum_cmd="shasum -a 256"
-  elif command_exists sha256sum; then
-    shasum_cmd="sha256sum"
-  else
-    color_echo "yellow" "⚠️ Could not find shasum or sha256sum utility. Skipping checksum verification."
-    return 0
-  fi
-  
-  local calculated_checksum
-  calculated_checksum=$($shasum_cmd "$file" | cut -d ' ' -f 1)
-  
-  # Display information for manual verification
-  color_echo "blue" "Downloaded file: $file"
-  color_echo "blue" "Calculated checksum: $calculated_checksum"
-  color_echo "blue" "GitHub checksums file: https://github.com/${GITHUB_REPO}/releases/download/v${VERSION}/checksums.txt"
-  color_echo "blue" "Expected checksum: $expected_checksum"
-  
-  # Simple continue prompt
-  if prompt_yes_no "Continue with installation?"; then
-    return 0
-  else
-    return 1
-  fi
-}
-
 # Download the files and display checksum information
 download_files() {
   color_echo "blue" "🌟 Preparing to download RF-Swift..."
@@ -461,14 +413,16 @@ download_files() {
     color_echo "yellow" "⚠️ Could not calculate checksum (missing shasum/sha256sum tools)"
   fi
   
-  # GitHub release page for checksums
+  # Set the exact checksums file URL format
+  CHECKSUMS_URL="https://github.com/${GITHUB_REPO}/releases/download/v${VERSION}/RF-Swift_${VERSION}_checksums.txt"
+  color_echo "blue" "GitHub checksums file: ${CHECKSUMS_URL}"
+  
+  # GitHub release page for manual verification
   RELEASE_PAGE_URL="https://github.com/${GITHUB_REPO}/releases/tag/v${VERSION}"
-  color_echo "blue" "GitHub release page: ${RELEASE_PAGE_URL}"
-  color_echo "yellow" "Please verify the checksum by visiting the GitHub release page above."
-  color_echo "yellow" "The checksums are typically listed in the release notes or in the attached assets."
+  color_echo "yellow" "If needed, verify the checksum by visiting the GitHub release page: ${RELEASE_PAGE_URL}"
   
   # Ask to continue
-  if ! prompt_yes_no "Continue with installation?"; then
+  if ! prompt_yes_no "Continue with installation?" "y"; then
     color_echo "red" "🚨 Installation aborted by user."
     rm -rf "${TMP_DIR}"
     exit 1
@@ -485,7 +439,7 @@ choose_install_dir() {
   color_echo "cyan" "1. System-wide installation (/usr/local/bin) - requires sudo"
   color_echo "cyan" "2. User-local installation (~/.rfswift/bin) - doesn't require sudo"
   
-  if prompt_yes_no "Install system-wide (requires sudo)?"; then
+  if prompt_yes_no "Install system-wide (requires sudo)?" "n"; then
     INSTALL_DIR="/usr/local/bin"
     if ! have_sudo_access; then
       color_echo "red" "🚨 System-wide installation requires sudo. You don't seem to have sudo access."
@@ -562,7 +516,7 @@ main() {
   install_binary
   
   # Set up alias if requested
-  if prompt_yes_no "Would you like to set up an alias for RF-Swift?"; then
+  if prompt_yes_no "Would you like to set up an alias for RF-Swift?" "y"; then
     create_alias "$INSTALL_DIR"
   fi
   
