@@ -1,25 +1,33 @@
-#!/bin/bash
+#!/bin/sh
 # RF-Swift Installer Script
-# Usage: curl -fsSL "https://get.rfswift.io/" | sudo sh
-# or: wget -qO- "https://get.rfswift.io/" | sudo sh
+# Usage: curl -fsSL "https://get.rfswift.io/" | sh
+# or: wget -qO- "https://get.rfswift.io/" | sh
 
 set -e
 
 # Configuration
 GITHUB_REPO="PentHertz/RF-Swift"
-INSTALL_DIR="/usr/local/bin"  # Only install to system directory
 
-# Function to output colored text - fixed to work in sh
+# Color codes for better readability
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[0;33m'
+BLUE='\033[0;34m'
+MAGENTA='\033[0;35m'
+CYAN='\033[0;36m'
+NC='\033[0m' # No Color
+
+# Function to output colored text
 color_echo() {
   local color=$1
   local text=$2
   case $color in
-    "red") printf "\033[31m%s\033[0m\n" "${text}" ;;
-    "green") printf "\033[32m%s\033[0m\n" "${text}" ;;
-    "yellow") printf "\033[33m%s\033[0m\n" "${text}" ;;
-    "blue") printf "\033[34m%s\033[0m\n" "${text}" ;;
-    "magenta") printf "\033[35m%s\033[0m\n" "${text}" ;;
-    "cyan") printf "\033[36m%s\033[0m\n" "${text}" ;;
+    "red") printf "${RED}%s${NC}\n" "${text}" ;;
+    "green") printf "${GREEN}%s${NC}\n" "${text}" ;;
+    "yellow") printf "${YELLOW}%s${NC}\n" "${text}" ;;
+    "blue") printf "${BLUE}%s${NC}\n" "${text}" ;;
+    "magenta") printf "${MAGENTA}%s${NC}\n" "${text}" ;;
+    "cyan") printf "${CYAN}%s${NC}\n" "${text}" ;;
     *) printf "%s\n" "${text}" ;;
   esac
 }
@@ -34,80 +42,6 @@ fun_welcome() {
 thank_you_message() {
   color_echo "green" "🌟 You did it! RF-Swift is now ready for action! 🎉"
   color_echo "magenta" "Thank you for installing. You've just taken the first step towards RF mastery! 🔧"
-}
-
-# Function to create an alias for RF-Swift in the user's shell configuration
-create_alias() {
-  color_echo "blue" "🔗 Setting up an alias for RF-Swift..."
-  
-  # Get the real user even when run with sudo
-  REAL_USER=$(get_real_user)
-  USER_HOME=$(eval echo ~${REAL_USER})
-  
-  # Determine shell from the user's default shell
-  USER_SHELL=$(getent passwd "${REAL_USER}" | cut -d: -f7 | xargs basename)
-  if [ -z "${USER_SHELL}" ]; then
-    USER_SHELL=$(basename "${SHELL}")
-  fi
-  
-  SHELL_RC=""
-  ALIAS_LINE="alias rfswift='${INSTALL_DIR}/rfswift'"
-  
-  # Determine the correct shell configuration file
-  case "${USER_SHELL}" in
-    bash)
-      # Check for .bash_profile first (macOS preference), then .bashrc (Linux preference)
-      if [ -f "${USER_HOME}/.bash_profile" ]; then
-        SHELL_RC="${USER_HOME}/.bash_profile"
-      elif [ -f "${USER_HOME}/.bashrc" ]; then
-        SHELL_RC="${USER_HOME}/.bashrc"
-      else
-        # Default to .bashrc if neither exists
-        SHELL_RC="${USER_HOME}/.bashrc"
-      fi
-      ;;
-    zsh)
-      SHELL_RC="${USER_HOME}/.zshrc"
-      ;;
-    fish)
-      SHELL_RC="${USER_HOME}/.config/fish/config.fish"
-      ALIAS_LINE="alias rfswift '${INSTALL_DIR}/rfswift'"  # fish has different syntax
-      ;;
-    *)
-      color_echo "yellow" "⚠️ Unsupported shell ${USER_SHELL}. Please manually add an alias for rfswift."
-      return 1
-      ;;
-  esac
-  
-  # Create the configuration file if it doesn't exist
-  if [ ! -f "${SHELL_RC}" ]; then
-    if [ "${USER_SHELL}" = "fish" ]; then
-      # For fish, ensure config directory exists
-      mkdir -p "$(dirname "${SHELL_RC}")"
-    fi
-    touch "${SHELL_RC}"
-    if [ $? -ne 0 ]; then
-      color_echo "yellow" "⚠️ Unable to create ${SHELL_RC}. Please manually add the alias."
-      return 1
-    fi
-  fi
-  
-  # Check if alias already exists
-  if grep -q "alias rfswift=" "${SHELL_RC}" 2>/dev/null; then
-    color_echo "green" "✅ RF-Swift alias already exists in ${SHELL_RC}"
-    return 0
-  fi
-  
-  # Add the alias to the shell configuration file
-  if echo "${ALIAS_LINE}" >> "${SHELL_RC}"; then
-    color_echo "green" "✅ Added RF-Swift alias to ${SHELL_RC}"
-    color_echo "yellow" "⚡ To use the alias immediately, run: source ${SHELL_RC}"
-    return 0
-  else
-    color_echo "yellow" "⚠️ Failed to add alias to ${SHELL_RC}. Please manually add the alias."
-    color_echo "blue" "💡 Run this command to add it manually: echo '${ALIAS_LINE}' >> ${SHELL_RC}"
-    return 1
-  fi
 }
 
 # Function to check if a command exists
@@ -133,33 +67,166 @@ get_real_user() {
   fi
 }
 
-# Function to check and install Docker
-install_docker() {
+# Function to prompt user for yes/no
+prompt_yes_no() {
+  local prompt="$1"
+  local response
+  while true; do
+    printf "${YELLOW}%s (y/n): ${NC}" "${prompt}"
+    read -r response
+    case "$response" in
+      [Yy]* ) return 0 ;;
+      [Nn]* ) return 1 ;;
+      * ) echo "Please answer yes (y) or no (n)." ;;
+    esac
+  done
+}
+
+# Function to create an alias for RF-Swift in the user's shell configuration
+create_alias() {
+  local bin_path="$1"
+  color_echo "blue" "🔗 Setting up an alias for RF-Swift..."
+  
+  # Get the real user even when run with sudo
+  REAL_USER=$(get_real_user)
+  USER_HOME=$(eval echo ~${REAL_USER})
+  
+  # Determine shell from the user's default shell
+  USER_SHELL=$(getent passwd "${REAL_USER}" 2>/dev/null | cut -d: -f7 | xargs basename 2>/dev/null)
+  if [ -z "${USER_SHELL}" ]; then
+    USER_SHELL=$(basename "${SHELL}")
+  fi
+  
+  SHELL_RC=""
+  ALIAS_LINE="alias rfswift='${bin_path}/rfswift'"
+  
+  # Determine the correct shell configuration file
+  case "${USER_SHELL}" in
+    bash)
+      # Check for .bash_profile first (macOS preference), then .bashrc (Linux preference)
+      if [ -f "${USER_HOME}/.bash_profile" ]; then
+        SHELL_RC="${USER_HOME}/.bash_profile"
+      elif [ -f "${USER_HOME}/.bashrc" ]; then
+        SHELL_RC="${USER_HOME}/.bashrc"
+      else
+        # Default to .bashrc if neither exists
+        SHELL_RC="${USER_HOME}/.bashrc"
+      fi
+      ;;
+    zsh)
+      SHELL_RC="${USER_HOME}/.zshrc"
+      ;;
+    fish)
+      SHELL_RC="${USER_HOME}/.config/fish/config.fish"
+      ALIAS_LINE="alias rfswift '${bin_path}/rfswift'"  # fish has different syntax
+      ;;
+    *)
+      color_echo "yellow" "⚠️ Unsupported shell ${USER_SHELL}. Please manually add an alias for rfswift."
+      return 1
+      ;;
+  esac
+  
+  # Create the configuration file if it doesn't exist
+  if [ ! -f "${SHELL_RC}" ]; then
+    if [ "${USER_SHELL}" = "fish" ]; then
+      # For fish, ensure config directory exists
+      mkdir -p "$(dirname "${SHELL_RC}")"
+    fi
+    touch "${SHELL_RC}"
+    if [ $? -ne 0 ]; then
+      color_echo "yellow" "⚠️ Unable to create ${SHELL_RC}. Please manually add the alias."
+      return 1
+    fi
+  fi
+  
+  # Check if alias already exists
+  if grep -q "alias rfswift" "${SHELL_RC}" 2>/dev/null; then
+    color_echo "yellow" "An existing rfswift alias was found in ${SHELL_RC}"
+    if prompt_yes_no "Do you want to replace the existing alias?"; then
+      # Remove the existing alias line(s)
+      if [ "${USER_SHELL}" = "fish" ]; then
+        sed -i.bak '/alias rfswift /d' "${SHELL_RC}" 2>/dev/null || sed -i '' '/alias rfswift /d' "${SHELL_RC}" 2>/dev/null
+      else
+        sed -i.bak '/alias rfswift=/d' "${SHELL_RC}" 2>/dev/null || sed -i '' '/alias rfswift=/d' "${SHELL_RC}" 2>/dev/null
+      fi
+      
+      # Add the new alias
+      if echo "${ALIAS_LINE}" >> "${SHELL_RC}"; then
+        color_echo "green" "✅ Updated RF-Swift alias in ${SHELL_RC}"
+        color_echo "yellow" "⚡ To use the alias immediately, run: source ${SHELL_RC}"
+        return 0
+      else
+        color_echo "yellow" "⚠️ Failed to update alias in ${SHELL_RC}. Please manually update the alias."
+        color_echo "blue" "💡 Run this command to add it manually: echo '${ALIAS_LINE}' >> ${SHELL_RC}"
+        return 1
+      fi
+    else
+      color_echo "blue" "Keeping existing alias."
+      return 0
+    fi
+  fi
+  
+  # Add the alias if it doesn't exist
+  if echo "${ALIAS_LINE}" >> "${SHELL_RC}"; then
+    color_echo "green" "✅ Added RF-Swift alias to ${SHELL_RC}"
+    color_echo "yellow" "⚡ To use the alias immediately, run: source ${SHELL_RC}"
+    return 0
+  else
+    color_echo "yellow" "⚠️ Failed to add alias to ${SHELL_RC}. Please manually add the alias."
+    color_echo "blue" "💡 Run this command to add it manually: echo '${ALIAS_LINE}' >> ${SHELL_RC}"
+    return 1
+  fi
+}
+
+# Function to check if Docker is installed
+check_docker() {
   color_echo "blue" "🔍 Checking if Docker is installed..."
 
   if command_exists docker; then
-    color_echo "green" "🎉 Docker is already installed. You're all set for RF-Swift!"
+    color_echo "green" "✅ Docker is already installed. You're all set for RF-Swift!"
     return 0
   fi
 
-  color_echo "yellow" "Oops! It looks like Docker is missing. Don't worry, I'm installing it for you..."
+  color_echo "yellow" "⚠️ Docker is not installed on your system."
+  color_echo "blue" "ℹ️ Docker is required for RF-Swift to work properly."
+  
+  # Provide advice on running Docker with reduced privileges
+  color_echo "cyan" "📝 Docker Security Advice:"
+  color_echo "cyan" "   - Consider using Docker Desktop which provides a user-friendly interface"
+  color_echo "cyan" "   - On Linux, add your user to the 'docker' group to avoid using sudo with each Docker command"
+  color_echo "cyan" "   - Use rootless Docker mode if you need enhanced security"
+  color_echo "cyan" "   - Always pull container images from trusted sources"
+  
+  # Ask if the user wants to install Docker
+  if prompt_yes_no "Would you like to install Docker now?"; then
+    install_docker
+    return $?
+  else
+    color_echo "yellow" "⚠️ Docker installation skipped. You'll need to install Docker manually before using RF-Swift."
+    return 1
+  fi
+}
 
+# Function to install Docker
+install_docker() {
   case "$(uname -s)" in
     Darwin*)
       if command_exists brew; then
         color_echo "blue" "🍏 Installing Docker via Homebrew..."
         brew install --cask docker
         
-        color_echo "blue" "🚀 Launching Docker now... Hold tight!"
+        color_echo "blue" "🚀 Launching Docker Desktop now... Hold tight!"
         open -a Docker
         
         color_echo "yellow" "⏳ Give it a moment, Docker is warming up!"
-        for i in {1..30}; do
+        i=1
+        while [ $i -le 30 ]; do
           if command_exists docker && docker info >/dev/null 2>&1; then
             color_echo "green" "✅ Docker is up and running!"
             return 0
           fi
           sleep 2
+          i=$((i + 1))
         done
         
         color_echo "yellow" "Docker is installed but still starting. Please open Docker manually if needed."
@@ -173,18 +240,19 @@ install_docker() {
       
     Linux*)
       color_echo "blue" "🐧 Installing Docker on your Linux machine..."
+      color_echo "yellow" "⚠️ This will require sudo privileges to install Docker."
       
-      if command_exists sudo; then
-        sudo_cmd="sudo"
-      else
-        sudo_cmd=""
-        color_echo "yellow" "It seems like you don't have 'sudo'. Installation might not work without root privileges."
+      if ! have_sudo_access; then
+        color_echo "red" "🚨 Unable to obtain sudo privileges. Docker installation requires sudo."
+        return 1
       fi
-
+      
+      color_echo "blue" "Using sudo to install Docker..."
+      
       if command_exists curl; then
-        curl -fsSL "https://get.docker.com/" | $sudo_cmd sh
+        curl -fsSL "https://get.docker.com/" | sh
       elif command_exists wget; then
-        wget -qO- "https://get.docker.com/" | $sudo_cmd sh
+        wget -qO- "https://get.docker.com/" | sh
       else
         color_echo "red" "🚨 Missing curl/wget. Please install one of them."
         return 1
@@ -193,15 +261,15 @@ install_docker() {
       if command_exists sudo && command_exists groups; then
         if ! groups | grep -q docker; then
           color_echo "blue" "🔧 Adding you to the Docker group..."
-          $sudo_cmd usermod -aG docker "$(get_real_user)"
+          sudo usermod -aG docker "$(get_real_user)"
           color_echo "yellow" "⚡ You may need to log out and log back in for this to take effect."
         fi
       fi
       
       if command_exists systemctl; then
         color_echo "blue" "🚀 Starting Docker service..."
-        $sudo_cmd systemctl start docker
-        $sudo_cmd systemctl enable docker
+        sudo systemctl start docker
+        sudo systemctl enable docker
       fi
 
       color_echo "green" "🎉 Docker is now installed and running!"
@@ -214,7 +282,7 @@ install_docker() {
   esac
 }
 
-# Function to get the latest release information - FIXED
+# Function to get the latest release information
 get_latest_release() {
   color_echo "blue" "🔍 Detecting the latest RF-Swift release..."
 
@@ -296,13 +364,78 @@ detect_system() {
   color_echo "blue" "📂 Will download: ${FILENAME}"
 }
 
-# Download the files
+# Function to get checksums from GitHub
+get_checksums() {
+  color_echo "blue" "🔒 Getting checksums for verification..."
+  local checksums_url="${DOWNLOAD_BASE_URL}/checksums.txt"
+  local checksums
+  
+  if command_exists curl; then
+    checksums=$(curl -s "$checksums_url")
+  elif command_exists wget; then
+    checksums=$(wget -qO- "$checksums_url")
+  else
+    color_echo "yellow" "⚠️ No curl or wget found. Skipping checksum verification."
+    return 1
+  fi
+  
+  if [ -z "$checksums" ]; then
+    color_echo "yellow" "⚠️ Could not download checksums. Skipping checksum verification."
+    return 1
+  fi
+  
+  # Extract the checksum for our specific file
+  expected_checksum=$(echo "$checksums" | grep "$FILENAME" | cut -d ' ' -f 1)
+  
+  if [ -z "$expected_checksum" ]; then
+    color_echo "yellow" "⚠️ Could not find checksum for $FILENAME. Skipping checksum verification."
+    return 1
+  fi
+  
+  echo "$expected_checksum"
+}
+
+# Function to verify checksums - just display info and ask to continue
+verify_checksum() {
+  local file="$1"
+  local expected_checksum="$2"
+  local shasum_cmd
+  
+  if command_exists shasum; then
+    shasum_cmd="shasum -a 256"
+  elif command_exists sha256sum; then
+    shasum_cmd="sha256sum"
+  else
+    color_echo "yellow" "⚠️ Could not find shasum or sha256sum utility. Skipping checksum verification."
+    return 0
+  fi
+  
+  local calculated_checksum
+  calculated_checksum=$($shasum_cmd "$file" | cut -d ' ' -f 1)
+  
+  # Display information for manual verification
+  color_echo "blue" "Downloaded file: $file"
+  color_echo "blue" "Calculated checksum: $calculated_checksum"
+  color_echo "blue" "GitHub checksums file: https://github.com/${GITHUB_REPO}/releases/download/v${VERSION}/checksums.txt"
+  color_echo "blue" "Expected checksum: $expected_checksum"
+  
+  # Simple continue prompt
+  if prompt_yes_no "Continue with installation?"; then
+    return 0
+  else
+    return 1
+  fi
+}
+
+# Download the files and display checksum information
 download_files() {
   color_echo "blue" "🌟 Preparing to download RF-Swift..."
 
+  # Create temporary directory and store it in a global variable
   TMP_DIR=$(mktemp -d)
   color_echo "blue" "🔽 Downloading RF-Swift binary from ${DOWNLOAD_URL}..."
   
+  # Download the file
   if command_exists curl; then
     curl -L -o "${TMP_DIR}/${FILENAME}" "${DOWNLOAD_URL}" --progress-bar
   elif command_exists wget; then
@@ -311,15 +444,75 @@ download_files() {
     color_echo "red" "🚨 Missing curl or wget. Please install one of them."
     exit 1
   fi
+  
+  # Calculate and display checksum
+  color_echo "blue" "Downloaded file: ${TMP_DIR}/${FILENAME}"
+  
+  CALCULATED_CHECKSUM=""
+  if command_exists shasum; then
+    CALCULATED_CHECKSUM=$(shasum -a 256 "${TMP_DIR}/${FILENAME}" | cut -d ' ' -f 1)
+  elif command_exists sha256sum; then
+    CALCULATED_CHECKSUM=$(sha256sum "${TMP_DIR}/${FILENAME}" | cut -d ' ' -f 1)
+  fi
+  
+  if [ -n "$CALCULATED_CHECKSUM" ]; then
+    color_echo "blue" "Calculated checksum: $CALCULATED_CHECKSUM"
+  else
+    color_echo "yellow" "⚠️ Could not calculate checksum (missing shasum/sha256sum tools)"
+  fi
+  
+  # GitHub release page for checksums
+  RELEASE_PAGE_URL="https://github.com/${GITHUB_REPO}/releases/tag/v${VERSION}"
+  color_echo "blue" "GitHub release page: ${RELEASE_PAGE_URL}"
+  color_echo "yellow" "Please verify the checksum by visiting the GitHub release page above."
+  color_echo "yellow" "The checksums are typically listed in the release notes or in the attached assets."
+  
+  # Ask to continue
+  if ! prompt_yes_no "Continue with installation?"; then
+    color_echo "red" "🚨 Installation aborted by user."
+    rm -rf "${TMP_DIR}"
+    exit 1
+  fi
+  
+  # If we got here, continue with installation
+  return 0
+}
+
+# Choose installation directory
+choose_install_dir() {
+  color_echo "blue" "🏠 Choose where to install RF-Swift..."
+  color_echo "cyan" "You have two options:"
+  color_echo "cyan" "1. System-wide installation (/usr/local/bin) - requires sudo"
+  color_echo "cyan" "2. User-local installation (~/.rfswift/bin) - doesn't require sudo"
+  
+  if prompt_yes_no "Install system-wide (requires sudo)?"; then
+    INSTALL_DIR="/usr/local/bin"
+    if ! have_sudo_access; then
+      color_echo "red" "🚨 System-wide installation requires sudo. You don't seem to have sudo access."
+      color_echo "yellow" "Falling back to user-local installation."
+      INSTALL_DIR="$HOME/.rfswift/bin"
+    fi
+  else
+    INSTALL_DIR="$HOME/.rfswift/bin"
+  fi
+  
+  color_echo "green" "👍 Will install RF-Swift to: ${INSTALL_DIR}"
+  return 0
 }
 
 # Install the binary
 install_binary() {
   color_echo "blue" "🔧 Installing RF-Swift..."
   
-  if ! have_sudo_access; then
-    color_echo "red" "🚨 This requires sudo. Please run with sudo or as root."
-    exit 1
+  # Create installation directory if needed
+  if [ "$INSTALL_DIR" = "/usr/local/bin" ]; then
+    if ! have_sudo_access; then
+      color_echo "red" "🚨 System-wide installation requires sudo. Please run with sudo or choose user-local installation."
+      exit 1
+    fi
+    sudo mkdir -p "$INSTALL_DIR"
+  else
+    mkdir -p "$INSTALL_DIR"
   fi
   
   color_echo "blue" "📦 Extracting archive..."
@@ -331,46 +524,57 @@ install_binary() {
     exit 1
   fi
 
-  # Make sure installation directory exists
-  sudo mkdir -p "${INSTALL_DIR}"
-  
   color_echo "blue" "🚀 Moving RF-Swift to ${INSTALL_DIR}..."
-  sudo cp "${RFSWIFT_BIN}" "${INSTALL_DIR}/rfswift"
-  sudo chmod +x "${INSTALL_DIR}/rfswift"
+  if [ "$INSTALL_DIR" = "/usr/local/bin" ]; then
+    sudo cp "${RFSWIFT_BIN}" "${INSTALL_DIR}/rfswift"
+    sudo chmod +x "${INSTALL_DIR}/rfswift"
+  else
+    cp "${RFSWIFT_BIN}" "${INSTALL_DIR}/rfswift"
+    chmod +x "${INSTALL_DIR}/rfswift"
+  fi
   
   # Clean up
   rm -rf "${TMP_DIR}"
   
-  color_echo "green" "🎉 RF-Swift has been installed successfully!"
+  color_echo "green" "🎉 RF-Swift has been installed successfully to ${INSTALL_DIR}/rfswift!"
 }
 
 # Main function
 main() {
   fun_welcome
   
-  # Detect system early to help with dependency checks
-  case "$(uname -s)" in
-    Linux*)  OS="Linux" ;;
-    Darwin*) OS="Darwin" ;;
-    *)       color_echo "red" "Unsupported operating system: $(uname -s)"; exit 1 ;;
-  esac
+  # Check if Docker is installed and offer to install it if not
+  check_docker
   
-  install_docker
+  # Get latest release info
   get_latest_release
+  
+  # Detect system architecture
   detect_system
+  
+  # Download files
   download_files
+  
+  # Choose installation directory
+  choose_install_dir
+  
+  # Install binary
   install_binary
-  create_alias
+  
+  # Set up alias if requested
+  if prompt_yes_no "Would you like to set up an alias for RF-Swift?"; then
+    create_alias "$INSTALL_DIR"
+  fi
+  
   thank_you_message
   
-  # Check if alias was created successfully
-  if grep -q "alias rfswift=" "$(eval echo ~$(get_real_user))/.bash*" 2>/dev/null || \
-     grep -q "alias rfswift=" "$(eval echo ~$(get_real_user))/.zshrc" 2>/dev/null || \
-     grep -q "alias rfswift " "$(eval echo ~$(get_real_user))/.config/fish/config.fish" 2>/dev/null; then
-    color_echo "cyan" "🚀 You can now run RF-Swift by simply typing: rfswift"
-    color_echo "yellow" "   (You may need to restart your terminal or run 'source ~/.bashrc' or equivalent first)"
+  # Final instructions
+  if [ "$INSTALL_DIR" != "/usr/local/bin" ]; then
+    color_echo "cyan" "🚀 To use RF-Swift, you can:"
+    color_echo "cyan" "   - Run it directly: ${INSTALL_DIR}/rfswift"
+    color_echo "cyan" "   - Add ${INSTALL_DIR} to your PATH"
   else
-    color_echo "cyan" "🚀 You can run RF-Swift by typing: ${INSTALL_DIR}/rfswift"
+    color_echo "cyan" "🚀 You can now run RF-Swift by simply typing: rfswift"
   fi
 }
 
