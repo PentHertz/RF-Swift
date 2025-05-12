@@ -72,21 +72,10 @@ prompt_yes_no() {
   local default="$2"  # Optional default (y/n)
   local response
   
-  # We need to check if the stdin is a terminal AND if it's available for reading
-  # This handles both pipe scenarios AND terminal redirects
-  if [ -t 0 ] && [ -t 1 ]; then
-    # Interactive terminal with stdin and stdout available
-    while true; do
-      printf "${YELLOW}%s (y/n): ${NC}" "${prompt}"
-      read -r response < /dev/tty
-      case "$response" in
-        [Yy]* ) return 0 ;;
-        [Nn]* ) return 1 ;;
-        * ) echo "Please answer yes (y) or no (n)." ;;
-      esac
-    done
-  else
-    # Non-interactive mode or pipe
+  # Special handling for curl | sh or similar piped execution
+  # In a pipe, stdin is not a terminal (not -t 0)
+  if [ ! -t 0 ]; then
+    # We're in a pipe (like curl | sh) - use defaults
     if [ "$default" = "n" ]; then
       echo "${YELLOW}${prompt} (y/n): Defaulting to no in non-interactive mode${NC}"
       return 1
@@ -94,6 +83,17 @@ prompt_yes_no() {
       echo "${YELLOW}${prompt} (y/n): Defaulting to yes in non-interactive mode${NC}"
       return 0
     fi
+  else
+    # Normal interactive terminal
+    while true; do
+      printf "${YELLOW}%s (y/n): ${NC}" "${prompt}"
+      read -r response
+      case "$response" in
+        [Yy]* ) return 0 ;;
+        [Nn]* ) return 1 ;;
+        * ) echo "Please answer yes (y) or no (n)." ;;
+      esac
+    done
   fi
 }
 
