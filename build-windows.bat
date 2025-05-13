@@ -1,5 +1,5 @@
 @echo off
-REM This code is part of RF Switch by @Penthertz
+REM This code is part of RF Swift by @Penthertz
 REM Author(s): Sébastien Dudek (@FlUxIuS)
 setlocal enabledelayedexpansion
 
@@ -61,13 +61,13 @@ rmdir /s /q thirdparty
 echo Go installed successfully.
 goto building_rfswift
 
-REM Function to build RF Switch Go Project
+REM Function to build RF Swift Go Project
 :building_rfswift
 cd go\rfswift
 go build .
 move rfswift.exe ..\..\
 cd ..\..
-echo RF Switch Go Project built successfully.
+echo RF Swift Go Project built successfully.
 
 REM Prompt the user if they want to build a Docker container, pull an image, or exit
 echo Do you want to build a Docker container, pull an existing image, or exit?

@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# This code is part of RF Switch by @Penthertz
+# This code is part of RF Swift by @Penthertz
 # Author(s): Sébastien Dudek (@FlUxIuS)
 
 source common.sh
@@ -24,7 +24,7 @@ install_go
 # Ensure Go binary is in the PATH for the current script session
 export PATH=$PATH:/usr/local/go/bin
 
-echo -e "${YELLOW}[+] Building RF Switch Go Project${NC}"
+echo -e "${YELLOW}[+] Building RF Swift Go Project${NC}"
 building_rfswift
 
 

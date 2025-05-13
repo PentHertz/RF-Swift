@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# This code is part of RF Switch by @Penthertz
+# This code is part of RF Swift by @Penthertz
 # Author(s): Sébastien Dudek (@FlUxIuS)
 source common.sh
 
