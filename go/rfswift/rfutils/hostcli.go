@@ -14,7 +14,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/lawl/pulseaudio"
+	"github.com/FlUxIuS/pulseaudio_2"
 	common "penthertz/rfswift/common"
 )
 
