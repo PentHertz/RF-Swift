@@ -18,6 +18,15 @@ import (
 	common "penthertz/rfswift/common"
 )
 
+// AudioSystem represents the type of audio system
+type AudioSystem int
+
+const (
+	AudioSystemPulse AudioSystem = iota
+	AudioSystemPipeWire
+	AudioSystemUnknown
+)
+
 // USBDevice represents a USB device information
 type USBDevice struct {
 	BusID       string
@@ -250,6 +259,43 @@ func AutoUnbindDetachUSB_Windows() {
 	fmt.Println("Operation completed successfully.")
 }
 
+// detectAudioSystem detects whether PulseAudio or PipeWire is running
+func detectAudioSystem() AudioSystem {
+	// Check if PipeWire is running
+	if isPipeWireRunning() {
+		return AudioSystemPipeWire
+	}
+	
+	// Check if PulseAudio is running
+	if isPulseAudioRunning() {
+		return AudioSystemPulse
+	}
+	
+	return AudioSystemUnknown
+}
+
+// isPipeWireRunning checks if PipeWire is running
+func isPipeWireRunning() bool {
+	// Check if pipewire process is running
+	cmd := exec.Command("pgrep", "-x", "pipewire")
+	if err := cmd.Run(); err == nil {
+		return true
+	}
+	
+	// Alternative check: try to connect to PipeWire socket
+	if _, err := os.Stat("/run/user/" + os.Getenv("USER") + "/pipewire-0"); err == nil {
+		return true
+	}
+	
+	return false
+}
+
+// isPulseAudioRunning checks if PulseAudio is running
+func isPulseAudioRunning() bool {
+	cmd := exec.Command("pulseaudio", "--check")
+	return cmd.Run() == nil
+}
+
 func checkPulseServer(address string, port string) {
 	// Combine address and port to create the endpoint
 	endpoint := net.JoinHostPort(address, port)
@@ -258,7 +304,7 @@ func checkPulseServer(address string, port string) {
 	conn, err := net.DialTimeout("tcp", endpoint, 5*time.Second)
 	if err != nil {
 		// Connection failed, prepare the error message
-		message := fmt.Sprintf("\033[33mWarning: Unable to connect to Pulse server at %s\033[0m\n", endpoint)
+		message := fmt.Sprintf("\033[33mWarning: Unable to connect to audio server at %s\033[0m\n", endpoint)
 		message += retInstallationInstructions()
 
 		// Display the notification
@@ -270,10 +316,124 @@ func checkPulseServer(address string, port string) {
 	conn.Close()
 
 	// Prepare success message
-	successMessage := fmt.Sprintf("Pulse server found at %s", endpoint)
+	successMessage := fmt.Sprintf("Audio server found at %s", endpoint)
 
 	// Display success notification
 	DisplayNotification(" Audio", successMessage, "info")
+}
+
+// detectLinuxDistribution detects the Linux distribution
+func detectLinuxDistribution() string {
+	// Check for specific distribution files
+	distributions := map[string]string{
+		"/etc/arch-release":    "arch",
+		"/etc/fedora-release":  "fedora",
+		"/etc/redhat-release":  "rhel",
+		"/etc/centos-release":  "centos",
+		"/etc/debian_version":  "debian",
+		"/etc/lsb-release":     "ubuntu", // Will be refined further
+	}
+
+	for file, distro := range distributions {
+		if _, err := os.Stat(file); err == nil {
+			// Special handling for some distributions
+			if distro == "ubuntu" {
+				if content, err := os.ReadFile(file); err == nil {
+					if strings.Contains(string(content), "Ubuntu") {
+						return "ubuntu"
+					}
+				}
+				// If lsb-release exists but doesn't contain Ubuntu, continue checking
+				continue
+			}
+			if distro == "rhel" {
+				// Distinguish between RHEL, CentOS, and Fedora
+				if content, err := os.ReadFile(file); err == nil {
+					contentStr := strings.ToLower(string(content))
+					if strings.Contains(contentStr, "centos") {
+						return "centos"
+					}
+					if strings.Contains(contentStr, "fedora") {
+						return "fedora"
+					}
+					if strings.Contains(contentStr, "red hat") {
+						return "rhel"
+					}
+				}
+			}
+			return distro
+		}
+	}
+
+	// Check /etc/os-release as a fallback
+	if content, err := os.ReadFile("/etc/os-release"); err == nil {
+		contentStr := strings.ToLower(string(content))
+		if strings.Contains(contentStr, "ubuntu") {
+			return "ubuntu"
+		}
+		if strings.Contains(contentStr, "debian") {
+			return "debian"
+		}
+		if strings.Contains(contentStr, "fedora") {
+			return "fedora"
+		}
+		if strings.Contains(contentStr, "rhel") || strings.Contains(contentStr, "red hat") {
+			return "rhel"
+		}
+		if strings.Contains(contentStr, "centos") {
+			return "centos"
+		}
+		if strings.Contains(contentStr, "arch") {
+			return "arch"
+		}
+	}
+
+	return "unknown"
+}
+
+// getPackageManager returns the appropriate package manager for the current distribution
+func getPackageManager() string {
+	switch detectLinuxDistribution() {
+	case "arch":
+		return "pacman"
+	case "fedora":
+		return "dnf"
+	case "rhel", "centos":
+		// Check if it's a newer version that uses dnf
+		if _, err := exec.LookPath("dnf"); err == nil {
+			return "dnf"
+		}
+		return "yum"
+	case "debian", "ubuntu":
+		return "apt"
+	default:
+		return "unknown"
+	}
+}
+
+// getRHELVersion returns the major version number of RHEL/CentOS
+func getRHELVersion() int {
+	// Try to read version from various files
+	files := []string{"/etc/redhat-release", "/etc/centos-release", "/etc/os-release"}
+	
+	for _, file := range files {
+		if content, err := os.ReadFile(file); err == nil {
+			contentStr := string(content)
+			
+			// Look for version patterns
+			if strings.Contains(contentStr, "release 9") || strings.Contains(contentStr, "VERSION_ID=\"9") {
+				return 9
+			}
+			if strings.Contains(contentStr, "release 8") || strings.Contains(contentStr, "VERSION_ID=\"8") {
+				return 8
+			}
+			if strings.Contains(contentStr, "release 7") || strings.Contains(contentStr, "VERSION_ID=\"7") {
+				return 7
+			}
+		}
+	}
+	
+	return 8 // Default to 8 if unable to determine
 }
 
 func retInstallationInstructions() string {
@@ -282,25 +442,88 @@ func retInstallationInstructions() string {
 
 	switch os {
 	case "windows":
-		retstring.WriteString("\nTo install Pulse server on Windows, follow these steps:\n")
-		retstring.WriteString("1. Download the Pulse server installer from the official website.\n")
+		retstring.WriteString("\nTo install audio server on Windows, follow these steps:\n")
+		retstring.WriteString("1. Download the PulseAudio server installer from the official website.\n")
 		retstring.WriteString("2. Run the installer and follow the on-screen instructions.\n")
 	case "darwin":
-		retstring.WriteString("To install Pulse server on macOS, follow these steps:\n")
+		retstring.WriteString("To install audio server on macOS, follow these steps:\n")
 		retstring.WriteString("1. Install Homebrew if you haven't already: /bin/bash -c \"$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)\"\n")
-		retstring.WriteString("2. Install Pulse server using Homebrew: brew install pulseaudio\n")
+		retstring.WriteString("2. Install PulseAudio using Homebrew: brew install pulseaudio\n")
+		retstring.WriteString("   OR install PipeWire: brew install pipewire\n")
 	case "linux":
-		if isArchLinux() {
-			retstring.WriteString("\nTo install Pulse server on Arch Linux, follow these steps:\n")
+		distro := detectLinuxDistribution()
+		switch distro {
+		case "arch":
+			retstring.WriteString("\nTo install audio server on Arch Linux, follow these steps:\n")
 			retstring.WriteString("1. Update your package database: sudo pacman -Syu\n")
-			retstring.WriteString("2. Install Pulse server: sudo pacman -S pulseaudio\n")
-		} else {
-			retstring.WriteString("To install Pulse server on Linux, follow these steps:\n")
-			retstring.WriteString("1. Update your package manager: sudo apt update (for Debian-based) or sudo yum update (for Red Hat-based).\n")
-			retstring.WriteString("2. Install Pulse server: sudo apt install pulseaudio (for Debian-based) or sudo yum install pulseaudio (for Red Hat-based).\n")
+			retstring.WriteString("2. Install PipeWire (recommended): sudo pacman -S pipewire pipewire-pulse pipewire-alsa\n")
+			retstring.WriteString("   OR install PulseAudio: sudo pacman -S pulseaudio pulseaudio-alsa\n")
+			retstring.WriteString("3. Enable user services: systemctl --user enable pipewire pipewire-pulse\n")
+		case "fedora":
+			retstring.WriteString("\nTo install audio server on Fedora, follow these steps:\n")
+			retstring.WriteString("1. Update your system: sudo dnf update\n")
+			retstring.WriteString("2. Install PipeWire (default since Fedora 34): sudo dnf install pipewire pipewire-pulseaudio pipewire-alsa\n")
+			retstring.WriteString("   OR install PulseAudio: sudo dnf install pulseaudio pulseaudio-utils\n")
+			retstring.WriteString("3. Enable user services: systemctl --user enable pipewire pipewire-pulse\n")
+			retstring.WriteString("Note: PipeWire is the default audio system in Fedora 34+\n")
+		case "rhel":
+			version := getRHELVersion()
+			retstring.WriteString("\nTo install audio server on Red Hat Enterprise Linux, follow these steps:\n")
+			retstring.WriteString(fmt.Sprintf("1. Update your system: sudo %s update\n", getPackageManager()))
+			if version >= 8 {
+				retstring.WriteString("For RHEL 8+:\n")
+				retstring.WriteString("2. Install PipeWire: sudo dnf install pipewire pipewire-pulseaudio pipewire-alsa\n")
+				retstring.WriteString("   OR install PulseAudio: sudo dnf install pulseaudio pulseaudio-utils\n")
+				retstring.WriteString("3. Enable user services: systemctl --user enable pipewire pipewire-pulse\n")
+			} else {
+				retstring.WriteString("For RHEL 7:\n")
+				retstring.WriteString("2. Install PulseAudio: sudo yum install pulseaudio pulseaudio-utils\n")
+				retstring.WriteString("3. Enable EPEL repository: sudo yum install epel-release\n")
+			}
+		case "centos":
+			version := getRHELVersion()
+			retstring.WriteString("\nTo install audio server on CentOS, follow these steps:\n")
+			retstring.WriteString(fmt.Sprintf("1. Update your system: sudo %s update\n", getPackageManager()))
+			if version >= 8 {
+				retstring.WriteString("For CentOS Stream 8+:\n")
+				retstring.WriteString("2. Install PipeWire: sudo dnf install pipewire pipewire-pulseaudio pipewire-alsa\n")
+				retstring.WriteString("   OR install PulseAudio: sudo dnf install pulseaudio pulseaudio-utils\n")
+				retstring.WriteString("3. Enable user services: systemctl --user enable pipewire pipewire-pulse\n")
+			} else {
+				retstring.WriteString("For CentOS 7:\n")
+				retstring.WriteString("2. Install PulseAudio: sudo yum install pulseaudio pulseaudio-utils\n")
+				retstring.WriteString("3. Enable EPEL repository: sudo yum install epel-release\n")
+			}
+		case "debian":
+			retstring.WriteString("\nTo install audio server on Debian, follow these steps:\n")
+			retstring.WriteString("1. Update your package database: sudo apt update\n")
+			retstring.WriteString("2. Install PipeWire (Debian 11+): sudo apt install pipewire pipewire-pulse pipewire-alsa\n")
+			retstring.WriteString("   OR install PulseAudio: sudo apt install pulseaudio pulseaudio-utils\n")
+			retstring.WriteString("3. Enable user services: systemctl --user enable pipewire pipewire-pulse\n")
+		case "ubuntu":
+			retstring.WriteString("\nTo install audio server on Ubuntu, follow these steps:\n")
+			retstring.WriteString("1. Update your package database: sudo apt update\n")
+			retstring.WriteString("2. Install PipeWire (Ubuntu 22.04+): sudo apt install pipewire pipewire-pulse pipewire-alsa\n")
+			retstring.WriteString("   OR install PulseAudio: sudo apt install pulseaudio pulseaudio-utils\n")
+			retstring.WriteString("3. Enable user services: systemctl --user enable pipewire pipewire-pulse\n")
+		default:
+			retstring.WriteString("\nTo install audio server on Linux, follow these steps:\n")
+			retstring.WriteString("1. Update your package manager:\n")
+			retstring.WriteString("   - Debian/Ubuntu: sudo apt update\n")
+			retstring.WriteString("   - Fedora: sudo dnf update\n")
+			retstring.WriteString("   - RHEL/CentOS 8+: sudo dnf update\n")
+			retstring.WriteString("   - RHEL/CentOS 7: sudo yum update\n")
+			retstring.WriteString("2. Install audio server:\n")
+			retstring.WriteString("   - PipeWire (recommended for modern systems):\n")
+			retstring.WriteString("     Debian/Ubuntu: sudo apt install pipewire pipewire-pulse pipewire-alsa\n")
+			retstring.WriteString("     Fedora/RHEL8+: sudo dnf install pipewire pipewire-pulseaudio pipewire-alsa\n")
+			retstring.WriteString("   - PulseAudio:\n")
+			retstring.WriteString("     Debian/Ubuntu: sudo apt install pulseaudio pulseaudio-utils\n")
+			retstring.WriteString("     Fedora/RHEL8+: sudo dnf install pulseaudio pulseaudio-utils\n")
+			retstring.WriteString("     RHEL/CentOS 7: sudo yum install pulseaudio pulseaudio-utils\n")
 		}
 	default:
-		retstring.WriteString("\nPlease refer to the official Pulse server documentation for installation instructions.\n")
+		retstring.WriteString("\nPlease refer to the official audio server documentation for installation instructions.\n")
 	}
 
 	retstring.WriteString("\n\nAfter installation, enable the module with the following command as unprivileged user:\n")
@@ -311,11 +534,36 @@ func retInstallationInstructions() string {
 
 // isArchLinux checks if the current Linux distribution is Arch Linux
 func isArchLinux() bool {
-	// This function checks if /etc/arch-release exists to determine if the system is Arch Linux
-	if _, err := os.Stat("/etc/arch-release"); err == nil {
-		return true
+	return detectLinuxDistribution() == "arch"
+}
+
+// isFedora checks if the current Linux distribution is Fedora
+func isFedora() bool {
+	return detectLinuxDistribution() == "fedora"
+}
+
+// isRedHat checks if the current Linux distribution is Red Hat based
+func isRedHat() bool {
+	distro := detectLinuxDistribution()
+	return distro == "rhel" || distro == "centos" || distro == "fedora"
+}
+
+// ensureAudioSystemRunning checks if audio system is running and starts it if not.
+func ensureAudioSystemRunning() error {
+	audioSystem := detectAudioSystem()
+	
+	switch audioSystem {
+	case AudioSystemPipeWire:
+		return ensurePipeWireRunning()
+	case AudioSystemPulse:
+		return ensurePulseAudioRunning()
+	default:
+		// Try to start PipeWire first, then PulseAudio
+		if err := ensurePipeWireRunning(); err != nil {
+			return ensurePulseAudioRunning()
+		}
+		return nil
 	}
-	return false
 }
 
 // ensurePulseAudioRunning checks if PulseAudio is running and starts it if not.
@@ -335,9 +583,71 @@ func ensurePulseAudioRunning() error {
 	return nil
 }
 
+// ensurePipeWireRunning checks if PipeWire is running and starts it if not.
+func ensurePipeWireRunning() error {
+	if isPipeWireRunning() {
+		common.PrintInfoMessage("PipeWire is already running.")
+		return nil
+	}
+	
+	// Try systemd user services first (preferred method)
+	if err := startPipeWireSystemd(); err == nil {
+		common.PrintSuccessMessage("PipeWire started successfully via systemd.")
+		time.Sleep(2 * time.Second)
+		return nil
+	}
+	
+	// Fallback: try starting pipewire directly
+	directStartCmd := exec.Command("pipewire")
+	if err := directStartCmd.Start(); err != nil {
+		return fmt.Errorf("failed to start PipeWire directly: %w", err)
+	}
+	
+	// For Red Hat/Fedora systems, also try to start additional services
+	if isRedHat() {
+		startRedHatPipeWireServices()
+	}
+	
+	common.PrintSuccessMessage("PipeWire started successfully.")
+	time.Sleep(2 * time.Second)
+	return nil
+}
+
+// startPipeWireSystemd starts PipeWire using systemd user services
+func startPipeWireSystemd() error {
+	services := []string{"pipewire.service", "pipewire-pulse.service"}
+	
+	for _, service := range services {
+		cmd := exec.Command("systemctl", "--user", "start", service)
+		if err := cmd.Run(); err != nil {
+			return fmt.Errorf("failed to start %s: %w", service, err)
+		}
+	}
+	
+	// Also try to start wireplumber if available (session manager)
+	wireplumberCmd := exec.Command("systemctl", "--user", "start", "wireplumber.service")
+	wireplumberCmd.Run() // Ignore errors as wireplumber might not be installed
+	
+	return nil
+}
+
+// startRedHatPipeWireServices starts additional PipeWire services specific to Red Hat systems
+func startRedHatPipeWireServices() {
+	additionalServices := []string{
+		"pipewire-media-session.service", // Legacy session manager
+		"wireplumber.service",            // Modern session manager
+	}
+	
+	for _, service := range additionalServices {
+		cmd := exec.Command("systemctl", "--user", "start", service)
+		cmd.Run() // Ignore errors as these services might not be available
+	}
+}
+
 func SetPulseCTL(address string) error {
 	/*
 	 * Use PACTL in command line to accept connection in TCP with defined port
+	 * Works with both PulseAudio and PipeWire (via pipewire-pulse)
 	 */
 	parts := strings.Split(address, ":")
 	if len(parts) != 3 {
@@ -346,11 +656,26 @@ func SetPulseCTL(address string) error {
 	port := parts[2]
 	ip := parts[1]
 
-	// Ensure PulseAudio is running
-	if err := ensurePulseAudioRunning(); err != nil {
-		return fmt.Errorf("failed to ensure PulseAudio is running: %w", err)
+	// Ensure audio system is running
+	if err := ensureAudioSystemRunning(); err != nil {
+		return fmt.Errorf("failed to ensure audio system is running: %w", err)
 	}
 
+	audioSystem := detectAudioSystem()
+	
+	switch audioSystem {
+	case AudioSystemPipeWire:
+		return setPipeWireTCPModule(ip, port)
+	case AudioSystemPulse:
+		return setPulseAudioTCPModule(ip, port)
+	default:
+		// Try PulseAudio method as fallback (should work with pipewire-pulse)
+		return setPulseAudioTCPModule(ip, port)
+	}
+}
+
+// setPulseAudioTCPModule sets up TCP module for PulseAudio
+func setPulseAudioTCPModule(ip, port string) error {
 	// Connect to PulseAudio
 	client, err := pulseaudio.NewClient()
 	if err != nil {
@@ -370,14 +695,29 @@ func SetPulseCTL(address string) error {
 	return nil
 }
 
+// setPipeWireTCPModule sets up TCP module for PipeWire using pactl (pipewire-pulse compatibility)
+func setPipeWireTCPModule(ip, port string) error {
+	// PipeWire with pipewire-pulse should support pactl commands
+	moduleArgs := fmt.Sprintf("port=%s auth-ip-acl=%s", port, ip)
+	
+	cmd := exec.Command("pactl", "load-module", "module-native-protocol-tcp", moduleArgs)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("failed to load module-native-protocol-tcp via pactl: %w\nOutput: %s", err, string(output))
+	}
+	
+	common.PrintSuccessMessage(fmt.Sprintf("Successfully loaded module-native-protocol-tcp via PipeWire"))
+	return nil
+}
+
 func UnloadPulseCTL() error {
 	/*
-	*	Unload pulseaudio TCP module
+	*	Unload audio TCP module (works with both PulseAudio and PipeWire)
 	 */
 	cmd := exec.Command("pactl", "list", "modules")
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("failed to list PulseAudio modules: %w\nOutput: %s", err, string(output))
+		return fmt.Errorf("failed to list audio modules: %w\nOutput: %s", err, string(output))
 	}
 
 	// Parse the output to find the module-native-protocol-tcp index
@@ -408,6 +748,52 @@ func UnloadPulseCTL() error {
 	}
 	fmt.Printf("Command output: %s\n", string(unloadOutput))
 
-	common.PrintSuccessMessage(fmt.Sprintf("Successfully unloaded module-native-protocol-tcp with index %s", moduleIndex))
+	audioSystemName := "audio system"
+	if detectAudioSystem() == AudioSystemPipeWire {
+		audioSystemName = "PipeWire"
+	} else if detectAudioSystem() == AudioSystemPulse {
+		audioSystemName = "PulseAudio"
+	}
+
+	common.PrintSuccessMessage(fmt.Sprintf("Successfully unloaded module-native-protocol-tcp from %s with index %s", audioSystemName, moduleIndex))
 	return nil
+}
+
+// Additional PipeWire-specific functions
+
+// GetPipeWireInfo returns information about the current PipeWire session
+func GetPipeWireInfo() (string, error) {
+	cmd := exec.Command("pw-cli", "info")
+	output, err := cmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("failed to get PipeWire info: %w", err)
+	}
+	return string(output), nil
+}
+
+// ListPipeWireNodes lists all PipeWire nodes
+func ListPipeWireNodes() (string, error) {
+	cmd := exec.Command("pw-cli", "list-objects", "Node")
+	output, err := cmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("failed to list PipeWire nodes: %w", err)
+	}
+	return string(output), nil
+}
+
+// GetAudioSystemStatus returns the status of the current audio system
+func GetAudioSystemStatus() string {
+	audioSystem := detectAudioSystem()
+	
+	switch audioSystem {
+	case AudioSystemPipeWire:
+		if info, err := GetPipeWireInfo(); err == nil {
+			return fmt.Sprintf("PipeWire is running\n%s", info)
+		}
+		return "PipeWire is running (info unavailable)"
+	case AudioSystemPulse:
+		return "PulseAudio is running"
+	default:
+		return "No audio system detected"
+	}
 }
