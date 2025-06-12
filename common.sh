@@ -10,15 +10,70 @@ GREEN='\033[0;32m'
 RED='\033[0;31m'
 YELLOW='\033[0;33m'
 BLUE='\033[0;34m'
+CYAN='\033[0;36m'
+MAGENTA='\033[0;35m'
 NC='\033[0m' # No Color
 
-# Audio system detection and installation functions
-
-# Detect Linux distribution
-detect_distro() {
+# Enhanced Arch Linux detection function
+is_arch_linux() {
+    # Primary check: /etc/arch-release file
     if [ -f /etc/arch-release ]; then
+        return 0
+    fi
+    
+    # Secondary check: /etc/os-release contains Arch
+    if [ -f /etc/os-release ] && grep -qi "arch" /etc/os-release; then
+        return 0
+    fi
+    
+    # Tertiary check: pacman command exists and /etc/pacman.conf exists
+    if command -v pacman &> /dev/null && [ -f /etc/pacman.conf ]; then
+        return 0
+    fi
+    
+    # Quaternary check: uname contains arch
+    if uname -a | grep -qi "arch"; then
+        return 0
+    fi
+    
+    return 1
+}
+
+# Enhanced Steam Deck detection
+is_steam_deck() {
+    # Check for Steam Deck specific indicators
+    if [ -f /etc/steamos-release ]; then
+        return 0
+    fi
+    
+    # Check for Steam Deck hardware identifiers
+    if [ -f /sys/devices/virtual/dmi/id/product_name ] && grep -q "Steam Deck" /sys/devices/virtual/dmi/id/product_name 2>/dev/null; then
+        return 0
+    fi
+    
+    # Check for deck user
+    if [ "$(whoami)" = "deck" ] || [ "$USER" = "deck" ]; then
+        return 0
+    fi
+    
+    # Check for Steam Deck specific mount points
+    if [ -d /home/deck ] && [ -f /usr/bin/steamos-readonly ]; then
+        return 0
+    fi
+    
+    return 1
+}
+
+# Enhanced Linux distribution detection
+detect_distro() {
+    # Enhanced Arch Linux detection first
+    if is_arch_linux; then
         echo "arch"
-    elif [ -f /etc/fedora-release ]; then
+        return 0
+    fi
+    
+    # Check for other distributions
+    if [ -f /etc/fedora-release ]; then
         echo "fedora"
     elif [ -f /etc/redhat-release ]; then
         if grep -q "CentOS" /etc/redhat-release; then
@@ -32,21 +87,38 @@ detect_distro() {
         else
             echo "debian"
         fi
+    elif [ -f /etc/gentoo-release ]; then
+        echo "gentoo"
+    elif [ -f /etc/alpine-release ]; then
+        echo "alpine"
+    elif [ -f /etc/opensuse-release ] || [ -f /etc/SUSE-brand ]; then
+        echo "opensuse"
     else
         echo "unknown"
     fi
 }
 
-# Get package manager
+# Enhanced package manager detection
 get_package_manager() {
-    if command -v pacman &> /dev/null; then
+    # Prioritize Arch Linux package manager
+    if is_arch_linux && command -v pacman &> /dev/null; then
         echo "pacman"
-    elif command -v dnf &> /dev/null; then
+        return 0
+    fi
+    
+    # Check for other package managers
+    if command -v dnf &> /dev/null; then
         echo "dnf"
     elif command -v yum &> /dev/null; then
         echo "yum"
     elif command -v apt &> /dev/null; then
         echo "apt"
+    elif command -v zypper &> /dev/null; then
+        echo "zypper"
+    elif command -v apk &> /dev/null; then
+        echo "apk"
+    elif command -v emerge &> /dev/null; then
+        echo "emerge"
     else
         echo "unknown"
     fi
@@ -54,12 +126,26 @@ get_package_manager() {
 
 # Check if PipeWire is running
 is_pipewire_running() {
-    pgrep -x pipewire &> /dev/null || [ -S "/run/user/$(id -u)/pipewire-0" ] 2>/dev/null
+    if command -v pgrep &> /dev/null; then
+        pgrep -x pipewire &> /dev/null && return 0
+    fi
+    
+    # Check for PipeWire socket
+    USER_ID=$(id -u 2>/dev/null || echo "1000")
+    if [ -S "/run/user/${USER_ID}/pipewire-0" ]; then
+        return 0
+    fi
+    
+    return 1
 }
 
 # Check if PulseAudio is running
 is_pulseaudio_running() {
-    pulseaudio --check &> /dev/null
+    if command -v pulseaudio &> /dev/null; then
+        pulseaudio --check &> /dev/null
+    else
+        return 1
+    fi
 }
 
 # Detect current audio system
@@ -73,7 +159,7 @@ detect_audio_system() {
     fi
 }
 
-# Install PipeWire packages
+# Install PipeWire packages with enhanced Arch Linux support
 install_pipewire() {
     local distro="$1"
     local pkg_manager="$2"
@@ -82,7 +168,13 @@ install_pipewire() {
     
     case "$distro" in
         "arch")
-            sudo pacman -Syu --noconfirm pipewire pipewire-pulse pipewire-alsa pipewire-jack wireplumber
+            echo -e "${CYAN}🏛️ Using pacman for PipeWire installation on Arch Linux${NC}"
+            # Update package database first
+            sudo pacman -Sy --noconfirm
+            # Install PipeWire and related packages
+            sudo pacman -S --noconfirm --needed pipewire pipewire-pulse pipewire-alsa pipewire-jack wireplumber
+            # Optional: install additional tools
+            sudo pacman -S --noconfirm --needed pipewire-audio pipewire-media-session || true
             ;;
         "fedora")
             sudo dnf install -y pipewire pipewire-pulseaudio pipewire-alsa pipewire-jack-audio-connection-kit wireplumber
@@ -103,6 +195,9 @@ install_pipewire() {
             sudo apt update
             sudo apt install -y pipewire pipewire-pulse pipewire-alsa wireplumber
             ;;
+        "opensuse")
+            sudo zypper install -y pipewire pipewire-pulseaudio pipewire-alsa wireplumber
+            ;;
         *)
             echo -e "${RED}❌ Unsupported distribution for PipeWire installation ❌${NC}"
             return 1
@@ -115,7 +210,7 @@ install_pipewire() {
     systemctl --user enable wireplumber.service 2>/dev/null || true
 }
 
-# Install PulseAudio packages
+# Install PulseAudio packages with enhanced Arch Linux support
 install_pulseaudio() {
     local distro="$1"
     local pkg_manager="$2"
@@ -124,7 +219,13 @@ install_pulseaudio() {
     
     case "$distro" in
         "arch")
-            sudo pacman -Syu --noconfirm pulseaudio pulseaudio-alsa alsa-utils
+            echo -e "${CYAN}🏛️ Using pacman for PulseAudio installation on Arch Linux${NC}"
+            # Update package database first
+            sudo pacman -Sy --noconfirm
+            # Install PulseAudio and related packages
+            sudo pacman -S --noconfirm --needed pulseaudio pulseaudio-alsa alsa-utils
+            # Optional: install additional tools
+            sudo pacman -S --noconfirm --needed pulseaudio-bluetooth pavucontrol || true
             ;;
         "fedora")
             sudo dnf install -y pulseaudio pulseaudio-utils alsa-utils
@@ -140,6 +241,9 @@ install_pulseaudio() {
         "debian"|"ubuntu")
             sudo apt update
             sudo apt install -y pulseaudio pulseaudio-utils alsa-utils
+            ;;
+        "opensuse")
+            sudo zypper install -y pulseaudio pulseaudio-utils alsa-utils
             ;;
         *)
             echo -e "${RED}❌ Unsupported distribution for PulseAudio installation ❌${NC}"
@@ -178,16 +282,20 @@ should_prefer_pipewire() {
     local distro="$1"
     
     case "$distro" in
+        "arch")
+            # Arch Linux: PipeWire is modern and well-supported
+            return 0
+            ;;
         "fedora")
             # PipeWire is default since Fedora 34
             return 0
             ;;
-        "arch")
-            # Arch usually has latest packages
-            return 0
-            ;;
         "ubuntu"|"debian")
             # Available in modern versions
+            return 0
+            ;;
+        "opensuse")
+            # OpenSUSE has good PipeWire support
             return 0
             ;;
         "rhel"|"centos")
@@ -200,7 +308,7 @@ should_prefer_pipewire() {
     esac
 }
 
-# Main audio system check and installation function
+# Enhanced audio system check with better Arch Linux support
 check_audio_system() {
     if [[ "$OSTYPE" == "darwin"* ]]; then
         echo -e "${YELLOW}🍎 Detected macOS. Checking for Homebrew... 🍎${NC}"
@@ -227,6 +335,11 @@ check_audio_system() {
     
     echo -e "${BLUE}🐧 Detected distribution: $distro 🐧${NC}"
     echo -e "${BLUE}📦 Package manager: $pkg_manager 📦${NC}"
+    
+    # Special message for Arch Linux
+    if [ "$distro" = "arch" ]; then
+        echo -e "${CYAN}🏛️ Arch Linux detected - BTW, I use Arch! 😉${NC}"
+    fi
     
     # Check current audio system status
     case "$current_audio" in
@@ -316,8 +429,7 @@ check_pulseaudio() {
     check_audio_system
 }
 
-# Original functions from your script
-
+# Enhanced xhost check with Arch Linux support
 check_xhost() {
     if ! command -v xhost &> /dev/null; then
         echo -e "${RED}❌ xhost is not installed on this system. ❌${NC}"
@@ -325,8 +437,9 @@ check_xhost() {
         local distro=$(detect_distro)
         case "$distro" in
             "arch")
-                echo -e "${YELLOW}📦 Installing xorg-xhost using pacman... 📦${NC}"
-                sudo pacman -Syu --noconfirm xorg-xhost
+                echo -e "${CYAN}🏛️ Installing xorg-xhost using pacman on Arch Linux... 📦${NC}"
+                sudo pacman -Sy --noconfirm
+                sudo pacman -S --noconfirm --needed xorg-xhost
                 ;;
             "fedora")
                 echo -e "${YELLOW}📦 Installing xorg-x11-server-utils using dnf... 📦${NC}"
@@ -346,6 +459,10 @@ check_xhost() {
                 sudo apt update
                 sudo apt install -y x11-xserver-utils
                 ;;
+            "opensuse")
+                echo -e "${YELLOW}📦 Installing xorg-x11-server using zypper... 📦${NC}"
+                sudo zypper install -y xorg-x11-server
+                ;;
             *)
                 echo -e "${RED}❌ Unsupported package manager. Please install xhost manually. ❌${NC}"
                 exit 1
@@ -357,6 +474,7 @@ check_xhost() {
     fi
 }
 
+# Enhanced curl check with Arch Linux support
 check_curl() {
     if ! command -v curl &> /dev/null; then
         echo -e "${RED}❌ curl is not installed on this system. ❌${NC}"
@@ -372,8 +490,9 @@ check_curl() {
             local distro=$(detect_distro)
             case "$distro" in
                 "arch")
-                    echo -e "${YELLOW}🐧 Installing cURL using pacman... 🐧${NC}"
-                    sudo pacman -Syu curl
+                    echo -e "${CYAN}🏛️ Installing cURL using pacman on Arch Linux... 🐧${NC}"
+                    sudo pacman -Sy --noconfirm
+                    sudo pacman -S --noconfirm --needed curl
                     ;;
                 "fedora")
                     echo -e "${YELLOW}🐧 Installing cURL using dnf... 🐧${NC}"
@@ -393,6 +512,10 @@ check_curl() {
                     sudo apt update
                     sudo apt install -y curl
                     ;;
+                "opensuse")
+                    echo -e "${YELLOW}🐧 Installing cURL using zypper... 🐧${NC}"
+                    sudo zypper install -y curl
+                    ;;
                 *)
                     echo -e "${RED}❌ Unable to detect package manager. Please install cURL manually. ❌${NC}"
                     exit 1
@@ -408,14 +531,21 @@ check_curl() {
     fi
 }
 
+# Enhanced Docker check with Arch Linux support
 check_docker() {
-    # Check if this is a Steam Deck installation (Linux only)
+    # Enhanced Steam Deck detection
     if [ "$(uname -s)" == "Linux" ]; then
-        echo -e "${YELLOW}🎮 Are you installing on a Steam Deck? (yes/no) 🎮${NC}"
-        read -p "Choose an option: " steamdeck_install
-        if [ "$steamdeck_install" == "yes" ]; then
+        if is_steam_deck; then
+            echo -e "${MAGENTA}🎮 Steam Deck detected automatically! 🎮${NC}"
             install_docker_steamdeck
             return
+        else
+            echo -e "${YELLOW}🎮 Are you installing on a Steam Deck? (yes/no) 🎮${NC}"
+            read -p "Choose an option: " steamdeck_install
+            if [ "$steamdeck_install" == "yes" ]; then
+                install_docker_steamdeck
+                return
+            fi
         fi
     fi
     
@@ -444,7 +574,7 @@ check_docker_user_only() {
     check_docker
 }
 
-# Standard Docker installation function
+# Enhanced Docker installation with Arch Linux support
 install_docker_standard() {
     arch=$(uname -m)
     os=$(uname -s)
@@ -462,45 +592,84 @@ install_docker_standard() {
         echo -e "${YELLOW}ℹ️ Please launch Docker from Applications to start the Docker daemon. ℹ️${NC}"
     elif [ "$os" == "Linux" ]; then
         echo -e "${YELLOW}🐧 Installing Docker on your Linux machine... 🐧${NC}"
-        echo -e "${YELLOW}⚠️ This will require sudo privileges to install Docker. ⚠️${NC}"
         
-        echo -e "${BLUE}Using Docker's official installation script... 🐧${NC}"
-        
-        if command -v curl &> /dev/null; then
-            curl -fsSL "https://get.docker.com/" | sudo sh
-        elif command -v wget &> /dev/null; then
-            wget -qO- "https://get.docker.com/" | sudo sh
-        else
-            echo -e "${RED}❌ Missing curl/wget. Please install one of them. ❌${NC}"
-            exit 1
-        fi
-
-        if command -v sudo && command -v groups; then
-            if ! groups | grep -q docker; then
-                echo -e "${BLUE}🔧 Adding you to the Docker group... 🔧${NC}"
-                sudo usermod -aG docker "$(whoami)"
-                echo -e "${YELLOW}⚡ You may need to log out and log back in for this to take effect. ⚡${NC}"
+        # Enhanced Arch Linux Docker installation
+        local distro=$(detect_distro)
+        if [ "$distro" = "arch" ]; then
+            echo -e "${CYAN}🏛️ Arch Linux detected - using pacman for Docker installation${NC}"
+            echo -e "${YELLOW}⚠️ This will require sudo privileges to install Docker. ⚠️${NC}"
+            
+            # Update package database and install Docker
+            sudo pacman -Sy --noconfirm
+            sudo pacman -S --noconfirm --needed docker docker-compose
+            
+            # Enable and start Docker service
+            if command -v systemctl &> /dev/null; then
+                echo -e "${BLUE}🚀 Enabling and starting Docker service... 🚀${NC}"
+                sudo systemctl enable docker
+                sudo systemctl start docker
             fi
-        fi
-        
-        if command -v systemctl; then
-            echo -e "${BLUE}🚀 Starting Docker service... 🚀${NC}"
-            sudo systemctl start docker
-            sudo systemctl enable docker
-        fi
+            
+            # Add user to docker group
+            current_user=$(whoami)
+            if ! groups "$current_user" 2>/dev/null | grep -q docker; then
+                echo -e "${BLUE}🔧 Adding '$current_user' to Docker group... 🔧${NC}"
+                sudo usermod -aG docker "$current_user"
+                echo -e "${YELLOW}⚡ You may need to log out and log back in for Docker group changes to take effect. ⚡${NC}"
+            fi
+            
+            echo -e "${GREEN}🎉 Docker installed successfully using pacman! 🎉${NC}"
+            
+            # Still install buildx and compose for completeness
+            install_buildx
+            install_docker_compose
+            return 0
+        else
+            # Standard Docker installation for other distributions
+            echo -e "${YELLOW}⚠️ This will require sudo privileges to install Docker. ⚠️${NC}"
+            
+            echo -e "${BLUE}Using Docker's official installation script... 🐧${NC}"
+            
+            if command -v curl &> /dev/null; then
+                curl -fsSL "https://get.docker.com/" | sudo sh
+            elif command -v wget &> /dev/null; then
+                wget -qO- "https://get.docker.com/" | sudo sh
+            else
+                echo -e "${RED}❌ Missing curl/wget. Please install one of them. ❌${NC}"
+                exit 1
+            fi
 
-        echo -e "${GREEN}🎉 Docker is now installed and running! 🎉${NC}"
-        
-        install_buildx
-        install_docker_compose
+            if command -v sudo && command -v groups; then
+                current_user=$(whoami)
+                if ! groups "$current_user" 2>/dev/null | grep -q docker; then
+                    echo -e "${BLUE}🔧 Adding you to the Docker group... 🔧${NC}"
+                    sudo usermod -aG docker "$current_user"
+                    echo -e "${YELLOW}⚡ You may need to log out and log back in for this to take effect. ⚡${NC}"
+                fi
+            fi
+            
+            if command -v systemctl &> /dev/null; then
+                echo -e "${BLUE}🚀 Starting Docker service... 🚀${NC}"
+                sudo systemctl start docker
+                sudo systemctl enable docker
+            fi
+
+            echo -e "${GREEN}🎉 Docker is now installed and running! 🎉${NC}"
+            
+            install_buildx
+            install_docker_compose
+        fi
     else
         echo -e "${RED}❌ Unsupported operating system: $os ❌${NC}"
         exit 1
     fi
 }
 
+# Enhanced Steam Deck Docker installation
 install_docker_steamdeck() {
-    # Installation steps for Docker on Steam Deck
+    # Installation steps for Docker on Steam Deck (Arch Linux based)
+    echo -e "${MAGENTA}🎮 Installing Docker on Steam Deck using Arch Linux methods... 🎮${NC}"
+    
     echo -e "${YELLOW}[+] 🎮 Disabling read-only mode on Steam Deck 🎮${NC}"
     sudo steamos-readonly disable
 
@@ -508,26 +677,43 @@ install_docker_steamdeck() {
     sudo pacman-key --init
     sudo pacman-key --populate archlinux
 
-    echo -e "${YELLOW}[+] 🐳 Installing Docker 🐳${NC}"
-    sudo pacman -Syu docker
+    echo -e "${YELLOW}[+] 🐳 Installing Docker using pacman 🐳${NC}"
+    sudo pacman -Syu --noconfirm docker docker-compose
 
     echo -e "${YELLOW}[+] 🔒 Re-enabling read-only mode on Steam Deck 🔒${NC}"
     sudo steamos-readonly enable
 
+    # Install Docker Compose for Steam Deck
     install_docker_compose_steamdeck
+
+    # Add user to docker group
+    current_user=$(whoami)
+    if ! groups "$current_user" 2>/dev/null | grep -q docker; then
+        echo -e "${YELLOW}[+] 👥 Adding '$current_user' user to Docker user group 👥${NC}"
+        sudo usermod -aG docker "$current_user"
+        echo -e "${YELLOW}⚡ You may need to log out and log back in for Docker group changes to take effect. ⚡${NC}"
+    fi
+    
+    # Start Docker service
+    if command -v systemctl &> /dev/null; then
+        echo -e "${BLUE}🚀 Starting Docker service... 🚀${NC}"
+        sudo systemctl start docker
+        sudo systemctl enable docker
+    fi
+
+    echo -e "${GREEN}✅ Docker and Docker Compose installed successfully on Steam Deck using Arch methods! ✅${NC}"
 }
 
 install_docker_compose_steamdeck() {
-    echo -e "${YELLOW}[+] 🧩 Installing Docker Compose v2 plugin 🧩${NC}"
+    echo -e "${YELLOW}[+] 🧩 Installing Docker Compose v2 plugin for Steam Deck 🧩${NC}"
     DOCKER_CONFIG=${DOCKER_CONFIG:-$HOME/.docker}
     mkdir -p $DOCKER_CONFIG/cli-plugins
-    sudo curl -SL https://github.com/docker/compose/releases/download/v2.36.0/docker-compose-linux-x86_64 -o $DOCKER_CONFIG/cli-plugins/docker-compose
+    
+    # Download Docker Compose for x86_64 (Steam Deck architecture)
+    curl -SL https://github.com/docker/compose/releases/download/v2.36.0/docker-compose-linux-x86_64 -o $DOCKER_CONFIG/cli-plugins/docker-compose
     chmod +x $DOCKER_CONFIG/cli-plugins/docker-compose
 
-    echo -e "${YELLOW}[+] 👥 Adding 'deck' user to Docker user group 👥${NC}"
-    sudo usermod -a -G docker deck
-
-    echo -e "${GREEN}✅ Docker and Docker Compose v2 installed successfully on Steam Deck. ✅${NC}"
+    echo -e "${GREEN}✅ Docker Compose v2 installed successfully for Steam Deck ✅${NC}"
 }
 
 install_buildx() {
@@ -616,6 +802,7 @@ install_docker_compose() {
     fi
 }
 
+# Enhanced Go installation with Arch Linux support
 install_go() {
     if command -v go &> /dev/null; then
         echo -e "${GREEN}✅ golang is already installed and in PATH. Moving on. ✅${NC}"
@@ -628,6 +815,17 @@ install_go() {
         return 0
     fi
 
+    # Check if Go is available via package manager on Arch Linux
+    local distro=$(detect_distro)
+    if [ "$distro" = "arch" ]; then
+        echo -e "${CYAN}🏛️ Arch Linux detected. Installing Go using pacman... 📦${NC}"
+        sudo pacman -Sy --noconfirm
+        sudo pacman -S --noconfirm --needed go
+        echo -e "${GREEN}✅ Go installed successfully using pacman on Arch Linux. ✅${NC}"
+        return 0
+    fi
+
+    # Fallback to manual installation for other distributions
     [ -d thirdparty ] || mkdir thirdparty
     cd thirdparty
     arch=$(uname -m)
@@ -725,6 +923,7 @@ pull_docker_image() {
     sudo docker pull $pull_image
 }
 
+# Enhanced binary installation with better path management
 install_binary_alias() {
     # First, ask where to install the binary
     echo -e "${YELLOW}📦 Where would you like to install the rfswift binary? 📦${NC}"
@@ -789,6 +988,11 @@ install_binary_alias() {
             zsh)
                 ALIAS_FILE="$HOME_DIR/.zshrc"
                 ;;
+            fish)
+                ALIAS_FILE="$HOME_DIR/.config/fish/config.fish"
+                # Create fish config directory if it doesn't exist
+                mkdir -p "$(dirname "$ALIAS_FILE")"
+                ;;
             *)
                 ALIAS_FILE="$HOME_DIR/.${SHELL_NAME}rc"
                 ;;
@@ -804,12 +1008,24 @@ install_binary_alias() {
         ALIAS_EXISTS=false
         ALIAS_NEEDS_UPDATE=false
         if [ -f "$ALIAS_FILE" ]; then
-            # Extract the current path if the alias already exists
-            EXISTING_ALIAS=$(grep "^alias $alias_name=" "$ALIAS_FILE" 2>/dev/null)
+            # Handle fish shell syntax differently
+            if [ "$SHELL_NAME" = "fish" ]; then
+                EXISTING_ALIAS=$(grep "^alias $alias_name " "$ALIAS_FILE" 2>/dev/null)
+                ALIAS_PATTERN="^alias $alias_name "
+            else
+                EXISTING_ALIAS=$(grep "^alias $alias_name=" "$ALIAS_FILE" 2>/dev/null)
+                ALIAS_PATTERN="^alias $alias_name="
+            fi
+            
             if [ -n "$EXISTING_ALIAS" ]; then
                 ALIAS_EXISTS=true
                 # Extract the path from the existing alias
-                EXISTING_PATH=$(echo "$EXISTING_ALIAS" | sed -E "s/^alias $alias_name='?([^']*)'?$/\1/")
+                if [ "$SHELL_NAME" = "fish" ]; then
+                    EXISTING_PATH=$(echo "$EXISTING_ALIAS" | sed -E "s/^alias $alias_name '?([^']*)'?$/\1/")
+                else
+                    EXISTING_PATH=$(echo "$EXISTING_ALIAS" | sed -E "s/^alias $alias_name='?([^']*)'?$/\1/")
+                fi
+                
                 if [ "$EXISTING_PATH" != "$BINARY_PATH" ]; then
                     ALIAS_NEEDS_UPDATE=true
                     echo -e "${YELLOW}[!] ⚠️ Alias '$alias_name' already exists but points to a different path: ⚠️${NC}"
@@ -818,9 +1034,13 @@ install_binary_alias() {
                     read -p "Do you want to update the alias to the new path? (yes/no): " update_alias
                     if [ "$update_alias" == "yes" ]; then
                         # Remove the existing alias line
-                        sed -i.bak "/^alias $alias_name=/d" "$ALIAS_FILE"
-                        # Add the new alias
-                        echo "alias $alias_name='$BINARY_PATH'" >> "$ALIAS_FILE"
+                        sed -i.bak "/$ALIAS_PATTERN/d" "$ALIAS_FILE"
+                        # Add the new alias with appropriate syntax
+                        if [ "$SHELL_NAME" = "fish" ]; then
+                            echo "alias $alias_name '$BINARY_PATH'" >> "$ALIAS_FILE"
+                        else
+                            echo "alias $alias_name='$BINARY_PATH'" >> "$ALIAS_FILE"
+                        fi
                         echo -e "${GREEN}✅ Alias '$alias_name' updated successfully. ✅${NC}"
                     else
                         echo -e "${GREEN}👍 Keeping existing alias configuration. 👍${NC}"
@@ -834,28 +1054,40 @@ install_binary_alias() {
         # Only add the alias if it doesn't exist and doesn't need an update
         if [ "$ALIAS_EXISTS" = false ] && [ "$ALIAS_NEEDS_UPDATE" = false ]; then
             # Add the alias to the appropriate shell configuration file for the user
-            echo "alias $alias_name='$BINARY_PATH'" >> "$ALIAS_FILE"
+            if [ "$SHELL_NAME" = "fish" ]; then
+                echo "alias $alias_name '$BINARY_PATH'" >> "$ALIAS_FILE"
+            else
+                echo "alias $alias_name='$BINARY_PATH'" >> "$ALIAS_FILE"
+            fi
             echo -e "${GREEN}✅ Alias '$alias_name' installed successfully! ✅${NC}"
         fi
         
         # Provide instructions to apply changes
-        if [ "$SHELL_NAME" = "zsh" ]; then
-            echo -e "${YELLOW}🔄 Zsh configuration updated. Please restart your terminal or run 'exec zsh' to apply the changes. 🔄${NC}"
-        elif [ "$SHELL_NAME" = "bash" ]; then
-            # Source the Bash configuration file
-            if [ -f "$ALIAS_FILE" ]; then
+        case "$SHELL_NAME" in
+            "zsh")
+                echo -e "${YELLOW}🔄 Zsh configuration updated. Please restart your terminal or run 'exec zsh' to apply the changes. 🔄${NC}"
+                ;;
+            "bash")
                 echo -e "${YELLOW}🔄 Bash configuration updated. Please run 'source $ALIAS_FILE' to apply the changes. 🔄${NC}"
-            fi
-        else
-            echo -e "${YELLOW}🔄 Please restart your terminal or source the ${ALIAS_FILE} manually to apply the alias. 🔄${NC}"
-        fi
+                ;;
+            "fish")
+                echo -e "${YELLOW}🔄 Fish configuration updated. Please restart your terminal or run 'source $ALIAS_FILE' to apply the changes. 🔄${NC}"
+                ;;
+            *)
+                echo -e "${YELLOW}🔄 Please restart your terminal or source the ${ALIAS_FILE} manually to apply the alias. 🔄${NC}"
+                ;;
+        esac
         
         # If installed to user directory, add path to PATH if needed
         if [ "$install_location" == "2" ]; then
             # Check if the directory is already in PATH
             if [[ ":$PATH:" != *":$INSTALL_DIR:"* ]]; then
                 echo -e "${YELLOW}[+] 🔀 Adding $INSTALL_DIR to your PATH 🔀${NC}"
-                echo "export PATH=\$PATH:$INSTALL_DIR" >> "$ALIAS_FILE"
+                if [ "$SHELL_NAME" = "fish" ]; then
+                    echo "set -gx PATH \$PATH $INSTALL_DIR" >> "$ALIAS_FILE"
+                else
+                    echo "export PATH=\$PATH:$INSTALL_DIR" >> "$ALIAS_FILE"
+                fi
                 echo -e "${GREEN}✅ PATH updated successfully. Please restart your terminal or source your shell config file. ✅${NC}"
             fi
         fi
@@ -865,20 +1097,37 @@ install_binary_alias() {
         # If user-only installation and no alias, still add to PATH if needed
         if [ "$install_location" == "2" ]; then
             # Detect the shell configuration file
-            if [[ "$OSTYPE" == "darwin"* ]]; then
-                [ -f "$HOME/.bash_profile" ] && RC_FILE="$HOME/.bash_profile" || RC_FILE="$HOME/.profile"
-                [ -f "$HOME/.zshrc" ] && [ "$SHELL" = *"zsh"* ] && RC_FILE="$HOME/.zshrc"
-            else
-                [ -f "$HOME/.bashrc" ] && RC_FILE="$HOME/.bashrc" || RC_FILE="$HOME/.profile"
-                [ -f "$HOME/.zshrc" ] && [ "$SHELL" = *"zsh"* ] && RC_FILE="$HOME/.zshrc"
-            fi
+            SHELL_NAME=$(basename "$SHELL")
+            case "$SHELL_NAME" in
+                "bash")
+                    if [[ "$OSTYPE" == "darwin"* ]]; then
+                        [ -f "$HOME/.bash_profile" ] && RC_FILE="$HOME/.bash_profile" || RC_FILE="$HOME/.profile"
+                    else
+                        [ -f "$HOME/.bashrc" ] && RC_FILE="$HOME/.bashrc" || RC_FILE="$HOME/.profile"
+                    fi
+                    ;;
+                "zsh")
+                    RC_FILE="$HOME/.zshrc"
+                    ;;
+                "fish")
+                    RC_FILE="$HOME/.config/fish/config.fish"
+                    mkdir -p "$(dirname "$RC_FILE")"
+                    ;;
+                *)
+                    RC_FILE="$HOME/.profile"
+                    ;;
+            esac
             
             # Check if the directory is already in PATH
             if [[ ":$PATH:" != *":$INSTALL_DIR:"* ]]; then
                 echo -e "${YELLOW}[+] 🔀 Would you like to add $INSTALL_DIR to your PATH? (yes/no) 🔀${NC}"
                 read -p "Choose an option: " add_to_path
                 if [ "$add_to_path" == "yes" ]; then
-                    echo "export PATH=\$PATH:$INSTALL_DIR" >> "$RC_FILE"
+                    if [ "$SHELL_NAME" = "fish" ]; then
+                        echo "set -gx PATH \$PATH $INSTALL_DIR" >> "$RC_FILE"
+                    else
+                        echo "export PATH=\$PATH:$INSTALL_DIR" >> "$RC_FILE"
+                    fi
                     echo -e "${GREEN}✅ PATH updated in $RC_FILE. Please restart your terminal or run 'source $RC_FILE'. ✅${NC}"
                 else
                     echo -e "${YELLOW}ℹ️ Note: You'll need to run $BINARY_PATH using its full path. ℹ️${NC}"
@@ -888,8 +1137,15 @@ install_binary_alias() {
     fi
     
     echo -e "${GREEN}🎉 Installation complete! You can now use rfswift. 🎉${NC}"
+    
+    # Show system info if Arch Linux
+    local distro=$(detect_distro)
+    if [ "$distro" = "arch" ]; then
+        echo -e "${CYAN}🏛️ BTW, you're using Arch! RF-Swift is now optimized for your system. 🏛️${NC}"
+    fi
 }
 
+# Enhanced config file check
 check_config_file() {
     # Determine config file location based on OS
     if [[ "$OSTYPE" == "darwin"* ]]; then
@@ -1001,6 +1257,7 @@ check_config_file() {
     fi
 }
 
+# Enhanced rainbow logo display with Arch Linux easter egg
 display_rainbow_logo_animated() {
     # Define an array of colors for rainbow effect
     colors=(
@@ -1052,16 +1309,48 @@ display_rainbow_logo_animated() {
         done
     fi
     
-    # Add a tagline
-    echo -e "\n${colors[5]}🔥 RF Swift by @Penthertz - Radio Frequency Swiss Army Knife 🔥${NC}\n"
+    # Add a tagline with Arch Linux easter egg
+    echo -e "\n${colors[5]}🔥 RF Swift by @Penthertz - Radio Frequency Swiss Army Knife 🔥${NC}"
+    
+    # Show Arch Linux easter egg if detected
+    if is_arch_linux; then
+        echo -e "${CYAN}🏛️ BTW, I use Arch! 🏛️${NC}"
+    fi
+    
+    echo ""
     
     # Add a slight delay before continuing
     sleep 0.5
 }
 
+# Enhanced system information display
+show_system_info() {
+    echo -e "${BLUE}🖥️ System Information: 🖥️${NC}"
+    echo -e "${BLUE}   OS: $(uname -s) 🖥️${NC}"
+    echo -e "${BLUE}   Architecture: $(uname -m) 🏗️${NC}"
+    
+    local distro=$(detect_distro)
+    local pkg_mgr=$(get_package_manager)
+    
+    echo -e "${BLUE}   Distribution: $distro 🐧${NC}"
+    echo -e "${BLUE}   Package Manager: $pkg_mgr 📦${NC}"
+    
+    if is_steam_deck; then
+        echo -e "${MAGENTA}   🎮 Steam Deck detected! 🎮${NC}"
+    fi
+    
+    if is_arch_linux; then
+        echo -e "${CYAN}   🏛️ Arch Linux system detected! 🏛️${NC}"
+    fi
+    
+    echo ""
+}
+
 # Main execution section - if this script is run directly
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
-    echo -e "${BLUE}🎵 RF Swift Installer with Enhanced Audio Support 🎵${NC}"
+    display_rainbow_logo_animated
+    echo -e "${BLUE}🎵 RF Swift Enhanced Installer with Arch Linux Support 🎵${NC}"
     echo ""
+    show_system_info
     show_audio_status
 fi

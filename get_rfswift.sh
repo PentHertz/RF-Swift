@@ -1,5 +1,5 @@
 #!/bin/sh
-# RF-Swift Installer Script
+# RF-Swift Enhanced Installer Script
 # Usage: curl -fsSL "https://get.rfswift.io/" | sh
 # or: wget -qO- "https://get.rfswift.io/" | sh
 
@@ -32,7 +32,32 @@ color_echo() {
   esac
 }
 
-# Function to detect if running on Steam Deck
+# Enhanced Arch Linux detection function
+is_arch_linux() {
+  # Primary check: /etc/arch-release file
+  if [ -f /etc/arch-release ]; then
+    return 0
+  fi
+  
+  # Secondary check: /etc/os-release contains Arch
+  if [ -f /etc/os-release ] && grep -qi "arch" /etc/os-release; then
+    return 0
+  fi
+  
+  # Tertiary check: pacman command exists and /etc/pacman.conf exists
+  if command_exists pacman && [ -f /etc/pacman.conf ]; then
+    return 0
+  fi
+  
+  # Quaternary check: uname contains arch
+  if uname -a | grep -qi "arch"; then
+    return 0
+  fi
+  
+  return 1
+}
+
+# Enhanced Steam Deck detection
 is_steam_deck() {
   # Check for Steam Deck specific indicators
   if [ -f /etc/steamos-release ]; then
@@ -40,7 +65,7 @@ is_steam_deck() {
   fi
   
   # Check for Steam Deck hardware identifiers
-  if grep -q "Steam Deck" /sys/devices/virtual/dmi/id/product_name 2>/dev/null; then
+  if [ -f /sys/devices/virtual/dmi/id/product_name ] && grep -q "Steam Deck" /sys/devices/virtual/dmi/id/product_name 2>/dev/null; then
     return 0
   fi
   
@@ -49,16 +74,24 @@ is_steam_deck() {
     return 0
   fi
   
+  # Check for Steam Deck specific mount points
+  if [ -d /home/deck ] && [ -f /usr/bin/steamos-readonly ]; then
+    return 0
+  fi
+  
   return 1
 }
 
-# Audio system detection and installation functions
-
-# Detect Linux distribution
+# Enhanced Linux distribution detection
 detect_distro() {
-  if [ -f /etc/arch-release ]; then
+  # Enhanced Arch Linux detection first
+  if is_arch_linux; then
     echo "arch"
-  elif [ -f /etc/fedora-release ]; then
+    return 0
+  fi
+  
+  # Check for other distributions
+  if [ -f /etc/fedora-release ]; then
     echo "fedora"
   elif [ -f /etc/redhat-release ]; then
     if grep -q "CentOS" /etc/redhat-release; then
@@ -72,21 +105,38 @@ detect_distro() {
     else
       echo "debian"
     fi
+  elif [ -f /etc/gentoo-release ]; then
+    echo "gentoo"
+  elif [ -f /etc/alpine-release ]; then
+    echo "alpine"
+  elif [ -f /etc/opensuse-release ] || [ -f /etc/SUSE-brand ]; then
+    echo "opensuse"
   else
     echo "unknown"
   fi
 }
 
-# Get package manager
+# Enhanced package manager detection
 get_package_manager() {
-  if command_exists pacman; then
+  # Prioritize Arch Linux package manager
+  if is_arch_linux && command_exists pacman; then
     echo "pacman"
-  elif command_exists dnf; then
+    return 0
+  fi
+  
+  # Check for other package managers
+  if command_exists dnf; then
     echo "dnf"
   elif command_exists yum; then
     echo "yum"
   elif command_exists apt; then
     echo "apt"
+  elif command_exists zypper; then
+    echo "zypper"
+  elif command_exists apk; then
+    echo "apk"
+  elif command_exists emerge; then
+    echo "emerge"
   else
     echo "unknown"
   fi
@@ -132,16 +182,20 @@ should_prefer_pipewire() {
   local distro="$1"
   
   case "$distro" in
+    "arch")
+      # Arch Linux: PipeWire is modern and well-supported
+      return 0
+      ;;
     "fedora")
       # PipeWire is default since Fedora 34
       return 0
       ;;
-    "arch")
-      # Arch usually has latest packages
-      return 0
-      ;;
     "ubuntu"|"debian")
       # Available in modern versions
+      return 0
+      ;;
+    "opensuse")
+      # OpenSUSE has good PipeWire support
       return 0
       ;;
     "rhel"|"centos")
@@ -154,7 +208,7 @@ should_prefer_pipewire() {
   esac
 }
 
-# Install PipeWire packages
+# Enhanced PipeWire installation with Arch Linux optimization
 install_pipewire() {
   local distro="$1"
   
@@ -163,7 +217,13 @@ install_pipewire() {
   case "$distro" in
     "arch")
       if have_sudo_access; then
-        sudo pacman -Syu --noconfirm pipewire pipewire-pulse pipewire-alsa pipewire-jack wireplumber
+        color_echo "blue" "📦 Using pacman to install PipeWire on Arch Linux..."
+        # Update package database first
+        sudo pacman -Sy --noconfirm
+        # Install PipeWire and related packages
+        sudo pacman -S --noconfirm --needed pipewire pipewire-pulse pipewire-alsa pipewire-jack wireplumber
+        # Optional: install additional tools
+        sudo pacman -S --noconfirm --needed pipewire-audio pipewire-media-session || true
       else
         color_echo "red" "sudo access required for package installation"
         return 1
@@ -179,7 +239,6 @@ install_pipewire() {
       ;;
     "rhel"|"centos")
       if command_exists dnf; then
-        # RHEL/CentOS 8+
         if have_sudo_access; then
           sudo dnf install -y pipewire pipewire-pulseaudio pipewire-alsa wireplumber
         else
@@ -187,7 +246,6 @@ install_pipewire() {
           return 1
         fi
       else
-        # RHEL/CentOS 7 - PipeWire not available, install PulseAudio instead
         color_echo "yellow" "ℹ️ PipeWire not available on RHEL/CentOS 7, installing PulseAudio instead"
         return install_pulseaudio "$distro"
       fi
@@ -196,6 +254,14 @@ install_pipewire() {
       if have_sudo_access; then
         sudo apt update
         sudo apt install -y pipewire pipewire-pulse pipewire-alsa wireplumber
+      else
+        color_echo "red" "sudo access required for package installation"
+        return 1
+      fi
+      ;;
+    "opensuse")
+      if have_sudo_access; then
+        sudo zypper install -y pipewire pipewire-pulseaudio pipewire-alsa wireplumber
       else
         color_echo "red" "sudo access required for package installation"
         return 1
@@ -217,7 +283,7 @@ install_pipewire() {
   return 0
 }
 
-# Install PulseAudio packages
+# Enhanced PulseAudio installation with Arch Linux optimization
 install_pulseaudio() {
   local distro="$1"
   
@@ -226,7 +292,13 @@ install_pulseaudio() {
   case "$distro" in
     "arch")
       if have_sudo_access; then
-        sudo pacman -Syu --noconfirm pulseaudio pulseaudio-alsa alsa-utils
+        color_echo "blue" "📦 Using pacman to install PulseAudio on Arch Linux..."
+        # Update package database first
+        sudo pacman -Sy --noconfirm
+        # Install PulseAudio and related packages
+        sudo pacman -S --noconfirm --needed pulseaudio pulseaudio-alsa alsa-utils
+        # Optional: install additional tools
+        sudo pacman -S --noconfirm --needed pulseaudio-bluetooth pavucontrol || true
       else
         color_echo "red" "sudo access required for package installation"
         return 1
@@ -257,6 +329,14 @@ install_pulseaudio() {
       if have_sudo_access; then
         sudo apt update
         sudo apt install -y pulseaudio pulseaudio-utils alsa-utils
+      else
+        color_echo "red" "sudo access required for package installation"
+        return 1
+      fi
+      ;;
+    "opensuse")
+      if have_sudo_access; then
+        sudo zypper install -y pulseaudio pulseaudio-utils alsa-utils
       else
         color_echo "red" "sudo access required for package installation"
         return 1
@@ -316,7 +396,7 @@ start_pulseaudio() {
   return 1
 }
 
-# Check and install audio system
+# Enhanced audio system check with better Arch Linux support
 check_audio_system() {
   color_echo "blue" "🔍 Checking audio system..."
   
@@ -333,6 +413,11 @@ check_audio_system() {
   local current_audio=$(detect_audio_system)
   
   color_echo "blue" "🐧 Detected distribution: $distro"
+  
+  # Special message for Arch Linux
+  if [ "$distro" = "arch" ]; then
+    color_echo "cyan" "🏛️ Arch Linux detected - using optimized package management with pacman"
+  fi
   
   # Check current audio system status
   case "$current_audio" in
@@ -427,8 +512,26 @@ show_audio_status() {
 
 # Fun welcome message
 fun_welcome() {
-  color_echo "cyan" "🎉 WELCOME TO THE RF-Swift Installer! 🚀"
+  color_echo "cyan" "🎉 WELCOME TO THE RF-Swift Enhanced Installer! 🚀"
   color_echo "yellow" "Prepare yourself for an epic journey in the world of radio frequencies! 📡"
+  
+  # Show system information
+  local distro=$(detect_distro)
+  local pkg_mgr=$(get_package_manager)
+  
+  color_echo "blue" "🖥️ System Information:"
+  color_echo "blue" "   OS: $(uname -s)"
+  color_echo "blue" "   Architecture: $(uname -m)"
+  color_echo "blue" "   Distribution: $distro"
+  color_echo "blue" "   Package Manager: $pkg_mgr"
+  
+  if is_steam_deck; then
+    color_echo "magenta" "🎮 Steam Deck detected!"
+  fi
+  
+  if is_arch_linux; then
+    color_echo "cyan" "🏛️ Arch Linux system detected - BTW, I use Arch! 😉"
+  fi
 }
 
 # Fun thank you message after installation
@@ -468,10 +571,8 @@ prompt_yes_no() {
   
   # Try to use /dev/tty for interactive input even in pipe scenarios
   if [ -t 0 ]; then
-    # Standard terminal input is available
     tty_device="/dev/stdin"
   elif [ -e "/dev/tty" ]; then
-    # We're in a pipe but /dev/tty might be available
     tty_device="/dev/tty"
   else
     # No interactive terminal available, use defaults
@@ -602,16 +703,16 @@ create_alias() {
   fi
 }
 
-# Steam Deck specific Docker installation
+# Enhanced Steam Deck Docker installation with Arch Linux optimization
 install_docker_steamdeck() {
-  color_echo "yellow" "🎮 Installing Docker on Steam Deck..."
+  color_echo "yellow" "🎮 Installing Docker on Steam Deck using Arch Linux methods..."
   
   if ! have_sudo_access; then
     color_echo "red" "🚨 Steam Deck Docker installation requires sudo privileges."
     return 1
   fi
   
-  # Installation steps for Docker on Steam Deck
+  # Installation steps for Docker on Steam Deck (Arch Linux based)
   color_echo "blue" "🎮 Disabling read-only mode on Steam Deck"
   sudo steamos-readonly disable
 
@@ -619,8 +720,8 @@ install_docker_steamdeck() {
   sudo pacman-key --init
   sudo pacman-key --populate archlinux
 
-  color_echo "blue" "🐳 Installing Docker"
-  sudo pacman -Syu --noconfirm docker
+  color_echo "blue" "🐳 Installing Docker using pacman"
+  sudo pacman -Syu --noconfirm docker docker-compose
 
   color_echo "blue" "🔒 Re-enabling read-only mode on Steam Deck"
   sudo steamos-readonly enable
@@ -645,7 +746,7 @@ install_docker_steamdeck() {
     sudo systemctl enable docker
   fi
 
-  color_echo "green" "🎉 Docker installed successfully on Steam Deck!"
+  color_echo "green" "🎉 Docker installed successfully on Steam Deck using Arch Linux methods!"
   return 0
 }
 
@@ -664,7 +765,7 @@ install_docker_compose_steamdeck() {
   color_echo "green" "✅ Docker Compose v2 installed successfully for Steam Deck"
 }
 
-# Function to check if Docker is installed
+# Enhanced Docker check with Arch Linux optimization
 check_docker() {
   color_echo "blue" "🔍 Checking if Docker is installed..."
 
@@ -709,7 +810,7 @@ check_docker() {
   fi
 }
 
-# Function to install Docker (standard method)
+# Enhanced Docker installation with Arch Linux support
 install_docker() {
   case "$(uname -s)" in
     Darwin*)
@@ -742,39 +843,74 @@ install_docker() {
       
     Linux*)
       color_echo "blue" "🐧 Installing Docker on your Linux machine..."
-      color_echo "yellow" "⚠️ This will require sudo privileges to install Docker."
       
-      if ! have_sudo_access; then
-        color_echo "red" "🚨 Unable to obtain sudo privileges. Docker installation requires sudo."
-        return 1
-      fi
-      
-      color_echo "blue" "Using sudo to install Docker..."
-      
-      if command_exists curl; then
-        curl -fsSL "https://get.docker.com/" | sudo sh
-      elif command_exists wget; then
-        wget -qO- "https://get.docker.com/" | sudo sh
-      else
-        color_echo "red" "🚨 Missing curl/wget. Please install one of them."
-        return 1
-      fi
-
-      if command_exists sudo && command_exists groups; then
-        if ! groups | grep -q docker; then
-          color_echo "blue" "🔧 Adding you to the Docker group..."
-          sudo usermod -aG docker "$(get_real_user)"
-          color_echo "yellow" "⚡ You may need to log out and log back in for this to take effect."
+      # Enhanced Arch Linux Docker installation
+      if is_arch_linux; then
+        color_echo "cyan" "🏛️ Arch Linux detected - using pacman for Docker installation"
+        
+        if ! have_sudo_access; then
+          color_echo "red" "🚨 Unable to obtain sudo privileges. Docker installation requires sudo."
+          return 1
         fi
-      fi
-      
-      if command_exists systemctl; then
-        color_echo "blue" "🚀 Starting Docker service..."
-        sudo systemctl start docker
-        sudo systemctl enable docker
-      fi
+        
+        color_echo "blue" "📦 Installing Docker using pacman..."
+        sudo pacman -Sy --noconfirm
+        sudo pacman -S --noconfirm --needed docker docker-compose
+        
+        # Enable and start Docker service
+        if command_exists systemctl; then
+          color_echo "blue" "🚀 Enabling and starting Docker service..."
+          sudo systemctl enable docker
+          sudo systemctl start docker
+        fi
+        
+        # Add user to docker group
+        current_user=$(get_real_user)
+        if ! groups "$current_user" 2>/dev/null | grep -q docker; then
+          color_echo "blue" "🔧 Adding '$current_user' to Docker group..."
+          sudo usermod -aG docker "$current_user"
+          color_echo "yellow" "⚡ You may need to log out and log back in for Docker group changes to take effect."
+        fi
+        
+        color_echo "green" "🎉 Docker installed successfully using pacman!"
+        return 0
+      else
+        # Standard Docker installation for other distributions
+        color_echo "yellow" "⚠️ This will require sudo privileges to install Docker."
+        
+        if ! have_sudo_access; then
+          color_echo "red" "🚨 Unable to obtain sudo privileges. Docker installation requires sudo."
+          return 1
+        fi
+        
+        color_echo "blue" "Using sudo to install Docker..."
+        
+        if command_exists curl; then
+          curl -fsSL "https://get.docker.com/" | sudo sh
+        elif command_exists wget; then
+          wget -qO- "https://get.docker.com/" | sudo sh
+        else
+          color_echo "red" "🚨 Missing curl/wget. Please install one of them."
+          return 1
+        fi
 
-      color_echo "green" "🎉 Docker is now installed and running!"
+        if command_exists sudo && command_exists groups; then
+          current_user=$(get_real_user)
+          if ! groups "$current_user" 2>/dev/null | grep -q docker; then
+            color_echo "blue" "🔧 Adding you to the Docker group..."
+            sudo usermod -aG docker "$current_user"
+            color_echo "yellow" "⚡ You may need to log out and log back in for this to take effect."
+          fi
+        fi
+        
+        if command_exists systemctl; then
+          color_echo "blue" "🚀 Starting Docker service..."
+          sudo systemctl start docker
+          sudo systemctl enable docker
+        fi
+
+        color_echo "green" "🎉 Docker is now installed and running!"
+      fi
       ;;
       
     *)
@@ -980,6 +1116,7 @@ install_binary() {
   color_echo "green" "🎉 RF-Swift has been installed successfully to ${INSTALL_DIR}/rfswift!"
 }
 
+# Enhanced rainbow logo with Arch Linux easter egg
 display_rainbow_logo_animated() {
     # Define color variables (sh doesn't support arrays)
     RED='\033[1;31m'
@@ -1049,11 +1186,61 @@ display_rainbow_logo_animated() {
         sleep 0.3
     fi
     
-    # Add a tagline
-    printf "\n%b🔥 RF Swift by @Penthertz - Radio Frequency Swiss Army Knife 🔥%b\n\n" "$PURPLE" "$NC"
+    # Add a tagline with Arch Linux easter egg
+    printf "\n%b🔥 RF Swift by @Penthertz - Radio Frequency Swiss Army Knife 🔥%b\n" "$PURPLE" "$NC"
+    
+    # Show Arch Linux easter egg if detected
+    if is_arch_linux; then
+        printf "%b🏛️ BTW, I use Arch! 🏛️%b\n" "$CYAN" "$NC"
+    fi
+    
+    printf "\n"
     
     # Add a slight delay before continuing
     sleep 0.5
+}
+
+# Enhanced system verification
+verify_system_requirements() {
+  color_echo "blue" "🔍 Verifying system requirements..."
+  
+  local issues=0
+  
+  # Check for required tools
+  if ! command_exists curl && ! command_exists wget; then
+    color_echo "red" "❌ Neither curl nor wget is available. Please install one of them."
+    issues=$((issues + 1))
+  fi
+  
+  # Check for tar
+  if ! command_exists tar; then
+    color_echo "red" "❌ tar is not available. Please install tar."
+    issues=$((issues + 1))
+  fi
+  
+  # Check for basic shell tools
+  if ! command_exists grep || ! command_exists sed; then
+    color_echo "red" "❌ Basic shell tools (grep, sed) are missing."
+    issues=$((issues + 1))
+  fi
+  
+  # Arch Linux specific checks
+  if is_arch_linux; then
+    if ! command_exists pacman; then
+      color_echo "red" "❌ pacman is not available on this Arch Linux system."
+      issues=$((issues + 1))
+    else
+      color_echo "green" "✅ pacman package manager detected"
+    fi
+  fi
+  
+  if [ $issues -gt 0 ]; then
+    color_echo "red" "🚨 System requirements check failed. Please install the missing tools."
+    return 1
+  fi
+  
+  color_echo "green" "✅ All system requirements satisfied"
+  return 0
 }
 
 # Main function
@@ -1061,6 +1248,12 @@ main() {
   display_rainbow_logo_animated
 
   fun_welcome
+  
+  # Verify system requirements first
+  if ! verify_system_requirements; then
+    color_echo "red" "🚨 Cannot proceed due to missing system requirements."
+    exit 1
+  fi
   
   # Show Steam Deck detection status
   if is_steam_deck; then
@@ -1103,11 +1296,20 @@ main() {
     color_echo "cyan" "🚀 To use RF-Swift, you can:"
     color_echo "cyan" "   - Run it directly: ${INSTALL_DIR}/rfswift"
     color_echo "cyan" "   - Add ${INSTALL_DIR} to your PATH"
+    if is_arch_linux; then
+      color_echo "cyan" "   - Or use the alias if you set it up: rfswift"
+    fi
   else
     color_echo "cyan" "🚀 You can now run RF-Swift by simply typing: rfswift"
   fi
   
   color_echo "magenta" "🎵 Audio system is configured and ready for RF-Swift containers!"
+  
+  # Arch Linux specific final message
+  if is_arch_linux; then
+    color_echo "cyan" "🏛️ Arch Linux optimized installation complete!"
+    color_echo "cyan" "💡 All packages were installed using pacman for optimal integration"
+  fi
   
   # Steam Deck specific final message
   if is_steam_deck; then
