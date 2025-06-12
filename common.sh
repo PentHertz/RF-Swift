@@ -9,73 +9,352 @@ set -euo pipefail
 GREEN='\033[0;32m'
 RED='\033[0;31m'
 YELLOW='\033[0;33m'
+BLUE='\033[0;34m'
 NC='\033[0m' # No Color
+
+# Audio system detection and installation functions
+
+# Detect Linux distribution
+detect_distro() {
+    if [ -f /etc/arch-release ]; then
+        echo "arch"
+    elif [ -f /etc/fedora-release ]; then
+        echo "fedora"
+    elif [ -f /etc/redhat-release ]; then
+        if grep -q "CentOS" /etc/redhat-release; then
+            echo "centos"
+        else
+            echo "rhel"
+        fi
+    elif [ -f /etc/debian_version ]; then
+        if grep -q "Ubuntu" /etc/os-release 2>/dev/null; then
+            echo "ubuntu"
+        else
+            echo "debian"
+        fi
+    else
+        echo "unknown"
+    fi
+}
+
+# Get package manager
+get_package_manager() {
+    if command -v pacman &> /dev/null; then
+        echo "pacman"
+    elif command -v dnf &> /dev/null; then
+        echo "dnf"
+    elif command -v yum &> /dev/null; then
+        echo "yum"
+    elif command -v apt &> /dev/null; then
+        echo "apt"
+    else
+        echo "unknown"
+    fi
+}
+
+# Check if PipeWire is running
+is_pipewire_running() {
+    pgrep -x pipewire &> /dev/null || [ -S "/run/user/$(id -u)/pipewire-0" ] 2>/dev/null
+}
+
+# Check if PulseAudio is running
+is_pulseaudio_running() {
+    pulseaudio --check &> /dev/null
+}
+
+# Detect current audio system
+detect_audio_system() {
+    if is_pipewire_running; then
+        echo "pipewire"
+    elif is_pulseaudio_running; then
+        echo "pulseaudio"
+    else
+        echo "none"
+    fi
+}
+
+# Install PipeWire packages
+install_pipewire() {
+    local distro="$1"
+    local pkg_manager="$2"
+    
+    echo -e "${YELLOW}🔊 Installing PipeWire... 🔊${NC}"
+    
+    case "$distro" in
+        "arch")
+            sudo pacman -Syu --noconfirm pipewire pipewire-pulse pipewire-alsa pipewire-jack wireplumber
+            ;;
+        "fedora")
+            sudo dnf install -y pipewire pipewire-pulseaudio pipewire-alsa pipewire-jack-audio-connection-kit wireplumber
+            ;;
+        "rhel"|"centos")
+            if command -v dnf &> /dev/null; then
+                # RHEL/CentOS 8+
+                sudo dnf install -y pipewire pipewire-pulseaudio pipewire-alsa wireplumber
+            else
+                # RHEL/CentOS 7 - PipeWire not available, install PulseAudio instead
+                echo -e "${YELLOW}ℹ️ PipeWire not available on RHEL/CentOS 7, installing PulseAudio instead ℹ️${NC}"
+                sudo yum install -y epel-release
+                sudo yum install -y pulseaudio pulseaudio-utils alsa-utils
+                return
+            fi
+            ;;
+        "debian"|"ubuntu")
+            sudo apt update
+            sudo apt install -y pipewire pipewire-pulse pipewire-alsa wireplumber
+            ;;
+        *)
+            echo -e "${RED}❌ Unsupported distribution for PipeWire installation ❌${NC}"
+            return 1
+            ;;
+    esac
+    
+    # Enable PipeWire services
+    echo -e "${YELLOW}🔧 Enabling PipeWire services... 🔧${NC}"
+    systemctl --user enable pipewire.service pipewire-pulse.service 2>/dev/null || true
+    systemctl --user enable wireplumber.service 2>/dev/null || true
+}
+
+# Install PulseAudio packages
+install_pulseaudio() {
+    local distro="$1"
+    local pkg_manager="$2"
+    
+    echo -e "${YELLOW}🔊 Installing PulseAudio... 🔊${NC}"
+    
+    case "$distro" in
+        "arch")
+            sudo pacman -Syu --noconfirm pulseaudio pulseaudio-alsa alsa-utils
+            ;;
+        "fedora")
+            sudo dnf install -y pulseaudio pulseaudio-utils alsa-utils
+            ;;
+        "rhel"|"centos")
+            if command -v dnf &> /dev/null; then
+                sudo dnf install -y pulseaudio pulseaudio-utils alsa-utils
+            else
+                sudo yum install -y epel-release
+                sudo yum install -y pulseaudio pulseaudio-utils alsa-utils
+            fi
+            ;;
+        "debian"|"ubuntu")
+            sudo apt update
+            sudo apt install -y pulseaudio pulseaudio-utils alsa-utils
+            ;;
+        *)
+            echo -e "${RED}❌ Unsupported distribution for PulseAudio installation ❌${NC}"
+            return 1
+            ;;
+    esac
+}
+
+# Start PipeWire
+start_pipewire() {
+    echo -e "${YELLOW}🎵 Starting PipeWire... 🎵${NC}"
+    
+    # Try systemd user services first
+    if systemctl --user start pipewire.service pipewire-pulse.service 2>/dev/null; then
+        systemctl --user start wireplumber.service 2>/dev/null || true
+        echo -e "${GREEN}🎧 PipeWire started via systemd services 🎧${NC}"
+    else
+        # Fallback to direct execution
+        pipewire &
+        pipewire-pulse &
+        wireplumber &
+        sleep 2
+        echo -e "${GREEN}🎧 PipeWire started directly 🎧${NC}"
+    fi
+}
+
+# Start PulseAudio
+start_pulseaudio() {
+    echo -e "${YELLOW}🎵 Starting PulseAudio... 🎵${NC}"
+    pulseaudio --check &> /dev/null || pulseaudio --start
+    echo -e "${GREEN}🎧 PulseAudio is running 🎧${NC}"
+}
+
+# Check if we should prefer PipeWire for this distribution
+should_prefer_pipewire() {
+    local distro="$1"
+    
+    case "$distro" in
+        "fedora")
+            # PipeWire is default since Fedora 34
+            return 0
+            ;;
+        "arch")
+            # Arch usually has latest packages
+            return 0
+            ;;
+        "ubuntu"|"debian")
+            # Available in modern versions
+            return 0
+            ;;
+        "rhel"|"centos")
+            # Check if dnf is available (RHEL 8+)
+            command -v dnf &> /dev/null
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
+# Main audio system check and installation function
+check_audio_system() {
+    if [[ "$OSTYPE" == "darwin"* ]]; then
+        echo -e "${YELLOW}🍎 Detected macOS. Checking for Homebrew... 🍎${NC}"
+        if ! command -v brew &> /dev/null; then
+            echo -e "${RED}❌ Homebrew is not installed. Please install Homebrew first. ❌${NC}"
+            echo -e "${YELLOW}ℹ️ You can install Homebrew by running: ℹ️${NC}"
+            echo -e "${BLUE}🍺 /bin/bash -c \"\$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)\" 🍺${NC}"
+            exit 1
+        fi
+        
+        if ! command -v pulseaudio &> /dev/null; then
+            echo -e "${YELLOW}🔊 Installing PulseAudio using Homebrew... 🔊${NC}"
+            brew install pulseaudio
+        fi
+        echo -e "${GREEN}✅ PulseAudio installed on macOS ✅${NC}"
+        echo -e "${YELLOW}🍎 macOS detected. Audio server management is handled by the system 🍎${NC}"
+        return
+    fi
+
+    # Detect Linux distribution and package manager
+    local distro=$(detect_distro)
+    local pkg_manager=$(get_package_manager)
+    local current_audio=$(detect_audio_system)
+    
+    echo -e "${BLUE}🐧 Detected distribution: $distro 🐧${NC}"
+    echo -e "${BLUE}📦 Package manager: $pkg_manager 📦${NC}"
+    
+    # Check current audio system status
+    case "$current_audio" in
+        "pipewire")
+            echo -e "${GREEN}✅ PipeWire is already running ✅${NC}"
+            return
+            ;;
+        "pulseaudio")
+            echo -e "${GREEN}✅ PulseAudio is already running ✅${NC}"
+            return
+            ;;
+        "none")
+            echo -e "${YELLOW}⚠️ No audio system detected ⚠️${NC}"
+            ;;
+    esac
+    
+    # Determine which audio system to install
+    if should_prefer_pipewire "$distro"; then
+        echo -e "${BLUE}🎯 PipeWire is recommended for $distro 🎯${NC}"
+        
+        # Check if PipeWire is available
+        if command -v pipewire &> /dev/null || command -v pw-cli &> /dev/null; then
+            echo -e "${GREEN}✅ PipeWire is already installed ✅${NC}"
+            start_pipewire
+        else
+            echo -e "${YELLOW}📦 Installing PipeWire... 📦${NC}"
+            if install_pipewire "$distro" "$pkg_manager"; then
+                echo -e "${GREEN}✅ PipeWire installed successfully ✅${NC}"
+                start_pipewire
+            else
+                echo -e "${RED}❌ Failed to install PipeWire, falling back to PulseAudio ❌${NC}"
+                install_pulseaudio "$distro" "$pkg_manager"
+                start_pulseaudio
+            fi
+        fi
+    else
+        echo -e "${BLUE}🎯 PulseAudio is recommended for $distro 🎯${NC}"
+        
+        # Check if PulseAudio is available
+        if command -v pulseaudio &> /dev/null; then
+            echo -e "${GREEN}✅ PulseAudio is already installed ✅${NC}"
+            start_pulseaudio
+        else
+            echo -e "${YELLOW}📦 Installing PulseAudio... 📦${NC}"
+            if install_pulseaudio "$distro" "$pkg_manager"; then
+                echo -e "${GREEN}✅ PulseAudio installed successfully ✅${NC}"
+                start_pulseaudio
+            else
+                echo -e "${RED}❌ Failed to install PulseAudio ❌${NC}"
+                exit 1
+            fi
+        fi
+    fi
+}
+
+# Display audio system status
+show_audio_status() {
+    echo -e "${BLUE}🎵 Audio System Status 🎵${NC}"
+    echo "=================================="
+    
+    local current_audio=$(detect_audio_system)
+    case "$current_audio" in
+        "pipewire")
+            echo -e "${GREEN}✅ PipeWire is running${NC}"
+            if command -v pw-cli &> /dev/null; then
+                echo -e "${BLUE}ℹ️ PipeWire info:${NC}"
+                pw-cli info 2>/dev/null | head -5 || echo "Unable to get detailed info"
+            fi
+            ;;
+        "pulseaudio")
+            echo -e "${GREEN}✅ PulseAudio is running${NC}"
+            if command -v pactl &> /dev/null; then
+                echo -e "${BLUE}ℹ️ PulseAudio info:${NC}"
+                pactl info 2>/dev/null | grep -E "(Server|Version)" || echo "Unable to get detailed info"
+            fi
+            ;;
+        "none")
+            echo -e "${RED}❌ No audio system detected${NC}"
+            ;;
+    esac
+    echo "=================================="
+}
+
+# Enhanced function with both PulseAudio and PipeWire support
+check_pulseaudio() {
+    echo -e "${BLUE}🔍 Checking audio system... 🔍${NC}"
+    check_audio_system
+}
+
+# Original functions from your script
 
 check_xhost() {
     if ! command -v xhost &> /dev/null; then
         echo -e "${RED}❌ xhost is not installed on this system. ❌${NC}"
-        if command -v pacman &> /dev/null; then
-            echo -e "${YELLOW}📦 Installing xorg-xhost using pacman... 📦${NC}"
-            sudo pacman -Syu --noconfirm xorg-xhost
-        elif command -v apt &> /dev/null; then
-            echo -e "${YELLOW}📦 Installing x11-xserver-utils using apt... 📦${NC}"
-            sudo apt update
-            sudo apt install -y x11-xserver-utils
-        elif command -v yum &> /dev/null; then
-            echo -e "${YELLOW}📦 Installing xorg-x11-utils using yum... 📦${NC}"
-            sudo yum install -y xorg-x11-utils
-        else
-            echo -e "${RED}❌ Unsupported package manager. Please install xhost manually. ❌${NC}"
-            exit 1
-        fi
+        
+        local distro=$(detect_distro)
+        case "$distro" in
+            "arch")
+                echo -e "${YELLOW}📦 Installing xorg-xhost using pacman... 📦${NC}"
+                sudo pacman -Syu --noconfirm xorg-xhost
+                ;;
+            "fedora")
+                echo -e "${YELLOW}📦 Installing xorg-x11-server-utils using dnf... 📦${NC}"
+                sudo dnf install -y xorg-x11-server-utils
+                ;;
+            "rhel"|"centos")
+                if command -v dnf &> /dev/null; then
+                    echo -e "${YELLOW}📦 Installing xorg-x11-server-utils using dnf... 📦${NC}"
+                    sudo dnf install -y xorg-x11-server-utils
+                else
+                    echo -e "${YELLOW}📦 Installing xorg-x11-utils using yum... 📦${NC}"
+                    sudo yum install -y xorg-x11-utils
+                fi
+                ;;
+            "debian"|"ubuntu")
+                echo -e "${YELLOW}📦 Installing x11-xserver-utils using apt... 📦${NC}"
+                sudo apt update
+                sudo apt install -y x11-xserver-utils
+                ;;
+            *)
+                echo -e "${RED}❌ Unsupported package manager. Please install xhost manually. ❌${NC}"
+                exit 1
+                ;;
+        esac
         echo -e "${GREEN}✅ xhost installed successfully. ✅${NC}"
     else
         echo -e "${GREEN}✅ xhost is already installed. Moving on. ✅${NC}"
     fi
-}
-
-check_pulseaudio() {
-    if ! command -v pulseaudio &> /dev/null; then
-        echo -e "${RED}❌ PulseAudio is not installed on this system. ❌${NC}"
-        
-        if [[ "$OSTYPE" == "darwin"* ]]; then
-            echo -e "${YELLOW}🍎 Detected macOS. Checking for Homebrew... 🍎${NC}"
-            if ! command -v brew &> /dev/null; then
-                echo -e "${RED}❌ Homebrew is not installed. Please install Homebrew first. ❌${NC}"
-                echo -e "${YELLOW}ℹ️ You can install Homebrew by running: ℹ️${NC}"
-                echo -e "${BLUE}🍺 /bin/bash -c \"\$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)\" 🍺${NC}"
-                exit 1
-            fi
-            echo -e "${YELLOW}🔊 Installing PulseAudio using Homebrew... 🔊${NC}"
-            brew install pulseaudio
-        elif command -v pacman &> /dev/null; then
-            echo -e "${YELLOW}🔊 Installing PulseAudio using pacman... 🔊${NC}"
-            sudo pacman -Syu --noconfirm pulseaudio pulseaudio-alsa
-        elif command -v apt &> /dev/null; then
-            echo -e "${YELLOW}🔊 Installing PulseAudio using apt... 🔊${NC}"
-            sudo apt update
-            sudo apt install -y pulseaudio pulseaudio-utils
-        elif command -v yum &> /dev/null; then
-            echo -e "${YELLOW}🔊 Installing PulseAudio using yum... 🔊${NC}"
-            sudo yum install -y pulseaudio
-        else
-            echo -e "${RED}❌ Unsupported package manager. Please install PulseAudio manually. ❌${NC}"
-            exit 1
-        fi
-        
-        echo -e "${GREEN}✅ PulseAudio installed successfully. ✅${NC}"
-    else
-        echo -e "${GREEN}✅ PulseAudio is already installed. Moving on. ✅${NC}"
-    fi
-
-    if [[ "$OSTYPE" == "darwin"* ]]; then
-        echo -e "${YELLOW}🍎 Detected macOS. PulseAudio server will not be started. 🍎${NC}"
-        return
-    fi
-
-    echo -e "${YELLOW}🎵 Starting PulseAudio... 🎵${NC}"
-    pulseaudio --check &> /dev/null || pulseaudio --start
-    echo -e "${GREEN}🎧 PulseAudio is running. 🎧${NC}"
 }
 
 check_curl() {
@@ -90,20 +369,35 @@ check_curl() {
             fi
             brew install curl
         elif [ "$(uname -s)" == "Linux" ]; then
-            if command -v apt &> /dev/null; then
-                echo -e "${YELLOW}🐧 Attempting to install cURL using apt... 🐧${NC}"
-                sudo apt update
-                sudo apt install -y curl
-            elif command -v yum &> /dev/null; then
-                echo -e "${YELLOW}🐧 Attempting to install cURL using yum... 🐧${NC}"
-                sudo yum install -y curl
-            elif command -v pacman &> /dev/null; then
-                echo -e "${YELLOW}🐧 Attempting to install cURL using pacman... 🐧${NC}"
-                sudo pacman -Syu curl
-            else
-                echo -e "${RED}❌ Unable to detect package manager. Please install cURL manually. ❌${NC}"
-                exit 1
-            fi
+            local distro=$(detect_distro)
+            case "$distro" in
+                "arch")
+                    echo -e "${YELLOW}🐧 Installing cURL using pacman... 🐧${NC}"
+                    sudo pacman -Syu curl
+                    ;;
+                "fedora")
+                    echo -e "${YELLOW}🐧 Installing cURL using dnf... 🐧${NC}"
+                    sudo dnf install -y curl
+                    ;;
+                "rhel"|"centos")
+                    if command -v dnf &> /dev/null; then
+                        echo -e "${YELLOW}🐧 Installing cURL using dnf... 🐧${NC}"
+                        sudo dnf install -y curl
+                    else
+                        echo -e "${YELLOW}🐧 Installing cURL using yum... 🐧${NC}"
+                        sudo yum install -y curl
+                    fi
+                    ;;
+                "debian"|"ubuntu")
+                    echo -e "${YELLOW}🐧 Installing cURL using apt... 🐧${NC}"
+                    sudo apt update
+                    sudo apt install -y curl
+                    ;;
+                *)
+                    echo -e "${RED}❌ Unable to detect package manager. Please install cURL manually. ❌${NC}"
+                    exit 1
+                    ;;
+            esac
         else
             echo -e "${RED}❌ Unsupported operating system. Please install cURL manually. ❌${NC}"
             exit 1
@@ -150,6 +444,7 @@ check_docker_user_only() {
     check_docker
 }
 
+# Standard Docker installation function
 install_docker_standard() {
     arch=$(uname -m)
     os=$(uname -s)
@@ -166,56 +461,36 @@ install_docker_standard() {
         echo -e "${GREEN}✅ Docker installed successfully on macOS. ✅${NC}"
         echo -e "${YELLOW}ℹ️ Please launch Docker from Applications to start the Docker daemon. ℹ️${NC}"
     elif [ "$os" == "Linux" ]; then
-        # Make sure os-release exists
-        if [ ! -f /etc/os-release ]; then
-            echo -e "${YELLOW}🐧 Cannot determine Linux distribution. Using standard Docker installation. 🐧${NC}"
-            sudo curl -fsSL "https://get.docker.com/" | sh
-            sudo systemctl start docker
-            sudo systemctl enable docker
-            echo -e "${GREEN}✅ Docker installed successfully. ✅${NC}"
-            install_buildx
-            install_docker_compose
-            return
-        fi
+        echo -e "${YELLOW}🐧 Installing Docker on your Linux machine... 🐧${NC}"
+        echo -e "${YELLOW}⚠️ This will require sudo privileges to install Docker. ⚠️${NC}"
         
-        distro=$(grep "^ID=" /etc/os-release | cut -d= -f2 | tr -d '"')
+        echo -e "${BLUE}Using Docker's official installation script... 🐧${NC}"
         
-        if [ "$distro" == "arch" ] || [ "$distro" == "archlinux" ]; then
-            # Arch Linux installation using pacman
-            echo -e "${YELLOW}🏹 Installing Docker for Arch Linux using pacman... 🏹${NC}"
-            sudo pacman -Sy --noconfirm docker
-            sudo systemctl start docker
-            sudo systemctl enable docker
-            echo -e "${GREEN}✅ Docker installed successfully on Arch Linux. ✅${NC}"
-        elif command -v apt &> /dev/null && [ "$distro" == "debian" ] || [ "$distro" == "ubuntu" ] || [ "$distro" == "kali" ]; then
-            # Debian-based installation using apt
-            echo -e "${YELLOW}🐧 Installing Docker for Debian-based systems using apt... 🐧${NC}"
-            sudo apt update
-            sudo apt install -y docker.io
-            sudo systemctl start docker
-            sudo systemctl enable docker
-            echo -e "${GREEN}✅ Docker installed successfully on Debian-based system. ✅${NC}"
-        elif [ "$arch" == "riscv64" ]; then
-            # riscv64 installation using apt
-            if command -v apt &> /dev/null; then
-                echo -e "${YELLOW}🔧 Installing Docker for riscv64 using apt... 🔧${NC}"
-                sudo apt update
-                sudo apt install -y docker.io
-                sudo systemctl start docker
-                sudo systemctl enable docker
-                echo -e "${GREEN}✅ Docker installed successfully on riscv64. ✅${NC}"
-            else
-                echo -e "${RED}❌ apt is not available on this system. Unable to install Docker for riscv64. ❌${NC}"
-                exit 1
-            fi
+        if command -v curl &> /dev/null; then
+            curl -fsSL "https://get.docker.com/" | sudo sh
+        elif command -v wget &> /dev/null; then
+            wget -qO- "https://get.docker.com/" | sudo sh
         else
-            # Standard Linux installation
-            echo -e "${YELLOW}🐧 Installing Docker for Linux... 🐧${NC}"
-            sudo curl -fsSL "https://get.docker.com/" | sh
+            echo -e "${RED}❌ Missing curl/wget. Please install one of them. ❌${NC}"
+            exit 1
+        fi
+
+        if command -v sudo && command -v groups; then
+            if ! groups | grep -q docker; then
+                echo -e "${BLUE}🔧 Adding you to the Docker group... 🔧${NC}"
+                sudo usermod -aG docker "$(whoami)"
+                echo -e "${YELLOW}⚡ You may need to log out and log back in for this to take effect. ⚡${NC}"
+            fi
+        fi
+        
+        if command -v systemctl; then
+            echo -e "${BLUE}🚀 Starting Docker service... 🚀${NC}"
             sudo systemctl start docker
             sudo systemctl enable docker
-            echo -e "${GREEN}✅ Docker installed successfully. ✅${NC}"
         fi
+
+        echo -e "${GREEN}🎉 Docker is now installed and running! 🎉${NC}"
+        
         install_buildx
         install_docker_compose
     else
@@ -783,3 +1058,10 @@ display_rainbow_logo_animated() {
     # Add a slight delay before continuing
     sleep 0.5
 }
+
+# Main execution section - if this script is run directly
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+    echo -e "${BLUE}🎵 RF Swift Installer with Enhanced Audio Support 🎵${NC}"
+    echo ""
+    show_audio_status
+fi

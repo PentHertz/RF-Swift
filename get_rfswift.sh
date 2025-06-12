@@ -32,6 +32,399 @@ color_echo() {
   esac
 }
 
+# Function to detect if running on Steam Deck
+is_steam_deck() {
+  # Check for Steam Deck specific indicators
+  if [ -f /etc/steamos-release ]; then
+    return 0
+  fi
+  
+  # Check for Steam Deck hardware identifiers
+  if grep -q "Steam Deck" /sys/devices/virtual/dmi/id/product_name 2>/dev/null; then
+    return 0
+  fi
+  
+  # Check for deck user
+  if [ "$(whoami)" = "deck" ] || [ "$USER" = "deck" ]; then
+    return 0
+  fi
+  
+  return 1
+}
+
+# Audio system detection and installation functions
+
+# Detect Linux distribution
+detect_distro() {
+  if [ -f /etc/arch-release ]; then
+    echo "arch"
+  elif [ -f /etc/fedora-release ]; then
+    echo "fedora"
+  elif [ -f /etc/redhat-release ]; then
+    if grep -q "CentOS" /etc/redhat-release; then
+      echo "centos"
+    else
+      echo "rhel"
+    fi
+  elif [ -f /etc/debian_version ]; then
+    if grep -q "Ubuntu" /etc/os-release 2>/dev/null; then
+      echo "ubuntu"
+    else
+      echo "debian"
+    fi
+  else
+    echo "unknown"
+  fi
+}
+
+# Get package manager
+get_package_manager() {
+  if command_exists pacman; then
+    echo "pacman"
+  elif command_exists dnf; then
+    echo "dnf"
+  elif command_exists yum; then
+    echo "yum"
+  elif command_exists apt; then
+    echo "apt"
+  else
+    echo "unknown"
+  fi
+}
+
+# Check if PipeWire is running
+is_pipewire_running() {
+  if command_exists pgrep; then
+    pgrep -x pipewire >/dev/null 2>&1 && return 0
+  fi
+  
+  # Check for PipeWire socket
+  USER_ID=$(id -u 2>/dev/null || echo "1000")
+  if [ -S "/run/user/${USER_ID}/pipewire-0" ]; then
+    return 0
+  fi
+  
+  return 1
+}
+
+# Check if PulseAudio is running
+is_pulseaudio_running() {
+  if command_exists pulseaudio; then
+    pulseaudio --check >/dev/null 2>&1
+  else
+    return 1
+  fi
+}
+
+# Detect current audio system
+detect_audio_system() {
+  if is_pipewire_running; then
+    echo "pipewire"
+  elif is_pulseaudio_running; then
+    echo "pulseaudio"
+  else
+    echo "none"
+  fi
+}
+
+# Check if we should prefer PipeWire for this distribution
+should_prefer_pipewire() {
+  local distro="$1"
+  
+  case "$distro" in
+    "fedora")
+      # PipeWire is default since Fedora 34
+      return 0
+      ;;
+    "arch")
+      # Arch usually has latest packages
+      return 0
+      ;;
+    "ubuntu"|"debian")
+      # Available in modern versions
+      return 0
+      ;;
+    "rhel"|"centos")
+      # Check if dnf is available (RHEL 8+)
+      command_exists dnf
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+# Install PipeWire packages
+install_pipewire() {
+  local distro="$1"
+  
+  color_echo "blue" "🔊 Installing PipeWire audio system..."
+  
+  case "$distro" in
+    "arch")
+      if have_sudo_access; then
+        sudo pacman -Syu --noconfirm pipewire pipewire-pulse pipewire-alsa pipewire-jack wireplumber
+      else
+        color_echo "red" "sudo access required for package installation"
+        return 1
+      fi
+      ;;
+    "fedora")
+      if have_sudo_access; then
+        sudo dnf install -y pipewire pipewire-pulseaudio pipewire-alsa pipewire-jack-audio-connection-kit wireplumber
+      else
+        color_echo "red" "sudo access required for package installation"
+        return 1
+      fi
+      ;;
+    "rhel"|"centos")
+      if command_exists dnf; then
+        # RHEL/CentOS 8+
+        if have_sudo_access; then
+          sudo dnf install -y pipewire pipewire-pulseaudio pipewire-alsa wireplumber
+        else
+          color_echo "red" "sudo access required for package installation"
+          return 1
+        fi
+      else
+        # RHEL/CentOS 7 - PipeWire not available, install PulseAudio instead
+        color_echo "yellow" "ℹ️ PipeWire not available on RHEL/CentOS 7, installing PulseAudio instead"
+        return install_pulseaudio "$distro"
+      fi
+      ;;
+    "debian"|"ubuntu")
+      if have_sudo_access; then
+        sudo apt update
+        sudo apt install -y pipewire pipewire-pulse pipewire-alsa wireplumber
+      else
+        color_echo "red" "sudo access required for package installation"
+        return 1
+      fi
+      ;;
+    *)
+      color_echo "red" "❌ Unsupported distribution for PipeWire installation"
+      return 1
+      ;;
+  esac
+  
+  # Enable PipeWire services
+  color_echo "blue" "🔧 Enabling PipeWire services..."
+  if command_exists systemctl; then
+    systemctl --user enable pipewire.service pipewire-pulse.service 2>/dev/null || true
+    systemctl --user enable wireplumber.service 2>/dev/null || true
+  fi
+  
+  return 0
+}
+
+# Install PulseAudio packages
+install_pulseaudio() {
+  local distro="$1"
+  
+  color_echo "blue" "🔊 Installing PulseAudio audio system..."
+  
+  case "$distro" in
+    "arch")
+      if have_sudo_access; then
+        sudo pacman -Syu --noconfirm pulseaudio pulseaudio-alsa alsa-utils
+      else
+        color_echo "red" "sudo access required for package installation"
+        return 1
+      fi
+      ;;
+    "fedora")
+      if have_sudo_access; then
+        sudo dnf install -y pulseaudio pulseaudio-utils alsa-utils
+      else
+        color_echo "red" "sudo access required for package installation"
+        return 1
+      fi
+      ;;
+    "rhel"|"centos")
+      if have_sudo_access; then
+        if command_exists dnf; then
+          sudo dnf install -y pulseaudio pulseaudio-utils alsa-utils
+        else
+          sudo yum install -y epel-release
+          sudo yum install -y pulseaudio pulseaudio-utils alsa-utils
+        fi
+      else
+        color_echo "red" "sudo access required for package installation"
+        return 1
+      fi
+      ;;
+    "debian"|"ubuntu")
+      if have_sudo_access; then
+        sudo apt update
+        sudo apt install -y pulseaudio pulseaudio-utils alsa-utils
+      else
+        color_echo "red" "sudo access required for package installation"
+        return 1
+      fi
+      ;;
+    *)
+      color_echo "red" "❌ Unsupported distribution for PulseAudio installation"
+      return 1
+      ;;
+  esac
+  
+  return 0
+}
+
+# Start PipeWire
+start_pipewire() {
+  color_echo "blue" "🎵 Starting PipeWire..."
+  
+  # Try systemd user services first
+  if command_exists systemctl; then
+    if systemctl --user start pipewire.service pipewire-pulse.service 2>/dev/null; then
+      systemctl --user start wireplumber.service 2>/dev/null || true
+      color_echo "green" "🎧 PipeWire started via systemd services"
+      return 0
+    fi
+  fi
+  
+  # Fallback to direct execution
+  if command_exists pipewire && command_exists pipewire-pulse; then
+    pipewire >/dev/null 2>&1 &
+    pipewire-pulse >/dev/null 2>&1 &
+    if command_exists wireplumber; then
+      wireplumber >/dev/null 2>&1 &
+    fi
+    sleep 2
+    color_echo "green" "🎧 PipeWire started directly"
+    return 0
+  fi
+  
+  color_echo "yellow" "⚠️ Could not start PipeWire"
+  return 1
+}
+
+# Start PulseAudio
+start_pulseaudio() {
+  color_echo "blue" "🎵 Starting PulseAudio..."
+  
+  if command_exists pulseaudio; then
+    if ! pulseaudio --check >/dev/null 2>&1; then
+      pulseaudio --start >/dev/null 2>&1
+    fi
+    color_echo "green" "🎧 PulseAudio is running"
+    return 0
+  fi
+  
+  color_echo "yellow" "⚠️ Could not start PulseAudio"
+  return 1
+}
+
+# Check and install audio system
+check_audio_system() {
+  color_echo "blue" "🔍 Checking audio system..."
+  
+  # Skip audio setup on macOS
+  case "$(uname -s)" in
+    Darwin*)
+      color_echo "yellow" "🍎 macOS detected. Audio system management is handled by the system"
+      return 0
+      ;;
+  esac
+  
+  # Detect Linux distribution and current audio system
+  local distro=$(detect_distro)
+  local current_audio=$(detect_audio_system)
+  
+  color_echo "blue" "🐧 Detected distribution: $distro"
+  
+  # Check current audio system status
+  case "$current_audio" in
+    "pipewire")
+      color_echo "green" "✅ PipeWire is already running"
+      return 0
+      ;;
+    "pulseaudio")
+      color_echo "green" "✅ PulseAudio is already running"
+      return 0
+      ;;
+    "none")
+      color_echo "yellow" "⚠️ No audio system detected"
+      ;;
+  esac
+  
+  # Ask user if they want to install audio system
+  if ! prompt_yes_no "Would you like to install an audio system for RF-Swift?" "y"; then
+    color_echo "yellow" "⚠️ Audio system installation skipped"
+    return 0
+  fi
+  
+  # Determine which audio system to install
+  if should_prefer_pipewire "$distro"; then
+    color_echo "blue" "🎯 PipeWire is recommended for $distro"
+    
+    # Check if PipeWire is available
+    if command_exists pipewire || command_exists pw-cli; then
+      color_echo "green" "✅ PipeWire is already installed"
+      start_pipewire
+    else
+      color_echo "blue" "📦 Installing PipeWire..."
+      if install_pipewire "$distro"; then
+        color_echo "green" "✅ PipeWire installed successfully"
+        start_pipewire
+      else
+        color_echo "red" "❌ Failed to install PipeWire, falling back to PulseAudio"
+        if install_pulseaudio "$distro"; then
+          start_pulseaudio
+        fi
+      fi
+    fi
+  else
+    color_echo "blue" "🎯 PulseAudio is recommended for $distro"
+    
+    # Check if PulseAudio is available
+    if command_exists pulseaudio; then
+      color_echo "green" "✅ PulseAudio is already installed"
+      start_pulseaudio
+    else
+      color_echo "blue" "📦 Installing PulseAudio..."
+      if install_pulseaudio "$distro"; then
+        color_echo "green" "✅ PulseAudio installed successfully"
+        start_pulseaudio
+      else
+        color_echo "red" "❌ Failed to install PulseAudio"
+        return 1
+      fi
+    fi
+  fi
+  
+  return 0
+}
+
+# Display audio system status
+show_audio_status() {
+  color_echo "blue" "🎵 Audio System Status"
+  echo "=================================="
+  
+  local current_audio=$(detect_audio_system)
+  case "$current_audio" in
+    "pipewire")
+      color_echo "green" "✅ PipeWire is running"
+      if command_exists pw-cli; then
+        color_echo "blue" "ℹ️ PipeWire info:"
+        pw-cli info 2>/dev/null | head -5 || echo "Unable to get detailed info"
+      fi
+      ;;
+    "pulseaudio")
+      color_echo "green" "✅ PulseAudio is running"
+      if command_exists pactl; then
+        color_echo "blue" "ℹ️ PulseAudio info:"
+        pactl info 2>/dev/null | grep -E "(Server|Version)" || echo "Unable to get detailed info"
+      fi
+      ;;
+    "none")
+      color_echo "red" "❌ No audio system detected"
+      ;;
+  esac
+  echo "=================================="
+}
+
 # Fun welcome message
 fun_welcome() {
   color_echo "cyan" "🎉 WELCOME TO THE RF-Swift Installer! 🚀"
@@ -209,6 +602,68 @@ create_alias() {
   fi
 }
 
+# Steam Deck specific Docker installation
+install_docker_steamdeck() {
+  color_echo "yellow" "🎮 Installing Docker on Steam Deck..."
+  
+  if ! have_sudo_access; then
+    color_echo "red" "🚨 Steam Deck Docker installation requires sudo privileges."
+    return 1
+  fi
+  
+  # Installation steps for Docker on Steam Deck
+  color_echo "blue" "🎮 Disabling read-only mode on Steam Deck"
+  sudo steamos-readonly disable
+
+  color_echo "blue" "🔑 Initializing pacman keyring"
+  sudo pacman-key --init
+  sudo pacman-key --populate archlinux
+
+  color_echo "blue" "🐳 Installing Docker"
+  sudo pacman -Syu --noconfirm docker
+
+  color_echo "blue" "🔒 Re-enabling read-only mode on Steam Deck"
+  sudo steamos-readonly enable
+
+  # Install Docker Compose for Steam Deck
+  install_docker_compose_steamdeck
+
+  # Add user to docker group
+  if command_exists sudo && command_exists groups; then
+    current_user=$(get_real_user)
+    if ! groups "$current_user" | grep -q docker; then
+      color_echo "blue" "🔧 Adding '$current_user' to Docker group..."
+      sudo usermod -aG docker "$current_user"
+      color_echo "yellow" "⚡ You may need to log out and log back in for this to take effect."
+    fi
+  fi
+  
+  # Start Docker service
+  if command_exists systemctl; then
+    color_echo "blue" "🚀 Starting Docker service..."
+    sudo systemctl start docker
+    sudo systemctl enable docker
+  fi
+
+  color_echo "green" "🎉 Docker installed successfully on Steam Deck!"
+  return 0
+}
+
+# Install Docker Compose for Steam Deck
+install_docker_compose_steamdeck() {
+  color_echo "blue" "🧩 Installing Docker Compose v2 plugin for Steam Deck"
+  
+  DOCKER_CONFIG=${DOCKER_CONFIG:-$HOME/.docker}
+  mkdir -p "$DOCKER_CONFIG/cli-plugins"
+  
+  # Download Docker Compose for x86_64 (Steam Deck architecture)
+  color_echo "blue" "📥 Downloading Docker Compose..."
+  curl -SL https://github.com/docker/compose/releases/download/v2.36.0/docker-compose-linux-x86_64 -o "$DOCKER_CONFIG/cli-plugins/docker-compose"
+  chmod +x "$DOCKER_CONFIG/cli-plugins/docker-compose"
+
+  color_echo "green" "✅ Docker Compose v2 installed successfully for Steam Deck"
+}
+
 # Function to check if Docker is installed
 check_docker() {
   color_echo "blue" "🔍 Checking if Docker is installed..."
@@ -228,7 +683,23 @@ check_docker() {
   color_echo "cyan" "   - Use rootless Docker mode if you need enhanced security"
   color_echo "cyan" "   - Always pull container images from trusted sources"
   
-  # Ask if the user wants to install Docker
+  # Check if this is a Steam Deck and offer Steam Deck specific installation
+  if [ "$(uname -s)" = "Linux" ]; then
+    if is_steam_deck; then
+      color_echo "magenta" "🎮 Steam Deck detected!"
+      if prompt_yes_no "Would you like to install Docker using Steam Deck optimized method?" "y"; then
+        install_docker_steamdeck
+        return $?
+      fi
+    else
+      if prompt_yes_no "Are you installing on a Steam Deck?" "n"; then
+        install_docker_steamdeck
+        return $?
+      fi
+    fi
+  fi
+  
+  # Ask if the user wants to install Docker using standard method
   if prompt_yes_no "Would you like to install Docker now?" "n"; then
     install_docker
     return $?
@@ -238,7 +709,7 @@ check_docker() {
   fi
 }
 
-# Function to install Docker
+# Function to install Docker (standard method)
 install_docker() {
   case "$(uname -s)" in
     Darwin*)
@@ -591,8 +1062,16 @@ main() {
 
   fun_welcome
   
+  # Show Steam Deck detection status
+  if is_steam_deck; then
+    color_echo "magenta" "🎮 Steam Deck detected! Special optimizations will be applied."
+  fi
+  
   # Check if Docker is installed and offer to install it if not
   check_docker
+  
+  # Check and install audio system
+  check_audio_system
   
   # Get latest release info
   get_latest_release
@@ -614,6 +1093,9 @@ main() {
     create_alias "$INSTALL_DIR"
   fi
   
+  # Show audio system status
+  show_audio_status
+  
   thank_you_message
   
   # Final instructions
@@ -624,6 +1106,16 @@ main() {
   else
     color_echo "cyan" "🚀 You can now run RF-Swift by simply typing: rfswift"
   fi
+  
+  color_echo "magenta" "🎵 Audio system is configured and ready for RF-Swift containers!"
+  
+  # Steam Deck specific final message
+  if is_steam_deck; then
+    color_echo "magenta" "🎮 Steam Deck setup complete! RF-Swift is optimized for your device."
+    color_echo "cyan" "💡 Tip: You may need to reboot or log out/in for Docker group changes to take effect."
+  fi
+  
+  color_echo "cyan" "📡 Happy RF hacking! 🚀"
 }
 
 # Run the main function
