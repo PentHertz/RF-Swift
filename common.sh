@@ -578,7 +578,7 @@ install_buildx() {
 install_docker_compose() {
     arch=$(uname -m)
     os=$(uname -s | tr '[:upper:]' '[:lower:]') # Convert OS to lowercase
-    version="v2.37.0"
+    version="v2.37.1"
 
     # Map architecture to Docker Compose naming convention
     case "$arch" in
