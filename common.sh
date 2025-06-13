@@ -336,11 +336,6 @@ check_audio_system() {
     echo -e "${BLUE}🐧 Detected distribution: $distro 🐧${NC}"
     echo -e "${BLUE}📦 Package manager: $pkg_manager 📦${NC}"
     
-    # Special message for Arch Linux
-    if [ "$distro" = "arch" ]; then
-        echo -e "${CYAN}🏛️ Arch Linux detected - BTW, I use Arch! 😉${NC}"
-    fi
-    
     # Check current audio system status
     case "$current_audio" in
         "pipewire")
@@ -676,12 +671,10 @@ install_docker_steamdeck() {
     echo -e "${YELLOW}[+] 🔑 Initializing pacman keyring 🔑${NC}"
     sudo pacman-key --init
     sudo pacman-key --populate archlinux
+    sudo pacman-key --populate holo
 
     echo -e "${YELLOW}[+] 🐳 Installing Docker using pacman 🐳${NC}"
     sudo pacman -Syu --noconfirm docker docker-compose
-
-    echo -e "${YELLOW}[+] 🔒 Re-enabling read-only mode on Steam Deck 🔒${NC}"
-    sudo steamos-readonly enable
 
     # Install Docker Compose for Steam Deck
     install_docker_compose_steamdeck
@@ -1138,10 +1131,9 @@ install_binary_alias() {
     
     echo -e "${GREEN}🎉 Installation complete! You can now use rfswift. 🎉${NC}"
     
-    # Show system info if Arch Linux
-    local distro=$(detect_distro)
-    if [ "$distro" = "arch" ]; then
-        echo -e "${CYAN}🏛️ BTW, you're using Arch! RF-Swift is now optimized for your system. 🏛️${NC}"
+    if is_steam_deck; then
+        echo -e "${YELLOW}[+] 🔒 Re-enabling read-only mode on Steam Deck 🔒${NC}"
+        sudo steamos-readonly enable
     fi
 }
 
@@ -1311,11 +1303,6 @@ display_rainbow_logo_animated() {
     
     # Add a tagline with Arch Linux easter egg
     echo -e "\n${colors[5]}🔥 RF Swift by @Penthertz - Radio Frequency Swiss Army Knife 🔥${NC}"
-    
-    # Show Arch Linux easter egg if detected
-    if is_arch_linux; then
-        echo -e "${CYAN}🏛️ BTW, I use Arch! 🏛️${NC}"
-    fi
     
     echo ""
     

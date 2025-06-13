@@ -528,10 +528,6 @@ fun_welcome() {
   if is_steam_deck; then
     color_echo "magenta" "🎮 Steam Deck detected!"
   fi
-  
-  if is_arch_linux; then
-    color_echo "cyan" "🏛️ Arch Linux system detected - BTW, I use Arch! 😉"
-  fi
 }
 
 # Fun thank you message after installation
@@ -719,12 +715,10 @@ install_docker_steamdeck() {
   color_echo "blue" "🔑 Initializing pacman keyring"
   sudo pacman-key --init
   sudo pacman-key --populate archlinux
+  sudo pacman-key --populate holo
 
   color_echo "blue" "🐳 Installing Docker using pacman"
   sudo pacman -Syu --noconfirm docker docker-compose
-
-  color_echo "blue" "🔒 Re-enabling read-only mode on Steam Deck"
-  sudo steamos-readonly enable
 
   # Install Docker Compose for Steam Deck
   install_docker_compose_steamdeck
@@ -1189,11 +1183,6 @@ display_rainbow_logo_animated() {
     # Add a tagline with Arch Linux easter egg
     printf "\n%b🔥 RF Swift by @Penthertz - Radio Frequency Swiss Army Knife 🔥%b\n" "$PURPLE" "$NC"
     
-    # Show Arch Linux easter egg if detected
-    if is_arch_linux; then
-        printf "%b🏛️ BTW, I use Arch! 🏛️%b\n" "$CYAN" "$NC"
-    fi
-    
     printf "\n"
     
     # Add a slight delay before continuing
@@ -1313,10 +1302,12 @@ main() {
   
   # Steam Deck specific final message
   if is_steam_deck; then
+    echo -e "${YELLOW}[+] 🔒 Re-enabling read-only mode on Steam Deck 🔒${NC}"
+    sudo steamos-readonly enable
     color_echo "magenta" "🎮 Steam Deck setup complete! RF-Swift is optimized for your device."
     color_echo "cyan" "💡 Tip: You may need to reboot or log out/in for Docker group changes to take effect."
   fi
-  
+
   color_echo "cyan" "📡 Happy RF hacking! 🚀"
 }
 
