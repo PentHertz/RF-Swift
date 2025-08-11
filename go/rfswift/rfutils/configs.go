@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 )
 
@@ -41,6 +42,14 @@ const (
 
 func printOrange(message string) {
 	fmt.Printf("%s%s%s\n", orangeColor, message, resetColor)
+}
+
+func getDefaultDevices() string {
+	if runtime.GOOS == "windows" {
+		return "/dev/bus/usb:/dev/bus/usb,/dev/snd:/dev/snd,/dev/console:/dev/console,/dev/vcsa:/dev/vcsa,/dev/tty:/dev/tty,/dev/tty0:/dev/tty0,/dev/tty1:/dev/tty1,/dev/tty2:/dev/tty2,/dev/uinput:/dev/uinput"
+	}
+	// Default for Linux/macOS
+	return "/dev/bus/usb:/dev/bus/usb,/dev/snd:/dev/snd,/dev/dri:/dev/dri,/dev/input:/dev/input,/dev/vhci:/dev/vhci,/dev/console:/dev/console,/dev/vcsa:/dev/vcsa,/dev/tty:/dev/tty,/dev/tty0:/dev/tty0,/dev/tty1:/dev/tty1,/dev/tty2:/dev/tty2,/dev/uinput:/dev/uinput"
 }
 
 func ReadOrCreateConfig(filename string) (*Config, error) {
@@ -170,7 +179,7 @@ func ReadOrCreateConfig(filename string) (*Config, error) {
 	}
 	if len(config.Container.Bindings) == 0 {
 		printOrange("Bindings are missing in the config file.")
-		bindings := promptForValue("Bindings (comma-separated)", "/dev/bus/usb:/dev/bus/usb,/run/dbus/system_bus_socket:/run/dbus/system_bus_socket,/dev/snd:/dev/snd,/dev/dri:/dev/dri,/dev/vhci:/dev/vhci")
+		bindings := promptForValue("Bindings (comma-separated)", "")
 		config.Container.Bindings = strings.Split(bindings, ",")
 	}
 	if config.Container.Network == "[missing]" {
@@ -203,7 +212,7 @@ func ReadOrCreateConfig(filename string) (*Config, error) {
 	}
 	if config.Container.Devices == "[missing]" {
 		printOrange("Devices field is missing in the config file.")
-		config.Container.Devices = promptForValue("Devices", "/dev/snd:/dev/snd,/dev/dri:/dev/dri,/dev/input:/dev/input")
+		config.Container.Devices = promptForValue("Devices", getDefaultDevices())
 	}
 	if config.Container.Privileged == "[missing]" {
 		printOrange("Privileged value is missing in the config file.")
@@ -226,7 +235,10 @@ func ReadOrCreateConfig(filename string) (*Config, error) {
 }
 
 func createDefaultConfig(filename string) error {
-	content := `[general]
+	// Use platform-specific default devices
+	defaultDevices := getDefaultDevices()
+	
+	content := fmt.Sprintf(`[general]
 imagename = myrfswift:latest
 repotag = penthertz/rfswift
 
@@ -240,7 +252,7 @@ x11forward = /tmp/.X11-unix:/tmp/.X11-unix
 xdisplay = "DISPLAY=:0"
 extrahost = pluto.local:192.168.2.1
 extraenv =
-devices = /dev/bus/usb:/dev/bus/usb,/dev/snd:/dev/snd,/dev/dri:/dev/dri,/dev/input:/dev/input,/dev/vhci:/dev/vhci,/dev/console:/dev/console,/dev/vcsa:/dev/vcsa,/dev/tty:/dev/tty,/dev/tty0:/dev/tty0,/dev/tty1:/dev/tty1,/dev/tty2:/dev/tty2,/dev/uinput:/dev/uinput
+devices = %s
 privileged = false
 caps =
 seccomp =
@@ -248,7 +260,7 @@ cgroups = c 189:* rwm,c 166:* rwm,c 188:* rwm
 
 [audio]
 pulse_server = tcp:localhost:34567
-`
+`, defaultDevices)
 
 	dir := filepath.Dir(filename)
 	if err := os.MkdirAll(dir, os.ModePerm); err != nil {
