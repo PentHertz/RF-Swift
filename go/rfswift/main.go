@@ -3,25 +3,26 @@
  */
 
 package main
+
 import (
 	"os"
 	cli "penthertz/rfswift/cli"
 	common "penthertz/rfswift/common"
 )
 
-func main() {	
+func main() {
 	isCompletion := false
 
 	if len(os.Args) > 1 {
 		if (os.Args[1] == "completion") || (os.Args[1] == "__complete") {
 			isCompletion = true
-			
+
 		}
 	}
 
 	if isCompletion == false {
 		common.PrintASCII()
 	}
-	
+
 	cli.Execute()
 }

@@ -237,7 +237,7 @@ func ReadOrCreateConfig(filename string) (*Config, error) {
 func createDefaultConfig(filename string) error {
 	// Use platform-specific default devices
 	defaultDevices := getDefaultDevices()
-	
+
 	content := fmt.Sprintf(`[general]
 imagename = myrfswift:latest
 repotag = penthertz/rfswift

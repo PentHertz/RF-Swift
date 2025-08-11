@@ -265,12 +265,12 @@ func detectAudioSystem() AudioSystem {
 	if isPipeWireRunning() {
 		return AudioSystemPipeWire
 	}
-	
+
 	// Check if PulseAudio is running
 	if isPulseAudioRunning() {
 		return AudioSystemPulse
 	}
-	
+
 	return AudioSystemUnknown
 }
 
@@ -281,12 +281,12 @@ func isPipeWireRunning() bool {
 	if err := cmd.Run(); err == nil {
 		return true
 	}
-	
+
 	// Alternative check: try to connect to PipeWire socket
 	if _, err := os.Stat("/run/user/" + os.Getenv("USER") + "/pipewire-0"); err == nil {
 		return true
 	}
-	
+
 	return false
 }
 
@@ -326,12 +326,12 @@ func checkPulseServer(address string, port string) {
 func detectLinuxDistribution() string {
 	// Check for specific distribution files
 	distributions := map[string]string{
-		"/etc/arch-release":    "arch",
-		"/etc/fedora-release":  "fedora",
-		"/etc/redhat-release":  "rhel",
-		"/etc/centos-release":  "centos",
-		"/etc/debian_version":  "debian",
-		"/etc/lsb-release":     "ubuntu", // Will be refined further
+		"/etc/arch-release":   "arch",
+		"/etc/fedora-release": "fedora",
+		"/etc/redhat-release": "rhel",
+		"/etc/centos-release": "centos",
+		"/etc/debian_version": "debian",
+		"/etc/lsb-release":    "ubuntu", // Will be refined further
 	}
 
 	for file, distro := range distributions {
@@ -415,11 +415,11 @@ func getPackageManager() string {
 func getRHELVersion() int {
 	// Try to read version from various files
 	files := []string{"/etc/redhat-release", "/etc/centos-release", "/etc/os-release"}
-	
+
 	for _, file := range files {
 		if content, err := os.ReadFile(file); err == nil {
 			contentStr := string(content)
-			
+
 			// Look for version patterns
 			if strings.Contains(contentStr, "release 9") || strings.Contains(contentStr, "VERSION_ID=\"9") {
 				return 9
@@ -432,7 +432,7 @@ func getRHELVersion() int {
 			}
 		}
 	}
-	
+
 	return 8 // Default to 8 if unable to determine
 }
 
@@ -551,7 +551,7 @@ func isRedHat() bool {
 // ensureAudioSystemRunning checks if audio system is running and starts it if not.
 func ensureAudioSystemRunning() error {
 	audioSystem := detectAudioSystem()
-	
+
 	switch audioSystem {
 	case AudioSystemPipeWire:
 		return ensurePipeWireRunning()
@@ -589,25 +589,25 @@ func ensurePipeWireRunning() error {
 		common.PrintInfoMessage("PipeWire is already running.")
 		return nil
 	}
-	
+
 	// Try systemd user services first (preferred method)
 	if err := startPipeWireSystemd(); err == nil {
 		common.PrintSuccessMessage("PipeWire started successfully via systemd.")
 		time.Sleep(2 * time.Second)
 		return nil
 	}
-	
+
 	// Fallback: try starting pipewire directly
 	directStartCmd := exec.Command("pipewire")
 	if err := directStartCmd.Start(); err != nil {
 		return fmt.Errorf("failed to start PipeWire directly: %w", err)
 	}
-	
+
 	// For Red Hat/Fedora systems, also try to start additional services
 	if isRedHat() {
 		startRedHatPipeWireServices()
 	}
-	
+
 	common.PrintSuccessMessage("PipeWire started successfully.")
 	time.Sleep(2 * time.Second)
 	return nil
@@ -616,18 +616,18 @@ func ensurePipeWireRunning() error {
 // startPipeWireSystemd starts PipeWire using systemd user services
 func startPipeWireSystemd() error {
 	services := []string{"pipewire.service", "pipewire-pulse.service"}
-	
+
 	for _, service := range services {
 		cmd := exec.Command("systemctl", "--user", "start", service)
 		if err := cmd.Run(); err != nil {
 			return fmt.Errorf("failed to start %s: %w", service, err)
 		}
 	}
-	
+
 	// Also try to start wireplumber if available (session manager)
 	wireplumberCmd := exec.Command("systemctl", "--user", "start", "wireplumber.service")
 	wireplumberCmd.Run() // Ignore errors as wireplumber might not be installed
-	
+
 	return nil
 }
 
@@ -637,7 +637,7 @@ func startRedHatPipeWireServices() {
 		"pipewire-media-session.service", // Legacy session manager
 		"wireplumber.service",            // Modern session manager
 	}
-	
+
 	for _, service := range additionalServices {
 		cmd := exec.Command("systemctl", "--user", "start", service)
 		cmd.Run() // Ignore errors as these services might not be available
@@ -662,7 +662,7 @@ func SetPulseCTL(address string) error {
 	}
 
 	audioSystem := detectAudioSystem()
-	
+
 	switch audioSystem {
 	case AudioSystemPipeWire:
 		return setPipeWireTCPModule(ip, port)
@@ -699,13 +699,13 @@ func setPulseAudioTCPModule(ip, port string) error {
 func setPipeWireTCPModule(ip, port string) error {
 	// PipeWire with pipewire-pulse should support pactl commands
 	moduleArgs := fmt.Sprintf("port=%s auth-ip-acl=%s", port, ip)
-	
+
 	cmd := exec.Command("pactl", "load-module", "module-native-protocol-tcp", moduleArgs)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("failed to load module-native-protocol-tcp via pactl: %w\nOutput: %s", err, string(output))
 	}
-	
+
 	common.PrintSuccessMessage(fmt.Sprintf("Successfully loaded module-native-protocol-tcp via PipeWire"))
 	return nil
 }
@@ -784,7 +784,7 @@ func ListPipeWireNodes() (string, error) {
 // GetAudioSystemStatus returns the status of the current audio system
 func GetAudioSystemStatus() string {
 	audioSystem := detectAudioSystem()
-	
+
 	switch audioSystem {
 	case AudioSystemPipeWire:
 		if info, err := GetPipeWireInfo(); err == nil {

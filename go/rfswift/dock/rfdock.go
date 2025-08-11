@@ -521,10 +521,10 @@ func DockerLast(ifilter string, labelKey string, labelValue string) {
 
 	//rfutils.ClearScreen()
 	tableData := [][]string{}
-	
+
 	// Filter containers by image, name or ID (if ifilter is provided)
 	filteredContainers := []types.Container{}
-	
+
 	if ifilter != "" {
 		lowerFilter := strings.ToLower(ifilter)
 		for _, container := range containers {
@@ -533,14 +533,14 @@ func DockerLast(ifilter string, labelKey string, labelValue string) {
 				filteredContainers = append(filteredContainers, container)
 				continue
 			}
-			
+
 			// Check if container ID (full or short) contains the filter
-			if strings.Contains(strings.ToLower(container.ID), lowerFilter) || 
-			   strings.Contains(strings.ToLower(container.ID[:12]), lowerFilter) {
+			if strings.Contains(strings.ToLower(container.ID), lowerFilter) ||
+				strings.Contains(strings.ToLower(container.ID[:12]), lowerFilter) {
 				filteredContainers = append(filteredContainers, container)
 				continue
 			}
-			
+
 			// Check if any container name contains the filter
 			for _, name := range container.Names {
 				// Remove leading slash from name if it exists
@@ -548,7 +548,7 @@ func DockerLast(ifilter string, labelKey string, labelValue string) {
 				if len(name) > 0 && name[0] == '/' {
 					cleanName = name[1:]
 				}
-				
+
 				if strings.Contains(strings.ToLower(cleanName), lowerFilter) {
 					filteredContainers = append(filteredContainers, container)
 					break
@@ -558,7 +558,7 @@ func DockerLast(ifilter string, labelKey string, labelValue string) {
 	} else {
 		filteredContainers = containers
 	}
-	
+
 	for _, container := range filteredContainers {
 		created := time.Unix(container.Created, 0).Format(time.RFC3339)
 

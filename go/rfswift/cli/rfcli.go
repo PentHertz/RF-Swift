@@ -7,9 +7,9 @@ package cli
 import (
 	"fmt"
 	"os"
-	"runtime"
-	"path/filepath"
 	"os/exec"
+	"path/filepath"
+	"runtime"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -47,7 +47,7 @@ var Seccomp string
 var rootCmd = &cobra.Command{
 	Use:   "rfswift",
 	Short: "rfswift - you RF & HW swiss army",
-	Long: `rfswift is THE toolbox for any HAM & radiocommunications and hardware professionals`,
+	Long:  `rfswift is THE toolbox for any HAM & radiocommunications and hardware professionals`,
 	Run: func(cmd *cobra.Command, args []string) {
 		fmt.Println("Use '-h' for help")
 	},
@@ -426,14 +426,14 @@ func installCompletion(shell string) {
 		// Try common zsh completion directories
 		var zshCompletionDirs []string
 		homeDir := os.Getenv("HOME")
-		
+
 		// Check fpath directories
 		fpathCmd := exec.Command("zsh", "-c", "echo ${fpath[1]}")
 		fpathOutput, err := fpathCmd.Output()
 		if err == nil && len(fpathOutput) > 0 {
 			zshCompletionDirs = append(zshCompletionDirs, strings.TrimSpace(string(fpathOutput)))
 		}
-		
+
 		// Common locations
 		zshCompletionDirs = append(zshCompletionDirs,
 			filepath.Join(homeDir, ".zsh/completion"),
@@ -499,7 +499,7 @@ func installCompletion(shell string) {
 
 	// Generate completion script
 	common.PrintInfoMessage(fmt.Sprintf("Generating completion script for %s...", shell))
-	
+
 	switch shell {
 	case "bash":
 		rootCmd.GenBashCompletion(file)
@@ -519,10 +519,10 @@ func installCompletion(shell string) {
 
 	os.Chmod(filepath, 0644)
 	common.PrintSuccessMessage(fmt.Sprintf("Completion script installed successfully to %s", filepath))
-	
+
 	// Instructions for shell configuration
 	fmt.Println("\n📋 Configuration Instructions:")
-	
+
 	switch shell {
 	case "zsh":
 		common.PrintInfoMessage("To enable completions, add the following to your ~/.zshrc:")
@@ -540,7 +540,7 @@ func installCompletion(shell string) {
 		common.PrintInfoMessage("To enable completions, add the following to your PowerShell profile:")
 		fmt.Printf(". '%s'\n", filepath)
 	}
-	
+
 	fmt.Println("\n🚀 Happy tab-completing with rfswift!")
 }
 
@@ -565,7 +565,7 @@ func init() {
 		if len(os.Args) > 1 {
 			if (os.Args[1] == "completion") || (os.Args[1] == "__complete") {
 				isCompletion = true
-				
+
 			}
 		}
 

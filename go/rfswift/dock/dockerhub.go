@@ -72,13 +72,13 @@ func determineArchitectureFromTag(tagName, requestedArch string) string {
 	if strings.HasSuffix(tagName, "_riscv64") {
 		return "riscv64"
 	}
-	
+
 	// For tags without explicit architecture suffix, consider them as amd64 by default
 	// (as you specified) or match the requested architecture
 	if requestedArch == "amd64" || requestedArch == "" {
 		return "amd64"
 	}
-	
+
 	// For other architectures, only return if it's the requested one
 	return requestedArch
 }
