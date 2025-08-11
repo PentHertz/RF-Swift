@@ -10,7 +10,7 @@ import (
 )
 
 // RF Swift repo
-var Version = "0.6.4-rc1"
+var Version = "0.6.4-rc2"
 var Branch = "main"
 var Owner = "PentHertz"
 var Repo = "RF-Swift"

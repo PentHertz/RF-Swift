@@ -92,7 +92,7 @@ if "%option%" == "1" (
     docker build !imagename! -t !imagename! -f !dockerfile!
 ) else if "%option%" == "2" (
     rfswift.exe images remote
-    set "DEFAULT_PULL_IMAGE=penthertz/rfswift:latest"
+    set "DEFAULT_PULL_IMAGE=penthertz/rfswift:sdr_light"
     set /p pull_image="Enter the image tag to pull (default: !DEFAULT_PULL_IMAGE!): "
     if "!pull_image!" == "" set "pull_image=!DEFAULT_PULL_IMAGE!"
     echo Pulling the Docker image
