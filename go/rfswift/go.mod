@@ -5,7 +5,7 @@ go 1.24.4
 require (
 	github.com/FlUxIuS/pulseaudio_2 v0.0.0-20250608163549-43fae16119df
 	github.com/cheggaaa/pb/v3 v3.1.7
-	github.com/docker/docker v28.2.2+incompatible
+	github.com/docker/docker v28.3.3+incompatible
 	github.com/docker/go-connections v0.5.0
 	github.com/fatih/color v1.18.0
 	github.com/go-resty/resty/v2 v2.16.5
