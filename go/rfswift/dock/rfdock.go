@@ -171,7 +171,7 @@ var dockerObj = DockerInst{net: "host",
 	usbforward:    "",
 	extrabinding:  "/run/dbus/system_bus_socket:/run/dbus/system_bus_socket", // Some more if needed /run/dbus/system_bus_socket:/run/dbus/system_bus_socket,/dev/snd:/dev/snd,/dev/dri:/dev/dri
 	imagename:     "myrfswift:latest",
-	repotag:       "penthertz/rfswift",
+	repotag:       "penthertz/rfswift_noble",
 	extrahosts:    "",
 	extraenv:      "",
 	network_mode:  "host",

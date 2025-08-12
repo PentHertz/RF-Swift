@@ -240,7 +240,7 @@ func createDefaultConfig(filename string) error {
 
 	content := fmt.Sprintf(`[general]
 imagename = myrfswift:latest
-repotag = penthertz/rfswift
+repotag = penthertz/rfswift_noble
 
 [container]
 shell = /bin/zsh
