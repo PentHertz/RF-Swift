@@ -46,7 +46,6 @@ RF Swift is a revolutionary toolbox that transforms any computer into a powerful
 | **💾 Disk Space** | ✅ Only install tools you need | ❌ Requires 20-50GB minimum |
 | **🔄 Updates** | ✅ Update individual tools without risk | ❌ System-wide updates can break functionality |
 | **🌐 Multi-architecture** | ✅ x86_64, ARM64, RISCV64 and more! | ❌ Limited architecture support |
-| **🔌 Device Binding** | ✅ Dynamic - add/remove without restart | ❌ Static - requires reboot for changes |
 | **🔁 Reproducibility** | ✅ Identical environments everywhere | ❌ System drift between installations |
 | **💼 Work Environment** | ✅ Use alongside productivity tools | ❌ Switch contexts between systems |
 
