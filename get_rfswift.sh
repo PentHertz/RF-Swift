@@ -1232,6 +1232,288 @@ verify_system_requirements() {
   return 0
 }
 
+install_powerline_fonts() {
+  local distro="$1"
+  
+  color_echo "blue" "🔤 Installing Powerline fonts for better terminal experience..."
+  
+  case "$(uname -s)" in
+    Darwin*)
+      color_echo "blue" "🍎 Installing fonts on macOS..."
+      
+      if command_exists brew; then
+        color_echo "blue" "📦 Using Homebrew to install fonts..."
+        
+        # Tap the font cask if not already tapped
+        brew tap homebrew/cask-fonts 2>/dev/null || true
+        
+        # Install various powerline and nerd fonts
+        color_echo "blue" "Installing Powerline fonts..."
+        brew install --cask font-powerline-symbols 2>/dev/null || true
+        
+        color_echo "blue" "Installing Nerd Fonts (recommended for Oh My Zsh)..."
+        brew install --cask font-fira-code-nerd-font 2>/dev/null || true
+        brew install --cask font-hack-nerd-font 2>/dev/null || true
+        brew install --cask font-meslo-lg-nerd-font 2>/dev/null || true
+        brew install --cask font-source-code-pro-nerd-font 2>/dev/null || true
+        
+        color_echo "green" "✅ Fonts installed via Homebrew"
+      else
+        color_echo "yellow" "⚠️ Homebrew not found. Installing fonts manually..."
+        
+        # Create fonts directory
+        FONTS_DIR="$HOME/Library/Fonts"
+        mkdir -p "$FONTS_DIR"
+        
+        # Download and install Powerline symbols
+        color_echo "blue" "📥 Downloading Powerline symbols..."
+        if command_exists curl; then
+          curl -fLo "$FONTS_DIR/PowerlineSymbols.otf" \
+            https://github.com/powerline/powerline/raw/develop/font/PowerlineSymbols.otf
+        elif command_exists wget; then
+          wget -O "$FONTS_DIR/PowerlineSymbols.otf" \
+            https://github.com/powerline/powerline/raw/develop/font/PowerlineSymbols.otf
+        fi
+        
+        # Download a popular Nerd Font
+        color_echo "blue" "📥 Downloading Fira Code Nerd Font..."
+        TEMP_DIR=$(mktemp -d)
+        if command_exists curl; then
+          curl -fLo "$TEMP_DIR/FiraCode.zip" \
+            https://github.com/ryanoasis/nerd-fonts/releases/download/v3.1.1/FiraCode.zip
+        elif command_exists wget; then
+          wget -O "$TEMP_DIR/FiraCode.zip" \
+            https://github.com/ryanoasis/nerd-fonts/releases/download/v3.1.1/FiraCode.zip
+        fi
+        
+        if [ -f "$TEMP_DIR/FiraCode.zip" ]; then
+          cd "$TEMP_DIR"
+          unzip -q FiraCode.zip
+          cp *.ttf *.otf "$FONTS_DIR/" 2>/dev/null || true
+          rm -rf "$TEMP_DIR"
+          color_echo "green" "✅ Fonts installed manually"
+        fi
+      fi
+      ;;
+      
+    Linux*)
+      color_echo "blue" "🐧 Installing fonts on Linux..."
+      
+      # Create user fonts directory
+      FONTS_DIR="$HOME/.local/share/fonts"
+      mkdir -p "$FONTS_DIR"
+      
+      case "$distro" in
+        "arch")
+          if have_sudo_access; then
+            color_echo "blue" "📦 Using pacman to install fonts on Arch Linux..."
+            sudo pacman -Sy --noconfirm
+            sudo pacman -S --noconfirm --needed \
+              powerline-fonts \
+              ttf-fira-code \
+              ttf-hack \
+              ttf-meslo-nerd \
+              ttf-sourcecodepro-nerd \
+              noto-fonts \
+              noto-fonts-emoji 2>/dev/null || true
+            
+            # Also try AUR fonts if yay is available
+            if command_exists yay; then
+              color_echo "blue" "Installing additional fonts from AUR..."
+              yay -S --noconfirm nerd-fonts-complete 2>/dev/null || true
+            fi
+          else
+            color_echo "yellow" "⚠️ No sudo access, installing fonts manually..."
+            install_fonts_manually_linux
+          fi
+          ;;
+          
+        "ubuntu"|"debian")
+          if have_sudo_access; then
+            color_echo "blue" "📦 Using apt to install fonts..."
+            sudo apt update
+            sudo apt install -y \
+              fonts-powerline \
+              fonts-firacode \
+              fonts-hack \
+              fonts-noto \
+              fonts-noto-color-emoji 2>/dev/null || true
+            
+            # Install additional Nerd Fonts manually
+            install_nerd_fonts_linux
+          else
+            color_echo "yellow" "⚠️ No sudo access, installing fonts manually..."
+            install_fonts_manually_linux
+          fi
+          ;;
+          
+        "fedora")
+          if have_sudo_access; then
+            color_echo "blue" "📦 Using dnf to install fonts..."
+            sudo dnf install -y \
+              powerline-fonts \
+              fira-code-fonts \
+              hack-fonts \
+              google-noto-fonts \
+              google-noto-color-emoji-fonts 2>/dev/null || true
+            
+            # Install additional Nerd Fonts manually
+            install_nerd_fonts_linux
+          else
+            color_echo "yellow" "⚠️ No sudo access, installing fonts manually..."
+            install_fonts_manually_linux
+          fi
+          ;;
+          
+        "rhel"|"centos")
+          if have_sudo_access; then
+            color_echo "blue" "📦 Installing fonts on RHEL/CentOS..."
+            if command_exists dnf; then
+              sudo dnf install -y powerline-fonts google-noto-fonts 2>/dev/null || true
+            else
+              sudo yum install -y epel-release
+              sudo yum install -y powerline-fonts google-noto-fonts 2>/dev/null || true
+            fi
+            
+            install_nerd_fonts_linux
+          else
+            color_echo "yellow" "⚠️ No sudo access, installing fonts manually..."
+            install_fonts_manually_linux
+          fi
+          ;;
+          
+        "opensuse")
+          if have_sudo_access; then
+            color_echo "blue" "📦 Using zypper to install fonts..."
+            sudo zypper install -y \
+              powerline-fonts \
+              fira-code-fonts \
+              hack-fonts \
+              google-noto-fonts 2>/dev/null || true
+            
+            install_nerd_fonts_linux
+          else
+            color_echo "yellow" "⚠️ No sudo access, installing fonts manually..."
+            install_fonts_manually_linux
+          fi
+          ;;
+          
+        *)
+          color_echo "yellow" "⚠️ Unknown distribution, installing fonts manually..."
+          install_fonts_manually_linux
+          ;;
+      esac
+      
+      # Refresh font cache
+      if command_exists fc-cache; then
+        color_echo "blue" "🔄 Refreshing font cache..."
+        fc-cache -fv >/dev/null 2>&1
+        color_echo "green" "✅ Font cache refreshed"
+      fi
+      ;;
+      
+    *)
+      color_echo "red" "❌ Unsupported operating system for font installation"
+      return 1
+      ;;
+  esac
+  
+  return 0
+}
+
+test_font_installation() {
+  color_echo "blue" "🧪 Testing font installation..."
+  
+  color_echo "blue" "Font test symbols:"
+  echo "Powerline symbols: "
+  echo "Branch symbol: "
+  echo "Lock symbol: "
+  echo "Lightning: ⚡"
+  echo "Gear: ⚙"
+  echo "Arrow: ➜"
+  
+  color_echo "yellow" "If you see boxes or question marks instead of symbols,"
+  color_echo "yellow" "restart your terminal and ensure it's using a Nerd Font."
+}
+
+show_font_configuration_help() {
+  color_echo "cyan" "📝 Terminal Font Configuration Help:"
+  echo "=================================="
+  
+  case "$(uname -s)" in
+    Darwin*)
+      color_echo "blue" "🍎 macOS Terminal Configuration:"
+      color_echo "cyan" "• Terminal.app: Preferences → Profiles → Text → Font"
+      color_echo "cyan" "• iTerm2: Preferences → Profiles → Text → Font"
+      color_echo "cyan" "• Recommended fonts: 'Fira Code Nerd Font', 'Hack Nerd Font'"
+      ;;
+    Linux*)
+      color_echo "blue" "🐧 Linux Terminal Configuration:"
+      color_echo "cyan" "• GNOME Terminal: Preferences → Profiles → Text → Custom font"
+      color_echo "cyan" "• Konsole: Settings → Edit Current Profile → Appearance → Font"
+      color_echo "cyan" "• Alacritty: Edit ~/.config/alacritty/alacritty.yml"
+      color_echo "cyan" "• Terminator: Right-click → Preferences → Profiles → Font"
+      color_echo "cyan" "• VS Code: Settings → Terminal → Font Family"
+      ;;
+  esac
+  
+  echo "=================================="
+}
+
+check_agnoster_dependencies() {
+  color_echo "blue" "🔍 Checking agnoster theme dependencies..."
+  
+  local issues=0
+  local distro=$(detect_distro)
+  
+  # Check for fonts
+  color_echo "blue" "Checking for Powerline fonts..."
+  
+  case "$(uname -s)" in
+    Darwin*)
+      # Check if fonts exist in macOS
+      if [ ! -f "$HOME/Library/Fonts/PowerlineSymbols.otf" ] && ! ls "$HOME/Library/Fonts"/*Nerd* >/dev/null 2>&1; then
+        color_echo "yellow" "⚠️ Powerline/Nerd fonts not found in user fonts directory"
+        issues=$((issues + 1))
+      fi
+      ;;
+    Linux*)
+      # Check if fonts exist in Linux
+      if [ ! -f "$HOME/.local/share/fonts/PowerlineSymbols.otf" ] && ! ls "$HOME/.local/share/fonts"/*Nerd* >/dev/null 2>&1; then
+        # Also check system fonts
+        if ! fc-list | grep -i powerline >/dev/null 2>&1 && ! fc-list | grep -i nerd >/dev/null 2>&1; then
+          color_echo "yellow" "⚠️ Powerline/Nerd fonts not found"
+          issues=$((issues + 1))
+        fi
+      fi
+      ;;
+  esac
+  
+  # Check terminal capabilities
+  if [ -z "$TERM" ] || ! echo "$TERM" | grep -q "256color"; then
+    color_echo "yellow" "⚠️ Terminal may not support 256 colors (TERM=$TERM)"
+    color_echo "cyan" "💡 Try setting: export TERM=xterm-256color"
+  fi
+  
+  # Check for Git (agnoster shows git status)
+  if ! command_exists git; then
+    color_echo "yellow" "⚠️ Git not found (agnoster theme shows git information)"
+    issues=$((issues + 1))
+  fi
+  
+  if [ $issues -gt 0 ]; then
+    color_echo "yellow" "⚠️ Found $issues potential issues with agnoster dependencies"
+    
+    if prompt_yes_no "Would you like to install missing fonts?" "y"; then
+      install_powerline_fonts "$distro"
+      test_font_installation
+      show_font_configuration_help
+    fi
+  else
+    color_echo "green" "✅ All agnoster dependencies appear to be satisfied"
+  fi
+}
+
 # Main function
 main() {
   display_rainbow_logo_animated
@@ -1269,6 +1551,9 @@ main() {
   
   # Install binary
   install_binary
+
+  # check and install agnoster deps
+  check_agnoster_dependencies
   
   # Set up alias if requested
   if prompt_yes_no "Would you like to set up an alias for RF-Swift?" "y"; then
