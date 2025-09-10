@@ -221,7 +221,7 @@ install_pipewire() {
         # Update package database first
         sudo pacman -Sy --noconfirm
         # Install PipeWire and related packages
-        sudo pacman -S --noconfirm --needed pipewire pipewire-pulse pipewire-alsa pipewire-jack wireplumber
+        sudo pacman -S --noconfirm --needed pipewire pipewire-pulse pipewire-alsa pipewire-jack wireplumber libpulse
         # Optional: install additional tools
         sudo pacman -S --noconfirm --needed pipewire-audio pipewire-media-session || true
       else
@@ -231,7 +231,7 @@ install_pipewire() {
       ;;
     "fedora")
       if have_sudo_access; then
-        sudo dnf install -y pipewire pipewire-pulseaudio pipewire-alsa pipewire-jack-audio-connection-kit wireplumber
+        sudo dnf install -y pipewire pipewire-pulseaudio pipewire-alsa pipewire-jack-audio-connection-kit pulseaudio-utils wireplumber
       else
         color_echo "red" "sudo access required for package installation"
         return 1
@@ -240,7 +240,7 @@ install_pipewire() {
     "rhel"|"centos")
       if command_exists dnf; then
         if have_sudo_access; then
-          sudo dnf install -y pipewire pipewire-pulseaudio pipewire-alsa wireplumber
+          sudo dnf install -y pipewire pipewire-pulseaudio pipewire-alsa wireplumber pulseaudio-utils
         else
           color_echo "red" "sudo access required for package installation"
           return 1
@@ -253,7 +253,7 @@ install_pipewire() {
     "debian"|"ubuntu")
       if have_sudo_access; then
         sudo apt update
-        sudo apt install -y pipewire pipewire-pulse pipewire-alsa wireplumber
+        sudo apt install -y pipewire pipewire-pulse pipewire-alsa wireplumber pulseaudio-utils
       else
         color_echo "red" "sudo access required for package installation"
         return 1
@@ -261,7 +261,7 @@ install_pipewire() {
       ;;
     "opensuse")
       if have_sudo_access; then
-        sudo zypper install -y pipewire pipewire-pulseaudio pipewire-alsa wireplumber
+        sudo zypper install -y pipewire pipewire-pulseaudio pipewire-alsa wireplumber pulseaudio-utils
       else
         color_echo "red" "sudo access required for package installation"
         return 1
