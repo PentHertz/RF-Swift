@@ -1514,6 +1514,83 @@ check_agnoster_dependencies() {
   fi
 }
 
+install_nerd_fonts_linux() {
+  color_echo "blue" "📥 Installing Nerd Fonts manually..."
+  
+  FONTS_DIR="$HOME/.local/share/fonts"
+  mkdir -p "$FONTS_DIR"
+  
+  # Download popular Nerd Fonts
+  TEMP_DIR=$(mktemp -d)
+  
+  # Fira Code Nerd Font
+  if command_exists curl; then
+    curl -fLo "$TEMP_DIR/FiraCode.zip" \
+      https://github.com/ryanoasis/nerd-fonts/releases/download/v3.1.1/FiraCode.zip
+  elif command_exists wget; then
+    wget -O "$TEMP_DIR/FiraCode.zip" \
+      https://github.com/ryanoasis/nerd-fonts/releases/download/v3.1.1/FiraCode.zip
+  fi
+  
+  # Hack Nerd Font
+  if command_exists curl; then
+    curl -fLo "$TEMP_DIR/Hack.zip" \
+      https://github.com/ryanoasis/nerd-fonts/releases/download/v3.1.1/Hack.zip
+  elif command_exists wget; then
+    wget -O "$TEMP_DIR/Hack.zip" \
+      https://github.com/ryanoasis/nerd-fonts/releases/download/v3.1.1/Hack.zip
+  fi
+  
+  # Extract and install fonts
+  cd "$TEMP_DIR"
+  for font_zip in *.zip; do
+    if [ -f "$font_zip" ]; then
+      color_echo "blue" "Extracting $font_zip..."
+      unzip -q "$font_zip"
+      cp *.ttf *.otf "$FONTS_DIR/" 2>/dev/null || true
+    fi
+  done
+  
+  rm -rf "$TEMP_DIR"
+  color_echo "green" "✅ Nerd Fonts installed manually"
+}
+
+install_fonts_manually_linux() {
+  color_echo "blue" "📥 Installing fonts manually (no package manager)..."
+  
+  FONTS_DIR="$HOME/.local/share/fonts"
+  mkdir -p "$FONTS_DIR"
+  
+  # Install Powerline symbols
+  color_echo "blue" "Installing Powerline symbols..."
+  if command_exists curl; then
+    curl -fLo "$FONTS_DIR/PowerlineSymbols.otf" \
+      https://github.com/powerline/powerline/raw/develop/font/PowerlineSymbols.otf
+  elif command_exists wget; then
+    wget -O "$FONTS_DIR/PowerlineSymbols.otf" \
+      https://github.com/powerline/powerline/raw/develop/font/PowerlineSymbols.otf
+  fi
+  
+  # Install Nerd Fonts
+  install_nerd_fonts_linux
+}
+
+# Function to test font installation
+test_font_installation() {
+  color_echo "blue" "🧪 Testing font installation..."
+  
+  color_echo "blue" "Font test symbols:"
+  echo "Powerline symbols: "
+  echo "Branch symbol: "
+  echo "Lock symbol: "
+  echo "Lightning: ⚡"
+  echo "Gear: ⚙"
+  echo "Arrow: ➜"
+  
+  color_echo "yellow" "If you see boxes or question marks instead of symbols,"
+  color_echo "yellow" "restart your terminal and ensure it's using a Nerd Font."
+}
+
 # Main function
 main() {
   display_rainbow_logo_animated
