@@ -85,17 +85,12 @@ is_arch_linux() {
   fi
   
   # Secondary check: /etc/os-release contains Arch
-  if [ -f /etc/os-release ] && grep -qi "arch" /etc/os-release; then
+  if [ -f /etc/os-release ] && grep -qi "^ID=arch" /etc/os-release; then
     return 0
   fi
   
   # Tertiary check: pacman command exists and /etc/pacman.conf exists
   if command_exists pacman && [ -f /etc/pacman.conf ]; then
-    return 0
-  fi
-  
-  # Quaternary check: uname contains arch
-  if uname -a | grep -qi "arch"; then
     return 0
   fi
   
