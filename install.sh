@@ -21,6 +21,8 @@ check_curl
 echo -e "${YELLOW}[+] Checking Docker installation${NC}"
 check_docker_user_only
 
+check_agnoster_dependencies
+
 # Ensure Go binary is in the PATH for the current script session
 export PATH=$PATH:/usr/local/go/bin
 

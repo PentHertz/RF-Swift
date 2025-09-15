@@ -14,29 +14,39 @@ CYAN='\033[0;36m'
 MAGENTA='\033[0;35m'
 NC='\033[0m' # No Color
 
+# Function to output colored text
+color_echo() {
+  local color=$1
+  local text=$2
+  case $color in
+    "red") printf "${RED}%s${NC}\n" "${text}" ;;
+    "green") printf "${GREEN}%s${NC}\n" "${text}" ;;
+    "yellow") printf "${YELLOW}%s${NC}\n" "${text}" ;;
+    "blue") printf "${BLUE}%s${NC}\n" "${text}" ;;
+    "magenta") printf "${MAGENTA}%s${NC}\n" "${text}" ;;
+    "cyan") printf "${CYAN}%s${NC}\n" "${text}" ;;
+    *) printf "%s\n" "${text}" ;;
+  esac
+}
+
 # Enhanced Arch Linux detection function
 is_arch_linux() {
-    # Primary check: /etc/arch-release file
-    if [ -f /etc/arch-release ]; then
-        return 0
-    fi
-    
-    # Secondary check: /etc/os-release contains Arch
-    if [ -f /etc/os-release ] && grep -qi "arch" /etc/os-release; then
-        return 0
-    fi
-    
-    # Tertiary check: pacman command exists and /etc/pacman.conf exists
-    if command -v pacman &> /dev/null && [ -f /etc/pacman.conf ]; then
-        return 0
-    fi
-    
-    # Quaternary check: uname contains arch
-    if uname -a | grep -qi "arch"; then
-        return 0
-    fi
-    
-    return 1
+  # Primary check: /etc/arch-release file
+  if [ -f /etc/arch-release ]; then
+    return 0
+  fi
+  
+  # Secondary check: /etc/os-release contains Arch
+  if [ -f /etc/os-release ] && grep -qi "^ID=arch" /etc/os-release; then
+    return 0
+  fi
+  
+  # Tertiary check: pacman command exists and /etc/pacman.conf exists
+  if command_exists pacman && [ -f /etc/pacman.conf ]; then
+    return 0
+  fi
+  
+  return 1
 }
 
 # Enhanced Steam Deck detection
@@ -422,6 +432,60 @@ show_audio_status() {
 check_pulseaudio() {
     echo -e "${BLUE}🔍 Checking audio system... 🔍${NC}"
     check_audio_system
+}
+
+check_agnoster_dependencies() {
+  color_echo "blue" "🔍 Checking agnoster theme dependencies..."
+  
+  local issues=0
+  local distro=$(detect_distro)
+  
+  # Check for fonts
+  color_echo "blue" "Checking for Powerline fonts..."
+  
+  case "$(uname -s)" in
+    Darwin*)
+      # Check if fonts exist in macOS
+      if [ ! -f "$HOME/Library/Fonts/PowerlineSymbols.otf" ] && ! ls "$HOME/Library/Fonts"/*Nerd* >/dev/null 2>&1; then
+        color_echo "yellow" "⚠️ Powerline/Nerd fonts not found in user fonts directory"
+        issues=$((issues + 1))
+      fi
+      ;;
+    Linux*)
+      # Check if fonts exist in Linux
+      if [ ! -f "$HOME/.local/share/fonts/PowerlineSymbols.otf" ] && ! ls "$HOME/.local/share/fonts"/*Nerd* >/dev/null 2>&1; then
+        # Also check system fonts
+        if ! fc-list | grep -i powerline >/dev/null 2>&1 && ! fc-list | grep -i nerd >/dev/null 2>&1; then
+          color_echo "yellow" "⚠️ Powerline/Nerd fonts not found"
+          issues=$((issues + 1))
+        fi
+      fi
+      ;;
+  esac
+  
+  # Check terminal capabilities
+  if [ -z "$TERM" ] || ! echo "$TERM" | grep -q "256color"; then
+    color_echo "yellow" "⚠️ Terminal may not support 256 colors (TERM=$TERM)"
+    color_echo "cyan" "💡 Try setting: export TERM=xterm-256color"
+  fi
+  
+  # Check for Git (agnoster shows git status)
+  if ! command_exists git; then
+    color_echo "yellow" "⚠️ Git not found (agnoster theme shows git information)"
+    issues=$((issues + 1))
+  fi
+  
+  if [ $issues -gt 0 ]; then
+    color_echo "yellow" "⚠️ Found $issues potential issues with agnoster dependencies"
+    
+    if prompt_yes_no "Would you like to install missing fonts?" "y"; then
+      install_powerline_fonts "$distro"
+      test_font_installation
+      show_font_configuration_help
+    fi
+  else
+    color_echo "green" "✅ All agnoster dependencies appear to be satisfied"
+  fi
 }
 
 # Enhanced xhost check with Arch Linux support

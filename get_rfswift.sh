@@ -32,6 +32,51 @@ color_echo() {
   esac
 }
 
+# Enhanced xhost check with Arch Linux support
+check_xhost() {
+    if ! command -v xhost &> /dev/null; then
+        echo -e "${RED}❌ xhost is not installed on this system. ❌${NC}"
+        
+        local distro=$(detect_distro)
+        case "$distro" in
+            "arch")
+                echo -e "${CYAN}🏛️ Installing xorg-xhost using pacman on Arch Linux... 📦${NC}"
+                sudo pacman -Sy --noconfirm
+                sudo pacman -S --noconfirm --needed xorg-xhost
+                ;;
+            "fedora")
+                echo -e "${YELLOW}📦 Installing xorg-x11-server-utils using dnf... 📦${NC}"
+                sudo dnf install -y xorg-x11-server-utils
+                ;;
+            "rhel"|"centos")
+                if command -v dnf &> /dev/null; then
+                    echo -e "${YELLOW}📦 Installing xorg-x11-server-utils using dnf... 📦${NC}"
+                    sudo dnf install -y xorg-x11-server-utils
+                else
+                    echo -e "${YELLOW}📦 Installing xorg-x11-utils using yum... 📦${NC}"
+                    sudo yum install -y xorg-x11-utils
+                fi
+                ;;
+            "debian"|"ubuntu")
+                echo -e "${YELLOW}📦 Installing x11-xserver-utils using apt... 📦${NC}"
+                sudo apt update
+                sudo apt install -y x11-xserver-utils
+                ;;
+            "opensuse")
+                echo -e "${YELLOW}📦 Installing xorg-x11-server using zypper... 📦${NC}"
+                sudo zypper install -y xorg-x11-server
+                ;;
+            *)
+                echo -e "${RED}❌ Unsupported package manager. Please install xhost manually. ❌${NC}"
+                exit 1
+                ;;
+        esac
+        echo -e "${GREEN}✅ xhost installed successfully. ✅${NC}"
+    else
+        echo -e "${GREEN}✅ xhost is already installed. Moving on. ✅${NC}"
+    fi
+}
+
 # Enhanced Arch Linux detection function
 is_arch_linux() {
   # Primary check: /etc/arch-release file
@@ -1632,6 +1677,9 @@ main() {
   # check and install agnoster deps
   check_agnoster_dependencies
   
+  # Checking xhost
+  check_xhost
+
   # Set up alias if requested
   if prompt_yes_no "Would you like to set up an alias for RF-Swift?" "y"; then
     create_alias "$INSTALL_DIR"
