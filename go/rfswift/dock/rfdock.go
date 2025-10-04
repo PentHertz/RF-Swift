@@ -1921,6 +1921,14 @@ func DockerInstallScript(containerIdentifier, scriptName, functionScript string)
 		return err
 	}
 
+	// Step 4: Run "ldconfig"
+	common.PrintInfoMessage("Running 'ldconfig'...")
+	if err := showLoadingIndicator(ctx, func() error {
+		return execCommand(ctx, cli, containerIdentifier, []string{"/bin/bash", "-c", "ldconfig"})
+	}, "ldconfig"); err != nil {
+		return err
+	}
+	
 	return nil
 }
 
