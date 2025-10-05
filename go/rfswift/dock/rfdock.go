@@ -2138,6 +2138,19 @@ However, you can achieve similar functionality by using the following commands:
 		common.PrintWarningMessage(fmt.Sprintf("Source is empty. Defaulting source to target: %s", target))
 	}
 
+	// Check if source (host mount point) exists when adding a new binding
+	if add {
+		if _, err := os.Stat(source); os.IsNotExist(err) {
+			common.PrintErrorMessage(fmt.Errorf("host mount point does not exist: %s", source))
+			common.PrintInfoMessage("Please create the directory first or check the path")
+			os.Exit(1)
+		} else if err != nil {
+			common.PrintErrorMessage(fmt.Errorf("error checking host mount point: %v", err))
+			os.Exit(1)
+		}
+		common.PrintSuccessMessage(fmt.Sprintf("Verified host mount point exists: %s", source))
+	}
+
 	ctx := context.Background()
 
 	common.PrintInfoMessage("Fetching container ID...")
