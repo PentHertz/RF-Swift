@@ -202,7 +202,6 @@ func updateDockerObjFromConfig() {
 	dockerObj.network_mode = config.Container.Network
 	dockerObj.exposed_ports = config.Container.ExposedPorts
 	dockerObj.binded_ports = config.Container.PortBindings
-	dockerObj.x11forward = config.Container.X11Forward
 	dockerObj.xdisplay = config.Container.XDisplay
 	dockerObj.extrahosts = config.Container.ExtraHost
 	dockerObj.extraenv = config.Container.ExtraEnv
@@ -213,18 +212,27 @@ func updateDockerObjFromConfig() {
 	dockerObj.seccomp = config.Container.Seccomp
 	dockerObj.cgroups = config.Container.Cgroups
 
-	// Handle bindings
+	// Handle bindings - include ALL bindings from config
 	var bindings []string
+	var x11Bindings []string
+
 	for _, binding := range config.Container.Bindings {
-		if strings.Contains(binding, "/dev/bus/usb") {
+		if strings.Contains(binding, ".X11-unix") {
+			x11Bindings = append(x11Bindings, binding)
+		} else if strings.Contains(binding, "/dev/bus/usb") {
 			dockerObj.usbforward = binding
-			//bindings = append(bindings, binding)
-		} else if strings.Contains(binding, ".X11-unix") {
-			dockerObj.x11forward = binding
+			bindings = append(bindings, binding) // Include USB in bindings too
 		} else {
 			bindings = append(bindings, binding)
 		}
 	}
+
+	// Set X11 forward
+	if len(x11Bindings) > 0 {
+		dockerObj.x11forward = strings.Join(x11Bindings, ",")
+	}
+
+	// Set extra bindings
 	dockerObj.extrabinding = strings.Join(bindings, ",")
 }
 
@@ -1059,42 +1067,43 @@ func ParseBindedPorts(bindedPortsStr string) nat.PortMap {
 	// Split the input by ',' to get individual bindings
 	portEntries := strings.Split(bindedPortsStr, ",")
 	for _, entry := range portEntries {
-		// Expected format: containerPort[:hostAddress:]hostPort/protocol (e.g., 80:127.0.0.1:8080/tcp)
+		// Expected format: containerPort/protocol:hostPort or containerPort/protocol:hostAddress:hostPort
+		// Example: 80/tcp:8080 or 80/tcp:127.0.0.1:8080
+		entry = strings.TrimSpace(entry)
 		parts := strings.Split(entry, ":")
 		if len(parts) < 2 || len(parts) > 3 {
-			fmt.Printf("Invalid binded port format: %s (expected containerPort[:hostAddress:]hostPort/protocol)\n", entry)
+			fmt.Printf("Invalid binded port format: %s (expected containerPort/protocol:hostPort or containerPort/protocol:hostAddress:hostPort)\n", entry)
 			continue
 		}
 
 		var containerPortProto, hostPort, hostAddress string
 
-		// Handle the optional hostAddress
-		if len(parts) == 3 {
-			containerPortProto = strings.TrimSpace(parts[0]) // e.g., 80
-			hostAddress = strings.TrimSpace(parts[1])        // e.g., 127.0.0.1
-			hostPort = strings.TrimSpace(parts[2])           // e.g., 8080/tcp
-		} else {
-			containerPortProto = strings.TrimSpace(parts[0]) // e.g., 80
-			hostPort = strings.TrimSpace(parts[1])           // e.g., 8080/tcp
-		}
+		// Parse containerPort/protocol (e.g., "80/tcp")
+		containerPortProto = strings.TrimSpace(parts[0])
 
-		// Split hostPort into hostPort and protocol
-		hostPortParts := strings.Split(hostPort, "/")
-		if len(hostPortParts) != 2 {
-			fmt.Printf("Invalid port format: %s (expected hostPort/protocol)\n", hostPort)
+		// Validate that containerPortProto contains a protocol
+		if !strings.Contains(containerPortProto, "/") {
+			fmt.Printf("Invalid container port format: %s (expected format: port/protocol, e.g., 80/tcp)\n", containerPortProto)
 			continue
 		}
 
-		hostPortValue := strings.TrimSpace(hostPortParts[0]) // e.g., 8080
-		protocol := strings.TrimSpace(hostPortParts[1])      // e.g., tcp
+		// Handle the optional hostAddress
+		if len(parts) == 3 {
+			hostAddress = strings.TrimSpace(parts[1]) // e.g., 127.0.0.1
+			hostPort = strings.TrimSpace(parts[2])    // e.g., 8080
+		} else {
+			hostAddress = ""                       // No specific host address (binds to all interfaces)
+			hostPort = strings.TrimSpace(parts[1]) // e.g., 8080
+		}
 
-		// Rearrange to containerPort/protocol (e.g., 80/tcp)
+		// containerPortProto is already in format "80/tcp"
 		portKey := nat.Port(containerPortProto)
 
 		// Add the binding to the PortMap
+		// HostPort should be JUST the port number, not including protocol
 		portBindings[portKey] = append(portBindings[portKey], nat.PortBinding{
-			HostIP:   hostAddress, // Optional host address
-			HostPort: fmt.Sprintf("%s/%s", hostPortValue, protocol),
+			HostIP:   hostAddress, // Optional host address (empty means 0.0.0.0)
+			HostPort: hostPort,    // Just the port number, NO protocol
 		})
 	}
 
@@ -1406,24 +1415,63 @@ func DockerPull(imageref string, imagetag string) {
 	}
 	defer cli.Close()
 
+	// Get current architecture
+	architecture := getArchitecture()
+
+	// If imageref doesn't contain ":", prepend the repo tag
 	if !strings.Contains(imageref, ":") {
 		imageref = fmt.Sprintf("%s:%s", dockerObj.repotag, imageref)
 	}
+
+	// Parse the image reference to get repo and tag
+	parts := strings.Split(imageref, ":")
+	repo := parts[0]
+	tag := "latest"
+	if len(parts) > 1 {
+		tag = parts[1]
+	}
+
+	// Check if this is an official image that might need architecture suffix
+	isOfficial := IsOfficialImage(imageref)
+
+	// For official images, ALWAYS use architecture suffix
+	actualPullRef := imageref
+	if isOfficial && architecture != "" {
+		// Check if tag already has an architecture suffix
+		hasArchSuffix := strings.HasSuffix(tag, "_amd64") ||
+			strings.HasSuffix(tag, "_arm64") ||
+			strings.HasSuffix(tag, "_riscv64") ||
+			strings.HasSuffix(tag, "_arm")
+
+		if !hasArchSuffix {
+			// Append architecture to the tag - this is required for official images
+			actualPullRef = fmt.Sprintf("%s:%s_%s", repo, tag, architecture)
+			common.PrintInfoMessage(fmt.Sprintf("Detected architecture: %s, pulling %s", architecture, actualPullRef))
+		} else {
+			common.PrintInfoMessage(fmt.Sprintf("Using architecture-specific tag: %s", actualPullRef))
+		}
+	} else if isOfficial && architecture == "" {
+		common.PrintErrorMessage(fmt.Errorf("cannot determine system architecture for official image"))
+		return
+	}
+
+	// Set the display tag (without architecture suffix for cleaner naming)
 	if imagetag == "" {
-		imagetag = imageref
+		// Use clean tag name without architecture suffix
+		imagetag = fmt.Sprintf("%s:%s", repo, tag)
 	}
 
 	// Check if the image exists locally
-	localInspect, _, err := cli.ImageInspectWithRaw(ctx, imageref)
+	localInspect, _, err := cli.ImageInspectWithRaw(ctx, imagetag)
 	localExists := err == nil
 	localDigest := ""
 	if localExists {
 		localDigest = localInspect.ID
 	}
 
-	// Pull the image from remote
-	common.PrintInfoMessage(fmt.Sprintf("Pulling image from: %s", imageref))
-	out, err := cli.ImagePull(ctx, imageref, image.PullOptions{})
+	// Pull the image from remote using the architecture-specific reference
+	common.PrintInfoMessage(fmt.Sprintf("Pulling image from: %s", actualPullRef))
+	out, err := cli.ImagePull(ctx, actualPullRef, image.PullOptions{})
 	if err != nil {
 		common.PrintErrorMessage(err)
 		return
@@ -1449,7 +1497,7 @@ func DockerPull(imageref string, imagetag string) {
 	}
 
 	// Get information about the pulled image
-	remoteInspect, _, err := cli.ImageInspectWithRaw(ctx, imageref)
+	remoteInspect, _, err := cli.ImageInspectWithRaw(ctx, actualPullRef)
 	if err != nil {
 		common.PrintErrorMessage(err)
 		return
@@ -1475,14 +1523,27 @@ func DockerPull(imageref string, imagetag string) {
 		}
 	}
 
-	// Tag the new image if needed
-	if imagetag != imageref {
-		err = cli.ImageTag(ctx, imageref, imagetag)
+	// Tag the pulled image with the clean name (without architecture suffix)
+	if imagetag != actualPullRef {
+		err = cli.ImageTag(ctx, remoteInspect.ID, imagetag)
 		if err != nil {
 			common.PrintErrorMessage(err)
 			return
 		}
 		common.PrintSuccessMessage(fmt.Sprintf("Image tagged as '%s'", imagetag))
+
+		// Remove the original architecture-suffixed tag to avoid duplicates in local listing
+		if IsOfficialImage(actualPullRef) {
+			_, err = cli.ImageRemove(ctx, actualPullRef, image.RemoveOptions{Force: false})
+			if err != nil {
+				// Only log if it's not a "tag not found" or "in use" error
+				if !strings.Contains(err.Error(), "No such image") && !strings.Contains(err.Error(), "image is referenced") {
+					log.Printf("Note: Could not remove architecture-suffixed tag %s: %v", actualPullRef, err)
+				}
+			} else {
+				common.PrintInfoMessage(fmt.Sprintf("Removed architecture-suffixed tag: %s", actualPullRef))
+			}
+		}
 	}
 
 	common.PrintSuccessMessage(fmt.Sprintf("Image '%s' installed successfully", imagetag))
@@ -1797,6 +1858,9 @@ func DeleteImage(imageIDOrTag string) error {
 	var imageToDelete image.Summary
 	imageFound := false
 
+	// Get current architecture for matching
+	architecture := getArchitecture()
+
 	for _, img := range images {
 		// Check if the full image ID matches
 		if img.ID == "sha256:"+imageIDOrTag || img.ID == imageIDOrTag {
@@ -1805,16 +1869,54 @@ func DeleteImage(imageIDOrTag string) error {
 			break
 		}
 
-		// Check if any RepoTags match exactly
+		// Check if any RepoTags match
 		for _, tag := range img.RepoTags {
-			if !strings.Contains(tag, ":") {
-				// Prepend Config.General.RepoTag if the format is missing
-				tag = fmt.Sprintf("%s:%s", dockerObj.repotag, tag)
+			normalizedTag := tag
+
+			// If the input doesn't contain ":", prepend the repo
+			if !strings.Contains(imageIDOrTag, ":") {
+				imageIDOrTag = fmt.Sprintf("%s:%s", dockerObj.repotag, imageIDOrTag)
 			}
-			if tag == imageIDOrTag {
+
+			// Check for exact match first
+			if normalizedTag == imageIDOrTag {
 				imageToDelete = img
 				imageFound = true
 				break
+			}
+
+			// For official images, also check with architecture suffix
+			if IsOfficialImage(imageIDOrTag) {
+				// Extract repo and tag from the search term
+				parts := strings.Split(imageIDOrTag, ":")
+				if len(parts) == 2 {
+					repo := parts[0]
+					searchTag := parts[1]
+
+					// Try matching with architecture suffix
+					tagWithArch := fmt.Sprintf("%s:%s_%s", repo, searchTag, architecture)
+					if normalizedTag == tagWithArch {
+						imageToDelete = img
+						imageFound = true
+						break
+					}
+				}
+			}
+
+			// Also check if the stored tag (which might have arch suffix) matches
+			// when we strip the architecture suffix from it
+			cleanTag := normalizedTag
+			parts := strings.Split(cleanTag, ":")
+			if len(parts) == 2 {
+				tagPart := parts[1]
+				cleanedTagPart := removeArchitectureSuffix(tagPart)
+				cleanTag = fmt.Sprintf("%s:%s", parts[0], cleanedTagPart)
+
+				if cleanTag == imageIDOrTag {
+					imageToDelete = img
+					imageFound = true
+					break
+				}
 			}
 		}
 
@@ -1828,13 +1930,37 @@ func DeleteImage(imageIDOrTag string) error {
 		common.PrintErrorMessage(fmt.Errorf("image not found: %s", imageIDOrTag))
 		common.PrintInfoMessage("Available images:")
 		for _, img := range images {
-			common.PrintInfoMessage(fmt.Sprintf("ID: %s, Tags: %v", strings.TrimPrefix(img.ID, "sha256:"), img.RepoTags))
+			// Display tags with clean names
+			displayTags := []string{}
+			for _, tag := range img.RepoTags {
+				parts := strings.Split(tag, ":")
+				if len(parts) == 2 {
+					cleanTagPart := removeArchitectureSuffix(parts[1])
+					displayTags = append(displayTags, fmt.Sprintf("%s:%s", parts[0], cleanTagPart))
+				} else {
+					displayTags = append(displayTags, tag)
+				}
+			}
+			common.PrintInfoMessage(fmt.Sprintf("ID: %s, Tags: %v", strings.TrimPrefix(img.ID, "sha256:"), displayTags))
 		}
 		return fmt.Errorf("image not found: %s", imageIDOrTag)
 	}
 
 	imageID := imageToDelete.ID
-	common.PrintInfoMessage(fmt.Sprintf("Found image to delete: ID: %s, Tags: %v", strings.TrimPrefix(imageID, "sha256:"), imageToDelete.RepoTags))
+
+	// Display clean tag names in the confirmation
+	displayTags := []string{}
+	for _, tag := range imageToDelete.RepoTags {
+		parts := strings.Split(tag, ":")
+		if len(parts) == 2 {
+			cleanTagPart := removeArchitectureSuffix(parts[1])
+			displayTags = append(displayTags, fmt.Sprintf("%s:%s", parts[0], cleanTagPart))
+		} else {
+			displayTags = append(displayTags, tag)
+		}
+	}
+
+	common.PrintInfoMessage(fmt.Sprintf("Found image to delete: ID: %s, Tags: %v", strings.TrimPrefix(imageID, "sha256:"), displayTags))
 
 	// Ask for user confirmation
 	reader := bufio.NewReader(os.Stdin)
@@ -1928,7 +2054,7 @@ func DockerInstallScript(containerIdentifier, scriptName, functionScript string)
 	}, "ldconfig"); err != nil {
 		return err
 	}
-	
+
 	return nil
 }
 

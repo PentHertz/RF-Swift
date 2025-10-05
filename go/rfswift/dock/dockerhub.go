@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/fatih/color"
 	"golang.org/x/crypto/ssh/terminal"
 	rfutils "penthertz/rfswift/rfutils"
 )
@@ -128,7 +129,7 @@ func getRemoteImageCreationDate(repo, tag, architecture string) (time.Time, erro
 	hasEmptyImages := len(tagList.Results) > 0 && len(tagList.Results[0].Images) == 0
 
 	if hasEmptyImages {
-		log.Printf("Warning: Docker Hub API returned empty images arrays for getRemoteImageCreationDate, using fallback method")
+		color.New(color.FgHiBlack).Println("Info: Docker Hub API returned empty images arrays, using fallback method")
 		return getRemoteImageCreationDateFallback(body, tag, architecture)
 	}
 
@@ -334,7 +335,15 @@ func ListDockerImagesRepo() {
 	rfutils.ClearScreen()
 
 	headers := []string{"Tag", "Pushed Date", "Image", "Architecture"}
-	allTableData := [][]string{}
+
+	// Use a map to track unique tags with their latest timestamp
+	type tagInfo struct {
+		cleanName  string
+		pushedDate time.Time
+		repo       string
+		arch       string
+	}
+	uniqueTags := make(map[string]tagInfo)
 
 	// Process each repository
 	for _, repo := range repos {
@@ -345,19 +354,82 @@ func ListDockerImagesRepo() {
 		}
 
 		for _, tag := range tags {
+			// Skip tags that don't have an architecture suffix
+			hasArchSuffix := strings.HasSuffix(tag.Name, "_amd64") ||
+				strings.HasSuffix(tag.Name, "_arm64") ||
+				strings.HasSuffix(tag.Name, "_riscv64") ||
+				strings.HasSuffix(tag.Name, "_arm")
+
+			if !hasArchSuffix {
+				continue // Skip this tag
+			}
+
+			// Clean the tag name by removing architecture suffix BEFORE checking uniqueness
+			cleanTagName := removeArchitectureSuffix(tag.Name)
+
+			// Create a unique key combining repo and clean tag name
+			uniqueKey := fmt.Sprintf("%s:%s", repo, cleanTagName)
+
 			for _, image := range tag.Images {
 				if image.Architecture == architecture {
-					allTableData = append(allTableData, []string{
-						tag.Name,
-						tag.TagLastPushed.Format(time.RFC3339),
-						fmt.Sprintf("%s:%s", repo, tag.Name),
-						image.Architecture,
-					})
+					// Only add if we haven't seen this clean tag before, or if this one is newer
+					if existing, exists := uniqueTags[uniqueKey]; !exists {
+						uniqueTags[uniqueKey] = tagInfo{
+							cleanName:  cleanTagName,
+							pushedDate: tag.TagLastPushed,
+							repo:       repo,
+							arch:       image.Architecture,
+						}
+					} else {
+						// Keep the newer one
+						if tag.TagLastPushed.After(existing.pushedDate) {
+							uniqueTags[uniqueKey] = tagInfo{
+								cleanName:  cleanTagName,
+								pushedDate: tag.TagLastPushed,
+								repo:       repo,
+								arch:       image.Architecture,
+							}
+						}
+					}
 					break
 				}
 			}
 		}
 	}
+
+	// Convert map to slice for sorting and display
+	allTableData := [][]string{}
+	for _, info := range uniqueTags {
+		allTableData = append(allTableData, []string{
+			info.cleanName,
+			info.pushedDate.Format(time.RFC3339),
+			fmt.Sprintf("%s:%s", info.repo, info.cleanName),
+			info.arch,
+		})
+	}
+
+	// Sort all data by pushed date (newest first)
+	sort.Slice(allTableData, func(i, j int) bool {
+		dateI, errI := time.Parse(time.RFC3339, allTableData[i][1])
+		dateJ, errJ := time.Parse(time.RFC3339, allTableData[j][1])
+		if errI != nil || errJ != nil {
+			return false
+		}
+		return dateI.After(dateJ)
+	})
+
+	// Final deduplication pass - keep only the first occurrence of each tag name
+	// (which will be the newest due to sorting above)
+	seenTags := make(map[string]bool)
+	dedupedData := [][]string{}
+	for _, row := range allTableData {
+		tagKey := row[0] + "|" + row[2] // Tag name + Image (to handle multiple repos)
+		if !seenTags[tagKey] {
+			seenTags[tagKey] = true
+			dedupedData = append(dedupedData, row)
+		}
+	}
+	allTableData = dedupedData
 
 	// Sort all data by pushed date (newest first)
 	sort.Slice(allTableData, func(i, j int) bool {
@@ -427,4 +499,16 @@ func ListDockerImagesRepo() {
 
 	fmt.Print(reset)
 	fmt.Println()
+}
+
+func removeArchitectureSuffix(tagName string) string {
+	suffixes := []string{"_amd64", "_arm64", "_riscv64", "_arm"}
+
+	for _, suffix := range suffixes {
+		if strings.HasSuffix(tagName, suffix) {
+			return strings.TrimSuffix(tagName, suffix)
+		}
+	}
+
+	return tagName
 }
