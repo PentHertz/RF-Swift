@@ -108,6 +108,55 @@ detect_distro() {
     fi
 }
 
+# Function to prompt user for yes/no with terminal redirection solution
+prompt_yes_no() {
+  local prompt="$1"
+  local default="$2"  # Optional default (y/n)
+  local response
+  
+  # Try to use /dev/tty for interactive input even in pipe scenarios
+  if [ -t 0 ]; then
+    tty_device="/dev/stdin"
+  elif [ -e "/dev/tty" ]; then
+    tty_device="/dev/tty"
+  else
+    # No interactive terminal available, use defaults
+    if [ "$default" = "n" ]; then
+      echo "${YELLOW}${prompt} (y/n): Defaulting to no (no terminal available)${NC}"
+      return 1
+    else
+      echo "${YELLOW}${prompt} (y/n): Defaulting to yes (no terminal available)${NC}"
+      return 0
+    fi
+  fi
+  
+  # Try to read from the terminal
+  while true; do
+    printf "${YELLOW}%s (y/n): ${NC}" "${prompt}"
+    if read -r response < "$tty_device" 2>/dev/null; then
+      case "$response" in
+        [Yy]* ) return 0 ;;
+        [Nn]* ) return 1 ;;
+        * ) echo "Please answer yes (y) or no (n)." ;;
+      esac
+    else
+      # Failed to read from terminal, use default
+      if [ "$default" = "n" ]; then
+        echo "${YELLOW}${prompt} (y/n): Defaulting to no (couldn't read from terminal)${NC}"
+        return 1
+      else
+        echo "${YELLOW}${prompt} (y/n): Defaulting to yes (couldn't read from terminal)${NC}"
+        return 0
+      fi
+    fi
+  done
+}
+
+# Function to check if a command exists
+command_exists() {
+  command -v "$1" >/dev/null 2>&1
+}
+
 # Enhanced package manager detection
 get_package_manager() {
     # Prioritize Arch Linux package manager
