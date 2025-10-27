@@ -157,6 +157,7 @@ command_exists() {
   command -v "$1" >/dev/null 2>&1
 }
 
+
 # Enhanced package manager detection
 get_package_manager() {
     # Prioritize Arch Linux package manager
