@@ -988,14 +988,14 @@ get_latest_release() {
     RELEASES_PAGE=$(curl -s -L -H "User-Agent: RF-Swift-Installer" "https://github.com/${GITHUB_REPO}/releases/latest")
     
     # Look for version in the page title and URL
-    DETECTED_VERSION=$(echo "${RELEASES_PAGE}" | grep -o "${GITHUB_REPO}/releases/tag/v[0-9][0-9.]*" | head -1 | sed 's/.*tag\/v//')
+    DETECTED_VERSION=$(echo "${RELEASES_PAGE}" | grep -o "${GITHUB_REPO}/releases/tag/v[0-9][0-9.a-z-]*" | head -1 | sed 's/.*tag\/v//')
     
     if [ -n "${DETECTED_VERSION}" ]; then
       VERSION="${DETECTED_VERSION}"
       color_echo "green" "✅ Retrieved version ${VERSION} by parsing GitHub releases page"
     else
       # One last attempt - look for version in the title
-      DETECTED_VERSION=$(echo "${RELEASES_PAGE}" | grep -o '<title>Release v[0-9][0-9.]*' | head -1 | sed 's/.*Release v//')
+      DETECTED_VERSION=$(echo "${RELEASES_PAGE}" | grep -o '<title>Release v[0-9][0-9.a-z-]*' | head -1 | sed 's/.*Release v//')
       
       if [ -n "${DETECTED_VERSION}" ]; then
         VERSION="${DETECTED_VERSION}"
