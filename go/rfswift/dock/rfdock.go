@@ -575,7 +575,14 @@ func DockerLast(ifilter string, labelKey string, labelValue string) {
 
 		// Get the container image ID and associate with tags
 		containerImageID := container.ImageID
-		shortImageID := containerImageID[7:19] // shortened SHA256
+		shortImageID := ""
+		if len(containerImageID) >= 19 {
+			shortImageID = containerImageID[7:19] // shortened SHA256
+		} else if len(containerImageID) > 7 {
+			shortImageID = containerImageID[7:] // Use whatever is available after "sha256:"
+		} else {
+			shortImageID = containerImageID // Use as-is if too short
+		}
 
 		// Get the display image name
 		imageTag := container.Image
@@ -2478,6 +2485,282 @@ However, you can achieve similar functionality by using the following commands:
 		os.Exit(1)
 	}
 	common.PrintSuccessMessage("Docker service restarted successfully.")
+}
+
+// UpdateCapability adds or removes a capability from a container
+func UpdateCapability(containerID string, capability string, add bool) error {
+	ctx := context.Background()
+	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
+	if err != nil {
+		common.PrintErrorMessage(err)
+		return err
+	}
+	defer cli.Close()
+
+	// Get container info first
+	containerJSON, err := cli.ContainerInspect(ctx, containerID)
+	if err != nil {
+		common.PrintErrorMessage(fmt.Errorf("failed to inspect container: %v", err))
+		return err
+	}
+	containerName := strings.TrimPrefix(containerJSON.Name, "/")
+
+	// Get container properties
+	props, err := getContainerProperties(ctx, cli, containerID)
+	if err != nil {
+		common.PrintErrorMessage(fmt.Errorf("failed to get container properties: %v", err))
+		return err
+	}
+	
+	// Parse existing capabilities
+	var capabilities []string
+	if props["Caps"] != "" {
+		capabilities = strings.Split(props["Caps"], ",")
+	}
+
+	// Add or remove the capability
+	if add {
+		// Check if already exists
+		found := false
+		for _, cap := range capabilities {
+			if strings.TrimSpace(cap) == capability {
+				found = true
+				break
+			}
+		}
+		
+		if found {
+			common.PrintInfoMessage(fmt.Sprintf("Capability '%s' already exists in container '%s'", capability, containerName))
+			return nil
+		}
+		
+		capabilities = append(capabilities, capability)
+		common.PrintInfoMessage(fmt.Sprintf("Adding capability '%s' to container '%s'", capability, containerName))
+	} else {
+		// Remove capability
+		newCapabilities := []string{}
+		found := false
+		for _, cap := range capabilities {
+			if strings.TrimSpace(cap) != capability {
+				newCapabilities = append(newCapabilities, cap)
+			} else {
+				found = true
+			}
+		}
+		
+		if !found {
+			common.PrintWarningMessage(fmt.Sprintf("Capability '%s' not found in container '%s'", capability, containerName))
+			return nil
+		}
+		
+		capabilities = newCapabilities
+		common.PrintInfoMessage(fmt.Sprintf("Removing capability '%s' from container '%s'", capability, containerName))
+	}
+
+	// Update the container
+	props["Caps"] = strings.Join(capabilities, ",")
+	
+	return recreateContainerWithProperties(ctx, cli, containerID, props)
+}
+
+// UpdateCgroupRule adds or removes a cgroup rule from a container
+func UpdateCgroupRule(containerID string, rule string, add bool) error {
+	ctx := context.Background()
+	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
+	if err != nil {
+		common.PrintErrorMessage(err)
+		return err
+	}
+	defer cli.Close()
+
+	// Get container info first
+	containerJSON, err := cli.ContainerInspect(ctx, containerID)
+	if err != nil {
+		common.PrintErrorMessage(fmt.Errorf("failed to inspect container: %v", err))
+		return err
+	}
+	containerName := strings.TrimPrefix(containerJSON.Name, "/")
+
+	// Get container properties
+	props, err := getContainerProperties(ctx, cli, containerID)
+	if err != nil {
+		common.PrintErrorMessage(fmt.Errorf("failed to get container properties: %v", err))
+		return err
+	}
+	
+	// Parse existing cgroup rules
+	var cgroupRules []string
+	if props["Cgroups"] != "" {
+		cgroupRules = strings.Split(props["Cgroups"], ",")
+	}
+
+	// Add or remove the rule
+	if add {
+		// Check if already exists
+		found := false
+		for _, r := range cgroupRules {
+			if strings.TrimSpace(r) == rule {
+				found = true
+				break
+			}
+		}
+		
+		if found {
+			common.PrintInfoMessage(fmt.Sprintf("Cgroup rule '%s' already exists in container '%s'", rule, containerName))
+			return nil
+		}
+		
+		cgroupRules = append(cgroupRules, rule)
+		common.PrintInfoMessage(fmt.Sprintf("Adding cgroup rule '%s' to container '%s'", rule, containerName))
+	} else {
+		// Remove rule
+		newRules := []string{}
+		found := false
+		for _, r := range cgroupRules {
+			if strings.TrimSpace(r) != rule {
+				newRules = append(newRules, r)
+			} else {
+				found = true
+			}
+		}
+		
+		if !found {
+			common.PrintWarningMessage(fmt.Sprintf("Cgroup rule '%s' not found in container '%s'", rule, containerName))
+			return nil
+		}
+		
+		cgroupRules = newRules
+		common.PrintInfoMessage(fmt.Sprintf("Removing cgroup rule '%s' from container '%s'", rule, containerName))
+	}
+
+	// Update the container
+	props["Cgroups"] = strings.Join(cgroupRules, ",")
+	
+	return recreateContainerWithProperties(ctx, cli, containerID, props)
+}
+
+// Helper function to recreate container with updated properties
+func recreateContainerWithProperties(ctx context.Context, cli *client.Client, containerID string, props map[string]string) error {
+	// Get fresh container info first
+	containerJSON, err := cli.ContainerInspect(ctx, containerID)
+	if err != nil {
+		common.PrintErrorMessage(fmt.Errorf("failed to inspect container: %v", err))
+		return err
+	}
+	
+	containerName := strings.TrimPrefix(containerJSON.Name, "/")
+	
+	// Update props with actual container name if not present
+	if props["ContainerName"] == "" {
+		props["ContainerName"] = containerName
+	}
+	
+	// Update props with actual shell if not present or invalid
+	if props["Shell"] == "" {
+		props["Shell"] = containerJSON.Path
+		if props["Shell"] == "" {
+			props["Shell"] = "/bin/bash"
+		}
+	}
+	
+	// Update props with actual image
+	if props["Image"] == "" {
+		props["Image"] = containerJSON.Config.Image
+	}
+	
+	common.PrintInfoMessage(fmt.Sprintf("Updating container '%s'", containerName))
+	
+	// Stop the container
+	common.PrintInfoMessage("Stopping container...")
+	timeout := 10
+	if err := cli.ContainerStop(ctx, containerID, container.StopOptions{Timeout: &timeout}); err != nil {
+		common.PrintErrorMessage(fmt.Errorf("failed to stop container: %v", err))
+		return err
+	}
+
+	// Remove the container
+	common.PrintInfoMessage("Removing old container...")
+	if err := cli.ContainerRemove(ctx, containerID, container.RemoveOptions{Force: true}); err != nil {
+		common.PrintErrorMessage(fmt.Errorf("failed to remove container: %v", err))
+		return err
+	}
+
+	// Parse properties for recreation
+	bindings := []string{}
+	if props["Bindings"] != "" {
+		bindings = strings.Split(props["Bindings"], ",")
+	}
+
+	extrahosts := []string{}
+	if props["ExtraHosts"] != "" {
+		extrahosts = strings.Split(props["ExtraHosts"], ",")
+	}
+
+	dockerenv := []string{fmt.Sprintf("DISPLAY=%s", props["XDisplay"])}
+	if dockerObj.pulse_server != "" {
+		dockerenv = append(dockerenv, "PULSE_SERVER="+dockerObj.pulse_server)
+	}
+
+	exposedPorts := ParseExposedPorts(props["ExposedPorts"])
+	bindedPorts := ParseBindedPorts(props["PortBindings"])
+	devices := getDeviceMappingsFromString(props["Devices"])
+
+	privileged := props["Privileged"] == "true"
+
+	hostConfig := &container.HostConfig{
+		NetworkMode:  container.NetworkMode(props["NetworkMode"]),
+		Binds:        bindings,
+		ExtraHosts:   extrahosts,
+		PortBindings: bindedPorts,
+		Privileged:   privileged,
+	}
+
+	if !privileged {
+		hostConfig.Devices = devices
+		
+		if props["Cgroups"] != "" {
+			hostConfig.DeviceCgroupRules = strings.Split(props["Cgroups"], ",")
+		}
+		if props["Seccomp"] != "" && props["Seccomp"] != "(Default)" {
+			hostConfig.SecurityOpt = []string{"seccomp=" + props["Seccomp"]}
+		}
+		if props["Caps"] != "" {
+			hostConfig.CapAdd = strings.Split(props["Caps"], ",")
+		}
+	}
+
+	// Create the new container
+	common.PrintInfoMessage("Creating new container with updated configuration...")
+	resp, err := cli.ContainerCreate(ctx, &container.Config{
+		Image:        props["Image"],
+		Cmd:          []string{props["Shell"]},
+		Env:          dockerenv,
+		ExposedPorts: exposedPorts,
+		OpenStdin:    true,
+		StdinOnce:    false,
+		AttachStdin:  true,
+		AttachStdout: true,
+		AttachStderr: true,
+		Tty:          true,
+		Labels: map[string]string{
+			"org.container.project": "rfswift",
+		},
+	}, hostConfig, &network.NetworkingConfig{}, nil, containerName)
+
+	if err != nil {
+		common.PrintErrorMessage(fmt.Errorf("failed to create new container: %v", err))
+		return err
+	}
+
+	// Start the new container
+	common.PrintInfoMessage("Starting new container...")
+	if err := cli.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
+		common.PrintErrorMessage(fmt.Errorf("failed to start new container: %v", err))
+		return err
+	}
+
+	common.PrintSuccessMessage(fmt.Sprintf("Container '%s' updated successfully!", containerName))
+	return nil
 }
 
 // Check if a device mapping already exists
