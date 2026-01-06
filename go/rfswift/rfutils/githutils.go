@@ -122,8 +122,17 @@ func ReplaceBinary(newBinaryPath, currentBinaryPath string) error {
 }
 
 func VersionCompare(v1, v2 string) int {
-	parts1 := strings.Split(v1, ".")
-	parts2 := strings.Split(v2, ".")
+	// Strip 'v' prefix if present
+	v1 = strings.TrimPrefix(v1, "v")
+	v2 = strings.TrimPrefix(v2, "v")
+	
+	// Split version and pre-release parts
+	v1Parts := strings.SplitN(v1, "-", 2)
+	v2Parts := strings.SplitN(v2, "-", 2)
+	
+	// Compare main version numbers
+	parts1 := strings.Split(v1Parts[0], ".")
+	parts2 := strings.Split(v2Parts[0], ".")
 
 	for i := 0; i < len(parts1) && i < len(parts2); i++ {
 		p1, _ := strconv.Atoi(parts1[i])
@@ -142,6 +151,19 @@ func VersionCompare(v1, v2 string) int {
 	}
 	if len(parts1) < len(parts2) {
 		return -1
+	}
+
+	// Main versions are equal, compare pre-release tags
+	// If both have pre-release or both don't, they're equal
+	// If only one has pre-release, the one without is newer
+	hasPrerelease1 := len(v1Parts) > 1
+	hasPrerelease2 := len(v2Parts) > 1
+	
+	if !hasPrerelease1 && hasPrerelease2 {
+		return 1  // v1 is newer (stable > pre-release)
+	}
+	if hasPrerelease1 && !hasPrerelease2 {
+		return -1  // v2 is newer
 	}
 
 	return 0
