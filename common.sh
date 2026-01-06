@@ -826,7 +826,7 @@ install_docker_compose_steamdeck() {
 install_buildx() {
     arch=$(uname -m)
     os=$(uname -s | tr '[:upper:]' '[:lower:]') # Convert OS to lowercase
-    version="v0.29.1"
+    version="v0.30.1"
 
     # Map architecture to buildx naming convention
     case "$arch" in
@@ -871,7 +871,7 @@ install_buildx() {
 install_docker_compose() {
     arch=$(uname -m)
     os=$(uname -s | tr '[:upper:]' '[:lower:]') # Convert OS to lowercase
-    version="v2.40.0"
+    version="v5.0.1"
 
     # Map architecture to Docker Compose naming convention
     case "$arch" in
@@ -938,7 +938,7 @@ install_go() {
     arch=$(uname -m)
     os=$(uname -s | tr '[:upper:]' '[:lower:]') # Normalize OS name to lowercase
     prog=""
-    version="1.25.3"
+    version="1.25.5"
 
     # Map architecture and OS to Go binary tar.gz naming convention
     case "$arch" in

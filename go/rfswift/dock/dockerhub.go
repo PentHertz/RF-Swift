@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/fatih/color"
+	//"github.com/fatih/color"
 	"golang.org/x/crypto/ssh/terminal"
 	rfutils "penthertz/rfswift/rfutils"
 )
@@ -62,6 +62,30 @@ func getArchitecture() string {
 	}
 }
 
+func showLoadingIndicatorWithReturn(commandFunc func() error, stepName string) error {
+	done := make(chan error)
+	go func() {
+		done <- commandFunc()
+	}()
+
+	// Clock emojis to create the rotating clock animation
+	clockEmojis := []string{"🕛", "🕐", "🕑", "🕒", "🕓", "🕔", "🕕", "🕖", "🕗", "🕘", "🕙", "🕚"}
+	i := 0
+	ticker := time.NewTicker(200 * time.Millisecond)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case err := <-done:
+			fmt.Print("\r\033[K") // Clear the line
+			return err
+		case <-ticker.C:
+			fmt.Printf("\r%s %s", clockEmojis[i%len(clockEmojis)], stepName)
+			i++
+		}
+	}
+}
+
 func determineArchitectureFromTag(tagName, requestedArch string) string {
 	// Check for explicit architecture suffixes
 	if strings.HasSuffix(tagName, "_amd64") {
@@ -99,54 +123,39 @@ func IsOfficialImage(imageName string) bool {
 }
 
 func getRemoteImageCreationDate(repo, tag, architecture string) (time.Time, error) {
-	url := fmt.Sprintf("https://hub.docker.com/v2/repositories/%s/tags/?page_size=100", repo)
-
-	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Get(url)
-	if err != nil {
-		return time.Time{}, err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode == http.StatusNotFound {
-		return time.Time{}, fmt.Errorf("tag not found")
-	} else if resp.StatusCode != http.StatusOK {
-		return time.Time{}, fmt.Errorf("failed to get tags: %s", resp.Status)
-	}
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return time.Time{}, err
-	}
-
-	// First, try to parse with the original structure
-	var tagList TagList
-	if err := json.Unmarshal(body, &tagList); err != nil {
-		return time.Time{}, err
-	}
-
-	// Check if images arrays are empty (new API issue)
-	hasEmptyImages := len(tagList.Results) > 0 && len(tagList.Results[0].Images) == 0
-
-	if hasEmptyImages {
-		color.New(color.FgHiBlack).Println("Info: Docker Hub API returned empty images arrays, using fallback method")
-		return getRemoteImageCreationDateFallback(body, tag, architecture)
-	}
-
-	// Original logic when images arrays are populated
-	for _, t := range tagList.Results {
-		if t.Name == tag {
-			for _, image := range t.Images {
-				if image.Architecture == architecture {
-					return t.TagLastPushed, nil
-				}
-			}
+	var result time.Time
+	
+	err := showLoadingIndicatorWithReturn(func() error {
+		url := fmt.Sprintf("https://hub.docker.com/v2/repositories/%s/tags/?page_size=100", repo)
+		client := &http.Client{Timeout: 10 * time.Second}
+		resp, err := client.Get(url)
+		if err != nil {
+			return err
 		}
-	}
+		defer resp.Body.Close()
 
-	return time.Time{}, fmt.Errorf("tag not found")
+		if resp.StatusCode == http.StatusNotFound {
+			return fmt.Errorf("tag not found")
+		} else if resp.StatusCode != http.StatusOK {
+			return fmt.Errorf("failed to get tags: %s", resp.Status)
+		}
+
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return err
+		}
+
+		date, err := getRemoteImageCreationDateFallback(body, tag, architecture)
+		if err != nil {
+			return err
+		}
+
+		result = date
+		return nil
+	}, fmt.Sprintf("Checking Docker Hub for '%s' (%s)", tag, architecture))
+
+	return result, err
 }
-
 func getRemoteImageCreationDateFallback(body []byte, tag, architecture string) (time.Time, error) {
 	var response DockerHubResponse
 	if err := json.Unmarshal(body, &response); err != nil {
@@ -182,74 +191,37 @@ func getRemoteImageCreationDateFallback(body []byte, tag, architecture string) (
 }
 
 func getLatestDockerHubTags(repo string, architecture string) ([]Tag, error) {
-	url := fmt.Sprintf("https://hub.docker.com/v2/repositories/%s/tags/?page_size=100", repo)
-
-	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Get(url)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("failed to get tags: %s", resp.Status)
-	}
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, err
-	}
-
-	// First, try to parse with the original structure
-	var tagList TagList
-	if err := json.Unmarshal(body, &tagList); err != nil {
-		return nil, err
-	}
-
-	// Check if images arrays are empty (new API issue)
-	hasEmptyImages := len(tagList.Results) > 0 && len(tagList.Results[0].Images) == 0
-
-	if hasEmptyImages {
-		log.Printf("Warning: Docker Hub API returned empty images arrays, using fallback method")
-		return getLatestDockerHubTagsFallback(body, architecture)
-	}
-
-	// Original logic when images arrays are populated
-	var filteredTags []Tag
-	for _, tag := range tagList.Results {
-		for _, image := range tag.Images {
-			if image.Architecture == architecture {
-				filteredTags = append(filteredTags, tag)
-				break
-			}
-		}
-	}
-
-	// Sort tags by pushed date from latest to oldest
-	sort.Slice(filteredTags, func(i, j int) bool {
-		return filteredTags[i].TagLastPushed.After(filteredTags[j].TagLastPushed)
-	})
-
-	// Remove duplicate tags, keeping only the latest
-	uniqueTags := make(map[string]Tag)
-	for _, tag := range filteredTags {
-		if _, exists := uniqueTags[tag.Name]; !exists {
-			uniqueTags[tag.Name] = tag
-		}
-	}
-
-	// Convert map to slice
 	var latestTags []Tag
-	for _, tag := range uniqueTags {
-		latestTags = append(latestTags, tag)
-	}
 
-	// Sort the tags again to ensure they are in the correct order after deduplication
-	sort.Slice(latestTags, func(i, j int) bool {
-		return latestTags[i].TagLastPushed.After(latestTags[j].TagLastPushed)
-	})
+	err := showLoadingIndicatorWithReturn(func() error {
+		url := fmt.Sprintf("https://hub.docker.com/v2/repositories/%s/tags/?page_size=100", repo)
+		client := &http.Client{Timeout: 10 * time.Second}
+		resp, err := client.Get(url)
+		if err != nil {
+			return err
+		}
+		defer resp.Body.Close()
 
-	return latestTags, nil
+		if resp.StatusCode != http.StatusOK {
+			return fmt.Errorf("failed to get tags: %s", resp.Status)
+		}
+
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return err
+		}
+
+		// Use the new API format directly (fallback method)
+		filteredTags, err := getLatestDockerHubTagsFallback(body, architecture)
+		if err != nil {
+			return err
+		}
+
+		latestTags = filteredTags
+		return nil
+	}, "Fetching available tags")
+
+	return latestTags, err
 }
 
 func getLatestDockerHubTagsFallback(body []byte, architecture string) ([]Tag, error) {

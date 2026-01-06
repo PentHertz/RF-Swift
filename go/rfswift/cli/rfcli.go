@@ -370,6 +370,94 @@ PowerShell:
 	},
 }
 
+var CapabilitiesCmd = &cobra.Command{
+	Use:   "capabilities",
+	Short: "Manage container capabilities",
+	Long:  `Add or remove capabilities for a container`,
+}
+
+var CapabilitiesAddCmd = &cobra.Command{
+	Use:   "add",
+	Short: "Add a capability",
+	Long:  `Add a new capability to a container`,
+	Run: func(cmd *cobra.Command, args []string) {
+		capability, _ := cmd.Flags().GetString("capability")
+		rfdock.UpdateCapability(ContID, capability, true)
+	},
+}
+
+var CapabilitiesRmCmd = &cobra.Command{
+	Use:   "rm",
+	Short: "Remove a capability",
+	Long:  `Remove a capability from a container`,
+	Run: func(cmd *cobra.Command, args []string) {
+		capability, _ := cmd.Flags().GetString("capability")
+		rfdock.UpdateCapability(ContID, capability, false)
+	},
+}
+
+var CgroupsCmd = &cobra.Command{
+	Use:   "cgroups",
+	Short: "Manage container cgroup rules",
+	Long:  `Add or remove cgroup device rules for a container`,
+}
+
+var CgroupsAddCmd = &cobra.Command{
+	Use:   "add",
+	Short: "Add a cgroup rule",
+	Long:  `Add a new cgroup device rule to a container (e.g., 'c 189:* rwm')`,
+	Run: func(cmd *cobra.Command, args []string) {
+		rule, _ := cmd.Flags().GetString("rule")
+		rfdock.UpdateCgroupRule(ContID, rule, true)
+	},
+}
+
+var CgroupsRmCmd = &cobra.Command{
+	Use:   "rm",
+	Short: "Remove a cgroup rule",
+	Long:  `Remove a cgroup device rule from a container`,
+	Run: func(cmd *cobra.Command, args []string) {
+		rule, _ := cmd.Flags().GetString("rule")
+		rfdock.UpdateCgroupRule(ContID, rule, false)
+	},
+}
+
+var upgradeCmd = &cobra.Command{
+	Use:   "upgrade",
+	Short: "Upgrade container to a new/latest/another image",
+	Long: `Upgrade a container by pulling a new image and recreating the container with preserved repositories.
+This follows the Exegol upgrade pattern: pull new image → create new container → inherit name.
+
+Examples:
+  # Upgrade to latest version (no repositories preserved)
+  rfswift upgrade -c mycontainer
+
+  # Upgrade to specific image (no repositories preserved)
+  rfswift upgrade -c mycontainer -i telecom_15012025
+
+  # Upgrade keeping specific repositories
+  rfswift upgrade -c mycontainer -i telecom_15012025 -r /root/test,/root/share,/opt/tools
+
+  # Downgrade to previous version
+  rfswift upgrade -c mycontainer -i telecom_10102024`,
+	Run: func(cmd *cobra.Command, args []string) {
+		containerName, _ := cmd.Flags().GetString("container")
+		repositories, _ := cmd.Flags().GetString("repositories")  // CHANGED
+		imageName, _ := cmd.Flags().GetString("image")
+
+		if containerName == "" {
+			common.PrintErrorMessage(fmt.Errorf("container name (-c) is required"))
+			cmd.Help()
+			os.Exit(1)
+		}
+
+		if err := rfdock.DockerUpgrade(containerName, repositories, imageName); err != nil {  // CHANGED
+			common.PrintErrorMessage(err)
+			os.Exit(1)
+		}
+	},
+}
+
 func detectShell() string {
 	shell := os.Getenv("SHELL")
 	if shell == "" {
@@ -561,6 +649,9 @@ func init() {
 	rootCmd.AddCommand(UpdateCmd)
 	rootCmd.AddCommand(BindingsCmd)
 	rootCmd.AddCommand(stopCmd)
+	rootCmd.AddCommand(upgradeCmd)
+	rootCmd.AddCommand(CapabilitiesCmd)
+	rootCmd.AddCommand(CgroupsCmd)
 	rootCmd.PersistentPreRun = func(cmd *cobra.Command, args []string) {
 		if len(os.Args) > 1 {
 			if (os.Args[1] == "completion") || (os.Args[1] == "__complete") {
@@ -651,6 +742,35 @@ func init() {
 	BindingsRmCmd.Flags().StringVarP(&Btarget, "target", "t", "", "target binding")
 	BindingsRmCmd.MarkFlagRequired("container")
 	BindingsRmCmd.MarkFlagRequired("target")
+
+	// Capabilities configuration
+	CapabilitiesCmd.AddCommand(CapabilitiesAddCmd)
+	CapabilitiesCmd.AddCommand(CapabilitiesRmCmd)
+	CapabilitiesAddCmd.Flags().StringVarP(&ContID, "container", "c", "", "container ID or name")
+	CapabilitiesAddCmd.Flags().StringP("capability", "p", "", "capability to add (e.g., NET_ADMIN, SYS_PTRACE)")
+	CapabilitiesAddCmd.MarkFlagRequired("container")
+	CapabilitiesAddCmd.MarkFlagRequired("capability")
+	CapabilitiesRmCmd.Flags().StringVarP(&ContID, "container", "c", "", "container ID or name")
+	CapabilitiesRmCmd.Flags().StringP("capability", "p", "", "capability to remove")
+	CapabilitiesRmCmd.MarkFlagRequired("container")
+	CapabilitiesRmCmd.MarkFlagRequired("capability")
+
+	// Cgroups configuration
+	CgroupsCmd.AddCommand(CgroupsAddCmd)
+	CgroupsCmd.AddCommand(CgroupsRmCmd)
+	CgroupsAddCmd.Flags().StringVarP(&ContID, "container", "c", "", "container ID or name")
+	CgroupsAddCmd.Flags().StringP("rule", "r", "", "cgroup rule to add (e.g., 'c 189:* rwm')")
+	CgroupsAddCmd.MarkFlagRequired("container")
+	CgroupsAddCmd.MarkFlagRequired("rule")
+	CgroupsRmCmd.Flags().StringVarP(&ContID, "container", "c", "", "container ID or name")
+	CgroupsRmCmd.Flags().StringP("rule", "r", "", "cgroup rule to remove")
+	CgroupsRmCmd.MarkFlagRequired("container")
+	CgroupsRmCmd.MarkFlagRequired("rule")
+
+	upgradeCmd.Flags().StringP("container", "c", "", "Container name or ID to upgrade (required)")
+	upgradeCmd.Flags().StringP("repositories", "r", "", "Comma-separated list of container directories to preserve (e.g., /root/share,/opt/tools). These directories will be copied from old container to new container")
+	upgradeCmd.Flags().StringP("image", "i", "", "Target image name/tag (if not specified, uses 'latest')")
+	upgradeCmd.MarkFlagRequired("container")
 
 }
 
