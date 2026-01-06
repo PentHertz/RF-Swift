@@ -974,15 +974,16 @@ get_latest_release() {
       
       if [ -n "${DETECTED_VERSION}" ]; then
         VERSION="${DETECTED_VERSION}"
+        FOUND_VERSION=true
         color_echo "green" "✅ Successfully retrieved latest version using GitHub API"
       fi
     else
       color_echo "yellow" "GitHub API query didn't return expected results. Trying alternative method..."
     fi
   fi
-  
+
   # Second try: Parse the releases page directly if API method failed
-  if [ "${VERSION}" = "${DEFAULT_VERSION}" ] && command_exists curl; then
+  if [ "${FOUND_VERSION}" = false ] && command_exists curl; then
     color_echo "blue" "Trying direct HTML parsing method..."
     
     RELEASES_PAGE=$(curl -s -L -H "User-Agent: RF-Swift-Installer" "https://github.com/${GITHUB_REPO}/releases/latest")
@@ -999,13 +1000,18 @@ get_latest_release() {
       
       if [ -n "${DETECTED_VERSION}" ]; then
         VERSION="${DETECTED_VERSION}"
+        FOUND_VERSION=true
         color_echo "green" "✅ Retrieved version ${VERSION} from page title"
       else
         color_echo "yellow" "⚠️ Using default version ${DEFAULT_VERSION} as a fallback"
       fi
     fi
   fi
-  
+
+  if [ "${FOUND}" = false ]; then  
+    VERSION="${DEFAULT_VERSION}"  # Initialize with default
+  fi
+
   # Set URLs based on the version
   RELEASE_URL="https://github.com/${GITHUB_REPO}/releases/tag/v${VERSION}"
   DOWNLOAD_BASE_URL="https://github.com/${GITHUB_REPO}/releases/download/v${VERSION}"
