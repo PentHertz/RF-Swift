@@ -43,6 +43,7 @@ var Caps string
 var Cgroups string
 var isADevice bool
 var Seccomp string
+var NoX11 bool
 
 var rootCmd = &cobra.Command{
 	Use:   "rfswift",
@@ -59,12 +60,21 @@ var runCmd = &cobra.Command{
 	Long:  `Create a container and run a program inside the docker container`,
 	Run: func(cmd *cobra.Command, args []string) {
 		os := runtime.GOOS
-		if os == "windows" {
-			rfdock.DockerSetx11("/run/desktop/mnt/host/wslg/.X11-unix:/tmp/.X11-unix,/run/desktop/mnt/host/wslg:/mnt/wslg")
+		
+		// Only setup X11 if not disabled
+		if !NoX11 {
+			if os == "windows" {
+				rfdock.DockerSetx11("/run/desktop/mnt/host/wslg/.X11-unix:/tmp/.X11-unix,/run/desktop/mnt/host/wslg:/mnt/wslg")
+			} else {
+				rfutils.XHostEnable() // force xhost to add local connections ALCs, TODO: to optimize later
+			}
+			rfdock.DockerSetXDisplay(XDisplay)
 		} else {
-			rfutils.XHostEnable() // force xhost to add local connections ALCs, TODO: to optimize later
+			// Disable X11 by setting empty values
+			rfdock.DockerSetx11("")
+			rfdock.DockerSetXDisplay("")
 		}
-		rfdock.DockerSetXDisplay(XDisplay)
+		
 		rfdock.DockerSetShell(ExecCmd)
 		rfdock.DockerAddBinding(ExtraBind)
 		rfdock.DockerSetImage(DImage)
@@ -78,7 +88,7 @@ var runCmd = &cobra.Command{
 		rfdock.DockerAddCgroups(Cgroups)
 		rfdock.DockerSetPrivileges(Privileged)
 		rfdock.DockerSetSeccomp(Seccomp)
-		if os == "linux" { // use pactl to configure ACLs
+		if os == "linux" { // use pactl to configure ACLs only if X11 is enabled
 			rfutils.SetPulseCTL(PulseServer)
 		}
 		rfdock.DockerRun(DockerName)
@@ -91,11 +101,16 @@ var execCmd = &cobra.Command{
 	Long:  `Exec a program on a created docker container, even not started`,
 	Run: func(cmd *cobra.Command, args []string) {
 		os := runtime.GOOS
-		if os == "windows" {
-			rfdock.DockerSetx11("/run/desktop/mnt/host/wslg/.X11-unix:/tmp/.X11-unix,/run/desktop/mnt/host/wslg:/mnt/wslg")
-		} else {
-			rfutils.XHostEnable() // force xhost to add local connections ALCs, TODO: to optimize later
+		
+		// Only setup X11 if not disabled
+		if !NoX11 {
+			if os == "windows" {
+				rfdock.DockerSetx11("/run/desktop/mnt/host/wslg/.X11-unix:/tmp/.X11-unix,/run/desktop/mnt/host/wslg:/mnt/wslg")
+			} else {
+				rfutils.XHostEnable() // force xhost to add local connections ALCs, TODO: to optimize later
+			}
 		}
+		
 		rfdock.DockerSetShell(ExecCmd)
 		rfdock.DockerExec(ContID, "/root")
 	},
@@ -422,6 +437,52 @@ var CgroupsRmCmd = &cobra.Command{
 	},
 }
 
+var PortsCmd = &cobra.Command{
+	Use:   "ports",
+	Short: "Manage container ports",
+	Long:  `Add or remove exposed ports and port bindings for a container`,
+}
+
+var PortsExposeCmd = &cobra.Command{
+	Use:   "expose",
+	Short: "Expose a port",
+	Long:  `Expose a new port on a container (e.g., '8080/tcp')`,
+	Run: func(cmd *cobra.Command, args []string) {
+		port, _ := cmd.Flags().GetString("port")
+		rfdock.UpdateExposedPort(ContID, port, true)
+	},
+}
+
+var PortsUnexposeCmd = &cobra.Command{
+	Use:   "unexpose",
+	Short: "Remove an exposed port",
+	Long:  `Remove an exposed port from a container`,
+	Run: func(cmd *cobra.Command, args []string) {
+		port, _ := cmd.Flags().GetString("port")
+		rfdock.UpdateExposedPort(ContID, port, false)
+	},
+}
+
+var PortsBindCmd = &cobra.Command{
+	Use:   "bind",
+	Short: "Bind a port",
+	Long:  `Bind a container port to a host port (e.g., '8080/tcp:8080' or '8080/tcp:127.0.0.1:8080')`,
+	Run: func(cmd *cobra.Command, args []string) {
+		binding, _ := cmd.Flags().GetString("binding")
+		rfdock.UpdatePortBinding(ContID, binding, true)
+	},
+}
+
+var PortsUnbindCmd = &cobra.Command{
+	Use:   "unbind",
+	Short: "Remove a port binding",
+	Long:  `Remove a port binding from a container`,
+	Run: func(cmd *cobra.Command, args []string) {
+		binding, _ := cmd.Flags().GetString("binding")
+		rfdock.UpdatePortBinding(ContID, binding, false)
+	},
+}
+
 var upgradeCmd = &cobra.Command{
 	Use:   "upgrade",
 	Short: "Upgrade container to a new/latest/another image",
@@ -652,6 +713,7 @@ func init() {
 	rootCmd.AddCommand(upgradeCmd)
 	rootCmd.AddCommand(CapabilitiesCmd)
 	rootCmd.AddCommand(CgroupsCmd)
+	rootCmd.AddCommand(PortsCmd)
 	rootCmd.PersistentPreRun = func(cmd *cobra.Command, args []string) {
 		if len(os.Args) > 1 {
 			if (os.Args[1] == "completion") || (os.Args[1] == "__complete") {
@@ -707,6 +769,7 @@ func init() {
 	execCmd.Flags().StringVarP(&ContID, "container", "c", "", "container to run")
 	execCmd.Flags().StringVarP(&ExecCmd, "command", "e", "/bin/bash", "command to exec (by default: /bin/bash)")
 	execCmd.Flags().StringVarP(&SInstall, "install", "i", "", "install from function script (e.g: 'sdrpp_soft_install')")
+	execCmd.Flags().BoolVar(&NoX11, "no-x11", false, "Disable X11 forwarding")
 	//execCmd.MarkFlagRequired("command")
 	runCmd.Flags().StringVarP(&ExtraHost, "extrahosts", "x", "", "set extra hosts (default: 'pluto.local:192.168.1.2', and separate them with commas)")
 	runCmd.Flags().StringVarP(&XDisplay, "display", "d", rfutils.GetDisplayEnv(), "set X Display (duplicates hosts's env by default)")
@@ -721,6 +784,7 @@ func init() {
 	runCmd.Flags().StringVarP(&Caps, "capabilities", "a", "", "extra capabilities (separate them with commas)")
 	runCmd.Flags().StringVarP(&Cgroups, "cgroups", "g", "", "extra cgroup rules (separate them with commas)")
 	runCmd.Flags().StringVarP(&Seccomp, "seccomp", "m", "", "Set Seccomp profile ('default' one used by default)")
+	runCmd.Flags().BoolVar(&NoX11, "no-x11", false, "Disable X11 forwarding") 
 	runCmd.MarkFlagRequired("name")
 
 	runCmd.Flags().StringVarP(&NetExporsedPorts, "exposedports", "z", "", "Exposed ports")
@@ -766,6 +830,28 @@ func init() {
 	CgroupsRmCmd.Flags().StringP("rule", "r", "", "cgroup rule to remove")
 	CgroupsRmCmd.MarkFlagRequired("container")
 	CgroupsRmCmd.MarkFlagRequired("rule")
+
+	// Ports configuration
+	PortsCmd.AddCommand(PortsExposeCmd)
+	PortsCmd.AddCommand(PortsUnexposeCmd)
+	PortsCmd.AddCommand(PortsBindCmd)
+	PortsCmd.AddCommand(PortsUnbindCmd)
+	PortsExposeCmd.Flags().StringVarP(&ContID, "container", "c", "", "container ID or name")
+	PortsExposeCmd.Flags().StringP("port", "p", "", "port to expose (e.g., '8080/tcp')")
+	PortsExposeCmd.MarkFlagRequired("container")
+	PortsExposeCmd.MarkFlagRequired("port")
+	PortsUnexposeCmd.Flags().StringVarP(&ContID, "container", "c", "", "container ID or name")
+	PortsUnexposeCmd.Flags().StringP("port", "p", "", "port to remove")
+	PortsUnexposeCmd.MarkFlagRequired("container")
+	PortsUnexposeCmd.MarkFlagRequired("port")
+	PortsBindCmd.Flags().StringVarP(&ContID, "container", "c", "", "container ID or name")
+	PortsBindCmd.Flags().StringP("binding", "b", "", "port binding (e.g., '8080/tcp:8080' or '8080/tcp:127.0.0.1:8080')")
+	PortsBindCmd.MarkFlagRequired("container")
+	PortsBindCmd.MarkFlagRequired("binding")
+	PortsUnbindCmd.Flags().StringVarP(&ContID, "container", "c", "", "container ID or name")
+	PortsUnbindCmd.Flags().StringP("binding", "b", "", "port binding to remove")
+	PortsUnbindCmd.MarkFlagRequired("container")
+	PortsUnbindCmd.MarkFlagRequired("binding")
 
 	upgradeCmd.Flags().StringP("container", "c", "", "Container name or ID to upgrade (required)")
 	upgradeCmd.Flags().StringP("repositories", "r", "", "Comma-separated list of container directories to preserve (e.g., /root/share,/opt/tools). These directories will be copied from old container to new container")

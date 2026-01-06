@@ -2639,6 +2639,168 @@ func UpdateCgroupRule(containerID string, rule string, add bool) error {
 	return recreateContainerWithProperties(ctx, cli, containerID, props)
 }
 
+// UpdateExposedPort adds or removes an exposed port from a container
+func UpdateExposedPort(containerID string, port string, add bool) error {
+	ctx := context.Background()
+	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
+	if err != nil {
+		common.PrintErrorMessage(err)
+		return err
+	}
+	defer cli.Close()
+
+	// Get container info first
+	containerJSON, err := cli.ContainerInspect(ctx, containerID)
+	if err != nil {
+		common.PrintErrorMessage(fmt.Errorf("failed to inspect container: %v", err))
+		return err
+	}
+	containerName := strings.TrimPrefix(containerJSON.Name, "/")
+
+	// Get container properties
+	props, err := getContainerProperties(ctx, cli, containerID)
+	if err != nil {
+		common.PrintErrorMessage(fmt.Errorf("failed to get container properties: %v", err))
+		return err
+	}
+
+	// Parse existing exposed ports
+	exposedPortsStr := props["ExposedPorts"]
+	var exposedPorts []string
+	if exposedPortsStr != "" {
+		exposedPorts = strings.Split(exposedPortsStr, ",")
+		// Trim spaces
+		for i := range exposedPorts {
+			exposedPorts[i] = strings.TrimSpace(exposedPorts[i])
+		}
+	}
+
+	// Add or remove the port
+	if add {
+		// Check if already exists
+		found := false
+		for _, p := range exposedPorts {
+			if p == port {
+				found = true
+				break
+			}
+		}
+
+		if found {
+			common.PrintInfoMessage(fmt.Sprintf("Port '%s' already exposed in container '%s'", port, containerName))
+			return nil
+		}
+
+		exposedPorts = append(exposedPorts, port)
+		common.PrintInfoMessage(fmt.Sprintf("Exposing port '%s' on container '%s'", port, containerName))
+	} else {
+		// Remove port
+		newPorts := []string{}
+		found := false
+		for _, p := range exposedPorts {
+			if p != port {
+				newPorts = append(newPorts, p)
+			} else {
+				found = true
+			}
+		}
+
+		if !found {
+			common.PrintWarningMessage(fmt.Sprintf("Port '%s' not found in container '%s'", port, containerName))
+			return nil
+		}
+
+		exposedPorts = newPorts
+		common.PrintInfoMessage(fmt.Sprintf("Removing exposed port '%s' from container '%s'", port, containerName))
+	}
+
+	// Update the container
+	props["ExposedPorts"] = strings.Join(exposedPorts, ",")
+
+	return recreateContainerWithProperties(ctx, cli, containerID, props)
+}
+
+// UpdatePortBinding adds or removes a port binding from a container
+func UpdatePortBinding(containerID string, binding string, add bool) error {
+	ctx := context.Background()
+	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
+	if err != nil {
+		common.PrintErrorMessage(err)
+		return err
+	}
+	defer cli.Close()
+
+	// Get container info first
+	containerJSON, err := cli.ContainerInspect(ctx, containerID)
+	if err != nil {
+		common.PrintErrorMessage(fmt.Errorf("failed to inspect container: %v", err))
+		return err
+	}
+	containerName := strings.TrimPrefix(containerJSON.Name, "/")
+
+	// Get container properties
+	props, err := getContainerProperties(ctx, cli, containerID)
+	if err != nil {
+		common.PrintErrorMessage(fmt.Errorf("failed to get container properties: %v", err))
+		return err
+	}
+
+	// Parse existing port bindings
+	portBindingsStr := props["PortBindings"]
+	var portBindings []string
+	if portBindingsStr != "" {
+		portBindings = strings.Split(portBindingsStr, ",")
+		// Trim spaces
+		for i := range portBindings {
+			portBindings[i] = strings.TrimSpace(portBindings[i])
+		}
+	}
+
+	// Add or remove the binding
+	if add {
+		// Check if already exists
+		found := false
+		for _, b := range portBindings {
+			if b == binding {
+				found = true
+				break
+			}
+		}
+
+		if found {
+			common.PrintInfoMessage(fmt.Sprintf("Port binding '%s' already exists in container '%s'", binding, containerName))
+			return nil
+		}
+
+		portBindings = append(portBindings, binding)
+		common.PrintInfoMessage(fmt.Sprintf("Adding port binding '%s' to container '%s'", binding, containerName))
+	} else {
+		// Remove binding
+		newBindings := []string{}
+		found := false
+		for _, b := range portBindings {
+			if b != binding {
+				newBindings = append(newBindings, b)
+			} else {
+				found = true
+			}
+		}
+
+		if !found {
+			common.PrintWarningMessage(fmt.Sprintf("Port binding '%s' not found in container '%s'", binding, containerName))
+			return nil
+		}
+
+		portBindings = newBindings
+		common.PrintInfoMessage(fmt.Sprintf("Removing port binding '%s' from container '%s'", binding, containerName))
+	}
+
+	// Update the container
+	props["PortBindings"] = strings.Join(portBindings, ",")
+
+	return recreateContainerWithProperties(ctx, cli, containerID, props)
+}
+
 // Helper function to recreate container with updated properties
 func recreateContainerWithProperties(ctx context.Context, cli *client.Client, containerID string, props map[string]string) error {
 	// Get fresh container info first
