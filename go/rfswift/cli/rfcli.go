@@ -519,6 +519,22 @@ Examples:
 	},
 }
 
+var buildCmd = &cobra.Command{
+	Use:   "build",
+	Short: "Build an image from a recipe",
+	Long:  `Build a Docker image from a simplified YAML recipe file`,
+	Run: func(cmd *cobra.Command, args []string) {
+		recipeFile, _ := cmd.Flags().GetString("recipe")
+		tagName, _ := cmd.Flags().GetString("tag")
+		noCache, _ := cmd.Flags().GetBool("no-cache")
+		
+		if err := rfdock.BuildFromRecipe(recipeFile, tagName, noCache); err != nil {
+			common.PrintErrorMessage(err)
+			os.Exit(1)
+		}
+	},
+}
+
 func detectShell() string {
 	shell := os.Getenv("SHELL")
 	if shell == "" {
@@ -714,6 +730,7 @@ func init() {
 	rootCmd.AddCommand(CapabilitiesCmd)
 	rootCmd.AddCommand(CgroupsCmd)
 	rootCmd.AddCommand(PortsCmd)
+	rootCmd.AddCommand(buildCmd)
 	rootCmd.PersistentPreRun = func(cmd *cobra.Command, args []string) {
 		if len(os.Args) > 1 {
 			if (os.Args[1] == "completion") || (os.Args[1] == "__complete") {
@@ -857,6 +874,11 @@ func init() {
 	upgradeCmd.Flags().StringP("repositories", "r", "", "Comma-separated list of container directories to preserve (e.g., /root/share,/opt/tools). These directories will be copied from old container to new container")
 	upgradeCmd.Flags().StringP("image", "i", "", "Target image name/tag (if not specified, uses 'latest')")
 	upgradeCmd.MarkFlagRequired("container")
+
+	// Build command flags
+	buildCmd.Flags().StringP("recipe", "r", "rfswift-recipe.yaml", "Path to the recipe file")
+	buildCmd.Flags().StringP("tag", "t", "", "Override the tag name from recipe")
+	buildCmd.Flags().Bool("no-cache", false, "Build without using cache")
 
 }
 

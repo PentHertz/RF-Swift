@@ -1,0 +1,109 @@
+# RF Swift Build Recipe
+name: rfswift_core
+base_image: penthertz/rfswift_noble:sdrsa_devices
+tag: telecom_01012025
+
+labels:
+  org.container.project: "rfswift"
+  org.container.author: "Sébastien Dudek"
+
+# Build steps
+steps:
+  # Configure APT
+  - type: run
+    commands:
+      - echo 'APT::Install-Suggests "0";' >> /etc/apt/apt.conf.d/00-docker
+      - echo 'APT::Install-Recommends "0";' >> /etc/apt/apt.conf.d/00-docker
+      - apt-fast update
+
+  # Copy files from host
+
+  # Set working directory and prepare
+  - type: workdir
+    path: /root/scripts/
+
+  - type: run
+    commands:
+      - chmod +x entrypoint.sh
+
+  # Install GNU Radio modules
+  - type: script
+    name: "GNU Radio & OOT modules"
+    script: ./entrypoint.sh
+    functions:
+      - gnuradio_soft_install
+      - common_sources_and_sinks
+      - install_soapy_modules
+      - install_soapyPlutoSDR_modules
+      - kc908_sa_device
+      - soapyrfnm_grmod_install
+      - hydrasdr_rfone_soapy_install
+      - soapyharogic_grmod_install
+      - grbladerf_grmod_install
+      - grsignalhound_Receiver_grmod_install
+      - grhtra_grmod_install
+
+  # Install extra software
+  - type: script
+    name: "Extra SDR Software"
+    script: ./entrypoint.sh
+    functions:
+      - gqrx_soft_install
+      - multimon_ng_soft_install
+      - urh_soft_install
+      - inspectrum_soft_install
+      - rtl_433_soft_install
+      - retrogram_soapysdr_soft_install
+      - luaradio_sdr_soft_install
+      - dump1090_soft_install
+      - readsb_soft_install
+      - dumpvdl2_soft_install
+      - dumphfdl_soft_install
+
+  # SDR++
+  - type: script
+    name: "SDR++"
+    script: ./entrypoint.sh
+    functions:
+      - sdrpp_soft_fromsource_install
+      - sdrpp_extramodules_install
+
+  # Calibration tools
+  - type: script
+    name: "Calibration Tools"
+    script: ./entrypoint.sh
+    functions:
+      - jupyter_soft_install
+      - leobodnarv1_cal_device
+      - leobodnarv2_cal_device
+      - KCSDI_cal_device
+      - NanoVNASaver_cal_device
+      - NanoVNA_QT_cal_device
+      - gnsslogger_cal_device
+      - librevna_cal_device_buildx
+
+  # Additional tools
+  - type: script
+    name: "GNSS & Additional"
+    script: ./entrypoint.sh
+    functions:
+      - gnss_sdr_soft_install
+      - artemis_soft_install
+      - gqrxscanner_sdr_soft_install
+      - lotus_budc_tune_device
+
+  # Copy runtime files
+  - type: run
+    commands:
+      - mkdir -p /sdrtools/
+
+  # Cleanup
+  - type: workdir
+    path: /root/
+
+  - type: cleanup
+    paths:
+      - /root/thirdparty
+      - /root/rules/
+      - /root/config/
+    apt_clean: true
