@@ -9,6 +9,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"os/exec"
 	"regexp"
 	"runtime"
 	"strings"
@@ -17,6 +18,7 @@ import (
 	"path/filepath"
 	"context"
 	"gopkg.in/yaml.v3"
+	"compress/gzip"
 	
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
@@ -213,6 +215,15 @@ type BuildStep struct {
 type CopyItem struct {
 	Source      string `yaml:"source"`
 	Destination string `yaml:"destination"`
+}
+
+var loggingPID int
+var loggingFile string
+var loggingTool string
+
+// setTerminalTitle sets the terminal window title
+func setTerminalTitle(title string) {
+	fmt.Printf("\033]0;%s\007", title)
 }
 
 func init() {
@@ -3932,4 +3943,1177 @@ func createBuildContextTar(sourceDir string) (io.ReadCloser, error) {
 	}()
 
 	return pr, nil
+}
+
+// ExportContainer exports a container to a tar.gz file
+func ExportContainer(containerID string, outputFile string) error {
+	ctx := context.Background()
+	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
+	if err != nil {
+		return fmt.Errorf("failed to create Docker client: %v", err)
+	}
+	defer cli.Close()
+
+	// Get container info
+	containerJSON, err := cli.ContainerInspect(ctx, containerID)
+	if err != nil {
+		return fmt.Errorf("failed to inspect container: %v", err)
+	}
+	containerName := strings.TrimPrefix(containerJSON.Name, "/")
+
+	common.PrintInfoMessage(fmt.Sprintf("Exporting container '%s' to %s", containerName, outputFile))
+
+	// Export container
+	reader, err := cli.ContainerExport(ctx, containerID)
+	if err != nil {
+		return fmt.Errorf("failed to export container: %v", err)
+	}
+	defer reader.Close()
+
+	// Create output file
+	outFile, err := os.Create(outputFile)
+	if err != nil {
+		return fmt.Errorf("failed to create output file: %v", err)
+	}
+	defer outFile.Close()
+
+	// Create gzip writer
+	gzipWriter := gzip.NewWriter(outFile)
+	defer gzipWriter.Close()
+
+	// Copy with progress
+	common.PrintInfoMessage("Compressing container data...")
+	written, err := io.Copy(gzipWriter, reader)
+	if err != nil {
+		return fmt.Errorf("failed to write compressed data: %v", err)
+	}
+
+	common.PrintSuccessMessage(fmt.Sprintf("Container exported successfully: %s (%.2f MB)", 
+		outputFile, float64(written)/(1024*1024)))
+	return nil
+}
+
+// ExportImage exports one or more images to a tar.gz file
+func ExportImage(images []string, outputFile string) error {
+	ctx := context.Background()
+	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
+	if err != nil {
+		return fmt.Errorf("failed to create Docker client: %v", err)
+	}
+	defer cli.Close()
+
+	common.PrintInfoMessage(fmt.Sprintf("Exporting %d image(s) to %s", len(images), outputFile))
+	for _, img := range images {
+		common.PrintInfoMessage(fmt.Sprintf("  - %s", img))
+	}
+
+	// Save images
+	reader, err := cli.ImageSave(ctx, images)
+	if err != nil {
+		return fmt.Errorf("failed to save images: %v", err)
+	}
+	defer reader.Close()
+
+	// Create output file
+	outFile, err := os.Create(outputFile)
+	if err != nil {
+		return fmt.Errorf("failed to create output file: %v", err)
+	}
+	defer outFile.Close()
+
+	// Create gzip writer
+	gzipWriter := gzip.NewWriter(outFile)
+	defer gzipWriter.Close()
+
+	// Copy with progress
+	common.PrintInfoMessage("Compressing image data...")
+	written, err := io.Copy(gzipWriter, reader)
+	if err != nil {
+		return fmt.Errorf("failed to write compressed data: %v", err)
+	}
+
+	common.PrintSuccessMessage(fmt.Sprintf("Image(s) exported successfully: %s (%.2f MB)", 
+		outputFile, float64(written)/(1024*1024)))
+	return nil
+}
+
+// ImportContainer imports a container from a tar.gz file and creates an image
+func ImportContainer(inputFile string, imageName string) error {
+	ctx := context.Background()
+	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
+	if err != nil {
+		return fmt.Errorf("failed to create Docker client: %v", err)
+	}
+	defer cli.Close()
+
+	common.PrintInfoMessage(fmt.Sprintf("Importing container from %s as image '%s'", inputFile, imageName))
+
+	// Open input file
+	inFile, err := os.Open(inputFile)
+	if err != nil {
+		return fmt.Errorf("failed to open input file: %v", err)
+	}
+	defer inFile.Close()
+
+	// Check if file is gzipped
+	var reader io.Reader
+	gzipReader, err := gzip.NewReader(inFile)
+	if err == nil {
+		// File is gzipped
+		common.PrintInfoMessage("Decompressing tar.gz file...")
+		reader = gzipReader
+		defer gzipReader.Close()
+	} else {
+		// File is plain tar
+		common.PrintInfoMessage("Reading tar file...")
+		inFile.Seek(0, 0) // Reset file pointer
+		reader = inFile
+	}
+
+	// Import container with label
+	importResponse, err := cli.ImageImport(ctx, image.ImportSource{
+		Source:     reader,
+		SourceName: "-",
+	}, imageName, image.ImportOptions{
+		// Add RF Swift label
+		Changes: []string{
+			`LABEL "org.container.project"="rfswift"`,
+		},
+	})
+	if err != nil {
+		return fmt.Errorf("failed to import container: %v", err)
+	}
+	defer importResponse.Close()
+
+	// Read response
+	buf := new(strings.Builder)
+	io.Copy(buf, importResponse)
+
+	common.PrintSuccessMessage(fmt.Sprintf("Container imported successfully as image: %s", imageName))
+	return nil
+}
+
+// ImportImage imports one or more images from a tar.gz file
+func ImportImage(inputFile string) error {
+	ctx := context.Background()
+	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
+	if err != nil {
+		return fmt.Errorf("failed to create Docker client: %v", err)
+	}
+	defer cli.Close()
+
+	common.PrintInfoMessage(fmt.Sprintf("Importing image(s) from %s", inputFile))
+
+	// Open input file
+	inFile, err := os.Open(inputFile)
+	if err != nil {
+		return fmt.Errorf("failed to open input file: %v", err)
+	}
+	defer inFile.Close()
+
+	// Check if file is gzipped
+	var reader io.Reader
+	gzipReader, err := gzip.NewReader(inFile)
+	if err == nil {
+		// File is gzipped
+		common.PrintInfoMessage("Decompressing tar.gz file...")
+		reader = gzipReader
+		defer gzipReader.Close()
+	} else {
+		// File is plain tar
+		common.PrintInfoMessage("Reading tar file...")
+		inFile.Seek(0, 0) // Reset file pointer
+		reader = inFile
+	}
+
+	// Load images - no third parameter needed
+	loadResponse, err := cli.ImageLoad(ctx, reader)
+	if err != nil {
+		return fmt.Errorf("failed to load images: %v", err)
+	}
+	defer loadResponse.Body.Close()
+
+	// Parse response to show loaded images
+	scanner := bufio.NewScanner(loadResponse.Body)
+	for scanner.Scan() {
+		line := scanner.Text()
+		if strings.Contains(line, "Loaded image") || strings.Contains(line, "sha256") {
+			common.PrintInfoMessage(line)
+		}
+	}
+
+	common.PrintSuccessMessage("Image(s) imported successfully")
+	return nil
+}
+
+// SaveImageToFile pulls an image and saves it to a tar.gz file
+func SaveImageToFile(imageName string, outputFile string, pullFirst bool) error {
+	ctx := context.Background()
+	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
+	if err != nil {
+		return fmt.Errorf("failed to create Docker client: %v", err)
+	}
+	defer cli.Close()
+
+	// Check if image exists locally
+	_, _, err = cli.ImageInspectWithRaw(ctx, imageName)
+	imageExists := err == nil
+
+	if !imageExists || pullFirst {
+		// Need to pull the image
+		if !imageExists {
+			common.PrintInfoMessage(fmt.Sprintf("Image '%s' not found locally, pulling...", imageName))
+		} else {
+			common.PrintInfoMessage(fmt.Sprintf("Pulling latest version of '%s'...", imageName))
+		}
+
+		// Parse image name for architecture handling
+		parts := strings.Split(imageName, ":")
+		repo := parts[0]
+		tag := "latest"
+		if len(parts) > 1 {
+			tag = parts[1]
+		}
+
+		// Check if this is an official image
+		isOfficial := IsOfficialImage(imageName)
+		architecture := getArchitecture()
+		actualPullRef := imageName
+
+		// Handle architecture suffix for official images
+		if isOfficial && architecture != "" {
+			hasArchSuffix := strings.HasSuffix(tag, "_amd64") ||
+				strings.HasSuffix(tag, "_arm64") ||
+				strings.HasSuffix(tag, "_riscv64") ||
+				strings.HasSuffix(tag, "_arm")
+
+			if !hasArchSuffix {
+				actualPullRef = fmt.Sprintf("%s:%s_%s", repo, tag, architecture)
+				common.PrintInfoMessage(fmt.Sprintf("Using architecture-specific tag: %s", actualPullRef))
+			}
+		}
+
+		// Pull the image
+		out, err := cli.ImagePull(ctx, actualPullRef, image.PullOptions{})
+		if err != nil {
+			return fmt.Errorf("failed to pull image: %v", err)
+		}
+		defer out.Close()
+
+		// Show pull progress
+		termFd, isTerm := term.GetFdInfo(os.Stdout)
+		if isTerm {
+			jsonmessage.DisplayJSONMessagesStream(out, os.Stdout, termFd, isTerm, nil)
+		} else {
+			// Read to completion even if not displaying
+			io.Copy(io.Discard, out)
+		}
+
+		// Tag if needed (for official images with architecture suffix)
+		if actualPullRef != imageName && isOfficial {
+			remoteInspect, _, _ := cli.ImageInspectWithRaw(ctx, actualPullRef)
+			if remoteInspect.ID != "" {
+				cli.ImageTag(ctx, remoteInspect.ID, imageName)
+				common.PrintSuccessMessage(fmt.Sprintf("Tagged as: %s", imageName))
+			}
+		}
+
+		common.PrintSuccessMessage("Image pulled successfully")
+	} else {
+		common.PrintSuccessMessage(fmt.Sprintf("Using local image: %s", imageName))
+	}
+
+	// Now save the image to file
+	common.PrintInfoMessage(fmt.Sprintf("Saving image '%s' to %s", imageName, outputFile))
+
+	// Save image
+	reader, err := cli.ImageSave(ctx, []string{imageName})
+	if err != nil {
+		return fmt.Errorf("failed to save image: %v", err)
+	}
+	defer reader.Close()
+
+	// Create output file
+	outFile, err := os.Create(outputFile)
+	if err != nil {
+		return fmt.Errorf("failed to create output file: %v", err)
+	}
+	defer outFile.Close()
+
+	// Create gzip writer
+	gzipWriter := gzip.NewWriter(outFile)
+	defer gzipWriter.Close()
+
+	// Copy with progress
+	common.PrintInfoMessage("Compressing image data...")
+	written, err := io.Copy(gzipWriter, reader)
+	if err != nil {
+		return fmt.Errorf("failed to write compressed data: %v", err)
+	}
+
+	common.PrintSuccessMessage(fmt.Sprintf("Image saved successfully: %s (%.2f MB)", 
+		outputFile, float64(written)/(1024*1024)))
+	
+	// Show file info
+	fileInfo, _ := os.Stat(outputFile)
+	if fileInfo != nil {
+		common.PrintInfoMessage(fmt.Sprintf("Compressed file size: %.2f MB", float64(fileInfo.Size())/(1024*1024)))
+	}
+
+	return nil
+}
+
+// parseDuration parses duration strings like "24h", "7d", "1m", "1y"
+func parseDuration(duration string) (time.Duration, error) {
+	if duration == "" {
+		return 0, nil
+	}
+
+	// Extract number and unit
+	var value int
+	var unit string
+	_, err := fmt.Sscanf(duration, "%d%s", &value, &unit)
+	if err != nil {
+		return 0, fmt.Errorf("invalid duration format: %s (use format like '24h', '7d', '1m', '1y')", duration)
+	}
+
+	switch unit {
+	case "h":
+		return time.Duration(value) * time.Hour, nil
+	case "d":
+		return time.Duration(value) * 24 * time.Hour, nil
+	case "m":
+		return time.Duration(value) * 30 * 24 * time.Hour, nil // Approximate month
+	case "y":
+		return time.Duration(value) * 365 * 24 * time.Hour, nil // Approximate year
+	default:
+		return 0, fmt.Errorf("invalid duration unit: %s (use h, d, m, or y)", unit)
+	}
+}
+
+// CleanupAll removes both old containers and images
+func CleanupAll(olderThan string, force bool, dryRun bool) error {
+	common.PrintInfoMessage("Cleaning up containers and images...")
+	
+	if err := CleanupContainers(olderThan, force, dryRun, false); err != nil {
+		return err
+	}
+	
+	fmt.Println()
+	
+	if err := CleanupImages(olderThan, force, dryRun, false, true); err != nil {  // Enable pruneChildren for cleanup all
+		return err
+	}
+	
+	return nil
+}
+
+// CleanupContainers removes old containers
+func CleanupContainers(olderThan string, force bool, dryRun bool, onlyStopped bool) error {
+	ctx := context.Background()
+	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
+	if err != nil {
+		return fmt.Errorf("failed to create Docker client: %v", err)
+	}
+	defer cli.Close()
+
+	// Parse duration
+	duration, err := parseDuration(olderThan)
+	if err != nil {
+		return err
+	}
+
+	cutoffTime := time.Now().Add(-duration)
+
+	// List containers
+	containerFilters := filters.NewArgs()
+	containerFilters.Add("label", "org.container.project=rfswift")
+	
+	containers, err := cli.ContainerList(ctx, container.ListOptions{
+		All:     true,
+		Filters: containerFilters,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to list containers: %v", err)
+	}
+
+	// Filter containers
+	var toDelete []types.Container
+	for _, cont := range containers {
+		// Check if stopped only
+		if onlyStopped && cont.State == "running" {
+			continue
+		}
+
+		// Check age
+		created := time.Unix(cont.Created, 0)
+		if olderThan != "" && created.After(cutoffTime) {
+			continue
+		}
+
+		toDelete = append(toDelete, cont)
+	}
+
+	if len(toDelete) == 0 {
+		common.PrintInfoMessage("No containers to remove")
+		return nil
+	}
+
+	// Display containers to delete
+	cyan := "\033[36m"
+	reset := "\033[0m"
+	fmt.Printf("%s🗑️  Containers to remove: %d%s\n", cyan, len(toDelete), reset)
+	
+	for _, cont := range toDelete {
+		age := time.Since(time.Unix(cont.Created, 0))
+		containerName := cont.Names[0]
+		if containerName[0] == '/' {
+			containerName = containerName[1:]
+		}
+		
+		status := cont.State
+		if status == "running" {
+			status = "\033[32m" + status + "\033[0m"
+		} else {
+			status = "\033[31m" + status + "\033[0m"
+		}
+		
+		fmt.Printf("  • %s (%s) - Age: %s - Status: %s\n", 
+			containerName, cont.ID[:12], formatAge(age), status)
+	}
+	fmt.Println()
+
+	if dryRun {
+		common.PrintWarningMessage("DRY RUN: No containers were actually removed")
+		return nil
+	}
+
+	// Ask for confirmation
+	if !force {
+		reader := bufio.NewReader(os.Stdin)
+		common.PrintWarningMessage(fmt.Sprintf("Are you sure you want to remove %d container(s)? (y/n): ", len(toDelete)))
+		response, _ := reader.ReadString('\n')
+		response = strings.ToLower(strings.TrimSpace(response))
+		if response != "y" && response != "yes" {
+			common.PrintInfoMessage("Cleanup cancelled")
+			return nil
+		}
+	}
+
+	// Remove containers
+	removed := 0
+	for _, cont := range toDelete {
+		containerName := cont.Names[0]
+		if containerName[0] == '/' {
+			containerName = containerName[1:]
+		}
+
+		err := cli.ContainerRemove(ctx, cont.ID, container.RemoveOptions{Force: true})
+		if err != nil {
+			common.PrintWarningMessage(fmt.Sprintf("Failed to remove %s: %v", containerName, err))
+		} else {
+			common.PrintSuccessMessage(fmt.Sprintf("Removed container: %s", containerName))
+			removed++
+		}
+	}
+
+	common.PrintSuccessMessage(fmt.Sprintf("Cleanup complete: removed %d/%d container(s)", removed, len(toDelete)))
+	return nil
+}
+
+// CleanupImages removes old images
+func CleanupImages(olderThan string, force bool, dryRun bool, onlyDangling bool, pruneChildren bool) error {
+	ctx := context.Background()
+	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
+	if err != nil {
+		return fmt.Errorf("failed to create Docker client: %v", err)
+	}
+	defer cli.Close()
+
+	// Parse duration
+	duration, err := parseDuration(olderThan)
+	if err != nil {
+		return err
+	}
+
+	cutoffTime := time.Now().Add(-duration)
+
+	// List images
+	imageFilters := filters.NewArgs()
+	imageFilters.Add("label", "org.container.project=rfswift")
+	if onlyDangling {
+		imageFilters.Add("dangling", "true")
+	}
+
+	images, err := cli.ImageList(ctx, image.ListOptions{
+		All:     true,
+		Filters: imageFilters,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to list images: %v", err)
+	}
+
+	// Filter images
+	var toDelete []image.Summary
+	for _, img := range images {
+		// Skip if no RepoTags (dangling) unless we want dangling only
+		if !onlyDangling && len(img.RepoTags) == 0 {
+			continue
+		}
+
+		// Check age
+		created := time.Unix(img.Created, 0)
+		if olderThan != "" && created.After(cutoffTime) {
+			continue
+		}
+
+		toDelete = append(toDelete, img)
+	}
+
+	if len(toDelete) == 0 {
+		common.PrintInfoMessage("No images to remove")
+		return nil
+	}
+
+	// Display images to delete
+	magenta := "\033[35m"
+	reset := "\033[0m"
+	fmt.Printf("%s🗑️  Images to remove: %d%s\n", magenta, len(toDelete), reset)
+	
+	// Check for child images
+	var hasChildren bool
+	totalDescendants := 0
+	
+	for _, img := range toDelete {
+		age := time.Since(time.Unix(img.Created, 0))
+		size := float64(img.Size) / (1024 * 1024)
+		
+		var displayName string
+		if len(img.RepoTags) > 0 {
+			displayName = img.RepoTags[0]
+		} else {
+			displayName = fmt.Sprintf("<none> (%s)", img.ID[7:19])
+		}
+		
+		// Check if image has descendants (children, grandchildren, etc.)
+		descendants := getAllDescendants(ctx, cli, img.ID)
+		if len(descendants) > 0 {
+			hasChildren = true
+			totalDescendants += len(descendants)
+			fmt.Printf("  • %s - Age: %s - Size: %.2f MB - ⚠️  %d descendant(s)\n", 
+				displayName, formatAge(age), size, len(descendants))
+		} else {
+			fmt.Printf("  • %s - Age: %s - Size: %.2f MB\n", 
+				displayName, formatAge(age), size)
+		}
+	}
+	fmt.Println()
+
+	if hasChildren {
+		if pruneChildren {
+			common.PrintInfoMessage(fmt.Sprintf("Will remove %d total descendant images", totalDescendants))
+		} else {
+			common.PrintWarningMessage("Some images have dependent descendant images. Use --prune-children to remove them first.")
+		}
+	}
+
+	if dryRun {
+		common.PrintWarningMessage("DRY RUN: No images were actually removed")
+		return nil
+	}
+
+	// Ask for confirmation
+	if !force {
+		reader := bufio.NewReader(os.Stdin)
+		totalToRemove := len(toDelete)
+		if pruneChildren {
+			totalToRemove += totalDescendants
+		}
+		common.PrintWarningMessage(fmt.Sprintf("Are you sure you want to remove %d image(s) in total? (y/n): ", totalToRemove))
+		response, _ := reader.ReadString('\n')
+		response = strings.ToLower(strings.TrimSpace(response))
+		if response != "y" && response != "yes" {
+			common.PrintInfoMessage("Cleanup cancelled")
+			return nil
+		}
+	}
+
+	// Remove images
+	removed := 0
+	skipped := 0
+	
+	for _, img := range toDelete {
+		var displayName string
+		if len(img.RepoTags) > 0 {
+			displayName = img.RepoTags[0]
+		} else {
+			displayName = img.ID[7:19]
+		}
+
+		// Check if has descendants
+		descendants := getAllDescendants(ctx, cli, img.ID)
+		
+		if len(descendants) > 0 && !pruneChildren {
+			common.PrintWarningMessage(fmt.Sprintf("Skipped %s: has %d descendant(s) (use --prune-children)", displayName, len(descendants)))
+			skipped++
+			continue
+		}
+
+		// Remove with all descendants if requested
+		if pruneChildren {
+			descendantsRemoved, err := removeImageWithDescendants(ctx, cli, img.ID, displayName)
+			if err != nil {
+				common.PrintWarningMessage(fmt.Sprintf("Failed to remove %s: %v", displayName, err))
+			} else {
+				common.PrintSuccessMessage(fmt.Sprintf("Removed image: %s (+ %d descendants)", displayName, descendantsRemoved))
+				removed++
+			}
+		} else {
+			// Simple removal without descendants
+			_, err := cli.ImageRemove(ctx, img.ID, image.RemoveOptions{Force: true})
+			if err != nil {
+				if strings.Contains(err.Error(), "No such image") {
+					// Already removed
+					common.PrintSuccessMessage(fmt.Sprintf("Removed image: %s (cascaded)", displayName))
+					removed++
+				} else {
+					common.PrintWarningMessage(fmt.Sprintf("Failed to remove %s: %v", displayName, err))
+				}
+			} else {
+				common.PrintSuccessMessage(fmt.Sprintf("Removed image: %s", displayName))
+				removed++
+			}
+		}
+	}
+
+	if skipped > 0 {
+		common.PrintInfoMessage(fmt.Sprintf("Skipped %d image(s) with descendants", skipped))
+	}
+	common.PrintSuccessMessage(fmt.Sprintf("Cleanup complete: removed %d/%d parent image(s)", removed, len(toDelete)))
+	return nil
+}
+
+// getChildImages returns all images that depend on the given parent image
+func getChildImages(ctx context.Context, cli *client.Client, parentID string) []image.Summary {
+	var children []image.Summary
+	
+	// Get all images
+	allImages, err := cli.ImageList(ctx, image.ListOptions{All: true})
+	if err != nil {
+		return children
+	}
+
+	// Find children
+	for _, img := range allImages {
+		if img.ParentID == parentID {
+			children = append(children, img)
+		}
+	}
+
+	return children
+}
+
+// getAllDescendants recursively gets all descendant images
+func getAllDescendants(ctx context.Context, cli *client.Client, parentID string) []image.Summary {
+	var descendants []image.Summary
+	
+	// Get direct children
+	children := getChildImages(ctx, cli, parentID)
+	
+	for _, child := range children {
+		// Add this child
+		descendants = append(descendants, child)
+		// Recursively get its descendants
+		grandchildren := getAllDescendants(ctx, cli, child.ID)
+		descendants = append(descendants, grandchildren...)
+	}
+	
+	return descendants
+}
+
+// removeImageWithDescendants removes an image and all its descendants recursively
+func removeImageWithDescendants(ctx context.Context, cli *client.Client, imageID string, displayName string) (int, error) {
+	removedCount := 0
+	
+	// Get all descendants (children, grandchildren, etc.)
+	descendants := getAllDescendants(ctx, cli, imageID)
+	
+	if len(descendants) > 0 {
+		common.PrintInfoMessage(fmt.Sprintf("Removing %d descendant image(s) for %s...", len(descendants), displayName))
+		
+		// Remove descendants in reverse order (deepest first)
+		for i := len(descendants) - 1; i >= 0; i-- {
+			desc := descendants[i]
+			
+			// Check if image still exists (might have been removed as a side effect)
+			_, _, err := cli.ImageInspectWithRaw(ctx, desc.ID)
+			if err != nil {
+				// Image doesn't exist anymore, skip it
+				continue
+			}
+			
+			var descName string
+			if len(desc.RepoTags) > 0 {
+				descName = desc.RepoTags[0]
+			} else {
+				descName = desc.ID[7:19]
+			}
+			
+			_, err = cli.ImageRemove(ctx, desc.ID, image.RemoveOptions{Force: true, PruneChildren: true})
+			if err != nil {
+				// Check if error is because image doesn't exist
+				if strings.Contains(err.Error(), "No such image") {
+					// Already removed as a side effect
+					continue
+				}
+				common.PrintWarningMessage(fmt.Sprintf("  Failed to remove descendant %s: %v", descName, err))
+			} else {
+				common.PrintSuccessMessage(fmt.Sprintf("  Removed descendant: %s", descName))
+				removedCount++
+			}
+		}
+	}
+	
+	// Check if parent image still exists
+	_, _, err := cli.ImageInspectWithRaw(ctx, imageID)
+	if err != nil {
+		// Image was already removed as a side effect
+		common.PrintSuccessMessage(fmt.Sprintf("Image %s was already removed (cascaded)", displayName))
+		return removedCount, nil
+	}
+	
+	// Now remove the parent image
+	_, err = cli.ImageRemove(ctx, imageID, image.RemoveOptions{Force: true, PruneChildren: true})
+	if err != nil && strings.Contains(err.Error(), "No such image") {
+		// Already removed
+		return removedCount, nil
+	}
+	
+	return removedCount, err
+}
+
+// formatAge formats duration into human readable string
+func formatAge(d time.Duration) string {
+	days := int(d.Hours() / 24)
+	hours := int(d.Hours()) % 24
+	
+	if days > 365 {
+		years := days / 365
+		remainingDays := days % 365
+		if remainingDays > 0 {
+			return fmt.Sprintf("%dy %dd", years, remainingDays)
+		}
+		return fmt.Sprintf("%dy", years)
+	} else if days > 30 {
+		months := days / 30
+		remainingDays := days % 30
+		if remainingDays > 0 {
+			return fmt.Sprintf("%dmo %dd", months, remainingDays)
+		}
+		return fmt.Sprintf("%dmo", months)
+	} else if days > 0 {
+		if hours > 0 {
+			return fmt.Sprintf("%dd %dh", days, hours)
+		}
+		return fmt.Sprintf("%dd", days)
+	} else {
+		return fmt.Sprintf("%dh", int(d.Hours()))
+	}
+}
+
+// detectLoggingTool detects which logging tool is available
+func detectLoggingTool(forceScript bool) (string, error) {
+	if forceScript {
+		// Check if script is available
+		if _, err := exec.LookPath("script"); err != nil {
+			return "", fmt.Errorf("script command not found")
+		}
+		return "script", nil
+	}
+
+	// Try asciinema first
+	if _, err := exec.LookPath("asciinema"); err == nil {
+		return "asciinema", nil
+	}
+
+	// Fall back to script
+	if _, err := exec.LookPath("script"); err == nil {
+		return "script", nil
+	}
+
+	return "", fmt.Errorf("neither asciinema nor script command found. Install asciinema with: pip install asciinema")
+}
+
+// StartLogging starts a terminal recording session
+func StartLogging(outputFile string, useScript bool) error {
+	// Check if already logging
+	if loggingPID != 0 {
+		return fmt.Errorf("a recording session is already active (PID: %d)", loggingPID)
+	}
+
+	// Detect which tool to use
+	tool, err := detectLoggingTool(useScript)
+	if err != nil {
+		return err
+	}
+
+	// Generate output filename if not provided
+	if outputFile == "" {
+		timestamp := time.Now().Format("20060102-150405")
+		if tool == "asciinema" {
+			outputFile = fmt.Sprintf("rfswift-session-%s.cast", timestamp)
+		} else {
+			outputFile = fmt.Sprintf("rfswift-session-%s.log", timestamp)
+		}
+	}
+
+	common.PrintInfoMessage(fmt.Sprintf("Starting recording with %s...", tool))
+	common.PrintInfoMessage(fmt.Sprintf("Output file: %s", outputFile))
+
+	var cmd *exec.Cmd
+
+	switch tool {
+	case "asciinema":
+		// asciinema rec output.cast
+		cmd = exec.Command("asciinema", "rec", outputFile)
+
+	case "script":
+		// script -q output.log
+		if runtime.GOOS == "darwin" {
+			// macOS script syntax
+			cmd = exec.Command("script", "-q", outputFile)
+		} else {
+			// Linux script syntax
+			cmd = exec.Command("script", "-q", "-f", outputFile)
+		}
+	}
+
+	// Connect stdio
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+
+	// Start the recording
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("failed to start recording: %v", err)
+	}
+
+	// Save state
+	loggingPID = cmd.Process.Pid
+	loggingFile = outputFile
+	loggingTool = tool
+
+	// Write state to file for persistence
+	stateFile := filepath.Join(os.TempDir(), "rfswift-logging.state")
+	state := fmt.Sprintf("%d\n%s\n%s", loggingPID, loggingFile, loggingTool)
+	if err := ioutil.WriteFile(stateFile, []byte(state), 0644); err != nil {
+		common.PrintWarningMessage(fmt.Sprintf("Failed to save state: %v", err))
+	}
+
+	common.PrintSuccessMessage("Recording started!")
+	common.PrintInfoMessage("To stop recording:")
+	if tool == "asciinema" {
+		common.PrintInfoMessage("  - Press Ctrl+D or type 'exit'")
+		common.PrintInfoMessage("  - Or run: rfswift log stop")
+	} else {
+		common.PrintInfoMessage("  - Type 'exit' or press Ctrl+D")
+		common.PrintInfoMessage("  - Or run: rfswift log stop")
+	}
+
+	// Wait for the recording to finish
+	if err := cmd.Wait(); err != nil {
+		// Clean up state
+		loggingPID = 0
+		loggingFile = ""
+		loggingTool = ""
+		os.Remove(stateFile)
+		return fmt.Errorf("recording ended: %v", err)
+	}
+
+	common.PrintSuccessMessage(fmt.Sprintf("Recording saved to: %s", outputFile))
+
+	// Clean up state
+	loggingPID = 0
+	loggingFile = ""
+	loggingTool = ""
+	os.Remove(stateFile)
+
+	return nil
+}
+
+// StopLogging stops the current recording session
+func StopLogging() error {
+	// Try to load state from file
+	stateFile := filepath.Join(os.TempDir(), "rfswift-logging.state")
+	data, err := ioutil.ReadFile(stateFile)
+	if err == nil {
+		parts := strings.Split(strings.TrimSpace(string(data)), "\n")
+		if len(parts) >= 3 {
+			fmt.Sscanf(parts[0], "%d", &loggingPID)
+			loggingFile = parts[1]
+			loggingTool = parts[2]
+		}
+	}
+
+	if loggingPID == 0 {
+		return fmt.Errorf("no active recording session found")
+	}
+
+	common.PrintInfoMessage(fmt.Sprintf("Stopping recording (PID: %d)...", loggingPID))
+
+	// Send SIGTERM to the process
+	process, err := os.FindProcess(loggingPID)
+	if err != nil {
+		return fmt.Errorf("failed to find process: %v", err)
+	}
+
+	if err := process.Signal(os.Interrupt); err != nil {
+		return fmt.Errorf("failed to stop recording: %v", err)
+	}
+
+	common.PrintSuccessMessage(fmt.Sprintf("Recording stopped: %s", loggingFile))
+
+	// Clean up
+	loggingPID = 0
+	loggingFile = ""
+	loggingTool = ""
+	os.Remove(stateFile)
+
+	return nil
+}
+
+// ReplayLog replays a recorded session
+func ReplayLog(inputFile string, speed float64) error {
+	if _, err := os.Stat(inputFile); os.IsNotExist(err) {
+		return fmt.Errorf("file not found: %s", inputFile)
+	}
+
+	// Detect file type
+	var tool string
+	if strings.HasSuffix(inputFile, ".cast") {
+		tool = "asciinema"
+	} else {
+		tool = "script"
+	}
+
+	common.PrintInfoMessage(fmt.Sprintf("Replaying session from: %s", inputFile))
+
+	var cmd *exec.Cmd
+
+	switch tool {
+	case "asciinema":
+		// Check if asciinema is available
+		if _, err := exec.LookPath("asciinema"); err != nil {
+			return fmt.Errorf("asciinema not found. Install with: pip install asciinema")
+		}
+
+		speedStr := fmt.Sprintf("%.1f", speed)
+		cmd = exec.Command("asciinema", "play", "-s", speedStr, inputFile)
+
+	case "script":
+		// For script logs, just cat them (they're plain text)
+		common.PrintWarningMessage("Script logs don't support playback. Displaying content:")
+		cmd = exec.Command("cat", inputFile)
+	}
+
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("failed to replay session: %v", err)
+	}
+
+	return nil
+}
+
+// ListLogs lists all recorded session files
+func ListLogs(logDir string) error {
+	if logDir == "" {
+		logDir = "."
+	}
+
+	common.PrintInfoMessage(fmt.Sprintf("Searching for session logs in: %s", logDir))
+
+	// Find all .cast and .log files
+	var logs []string
+
+	err := filepath.Walk(logDir, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+
+		if !info.IsDir() {
+			if strings.HasSuffix(path, ".cast") || (strings.HasSuffix(path, ".log") && strings.Contains(path, "rfswift-session")) {
+				logs = append(logs, path)
+			}
+		}
+
+		return nil
+	})
+
+	if err != nil {
+		return fmt.Errorf("failed to search directory: %v", err)
+	}
+
+	if len(logs) == 0 {
+		common.PrintInfoMessage("No session logs found")
+		return nil
+	}
+
+	// Display logs
+	cyan := "\033[36m"
+	reset := "\033[0m"
+	fmt.Printf("%s📹 Session Logs: %d%s\n", cyan, len(logs), reset)
+
+	for _, log := range logs {
+		info, _ := os.Stat(log)
+		size := float64(info.Size()) / 1024
+		modTime := info.ModTime().Format("2006-01-02 15:04:05")
+
+		var tool string
+		if strings.HasSuffix(log, ".cast") {
+			tool = "asciinema"
+		} else {
+			tool = "script"
+		}
+
+		fmt.Printf("  • %s\n", log)
+		fmt.Printf("    Tool: %s | Size: %.2f KB | Modified: %s\n", tool, size, modTime)
+	}
+
+	return nil
+}
+
+// DockerRunWithRecording runs a container with session recording
+func DockerRunWithRecording(containerName string, outputFile string) error {
+	// Detect recording tool
+	tool, err := detectLoggingTool(false)
+	if err != nil {
+		return err
+	}
+
+	// Generate output filename if not provided
+	if outputFile == "" {
+		timestamp := time.Now().Format("20060102-150405")
+		if tool == "asciinema" {
+			outputFile = fmt.Sprintf("rfswift-run-%s-%s.cast", containerName, timestamp)
+		} else {
+			outputFile = fmt.Sprintf("rfswift-run-%s-%s.log", containerName, timestamp)
+		}
+	}
+	
+	common.PrintInfoMessage(fmt.Sprintf("🔴 Recording session with %s to: %s", tool, outputFile))
+
+	// Get the current executable path
+	executable, err := os.Executable()
+	if err != nil {
+		return fmt.Errorf("failed to get executable path: %v", err)
+	}
+
+	// Simple command without PS1 modification
+	runCmdStr := fmt.Sprintf("%s run -n %s", executable, containerName)
+
+	var recordCmd *exec.Cmd
+	
+	switch tool {
+	case "asciinema":
+		recordCmd = exec.Command("asciinema", "rec", "-c", runCmdStr, outputFile)
+	case "script":
+		if runtime.GOOS == "darwin" {
+			recordCmd = exec.Command("script", "-q", "-c", runCmdStr, outputFile)
+		} else {
+			recordCmd = exec.Command("script", "-q", "-f", "-c", runCmdStr, outputFile)
+		}
+	}
+
+	recordCmd.Stdin = os.Stdin
+	recordCmd.Stdout = os.Stdout
+	recordCmd.Stderr = os.Stderr
+
+	// Run the recorded session
+	if err := recordCmd.Run(); err != nil {
+		return fmt.Errorf("recording session failed: %v", err)
+	}
+
+	// Reset terminal title
+	fmt.Printf("\033]0;Terminal\007")
+	
+	common.PrintSuccessMessage(fmt.Sprintf("🔴 Session recorded to: %s", outputFile))
+	
+	return nil
+}
+
+// DockerExecWithRecording executes into a container with session recording
+func DockerExecWithRecording(containerIdentifier string, workingDir string, outputFile string) error {
+	// Detect recording tool
+	tool, err := detectLoggingTool(false)
+	if err != nil {
+		return err
+	}
+
+	// Get container name for filename
+	ctx := context.Background()
+	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
+	if err != nil {
+		return err
+	}
+	defer cli.Close()
+
+	containerJSON, err := cli.ContainerInspect(ctx, containerIdentifier)
+	if err != nil {
+		containerIdentifier = "unknown"
+	} else {
+		containerIdentifier = strings.TrimPrefix(containerJSON.Name, "/")
+	}
+
+	// Generate output filename if not provided
+	if outputFile == "" {
+		timestamp := time.Now().Format("20060102-150405")
+		if tool == "asciinema" {
+			outputFile = fmt.Sprintf("rfswift-exec-%s-%s.cast", containerIdentifier, timestamp)
+		} else {
+			outputFile = fmt.Sprintf("rfswift-exec-%s-%s.log", containerIdentifier, timestamp)
+		}
+	}
+	
+	common.PrintInfoMessage(fmt.Sprintf("🔴 Recording session with %s to: %s", tool, outputFile))
+
+	// Get the current executable path
+	executable, err := os.Executable()
+	if err != nil {
+		return fmt.Errorf("failed to get executable path: %v", err)
+	}
+
+	// Simple command without PS1 modification
+	execCmdStr := fmt.Sprintf("%s exec -c %s -w %s", executable, containerIdentifier, workingDir)
+
+	var recordCmd *exec.Cmd
+	
+	switch tool {
+	case "asciinema":
+		recordCmd = exec.Command("asciinema", "rec", "-c", execCmdStr, outputFile)
+	case "script":
+		if runtime.GOOS == "darwin" {
+			recordCmd = exec.Command("script", "-q", "-c", execCmdStr, outputFile)
+		} else {
+			recordCmd = exec.Command("script", "-q", "-f", "-c", execCmdStr, outputFile)
+		}
+	}
+
+	recordCmd.Stdin = os.Stdin
+	recordCmd.Stdout = os.Stdout
+	recordCmd.Stderr = os.Stderr
+
+	// Run the recorded session
+	if err := recordCmd.Run(); err != nil {
+		return fmt.Errorf("recording session failed: %v", err)
+	}
+
+	// Reset terminal title
+	fmt.Printf("\033]0;Terminal\007")
+	
+	common.PrintSuccessMessage(fmt.Sprintf("📹 Session recorded to: %s", outputFile))
+	
+	return nil
 }

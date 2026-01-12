@@ -44,6 +44,9 @@ var Cgroups string
 var isADevice bool
 var Seccomp string
 var NoX11 bool
+var RecordSession bool
+var RecordOutput string
+var WorkingDir string
 
 var rootCmd = &cobra.Command{
 	Use:   "rfswift",
@@ -59,11 +62,11 @@ var runCmd = &cobra.Command{
 	Short: "Create and run a program",
 	Long:  `Create a container and run a program inside the docker container`,
 	Run: func(cmd *cobra.Command, args []string) {
-		os := runtime.GOOS
+		operatingsystem := runtime.GOOS
 		
 		// Only setup X11 if not disabled
 		if !NoX11 {
-			if os == "windows" {
+			if operatingsystem == "windows" {
 				rfdock.DockerSetx11("/run/desktop/mnt/host/wslg/.X11-unix:/tmp/.X11-unix,/run/desktop/mnt/host/wslg:/mnt/wslg")
 			} else {
 				rfutils.XHostEnable() // force xhost to add local connections ALCs, TODO: to optimize later
@@ -88,10 +91,18 @@ var runCmd = &cobra.Command{
 		rfdock.DockerAddCgroups(Cgroups)
 		rfdock.DockerSetPrivileges(Privileged)
 		rfdock.DockerSetSeccomp(Seccomp)
-		if os == "linux" { // use pactl to configure ACLs only if X11 is enabled
+		if operatingsystem == "linux" { // use pactl to configure ACLs only if X11 is enabled
 			rfutils.SetPulseCTL(PulseServer)
 		}
-		rfdock.DockerRun(DockerName)
+
+		if RecordSession {
+        if err := rfdock.DockerRunWithRecording(DockerName, RecordOutput); err != nil {
+            common.PrintErrorMessage(err)
+            os.Exit(1)
+        }
+    } else {
+        rfdock.DockerRun(DockerName)
+    }
 	},
 }
 
@@ -100,11 +111,11 @@ var execCmd = &cobra.Command{
 	Short: "Exec a command",
 	Long:  `Exec a program on a created docker container, even not started`,
 	Run: func(cmd *cobra.Command, args []string) {
-		os := runtime.GOOS
+		operatingsystem := runtime.GOOS
 		
 		// Only setup X11 if not disabled
 		if !NoX11 {
-			if os == "windows" {
+			if operatingsystem == "windows" {
 				rfdock.DockerSetx11("/run/desktop/mnt/host/wslg/.X11-unix:/tmp/.X11-unix,/run/desktop/mnt/host/wslg:/mnt/wslg")
 			} else {
 				rfutils.XHostEnable() // force xhost to add local connections ALCs, TODO: to optimize later
@@ -112,7 +123,14 @@ var execCmd = &cobra.Command{
 		}
 		
 		rfdock.DockerSetShell(ExecCmd)
-		rfdock.DockerExec(ContID, "/root")
+		if RecordSession {
+        if err := rfdock.DockerExecWithRecording(ContID, WorkingDir, RecordOutput); err != nil {
+            common.PrintErrorMessage(err)
+            os.Exit(1)
+        }
+    } else {
+        rfdock.DockerExec(ContID, WorkingDir)
+    }
 	},
 }
 
@@ -535,6 +553,206 @@ var buildCmd = &cobra.Command{
 	},
 }
 
+var ExportCmd = &cobra.Command{
+	Use:   "export",
+	Short: "Export containers or images",
+	Long:  `Export containers or images to tar.gz files for backup or transfer`,
+}
+
+var ExportContainerCmd = &cobra.Command{
+	Use:   "container",
+	Short: "Export a container to tar.gz",
+	Long:  `Export a container's filesystem to a compressed tar.gz file`,
+	Run: func(cmd *cobra.Command, args []string) {
+		outputFile, _ := cmd.Flags().GetString("output")
+		if err := rfdock.ExportContainer(ContID, outputFile); err != nil {
+			common.PrintErrorMessage(err)
+			os.Exit(1)
+		}
+	},
+}
+
+var ExportImageCmd = &cobra.Command{
+	Use:   "image",
+	Short: "Export an image to tar.gz",
+	Long:  `Export one or more images to a compressed tar.gz file`,
+	Run: func(cmd *cobra.Command, args []string) {
+		outputFile, _ := cmd.Flags().GetString("output")
+		images, _ := cmd.Flags().GetStringSlice("images")
+		if err := rfdock.ExportImage(images, outputFile); err != nil {
+			common.PrintErrorMessage(err)
+			os.Exit(1)
+		}
+	},
+}
+
+var ImportCmd = &cobra.Command{
+	Use:   "import",
+	Short: "Import containers or images",
+	Long:  `Import containers or images from tar.gz files`,
+}
+
+var ImportContainerCmd = &cobra.Command{
+	Use:   "container",
+	Short: "Import a container from tar.gz",
+	Long:  `Import a container filesystem from a tar.gz file and create an image`,
+	Run: func(cmd *cobra.Command, args []string) {
+		inputFile, _ := cmd.Flags().GetString("input")
+		imageName, _ := cmd.Flags().GetString("name")
+		if err := rfdock.ImportContainer(inputFile, imageName); err != nil {
+			common.PrintErrorMessage(err)
+			os.Exit(1)
+		}
+	},
+}
+
+var ImportImageCmd = &cobra.Command{
+	Use:   "image",
+	Short: "Import an image from tar.gz",
+	Long:  `Import one or more images from a tar.gz file`,
+	Run: func(cmd *cobra.Command, args []string) {
+		inputFile, _ := cmd.Flags().GetString("input")
+		if err := rfdock.ImportImage(inputFile); err != nil {
+			common.PrintErrorMessage(err)
+			os.Exit(1)
+		}
+	},
+}
+
+var DownloadCmd = &cobra.Command{
+	Use:   "download",
+	Short: "Download and save an image to tar.gz",
+	Long:  `Download an image from a repository and save it locally as a compressed tar.gz file`,
+	Run: func(cmd *cobra.Command, args []string) {
+		imageName, _ := cmd.Flags().GetString("image")
+		outputFile, _ := cmd.Flags().GetString("output")
+		pullFirst, _ := cmd.Flags().GetBool("pull")
+		
+		if err := rfdock.SaveImageToFile(imageName, outputFile, pullFirst); err != nil {
+			common.PrintErrorMessage(err)
+			os.Exit(1)
+		}
+	},
+}
+
+var CleanupCmd = &cobra.Command{
+	Use:   "cleanup",
+	Short: "Clean up containers and images",
+	Long:  `Remove old or unused containers and images based on age filters`,
+}
+
+var CleanupAllCmd = &cobra.Command{
+	Use:   "all",
+	Short: "Clean both containers and images",
+	Long:  `Remove both old containers and images`,
+	Run: func(cmd *cobra.Command, args []string) {
+		olderThan, _ := cmd.Flags().GetString("older-than")
+		force, _ := cmd.Flags().GetBool("force")
+		dryRun, _ := cmd.Flags().GetBool("dry-run")
+		
+		if err := rfdock.CleanupAll(olderThan, force, dryRun); err != nil {
+			common.PrintErrorMessage(err)
+			os.Exit(1)
+		}
+	},
+}
+
+var CleanupContainersCmd = &cobra.Command{
+	Use:   "containers",
+	Short: "Clean containers only",
+	Long:  `Remove old containers based on age filter`,
+	Run: func(cmd *cobra.Command, args []string) {
+		olderThan, _ := cmd.Flags().GetString("older-than")
+		force, _ := cmd.Flags().GetBool("force")
+		dryRun, _ := cmd.Flags().GetBool("dry-run")
+		onlyStopped, _ := cmd.Flags().GetBool("stopped")
+		
+		if err := rfdock.CleanupContainers(olderThan, force, dryRun, onlyStopped); err != nil {
+			common.PrintErrorMessage(err)
+			os.Exit(1)
+		}
+	},
+}
+
+var CleanupImagesCmd = &cobra.Command{
+	Use:   "images",
+	Short: "Clean images only",
+	Long:  `Remove old images based on age filter`,
+	Run: func(cmd *cobra.Command, args []string) {
+		olderThan, _ := cmd.Flags().GetString("older-than")
+		force, _ := cmd.Flags().GetBool("force")
+		dryRun, _ := cmd.Flags().GetBool("dry-run")
+		onlyDangling, _ := cmd.Flags().GetBool("dangling")
+		pruneChildren, _ := cmd.Flags().GetBool("prune-children")  // ADD THIS
+		
+		if err := rfdock.CleanupImages(olderThan, force, dryRun, onlyDangling, pruneChildren); err != nil {  // UPDATED
+			common.PrintErrorMessage(err)
+			os.Exit(1)
+		}
+	},
+}
+
+var LogCmd = &cobra.Command{
+	Use:   "log",
+	Short: "Record and replay terminal sessions",
+	Long:  `Record RF Swift operations using asciinema or script command`,
+}
+
+var LogStartCmd = &cobra.Command{
+	Use:   "start",
+	Short: "Start recording a session",
+	Long:  `Start recording terminal session to a file`,
+	Run: func(cmd *cobra.Command, args []string) {
+		outputFile, _ := cmd.Flags().GetString("output")
+		useScript, _ := cmd.Flags().GetBool("use-script")
+		
+		if err := rfdock.StartLogging(outputFile, useScript); err != nil {
+			common.PrintErrorMessage(err)
+			os.Exit(1)
+		}
+	},
+}
+
+var LogStopCmd = &cobra.Command{
+	Use:   "stop",
+	Short: "Stop the current recording",
+	Long:  `Stop the active recording session`,
+	Run: func(cmd *cobra.Command, args []string) {
+		if err := rfdock.StopLogging(); err != nil {
+			common.PrintErrorMessage(err)
+			os.Exit(1)
+		}
+	},
+}
+
+var LogReplayCmd = &cobra.Command{
+	Use:   "replay",
+	Short: "Replay a recorded session",
+	Long:  `Replay a previously recorded session`,
+	Run: func(cmd *cobra.Command, args []string) {
+		inputFile, _ := cmd.Flags().GetString("input")
+		speed, _ := cmd.Flags().GetFloat64("speed")
+		
+		if err := rfdock.ReplayLog(inputFile, speed); err != nil {
+			common.PrintErrorMessage(err)
+			os.Exit(1)
+		}
+	},
+}
+
+var LogListCmd = &cobra.Command{
+	Use:   "list",
+	Short: "List recorded sessions",
+	Long:  `List all recorded session files`,
+	Run: func(cmd *cobra.Command, args []string) {
+		logDir, _ := cmd.Flags().GetString("dir")
+		if err := rfdock.ListLogs(logDir); err != nil {
+			common.PrintErrorMessage(err)
+			os.Exit(1)
+		}
+	},
+}
+
 func detectShell() string {
 	shell := os.Getenv("SHELL")
 	if shell == "" {
@@ -731,6 +949,11 @@ func init() {
 	rootCmd.AddCommand(CgroupsCmd)
 	rootCmd.AddCommand(PortsCmd)
 	rootCmd.AddCommand(buildCmd)
+	rootCmd.AddCommand(ExportCmd)
+	rootCmd.AddCommand(ImportCmd)
+	rootCmd.AddCommand(DownloadCmd)
+	rootCmd.AddCommand(CleanupCmd)
+	rootCmd.AddCommand(LogCmd)
 	rootCmd.PersistentPreRun = func(cmd *cobra.Command, args []string) {
 		if len(os.Args) > 1 {
 			if (os.Args[1] == "completion") || (os.Args[1] == "__complete") {
@@ -783,10 +1006,14 @@ func init() {
 	commitCmd.Flags().StringVarP(&DImage, "image", "i", "", "image (default: 'myrfswift:latest')")
 	commitCmd.MarkFlagRequired("container")
 	commitCmd.MarkFlagRequired("image")
+	execCmd.Flags().StringVarP(&WorkingDir, "workdir", "w", "/root", "Working directory inside container (default: /root)")
 	execCmd.Flags().StringVarP(&ContID, "container", "c", "", "container to run")
 	execCmd.Flags().StringVarP(&ExecCmd, "command", "e", "/bin/bash", "command to exec (by default: /bin/bash)")
 	execCmd.Flags().StringVarP(&SInstall, "install", "i", "", "install from function script (e.g: 'sdrpp_soft_install')")
 	execCmd.Flags().BoolVar(&NoX11, "no-x11", false, "Disable X11 forwarding")
+	execCmd.Flags().BoolVar(&RecordSession, "record", false, "Record the container session")
+	execCmd.Flags().StringVar(&RecordOutput, "record-output", "", "Output file for recording (default: auto-generated)")
+
 	//execCmd.MarkFlagRequired("command")
 	runCmd.Flags().StringVarP(&ExtraHost, "extrahosts", "x", "", "set extra hosts (default: 'pluto.local:192.168.1.2', and separate them with commas)")
 	runCmd.Flags().StringVarP(&XDisplay, "display", "d", rfutils.GetDisplayEnv(), "set X Display (duplicates hosts's env by default)")
@@ -806,6 +1033,9 @@ func init() {
 
 	runCmd.Flags().StringVarP(&NetExporsedPorts, "exposedports", "z", "", "Exposed ports")
 	runCmd.Flags().StringVarP(&NetBindedPorts, "bindedports", "w", "", "Exposed ports")
+	runCmd.Flags().BoolVar(&RecordSession, "record", false, "Record the container session")
+	runCmd.Flags().StringVar(&RecordOutput, "record-output", "", "Output file for recording (default: auto-generated)")
+
 	lastCmd.Flags().StringVarP(&FilterLast, "filter", "f", "", "filter by image name")
 
 	stopCmd.Flags().StringVarP(&ContID, "container", "c", "", "container to stop")
@@ -880,6 +1110,82 @@ func init() {
 	buildCmd.Flags().StringP("tag", "t", "", "Override the tag name from recipe")
 	buildCmd.Flags().Bool("no-cache", false, "Build without using cache")
 
+
+	// Export/Import configuration
+	ExportCmd.AddCommand(ExportContainerCmd)
+	ExportCmd.AddCommand(ExportImageCmd)
+	ImportCmd.AddCommand(ImportContainerCmd)
+	ImportCmd.AddCommand(ImportImageCmd)
+
+	// Export container flags
+	ExportContainerCmd.Flags().StringVarP(&ContID, "container", "c", "", "container ID or name to export")
+	ExportContainerCmd.Flags().StringP("output", "o", "", "output file path (e.g., mycontainer.tar.gz)")
+	ExportContainerCmd.MarkFlagRequired("container")
+	ExportContainerCmd.MarkFlagRequired("output")
+
+	// Export image flags
+	ExportImageCmd.Flags().StringSliceP("images", "i", []string{}, "image name(s) to export (can specify multiple)")
+	ExportImageCmd.Flags().StringP("output", "o", "", "output file path (e.g., myimages.tar.gz)")
+	ExportImageCmd.MarkFlagRequired("images")
+	ExportImageCmd.MarkFlagRequired("output")
+
+	// Import container flags
+	ImportContainerCmd.Flags().StringP("input", "i", "", "input tar.gz file path")
+	ImportContainerCmd.Flags().StringP("name", "n", "", "name for the imported image (e.g., myimage:tag)")
+	ImportContainerCmd.MarkFlagRequired("input")
+	ImportContainerCmd.MarkFlagRequired("name")
+
+	// Import image flags
+	ImportImageCmd.Flags().StringP("input", "i", "", "input tar.gz file path")
+	ImportImageCmd.MarkFlagRequired("input")
+
+	// Download image to file
+	DownloadCmd.Flags().StringP("image", "i", "", "image name to download (e.g., penthertz/rfswift:latest)")
+	DownloadCmd.Flags().StringP("output", "o", "", "output file path (e.g., rfswift-latest.tar.gz)")
+	DownloadCmd.Flags().Bool("pull", false, "pull image first if not present locally")
+	DownloadCmd.MarkFlagRequired("image")
+	DownloadCmd.MarkFlagRequired("output")
+
+	// Cleanup configuration
+	CleanupCmd.AddCommand(CleanupAllCmd)
+	CleanupCmd.AddCommand(CleanupContainersCmd)
+	CleanupCmd.AddCommand(CleanupImagesCmd)
+
+	// Cleanup all flags
+	CleanupAllCmd.Flags().String("older-than", "", "Remove items older than duration (e.g., '24h', '7d', '1m', '1y')")
+	CleanupAllCmd.Flags().Bool("force", false, "Don't ask for confirmation")
+	CleanupAllCmd.Flags().Bool("dry-run", false, "Show what would be deleted without actually deleting")
+
+	// Cleanup containers flags
+	CleanupContainersCmd.Flags().String("older-than", "", "Remove containers older than duration (e.g., '24h', '7d', '1m', '1y')")
+	CleanupContainersCmd.Flags().Bool("force", false, "Don't ask for confirmation")
+	CleanupContainersCmd.Flags().Bool("dry-run", false, "Show what would be deleted without actually deleting")
+	CleanupContainersCmd.Flags().Bool("stopped", false, "Only remove stopped containers")
+
+	// Cleanup images flags
+	CleanupImagesCmd.Flags().String("older-than", "", "Remove images older than duration (e.g., '24h', '7d', '1m', '1y')")
+	CleanupImagesCmd.Flags().Bool("force", false, "Don't ask for confirmation")
+	CleanupImagesCmd.Flags().Bool("dry-run", false, "Show what would be deleted without actually deleting")
+	CleanupImagesCmd.Flags().Bool("dangling", false, "Only remove dangling (untagged) images")
+	CleanupImagesCmd.Flags().Bool("prune-children", false, "Also remove dependent child images")
+
+	// Logging configuration
+	LogCmd.AddCommand(LogStartCmd)
+	LogCmd.AddCommand(LogStopCmd)
+	LogCmd.AddCommand(LogReplayCmd)
+	LogCmd.AddCommand(LogListCmd)
+
+	// Log start flags
+	LogStartCmd.Flags().StringP("output", "o", "", "output file (default: rfswift-session-YYYYMMDD-HHMMSS.cast)")
+	LogStartCmd.Flags().Bool("use-script", false, "force use of 'script' command instead of asciinema")
+
+	// Log replay flags
+	LogReplayCmd.Flags().StringP("input", "i", "", "input file to replay")
+	LogReplayCmd.Flags().Float64P("speed", "s", 1.0, "playback speed (e.g., 2.0 for 2x)")
+	LogReplayCmd.MarkFlagRequired("input")
+
+	// Log list flags
+	LogListCmd.Flags().String("dir", "", "directory to search (default: current directory)")
 }
 
 func Execute() {
