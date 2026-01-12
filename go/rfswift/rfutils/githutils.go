@@ -154,16 +154,49 @@ func VersionCompare(v1, v2 string) int {
 	}
 
 	// Main versions are equal, compare pre-release tags
-	// If both have pre-release or both don't, they're equal
-	// If only one has pre-release, the one without is newer
 	hasPrerelease1 := len(v1Parts) > 1
 	hasPrerelease2 := len(v2Parts) > 1
 	
+	// If only one has pre-release, the one without is newer
 	if !hasPrerelease1 && hasPrerelease2 {
 		return 1  // v1 is newer (stable > pre-release)
 	}
 	if hasPrerelease1 && !hasPrerelease2 {
 		return -1  // v2 is newer
+	}
+	
+	// Both have pre-release tags, compare them
+	if hasPrerelease1 && hasPrerelease2 {
+		prerelease1 := v1Parts[1]
+		prerelease2 := v2Parts[1]
+		
+		// Extract rc number if format is "rcX"
+		if strings.HasPrefix(prerelease1, "rc") && strings.HasPrefix(prerelease2, "rc") {
+			rc1Str := strings.TrimPrefix(prerelease1, "rc")
+			rc2Str := strings.TrimPrefix(prerelease2, "rc")
+			
+			rc1, err1 := strconv.Atoi(rc1Str)
+			rc2, err2 := strconv.Atoi(rc2Str)
+			
+			// If both are valid rc numbers, compare numerically
+			if err1 == nil && err2 == nil {
+				if rc1 > rc2 {
+					return 1
+				}
+				if rc1 < rc2 {
+					return -1
+				}
+				return 0
+			}
+		}
+		
+		// Fallback to string comparison for other pre-release formats
+		if prerelease1 > prerelease2 {
+			return 1
+		}
+		if prerelease1 < prerelease2 {
+			return -1
+		}
 	}
 
 	return 0
