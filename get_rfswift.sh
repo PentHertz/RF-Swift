@@ -34,46 +34,46 @@ color_echo() {
 
 # Enhanced xhost check with Arch Linux support
 check_xhost() {
-    if ! command -v xhost &> /dev/null; then
-        echo -e "${RED}❌ xhost is not installed on this system. ❌${NC}"
+    if ! command -v xhost >/dev/null 2>&1; then
+        color_echo "red" "❌ xhost is not installed on this system. ❌"
         
         local distro=$(detect_distro)
         case "$distro" in
             "arch")
-                echo -e "${CYAN}🏛️ Installing xorg-xhost using pacman on Arch Linux... 📦${NC}"
+                color_echo "cyan" "🏛️ Installing xorg-xhost using pacman on Arch Linux... 📦"
                 sudo pacman -Sy --noconfirm
                 sudo pacman -S --noconfirm --needed xorg-xhost
                 ;;
             "fedora")
-                echo -e "${YELLOW}📦 Installing xorg-x11-server-utils using dnf... 📦${NC}"
+                color_echo "yellow" "📦 Installing xorg-x11-server-utils using dnf... 📦"
                 sudo dnf install -y xorg-x11-server-utils
                 ;;
             "rhel"|"centos")
-                if command -v dnf &> /dev/null; then
-                    echo -e "${YELLOW}📦 Installing xorg-x11-server-utils using dnf... 📦${NC}"
+                if command -v dnf >/dev/null 2>&1; then
+                    color_echo "yellow" "📦 Installing xorg-x11-server-utils using dnf... 📦"
                     sudo dnf install -y xorg-x11-server-utils
                 else
-                    echo -e "${YELLOW}📦 Installing xorg-x11-utils using yum... 📦${NC}"
+                    color_echo "yellow" "📦 Installing xorg-x11-utils using yum... 📦"
                     sudo yum install -y xorg-x11-utils
                 fi
                 ;;
             "debian"|"ubuntu")
-                echo -e "${YELLOW}📦 Installing x11-xserver-utils using apt... 📦${NC}"
+                color_echo "yellow" "📦 Installing x11-xserver-utils using apt... 📦"
                 sudo apt update
                 sudo apt install -y x11-xserver-utils
                 ;;
             "opensuse")
-                echo -e "${YELLOW}📦 Installing xorg-x11-server using zypper... 📦${NC}"
+                color_echo "yellow" "📦 Installing xorg-x11-server using zypper... 📦"
                 sudo zypper install -y xorg-x11-server
                 ;;
             *)
-                echo -e "${RED}❌ Unsupported package manager. Please install xhost manually. ❌${NC}"
+                color_echo "red" "❌ Unsupported package manager. Please install xhost manually. ❌"
                 exit 1
                 ;;
         esac
-        echo -e "${GREEN}✅ xhost installed successfully. ✅${NC}"
+        color_echo "green" "✅ xhost installed successfully. ✅"
     else
-        echo -e "${GREEN}✅ xhost is already installed. Moving on. ✅${NC}"
+        color_echo "green" "✅ xhost is already installed. Moving on. ✅"
     fi
 }
 
