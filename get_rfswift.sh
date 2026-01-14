@@ -1637,6 +1637,127 @@ test_font_installation() {
   color_echo "yellow" "restart your terminal and ensure it's using a Nerd Font."
 }
 
+# Check and install asciinema for terminal recording
+check_asciinema() {
+    if command -v asciinema >/dev/null 2>&1; then
+        color_echo "green" "✅ asciinema is already installed. Moving on. ✅"
+        return 0
+    fi
+    
+    color_echo "yellow" "⚠️ asciinema is not installed on this system."
+    color_echo "blue" "ℹ️ asciinema allows you to record and share terminal sessions."
+    
+    if ! prompt_yes_no "Would you like to install asciinema?" "n"; then
+        color_echo "yellow" "⚠️ asciinema installation skipped."
+        return 0
+    fi
+    
+    color_echo "blue" "📦 Installing asciinema..."
+    
+    local distro=$(detect_distro)
+    case "$(uname -s)" in
+        Darwin*)
+            if command -v brew >/dev/null 2>&1; then
+                color_echo "blue" "🍎 Installing asciinema via Homebrew..."
+                brew install asciinema
+            else
+                color_echo "yellow" "⚠️ Homebrew not found. Installing via pip..."
+                if command -v pip3 >/dev/null 2>&1; then
+                    pip3 install asciinema
+                elif command -v pip >/dev/null 2>&1; then
+                    pip install asciinema
+                else
+                    color_echo "red" "❌ Neither Homebrew nor pip found. Please install asciinema manually."
+                    return 1
+                fi
+            fi
+            ;;
+        Linux*)
+            case "$distro" in
+                "arch")
+                    if have_sudo_access; then
+                        color_echo "cyan" "🏛️ Installing asciinema using pacman on Arch Linux... 📦"
+                        sudo pacman -Sy --noconfirm
+                        sudo pacman -S --noconfirm --needed asciinema
+                    else
+                        color_echo "red" "❌ sudo access required for package installation"
+                        return 1
+                    fi
+                    ;;
+                "fedora")
+                    if have_sudo_access; then
+                        color_echo "yellow" "📦 Installing asciinema using dnf... 📦"
+                        sudo dnf install -y asciinema
+                    else
+                        color_echo "red" "❌ sudo access required for package installation"
+                        return 1
+                    fi
+                    ;;
+                "rhel"|"centos")
+                    if have_sudo_access; then
+                        if command -v dnf >/dev/null 2>&1; then
+                            color_echo "yellow" "📦 Installing asciinema using dnf... 📦"
+                            sudo dnf install -y asciinema
+                        else
+                            color_echo "yellow" "📦 Installing asciinema using pip... 📦"
+                            sudo yum install -y python3-pip
+                            pip3 install asciinema
+                        fi
+                    else
+                        color_echo "red" "❌ sudo access required for package installation"
+                        return 1
+                    fi
+                    ;;
+                "debian"|"ubuntu")
+                    if have_sudo_access; then
+                        color_echo "yellow" "📦 Installing asciinema using apt... 📦"
+                        sudo apt update
+                        sudo apt install -y asciinema
+                    else
+                        color_echo "red" "❌ sudo access required for package installation"
+                        return 1
+                    fi
+                    ;;
+                "opensuse")
+                    if have_sudo_access; then
+                        color_echo "yellow" "📦 Installing asciinema using zypper... 📦"
+                        sudo zypper install -y asciinema
+                    else
+                        color_echo "red" "❌ sudo access required for package installation"
+                        return 1
+                    fi
+                    ;;
+                *)
+                    color_echo "yellow" "⚠️ Unknown distribution. Trying pip installation..."
+                    if command -v pip3 >/dev/null 2>&1; then
+                        pip3 install --user asciinema
+                    elif command -v pip >/dev/null 2>&1; then
+                        pip install --user asciinema
+                    else
+                        color_echo "red" "❌ Unsupported package manager and pip not found. Please install asciinema manually."
+                        return 1
+                    fi
+                    ;;
+            esac
+            ;;
+        *)
+            color_echo "red" "❌ Unsupported operating system for asciinema installation"
+            return 1
+            ;;
+    esac
+    
+    # Verify installation
+    if command -v asciinema >/dev/null 2>&1; then
+        color_echo "green" "✅ asciinema installed successfully. ✅"
+        color_echo "cyan" "💡 Tip: Run 'asciinema rec' to start recording your terminal session."
+        return 0
+    else
+        color_echo "yellow" "⚠️ asciinema may have been installed but is not in PATH."
+        color_echo "cyan" "💡 Try restarting your terminal or check ~/.local/bin/"
+        return 0
+    fi
+}
+
 # Main function
 main() {
   display_rainbow_logo_animated
@@ -1680,6 +1801,9 @@ main() {
   
   # Checking xhost
   check_xhost
+
+  # Check and optionally install asciinema
+  check_asciinema
 
   # Set up alias if requested
   if prompt_yes_no "Would you like to set up an alias for RF-Swift?" "y"; then
