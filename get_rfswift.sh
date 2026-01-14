@@ -1592,11 +1592,12 @@ install_nerd_fonts_linux() {
   for font_zip in *.zip; do
     if [ -f "$font_zip" ]; then
       color_echo "blue" "Extracting $font_zip..."
-      unzip -q "$font_zip"
-      cp *.ttf *.otf "$FONTS_DIR/" 2>/dev/null || true
+      unzip -o -q "$font_zip" -d "${font_zip%.zip}"  # Extract to subdirectory
+      find "${font_zip%.zip}" -type f \( -name "*.ttf" -o -name "*.otf" \) -exec cp {} "$FONTS_DIR/" \;
     fi
   done
   
+  cd - >/dev/null
   rm -rf "$TEMP_DIR"
   color_echo "green" "✅ Nerd Fonts installed manually"
 }
