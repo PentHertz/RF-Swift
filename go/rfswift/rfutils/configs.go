@@ -45,11 +45,16 @@ func printOrange(message string) {
 }
 
 func getDefaultDevices() string {
-	if runtime.GOOS == "windows" {
+	switch runtime.GOOS {
+	case "darwin":
+		return ""
+	case "windows":
+		// WSL2/Docker Desktop - fewer device mappings available
 		return "/dev/bus/usb:/dev/bus/usb,/dev/snd:/dev/snd,/dev/console:/dev/console,/dev/vcsa:/dev/vcsa,/dev/tty:/dev/tty,/dev/tty0:/dev/tty0,/dev/tty1:/dev/tty1,/dev/tty2:/dev/tty2,/dev/uinput:/dev/uinput"
+	default:
+		// Linux - full device access
+		return "/dev/bus/usb:/dev/bus/usb,/dev/snd:/dev/snd,/dev/dri:/dev/dri,/dev/input:/dev/input,/dev/vhci:/dev/vhci,/dev/console:/dev/console,/dev/vcsa:/dev/vcsa,/dev/tty:/dev/tty,/dev/tty0:/dev/tty0,/dev/tty1:/dev/tty1,/dev/tty2:/dev/tty2,/dev/uinput:/dev/uinput"
 	}
-	// Default for Linux/macOS
-	return "/dev/bus/usb:/dev/bus/usb,/dev/snd:/dev/snd,/dev/dri:/dev/dri,/dev/input:/dev/input,/dev/vhci:/dev/vhci,/dev/console:/dev/console,/dev/vcsa:/dev/vcsa,/dev/tty:/dev/tty,/dev/tty0:/dev/tty0,/dev/tty1:/dev/tty1,/dev/tty2:/dev/tty2,/dev/uinput:/dev/uinput"
 }
 
 func ReadOrCreateConfig(filename string) (*Config, error) {
