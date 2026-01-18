@@ -18,40 +18,8 @@ import (
 	rfutils "penthertz/rfswift/rfutils"
 )
 
-var (
-	DImage          string
-	ContID          string
-	ExecCmd         string
-	FilterLast      string
-	ExtraBind       string
-	XDisplay        string
-	SInstall        string
-	ImageRef        string
-	ImageTag        string
-	ExtraHost       string
-	UsbDevice       string
-	PulseServer     string
-	DockerName      string
-	DockerNewName   string
-	Bsource         string
-	Btarget         string
-	NetMode         string
-	NetExporsedPorts string
-	NetBindedPorts  string
-	Devices         string
-	Caps            string
-	Cgroups         string
-	Seccomp         string
-	RecordOutput    string
-	WorkingDir      string
-	Privileged      int
-	isADevice       bool
-	NoX11           bool
-	RecordSession   bool
-)
-
-func setupX11(setDisplay bool) {
-	if NoX11 {
+func setupX11(noX11 bool, xDisplay string, setDisplay bool) {
+	if noX11 {
 		if setDisplay {
 			rfdock.DockerSetx11("")
 			rfdock.DockerSetXDisplay("")
@@ -65,7 +33,7 @@ func setupX11(setDisplay bool) {
 		rfutils.XHostEnable()
 	}
 	if setDisplay {
-		rfdock.DockerSetXDisplay(XDisplay)
+		rfdock.DockerSetXDisplay(xDisplay)
 	}
 }
 
@@ -83,31 +51,51 @@ var runCmd = &cobra.Command{
 	Short: "Create and run a program",
 	Long:  `Create a container and run a program inside the docker container`,
 	Run: func(cmd *cobra.Command, args []string) {
-		setupX11(true)
-		rfdock.DockerSetShell(ExecCmd)
-		rfdock.DockerAddBinding(ExtraBind)
-		rfdock.DockerSetImage(DImage)
-		rfdock.DockerSetExtraHosts(ExtraHost)
-		rfdock.DockerSetPulse(PulseServer)
-		rfdock.DockerSetNetworkMode(NetMode)
-		rfdock.DockerSetExposedPorts(NetExporsedPorts)
-		rfdock.DockerSetBindexPorts(NetBindedPorts)
-		rfdock.DockerAddDevices(Devices)
-		rfdock.DockerAddCaps(Caps)
-		rfdock.DockerAddCgroups(Cgroups)
-		rfdock.DockerSetPrivileges(Privileged)
-		rfdock.DockerSetSeccomp(Seccomp)
+		// Retrieve all flags locally
+		image, _ := cmd.Flags().GetString("image")
+		execCommand, _ := cmd.Flags().GetString("command")
+		extraBind, _ := cmd.Flags().GetString("bind")
+		xDisplay, _ := cmd.Flags().GetString("display")
+		extraHost, _ := cmd.Flags().GetString("extrahosts")
+		pulseServer, _ := cmd.Flags().GetString("pulseserver")
+		dockerName, _ := cmd.Flags().GetString("name")
+		netMode, _ := cmd.Flags().GetString("network")
+		exposedPorts, _ := cmd.Flags().GetString("exposedports")
+		bindedPorts, _ := cmd.Flags().GetString("bindedports")
+		devices, _ := cmd.Flags().GetString("devices")
+		privileged, _ := cmd.Flags().GetInt("privileged")
+		caps, _ := cmd.Flags().GetString("capabilities")
+		cgroups, _ := cmd.Flags().GetString("cgroups")
+		seccomp, _ := cmd.Flags().GetString("seccomp")
+		noX11, _ := cmd.Flags().GetBool("no-x11")
+		recordSession, _ := cmd.Flags().GetBool("record")
+		recordOutput, _ := cmd.Flags().GetString("record-output")
+
+		setupX11(noX11, xDisplay, true)
+		rfdock.DockerSetShell(execCommand)
+		rfdock.DockerAddBinding(extraBind)
+		rfdock.DockerSetImage(image)
+		rfdock.DockerSetExtraHosts(extraHost)
+		rfdock.DockerSetPulse(pulseServer)
+		rfdock.DockerSetNetworkMode(netMode)
+		rfdock.DockerSetExposedPorts(exposedPorts)
+		rfdock.DockerSetBindexPorts(bindedPorts)
+		rfdock.DockerAddDevices(devices)
+		rfdock.DockerAddCaps(caps)
+		rfdock.DockerAddCgroups(cgroups)
+		rfdock.DockerSetPrivileges(privileged)
+		rfdock.DockerSetSeccomp(seccomp)
 		if runtime.GOOS == "linux" {
-			rfutils.SetPulseCTL(PulseServer)
+			rfutils.SetPulseCTL(pulseServer)
 		}
 
-		if RecordSession {
-			if err := rfdock.DockerRunWithRecording(DockerName, RecordOutput); err != nil {
+		if recordSession {
+			if err := rfdock.DockerRunWithRecording(dockerName, recordOutput); err != nil {
 				common.PrintErrorMessage(err)
 				os.Exit(1)
 			}
 		} else {
-			rfdock.DockerRun(DockerName)
+			rfdock.DockerRun(dockerName)
 		}
 	},
 }
@@ -117,15 +105,23 @@ var execCmd = &cobra.Command{
 	Short: "Exec a command",
 	Long:  `Exec a program on a created docker container, even not started`,
 	Run: func(cmd *cobra.Command, args []string) {
-		setupX11(false)
-		rfdock.DockerSetShell(ExecCmd)
-		if RecordSession {
-			if err := rfdock.DockerExecWithRecording(ContID, WorkingDir, RecordOutput); err != nil {
+		// Retrieve all flags locally
+		contID, _ := cmd.Flags().GetString("container")
+		execCommand, _ := cmd.Flags().GetString("command")
+		workingDir, _ := cmd.Flags().GetString("workdir")
+		noX11, _ := cmd.Flags().GetBool("no-x11")
+		recordSession, _ := cmd.Flags().GetBool("record")
+		recordOutput, _ := cmd.Flags().GetString("record-output")
+
+		setupX11(noX11, "", false)
+		rfdock.DockerSetShell(execCommand)
+		if recordSession {
+			if err := rfdock.DockerExecWithRecording(contID, workingDir, recordOutput); err != nil {
 				common.PrintErrorMessage(err)
 				os.Exit(1)
 			}
 		} else {
-			rfdock.DockerExec(ContID, WorkingDir)
+			rfdock.DockerExec(contID, workingDir)
 		}
 	},
 }
@@ -135,9 +131,10 @@ var lastCmd = &cobra.Command{
 	Short: "Last container run",
 	Long:  `Display the latest container that was run`,
 	Run: func(cmd *cobra.Command, args []string) {
+		filterLast, _ := cmd.Flags().GetString("filter")
 		labelKey := "org.container.project"
 		labelValue := "rfswift"
-		rfdock.DockerLast(FilterLast, labelKey, labelValue)
+		rfdock.DockerLast(filterLast, labelKey, labelValue)
 	},
 }
 
@@ -146,8 +143,10 @@ var installCmd = &cobra.Command{
 	Short: "Install function script",
 	Long:  `Install function script inside the container`,
 	Run: func(cmd *cobra.Command, args []string) {
-		rfdock.DockerSetShell(ExecCmd)
-		rfdock.DockerInstallFromScript(ContID)
+		contID, _ := cmd.Flags().GetString("container")
+		execCommand, _ := cmd.Flags().GetString("install")
+		rfdock.DockerSetShell(execCommand)
+		rfdock.DockerInstallFromScript(contID)
 	},
 }
 
@@ -156,8 +155,10 @@ var commitCmd = &cobra.Command{
 	Short: "Commit a container",
 	Long:  `Commit a container with change we have made`,
 	Run: func(cmd *cobra.Command, args []string) {
-		rfdock.DockerSetImage(DImage)
-		rfdock.DockerCommit(ContID)
+		contID, _ := cmd.Flags().GetString("container")
+		image, _ := cmd.Flags().GetString("image")
+		rfdock.DockerSetImage(image)
+		rfdock.DockerCommit(contID)
 	},
 }
 
@@ -166,7 +167,8 @@ var stopCmd = &cobra.Command{
 	Short: "Stop a container",
 	Long:  `Stop last or a particular container running`,
 	Run: func(cmd *cobra.Command, args []string) {
-		rfdock.DockerStop(ContID)
+		contID, _ := cmd.Flags().GetString("container")
+		rfdock.DockerStop(contID)
 	},
 }
 
@@ -175,7 +177,9 @@ var pullCmd = &cobra.Command{
 	Short: "Pull a container",
 	Long:  `Pull a container from internet`,
 	Run: func(cmd *cobra.Command, args []string) {
-		rfdock.DockerPull(ImageRef, ImageTag)
+		imageRef, _ := cmd.Flags().GetString("image")
+		imageTag, _ := cmd.Flags().GetString("tag")
+		rfdock.DockerPull(imageRef, imageTag)
 	},
 }
 
@@ -184,7 +188,9 @@ var retagCmd = &cobra.Command{
 	Short: "Rename an image",
 	Long:  `Rename an image with another tag`,
 	Run: func(cmd *cobra.Command, args []string) {
-		rfdock.DockerTag(ImageRef, ImageTag)
+		imageRef, _ := cmd.Flags().GetString("image")
+		imageTag, _ := cmd.Flags().GetString("tag")
+		rfdock.DockerTag(imageRef, imageTag)
 	},
 }
 
@@ -193,7 +199,9 @@ var renameCmd = &cobra.Command{
 	Short: "Rename a container",
 	Long:  `Rename a container by another name`,
 	Run: func(cmd *cobra.Command, args []string) {
-		rfdock.DockerRename(DockerName, DockerNewName)
+		dockerName, _ := cmd.Flags().GetString("name")
+		dockerNewName, _ := cmd.Flags().GetString("destination")
+		rfdock.DockerRename(dockerName, dockerNewName)
 	},
 }
 
@@ -202,7 +210,8 @@ var removeCmd = &cobra.Command{
 	Short: "Remove a container",
 	Long:  `Remore an existing container`,
 	Run: func(cmd *cobra.Command, args []string) {
-		rfdock.DockerRemove(ContID)
+		contID, _ := cmd.Flags().GetString("container")
+		rfdock.DockerRemove(contID)
 	},
 }
 
@@ -235,7 +244,8 @@ var winusbattachCmd = &cobra.Command{
 	Short: "Attach a bus ID",
 	Long:  `Attach a bus ID from the host to containers`,
 	Run: func(cmd *cobra.Command, args []string) {
-		rfutils.BindAndAttachDevice(UsbDevice)
+		usbDevice, _ := cmd.Flags().GetString("busid")
+		rfutils.BindAndAttachDevice(usbDevice)
 	},
 }
 
@@ -244,7 +254,8 @@ var winusbdetachCmd = &cobra.Command{
 	Short: "Detach a bus ID",
 	Long:  `Detach a bus ID from the host to containers`,
 	Run: func(cmd *cobra.Command, args []string) {
-		rfutils.BindAndAttachDevice(UsbDevice)
+		usbDevice, _ := cmd.Flags().GetString("busid")
+		rfutils.BindAndAttachDevice(usbDevice)
 	},
 }
 
@@ -279,7 +290,9 @@ var ImagesPullCmd = &cobra.Command{
 	Short: "Pull a container",
 	Long:  `Pull a container from internet`,
 	Run: func(cmd *cobra.Command, args []string) {
-		rfdock.DockerPull(ImageRef, ImageTag)
+		imageRef, _ := cmd.Flags().GetString("image")
+		imageTag, _ := cmd.Flags().GetString("tag")
+		rfdock.DockerPull(imageRef, imageTag)
 	},
 }
 
@@ -288,7 +301,8 @@ var DeleteCmd = &cobra.Command{
 	Short: "Delete an rfswift images",
 	Long:  `Delete an RF Swift image from image name or tag`,
 	Run: func(cmd *cobra.Command, args []string) {
-		rfdock.DeleteImage(DImage)
+		image, _ := cmd.Flags().GetString("image")
+		rfdock.DeleteImage(image)
 	},
 }
 
@@ -309,7 +323,8 @@ var HostPulseAudioEnableCmd = &cobra.Command{
 	Short: "Enable connection",
 	Long:  `Allow connections to a specific port and interface. Warning: command to be executed as user!`,
 	Run: func(cmd *cobra.Command, args []string) {
-		rfutils.SetPulseCTL(PulseServer)
+		pulseServer, _ := cmd.Flags().GetString("pulseserver")
+		rfutils.SetPulseCTL(pulseServer)
 	},
 }
 
@@ -341,10 +356,14 @@ var BindingsAddCmd = &cobra.Command{
 	Short: "Add a binding",
 	Long:  `Adding a new binding for a container ID`,
 	Run: func(cmd *cobra.Command, args []string) {
+		contID, _ := cmd.Flags().GetString("container")
+		bsource, _ := cmd.Flags().GetString("source")
+		btarget, _ := cmd.Flags().GetString("target")
+		isADevice, _ := cmd.Flags().GetBool("devices")
 		if isADevice {
-			rfdock.UpdateDeviceBinding(ContID, Bsource, Btarget, true)
+			rfdock.UpdateDeviceBinding(contID, bsource, btarget, true)
 		} else {
-			rfdock.UpdateMountBinding(ContID, Bsource, Btarget, true)
+			rfdock.UpdateMountBinding(contID, bsource, btarget, true)
 		}
 	},
 }
@@ -354,10 +373,14 @@ var BindingsRmCmd = &cobra.Command{
 	Short: "Remove a binding",
 	Long:  `Remove a new binding for a container ID`,
 	Run: func(cmd *cobra.Command, args []string) {
+		contID, _ := cmd.Flags().GetString("container")
+		bsource, _ := cmd.Flags().GetString("source")
+		btarget, _ := cmd.Flags().GetString("target")
+		isADevice, _ := cmd.Flags().GetBool("devices")
 		if isADevice {
-			rfdock.UpdateDeviceBinding(ContID, Bsource, Btarget, false)
+			rfdock.UpdateDeviceBinding(contID, bsource, btarget, false)
 		} else {
-			rfdock.UpdateMountBinding(ContID, Bsource, Btarget, false)
+			rfdock.UpdateMountBinding(contID, bsource, btarget, false)
 		}
 	},
 }
@@ -410,8 +433,9 @@ var CapabilitiesAddCmd = &cobra.Command{
 	Short: "Add a capability",
 	Long:  `Add a new capability to a container`,
 	Run: func(cmd *cobra.Command, args []string) {
+		contID, _ := cmd.Flags().GetString("container")
 		capability, _ := cmd.Flags().GetString("capability")
-		rfdock.UpdateCapability(ContID, capability, true)
+		rfdock.UpdateCapability(contID, capability, true)
 	},
 }
 
@@ -420,8 +444,9 @@ var CapabilitiesRmCmd = &cobra.Command{
 	Short: "Remove a capability",
 	Long:  `Remove a capability from a container`,
 	Run: func(cmd *cobra.Command, args []string) {
+		contID, _ := cmd.Flags().GetString("container")
 		capability, _ := cmd.Flags().GetString("capability")
-		rfdock.UpdateCapability(ContID, capability, false)
+		rfdock.UpdateCapability(contID, capability, false)
 	},
 }
 
@@ -436,8 +461,9 @@ var CgroupsAddCmd = &cobra.Command{
 	Short: "Add a cgroup rule",
 	Long:  `Add a new cgroup device rule to a container (e.g., 'c 189:* rwm')`,
 	Run: func(cmd *cobra.Command, args []string) {
+		contID, _ := cmd.Flags().GetString("container")
 		rule, _ := cmd.Flags().GetString("rule")
-		rfdock.UpdateCgroupRule(ContID, rule, true)
+		rfdock.UpdateCgroupRule(contID, rule, true)
 	},
 }
 
@@ -446,8 +472,9 @@ var CgroupsRmCmd = &cobra.Command{
 	Short: "Remove a cgroup rule",
 	Long:  `Remove a cgroup device rule from a container`,
 	Run: func(cmd *cobra.Command, args []string) {
+		contID, _ := cmd.Flags().GetString("container")
 		rule, _ := cmd.Flags().GetString("rule")
-		rfdock.UpdateCgroupRule(ContID, rule, false)
+		rfdock.UpdateCgroupRule(contID, rule, false)
 	},
 }
 
@@ -462,8 +489,9 @@ var PortsExposeCmd = &cobra.Command{
 	Short: "Expose a port",
 	Long:  `Expose a new port on a container (e.g., '8080/tcp')`,
 	Run: func(cmd *cobra.Command, args []string) {
+		contID, _ := cmd.Flags().GetString("container")
 		port, _ := cmd.Flags().GetString("port")
-		rfdock.UpdateExposedPort(ContID, port, true)
+		rfdock.UpdateExposedPort(contID, port, true)
 	},
 }
 
@@ -472,8 +500,9 @@ var PortsUnexposeCmd = &cobra.Command{
 	Short: "Remove an exposed port",
 	Long:  `Remove an exposed port from a container`,
 	Run: func(cmd *cobra.Command, args []string) {
+		contID, _ := cmd.Flags().GetString("container")
 		port, _ := cmd.Flags().GetString("port")
-		rfdock.UpdateExposedPort(ContID, port, false)
+		rfdock.UpdateExposedPort(contID, port, false)
 	},
 }
 
@@ -482,8 +511,9 @@ var PortsBindCmd = &cobra.Command{
 	Short: "Bind a port",
 	Long:  `Bind a container port to a host port (e.g., '8080/tcp:8080' or '8080/tcp:127.0.0.1:8080')`,
 	Run: func(cmd *cobra.Command, args []string) {
+		contID, _ := cmd.Flags().GetString("container")
 		binding, _ := cmd.Flags().GetString("binding")
-		rfdock.UpdatePortBinding(ContID, binding, true)
+		rfdock.UpdatePortBinding(contID, binding, true)
 	},
 }
 
@@ -492,8 +522,9 @@ var PortsUnbindCmd = &cobra.Command{
 	Short: "Remove a port binding",
 	Long:  `Remove a port binding from a container`,
 	Run: func(cmd *cobra.Command, args []string) {
+		contID, _ := cmd.Flags().GetString("container")
 		binding, _ := cmd.Flags().GetString("binding")
-		rfdock.UpdatePortBinding(ContID, binding, false)
+		rfdock.UpdatePortBinding(contID, binding, false)
 	},
 }
 
@@ -560,8 +591,9 @@ var ExportContainerCmd = &cobra.Command{
 	Short: "Export a container to tar.gz",
 	Long:  `Export a container's filesystem to a compressed tar.gz file`,
 	Run: func(cmd *cobra.Command, args []string) {
+		contID, _ := cmd.Flags().GetString("container")
 		outputFile, _ := cmd.Flags().GetString("output")
-		if err := rfdock.ExportContainer(ContID, outputFile); err != nil {
+		if err := rfdock.ExportContainer(contID, outputFile); err != nil {
 			common.PrintErrorMessage(err)
 			os.Exit(1)
 		}
@@ -964,90 +996,90 @@ func init() {
 		winusbCmd.AddCommand(winusblistCmd)
 		winusbCmd.AddCommand(winusbattachCmd)
 		winusbCmd.AddCommand(winusbdetachCmd)
-		winusbattachCmd.Flags().StringVarP(&UsbDevice, "busid", "i", "", "busid")
-		winusbdetachCmd.Flags().StringVarP(&UsbDevice, "busid", "i", "", "busid")
+		winusbattachCmd.Flags().StringP("busid", "i", "", "busid")
+		winusbdetachCmd.Flags().StringP("busid", "i", "", "busid")
 	}
 
 	ImagesCmd.AddCommand(pullCmd)
 	ImagesCmd.AddCommand(ImagesRemoteCmd)
 	ImagesCmd.AddCommand(ImagesLocalCmd)
-	pullCmd.Flags().StringVarP(&ImageRef, "image", "i", "", "image reference")
-	pullCmd.Flags().StringVarP(&ImageTag, "tag", "t", "", "rename to target tag")
+	pullCmd.Flags().StringP("image", "i", "", "image reference")
+	pullCmd.Flags().StringP("tag", "t", "", "rename to target tag")
 	pullCmd.MarkFlagRequired("image")
 
 	HostCmd.AddCommand(HostPulseAudioCmd)
 	HostPulseAudioCmd.AddCommand(HostPulseAudioEnableCmd)
 	HostPulseAudioCmd.AddCommand(HostPulseAudioUnloadCmd)
-	HostPulseAudioEnableCmd.Flags().StringVarP(&PulseServer, "pulseserver", "s", "tcp:127.0.0.1:34567", "pulse server address (by default: 'tcp:127.0.0.1:34567')")
+	HostPulseAudioEnableCmd.Flags().StringP("pulseserver", "s", "tcp:127.0.0.1:34567", "pulse server address (by default: 'tcp:127.0.0.1:34567')")
 
-	DeleteCmd.Flags().StringVarP(&DImage, "image", "i", "", "image ID or tag")
-	removeCmd.Flags().StringVarP(&ContID, "container", "c", "", "container to remove")
-	installCmd.Flags().StringVarP(&ExecCmd, "install", "i", "", "function for installation")
-	installCmd.Flags().StringVarP(&ContID, "container", "c", "", "container to run")
+	DeleteCmd.Flags().StringP("image", "i", "", "image ID or tag")
+	removeCmd.Flags().StringP("container", "c", "", "container to remove")
+	installCmd.Flags().StringP("install", "i", "", "function for installation")
+	installCmd.Flags().StringP("container", "c", "", "container to run")
 
-	retagCmd.Flags().StringVarP(&ImageRef, "image", "i", "", "image reference")
-	retagCmd.Flags().StringVarP(&ImageTag, "tag", "t", "", "rename to target tag")
-	renameCmd.Flags().StringVarP(&DockerName, "name", "n", "", "Docker current name")
-	renameCmd.Flags().StringVarP(&DockerNewName, "destination", "d", "", "Docker new name")
-	commitCmd.Flags().StringVarP(&ContID, "container", "c", "", "container to run")
-	commitCmd.Flags().StringVarP(&DImage, "image", "i", "", "image (default: 'myrfswift:latest')")
+	retagCmd.Flags().StringP("image", "i", "", "image reference")
+	retagCmd.Flags().StringP("tag", "t", "", "rename to target tag")
+	renameCmd.Flags().StringP("name", "n", "", "Docker current name")
+	renameCmd.Flags().StringP("destination", "d", "", "Docker new name")
+	commitCmd.Flags().StringP("container", "c", "", "container to run")
+	commitCmd.Flags().StringP("image", "i", "", "image (default: 'myrfswift:latest')")
 	commitCmd.MarkFlagRequired("container")
 	commitCmd.MarkFlagRequired("image")
-	execCmd.Flags().StringVarP(&WorkingDir, "workdir", "w", "/root", "Working directory inside container")
-	execCmd.Flags().StringVarP(&ContID, "container", "c", "", "container to run")
-	execCmd.Flags().StringVarP(&ExecCmd, "command", "e", "/bin/bash", "command to exec")
-	execCmd.Flags().StringVarP(&SInstall, "install", "i", "", "install from function script (e.g: 'sdrpp_soft_install')")
-	execCmd.Flags().BoolVar(&NoX11, "no-x11", false, "Disable X11 forwarding")
-	execCmd.Flags().BoolVar(&RecordSession, "record", false, "Record the container session")
-	execCmd.Flags().StringVar(&RecordOutput, "record-output", "", "Output file for recording (default: auto-generated)")
+	execCmd.Flags().StringP("workdir", "w", "/root", "Working directory inside container")
+	execCmd.Flags().StringP("container", "c", "", "container to run")
+	execCmd.Flags().StringP("command", "e", "/bin/bash", "command to exec")
+	execCmd.Flags().StringP("install", "i", "", "install from function script (e.g: 'sdrpp_soft_install')")
+	execCmd.Flags().Bool("no-x11", false, "Disable X11 forwarding")
+	execCmd.Flags().Bool("record", false, "Record the container session")
+	execCmd.Flags().String("record-output", "", "Output file for recording (default: auto-generated)")
 
-	runCmd.Flags().StringVarP(&ExtraHost, "extrahosts", "x", "", "set extra hosts (default: 'pluto.local:192.168.1.2', and separate them with commas)")
-	runCmd.Flags().StringVarP(&XDisplay, "display", "d", rfutils.GetDisplayEnv(), "set X Display (duplicates hosts's env by default)")
-	runCmd.Flags().StringVarP(&ExecCmd, "command", "e", "", "command to exec (by default: '/bin/bash')")
-	runCmd.Flags().StringVarP(&ExtraBind, "bind", "b", "", "extra bindings (separate them with commas)")
-	runCmd.Flags().StringVarP(&DImage, "image", "i", "", "image (default: 'myrfswift:latest')")
-	runCmd.Flags().StringVarP(&PulseServer, "pulseserver", "p", "tcp:127.0.0.1:34567", "PULSE SERVER TCP address (by default: tcp:127.0.0.1:34567)")
-	runCmd.Flags().StringVarP(&DockerName, "name", "n", "", "A docker name")
-	runCmd.Flags().StringVarP(&NetMode, "network", "t", "", "Network mode (default: 'host')")
-	runCmd.Flags().StringVarP(&Devices, "devices", "s", "", "extra devices mapping (separate them with commas)")
-	runCmd.Flags().IntVarP(&Privileged, "privileged", "u", 0, "Set privilege level (1: privileged, 0: unprivileged)")
-	runCmd.Flags().StringVarP(&Caps, "capabilities", "a", "", "extra capabilities (separate them with commas)")
-	runCmd.Flags().StringVarP(&Cgroups, "cgroups", "g", "", "extra cgroup rules (separate them with commas)")
-	runCmd.Flags().StringVarP(&Seccomp, "seccomp", "m", "", "Set Seccomp profile ('default' one used by default)")
-	runCmd.Flags().BoolVar(&NoX11, "no-x11", false, "Disable X11 forwarding")
+	runCmd.Flags().StringP("extrahosts", "x", "", "set extra hosts (default: 'pluto.local:192.168.1.2', and separate them with commas)")
+	runCmd.Flags().StringP("display", "d", rfutils.GetDisplayEnv(), "set X Display (duplicates hosts's env by default)")
+	runCmd.Flags().StringP("command", "e", "", "command to exec (by default: '/bin/bash')")
+	runCmd.Flags().StringP("bind", "b", "", "extra bindings (separate them with commas)")
+	runCmd.Flags().StringP("image", "i", "", "image (default: 'myrfswift:latest')")
+	runCmd.Flags().StringP("pulseserver", "p", "tcp:127.0.0.1:34567", "PULSE SERVER TCP address (by default: tcp:127.0.0.1:34567)")
+	runCmd.Flags().StringP("name", "n", "", "A docker name")
+	runCmd.Flags().StringP("network", "t", "", "Network mode (default: 'host')")
+	runCmd.Flags().StringP("devices", "s", "", "extra devices mapping (separate them with commas)")
+	runCmd.Flags().IntP("privileged", "u", 0, "Set privilege level (1: privileged, 0: unprivileged)")
+	runCmd.Flags().StringP("capabilities", "a", "", "extra capabilities (separate them with commas)")
+	runCmd.Flags().StringP("cgroups", "g", "", "extra cgroup rules (separate them with commas)")
+	runCmd.Flags().StringP("seccomp", "m", "", "Set Seccomp profile ('default' one used by default)")
+	runCmd.Flags().Bool("no-x11", false, "Disable X11 forwarding")
 	runCmd.MarkFlagRequired("name")
 
-	runCmd.Flags().StringVarP(&NetExporsedPorts, "exposedports", "z", "", "Exposed ports")
-	runCmd.Flags().StringVarP(&NetBindedPorts, "bindedports", "w", "", "Exposed ports")
-	runCmd.Flags().BoolVar(&RecordSession, "record", false, "Record the container session")
-	runCmd.Flags().StringVar(&RecordOutput, "record-output", "", "Output file for recording (default: auto-generated)")
+	runCmd.Flags().StringP("exposedports", "z", "", "Exposed ports")
+	runCmd.Flags().StringP("bindedports", "w", "", "Exposed ports")
+	runCmd.Flags().Bool("record", false, "Record the container session")
+	runCmd.Flags().String("record-output", "", "Output file for recording (default: auto-generated)")
 
-	lastCmd.Flags().StringVarP(&FilterLast, "filter", "f", "", "filter by image name")
+	lastCmd.Flags().StringP("filter", "f", "", "filter by image name")
 
-	stopCmd.Flags().StringVarP(&ContID, "container", "c", "", "container to stop")
+	stopCmd.Flags().StringP("container", "c", "", "container to stop")
 
 	BindingsCmd.AddCommand(BindingsAddCmd)
-	BindingsCmd.PersistentFlags().BoolVarP(&isADevice, "devices", "d", false, "Manage a device rather than a volume")
+	BindingsCmd.PersistentFlags().BoolP("devices", "d", false, "Manage a device rather than a volume")
 	BindingsCmd.AddCommand(BindingsRmCmd)
-	BindingsAddCmd.Flags().StringVarP(&ContID, "container", "c", "", "container to run")
-	BindingsAddCmd.Flags().StringVarP(&Bsource, "source", "s", "", "source binding (by default: source=target)")
-	BindingsAddCmd.Flags().StringVarP(&Btarget, "target", "t", "", "target binding")
+	BindingsAddCmd.Flags().StringP("container", "c", "", "container to run")
+	BindingsAddCmd.Flags().StringP("source", "s", "", "source binding (by default: source=target)")
+	BindingsAddCmd.Flags().StringP("target", "t", "", "target binding")
 	BindingsAddCmd.MarkFlagRequired("container")
 	BindingsAddCmd.MarkFlagRequired("target")
-	BindingsRmCmd.Flags().StringVarP(&ContID, "container", "c", "", "container to run")
-	BindingsRmCmd.Flags().StringVarP(&Bsource, "source", "s", "", "source binding (by default: source=target)")
-	BindingsRmCmd.Flags().StringVarP(&Btarget, "target", "t", "", "target binding")
+	BindingsRmCmd.Flags().StringP("container", "c", "", "container to run")
+	BindingsRmCmd.Flags().StringP("source", "s", "", "source binding (by default: source=target)")
+	BindingsRmCmd.Flags().StringP("target", "t", "", "target binding")
 	BindingsRmCmd.MarkFlagRequired("container")
 	BindingsRmCmd.MarkFlagRequired("target")
 
 	// Capabilities configuration
 	CapabilitiesCmd.AddCommand(CapabilitiesAddCmd)
 	CapabilitiesCmd.AddCommand(CapabilitiesRmCmd)
-	CapabilitiesAddCmd.Flags().StringVarP(&ContID, "container", "c", "", "container ID or name")
+	CapabilitiesAddCmd.Flags().StringP("container", "c", "", "container ID or name")
 	CapabilitiesAddCmd.Flags().StringP("capability", "p", "", "capability to add (e.g., NET_ADMIN, SYS_PTRACE)")
 	CapabilitiesAddCmd.MarkFlagRequired("container")
 	CapabilitiesAddCmd.MarkFlagRequired("capability")
-	CapabilitiesRmCmd.Flags().StringVarP(&ContID, "container", "c", "", "container ID or name")
+	CapabilitiesRmCmd.Flags().StringP("container", "c", "", "container ID or name")
 	CapabilitiesRmCmd.Flags().StringP("capability", "p", "", "capability to remove")
 	CapabilitiesRmCmd.MarkFlagRequired("container")
 	CapabilitiesRmCmd.MarkFlagRequired("capability")
@@ -1055,11 +1087,11 @@ func init() {
 	// Cgroups configuration
 	CgroupsCmd.AddCommand(CgroupsAddCmd)
 	CgroupsCmd.AddCommand(CgroupsRmCmd)
-	CgroupsAddCmd.Flags().StringVarP(&ContID, "container", "c", "", "container ID or name")
+	CgroupsAddCmd.Flags().StringP("container", "c", "", "container ID or name")
 	CgroupsAddCmd.Flags().StringP("rule", "r", "", "cgroup rule to add (e.g., 'c 189:* rwm')")
 	CgroupsAddCmd.MarkFlagRequired("container")
 	CgroupsAddCmd.MarkFlagRequired("rule")
-	CgroupsRmCmd.Flags().StringVarP(&ContID, "container", "c", "", "container ID or name")
+	CgroupsRmCmd.Flags().StringP("container", "c", "", "container ID or name")
 	CgroupsRmCmd.Flags().StringP("rule", "r", "", "cgroup rule to remove")
 	CgroupsRmCmd.MarkFlagRequired("container")
 	CgroupsRmCmd.MarkFlagRequired("rule")
@@ -1069,19 +1101,19 @@ func init() {
 	PortsCmd.AddCommand(PortsUnexposeCmd)
 	PortsCmd.AddCommand(PortsBindCmd)
 	PortsCmd.AddCommand(PortsUnbindCmd)
-	PortsExposeCmd.Flags().StringVarP(&ContID, "container", "c", "", "container ID or name")
+	PortsExposeCmd.Flags().StringP("container", "c", "", "container ID or name")
 	PortsExposeCmd.Flags().StringP("port", "p", "", "port to expose (e.g., '8080/tcp')")
 	PortsExposeCmd.MarkFlagRequired("container")
 	PortsExposeCmd.MarkFlagRequired("port")
-	PortsUnexposeCmd.Flags().StringVarP(&ContID, "container", "c", "", "container ID or name")
+	PortsUnexposeCmd.Flags().StringP("container", "c", "", "container ID or name")
 	PortsUnexposeCmd.Flags().StringP("port", "p", "", "port to remove")
 	PortsUnexposeCmd.MarkFlagRequired("container")
 	PortsUnexposeCmd.MarkFlagRequired("port")
-	PortsBindCmd.Flags().StringVarP(&ContID, "container", "c", "", "container ID or name")
+	PortsBindCmd.Flags().StringP("container", "c", "", "container ID or name")
 	PortsBindCmd.Flags().StringP("binding", "b", "", "port binding (e.g., '8080/tcp:8080' or '8080/tcp:127.0.0.1:8080')")
 	PortsBindCmd.MarkFlagRequired("container")
 	PortsBindCmd.MarkFlagRequired("binding")
-	PortsUnbindCmd.Flags().StringVarP(&ContID, "container", "c", "", "container ID or name")
+	PortsUnbindCmd.Flags().StringP("container", "c", "", "container ID or name")
 	PortsUnbindCmd.Flags().StringP("binding", "b", "", "port binding to remove")
 	PortsUnbindCmd.MarkFlagRequired("container")
 	PortsUnbindCmd.MarkFlagRequired("binding")
@@ -1097,13 +1129,12 @@ func init() {
 	buildCmd.Flags().Bool("no-cache", false, "Build without using cache")
 
 	ExportCmd.AddCommand(ExportContainerCmd)
-	ExportCmd.AddCommand(ExportContainerCmd)
 	ExportCmd.AddCommand(ExportImageCmd)
 	ImportCmd.AddCommand(ImportContainerCmd)
 	ImportCmd.AddCommand(ImportImageCmd)
 
 	// Export container flags
-	ExportContainerCmd.Flags().StringVarP(&ContID, "container", "c", "", "container ID or name to export")
+	ExportContainerCmd.Flags().StringP("container", "c", "", "container ID or name to export")
 	ExportContainerCmd.Flags().StringP("output", "o", "", "output file path (e.g., mycontainer.tar.gz)")
 	ExportContainerCmd.MarkFlagRequired("container")
 	ExportContainerCmd.MarkFlagRequired("output")
