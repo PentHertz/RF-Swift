@@ -18,35 +18,56 @@ import (
 	rfutils "penthertz/rfswift/rfutils"
 )
 
-var DImage string
-var ContID string
-var ExecCmd string
-var FilterLast string
-var ExtraBind string
-var XDisplay string
-var SInstall string
-var ImageRef string
-var ImageTag string
-var ExtraHost string
-var UsbDevice string
-var PulseServer string
-var DockerName string
-var DockerNewName string
-var Bsource string
-var Btarget string
-var NetMode string
-var NetExporsedPorts string
-var NetBindedPorts string
-var Devices string
-var Privileged int
-var Caps string
-var Cgroups string
-var isADevice bool
-var Seccomp string
-var NoX11 bool
-var RecordSession bool
-var RecordOutput string
-var WorkingDir string
+var (
+	DImage          string
+	ContID          string
+	ExecCmd         string
+	FilterLast      string
+	ExtraBind       string
+	XDisplay        string
+	SInstall        string
+	ImageRef        string
+	ImageTag        string
+	ExtraHost       string
+	UsbDevice       string
+	PulseServer     string
+	DockerName      string
+	DockerNewName   string
+	Bsource         string
+	Btarget         string
+	NetMode         string
+	NetExporsedPorts string
+	NetBindedPorts  string
+	Devices         string
+	Caps            string
+	Cgroups         string
+	Seccomp         string
+	RecordOutput    string
+	WorkingDir      string
+	Privileged      int
+	isADevice       bool
+	NoX11           bool
+	RecordSession   bool
+)
+
+func setupX11(setDisplay bool) {
+	if NoX11 {
+		if setDisplay {
+			rfdock.DockerSetx11("")
+			rfdock.DockerSetXDisplay("")
+		}
+		return
+	}
+	if runtime.GOOS == "windows" {
+		rfdock.DockerSetx11("/run/desktop/mnt/host/wslg/.X11-unix:/tmp/.X11-unix,/run/desktop/mnt/host/wslg:/mnt/wslg")
+	} else {
+		// force xhost to add local connections ALCs, TODO: to optimize later
+		rfutils.XHostEnable()
+	}
+	if setDisplay {
+		rfdock.DockerSetXDisplay(XDisplay)
+	}
+}
 
 var rootCmd = &cobra.Command{
 	Use:   "rfswift",
@@ -62,22 +83,7 @@ var runCmd = &cobra.Command{
 	Short: "Create and run a program",
 	Long:  `Create a container and run a program inside the docker container`,
 	Run: func(cmd *cobra.Command, args []string) {
-		operatingsystem := runtime.GOOS
-		
-		// Only setup X11 if not disabled
-		if !NoX11 {
-			if operatingsystem == "windows" {
-				rfdock.DockerSetx11("/run/desktop/mnt/host/wslg/.X11-unix:/tmp/.X11-unix,/run/desktop/mnt/host/wslg:/mnt/wslg")
-			} else {
-				rfutils.XHostEnable() // force xhost to add local connections ALCs, TODO: to optimize later
-			}
-			rfdock.DockerSetXDisplay(XDisplay)
-		} else {
-			// Disable X11 by setting empty values
-			rfdock.DockerSetx11("")
-			rfdock.DockerSetXDisplay("")
-		}
-		
+		setupX11(true)
 		rfdock.DockerSetShell(ExecCmd)
 		rfdock.DockerAddBinding(ExtraBind)
 		rfdock.DockerSetImage(DImage)
@@ -91,18 +97,18 @@ var runCmd = &cobra.Command{
 		rfdock.DockerAddCgroups(Cgroups)
 		rfdock.DockerSetPrivileges(Privileged)
 		rfdock.DockerSetSeccomp(Seccomp)
-		if operatingsystem == "linux" { // use pactl to configure ACLs only if X11 is enabled
+		if runtime.GOOS == "linux" {
 			rfutils.SetPulseCTL(PulseServer)
 		}
 
 		if RecordSession {
-        if err := rfdock.DockerRunWithRecording(DockerName, RecordOutput); err != nil {
-            common.PrintErrorMessage(err)
-            os.Exit(1)
-        }
-    } else {
-        rfdock.DockerRun(DockerName)
-    }
+			if err := rfdock.DockerRunWithRecording(DockerName, RecordOutput); err != nil {
+				common.PrintErrorMessage(err)
+				os.Exit(1)
+			}
+		} else {
+			rfdock.DockerRun(DockerName)
+		}
 	},
 }
 
@@ -111,26 +117,16 @@ var execCmd = &cobra.Command{
 	Short: "Exec a command",
 	Long:  `Exec a program on a created docker container, even not started`,
 	Run: func(cmd *cobra.Command, args []string) {
-		operatingsystem := runtime.GOOS
-		
-		// Only setup X11 if not disabled
-		if !NoX11 {
-			if operatingsystem == "windows" {
-				rfdock.DockerSetx11("/run/desktop/mnt/host/wslg/.X11-unix:/tmp/.X11-unix,/run/desktop/mnt/host/wslg:/mnt/wslg")
-			} else {
-				rfutils.XHostEnable() // force xhost to add local connections ALCs, TODO: to optimize later
-			}
-		}
-		
+		setupX11(false)
 		rfdock.DockerSetShell(ExecCmd)
 		if RecordSession {
-        if err := rfdock.DockerExecWithRecording(ContID, WorkingDir, RecordOutput); err != nil {
-            common.PrintErrorMessage(err)
-            os.Exit(1)
-        }
-    } else {
-        rfdock.DockerExec(ContID, WorkingDir)
-    }
+			if err := rfdock.DockerExecWithRecording(ContID, WorkingDir, RecordOutput); err != nil {
+				common.PrintErrorMessage(err)
+				os.Exit(1)
+			}
+		} else {
+			rfdock.DockerExec(ContID, WorkingDir)
+		}
 	},
 }
 
@@ -345,7 +341,7 @@ var BindingsAddCmd = &cobra.Command{
 	Short: "Add a binding",
 	Long:  `Adding a new binding for a container ID`,
 	Run: func(cmd *cobra.Command, args []string) {
-		if isADevice == true {
+		if isADevice {
 			rfdock.UpdateDeviceBinding(ContID, Bsource, Btarget, true)
 		} else {
 			rfdock.UpdateMountBinding(ContID, Bsource, Btarget, true)
@@ -358,7 +354,7 @@ var BindingsRmCmd = &cobra.Command{
 	Short: "Remove a binding",
 	Long:  `Remove a new binding for a container ID`,
 	Run: func(cmd *cobra.Command, args []string) {
-		if isADevice == true {
+		if isADevice {
 			rfdock.UpdateDeviceBinding(ContID, Bsource, Btarget, false)
 		} else {
 			rfdock.UpdateMountBinding(ContID, Bsource, Btarget, false)
@@ -521,7 +517,7 @@ Examples:
   rfswift upgrade -c mycontainer -i telecom_10102024`,
 	Run: func(cmd *cobra.Command, args []string) {
 		containerName, _ := cmd.Flags().GetString("container")
-		repositories, _ := cmd.Flags().GetString("repositories")  // CHANGED
+		repositories, _ := cmd.Flags().GetString("repositories")
 		imageName, _ := cmd.Flags().GetString("image")
 
 		if containerName == "" {
@@ -530,7 +526,7 @@ Examples:
 			os.Exit(1)
 		}
 
-		if err := rfdock.DockerUpgrade(containerName, repositories, imageName); err != nil {  // CHANGED
+		if err := rfdock.DockerUpgrade(containerName, repositories, imageName); err != nil {
 			common.PrintErrorMessage(err)
 			os.Exit(1)
 		}
@@ -545,7 +541,7 @@ var buildCmd = &cobra.Command{
 		recipeFile, _ := cmd.Flags().GetString("recipe")
 		tagName, _ := cmd.Flags().GetString("tag")
 		noCache, _ := cmd.Flags().GetBool("no-cache")
-		
+
 		if err := rfdock.BuildFromRecipe(recipeFile, tagName, noCache); err != nil {
 			common.PrintErrorMessage(err)
 			os.Exit(1)
@@ -627,7 +623,7 @@ var DownloadCmd = &cobra.Command{
 		imageName, _ := cmd.Flags().GetString("image")
 		outputFile, _ := cmd.Flags().GetString("output")
 		pullFirst, _ := cmd.Flags().GetBool("pull")
-		
+
 		if err := rfdock.SaveImageToFile(imageName, outputFile, pullFirst); err != nil {
 			common.PrintErrorMessage(err)
 			os.Exit(1)
@@ -649,7 +645,7 @@ var CleanupAllCmd = &cobra.Command{
 		olderThan, _ := cmd.Flags().GetString("older-than")
 		force, _ := cmd.Flags().GetBool("force")
 		dryRun, _ := cmd.Flags().GetBool("dry-run")
-		
+
 		if err := rfdock.CleanupAll(olderThan, force, dryRun); err != nil {
 			common.PrintErrorMessage(err)
 			os.Exit(1)
@@ -666,7 +662,7 @@ var CleanupContainersCmd = &cobra.Command{
 		force, _ := cmd.Flags().GetBool("force")
 		dryRun, _ := cmd.Flags().GetBool("dry-run")
 		onlyStopped, _ := cmd.Flags().GetBool("stopped")
-		
+
 		if err := rfdock.CleanupContainers(olderThan, force, dryRun, onlyStopped); err != nil {
 			common.PrintErrorMessage(err)
 			os.Exit(1)
@@ -683,9 +679,9 @@ var CleanupImagesCmd = &cobra.Command{
 		force, _ := cmd.Flags().GetBool("force")
 		dryRun, _ := cmd.Flags().GetBool("dry-run")
 		onlyDangling, _ := cmd.Flags().GetBool("dangling")
-		pruneChildren, _ := cmd.Flags().GetBool("prune-children")  // ADD THIS
-		
-		if err := rfdock.CleanupImages(olderThan, force, dryRun, onlyDangling, pruneChildren); err != nil {  // UPDATED
+		pruneChildren, _ := cmd.Flags().GetBool("prune-children")
+
+		if err := rfdock.CleanupImages(olderThan, force, dryRun, onlyDangling, pruneChildren); err != nil {
 			common.PrintErrorMessage(err)
 			os.Exit(1)
 		}
@@ -705,7 +701,7 @@ var LogStartCmd = &cobra.Command{
 	Run: func(cmd *cobra.Command, args []string) {
 		outputFile, _ := cmd.Flags().GetString("output")
 		useScript, _ := cmd.Flags().GetBool("use-script")
-		
+
 		if err := rfdock.StartLogging(outputFile, useScript); err != nil {
 			common.PrintErrorMessage(err)
 			os.Exit(1)
@@ -732,7 +728,7 @@ var LogReplayCmd = &cobra.Command{
 	Run: func(cmd *cobra.Command, args []string) {
 		inputFile, _ := cmd.Flags().GetString("input")
 		speed, _ := cmd.Flags().GetFloat64("speed")
-		
+
 		if err := rfdock.ReplayLog(inputFile, speed); err != nil {
 			common.PrintErrorMessage(err)
 			os.Exit(1)
@@ -928,7 +924,6 @@ func installCompletion(shell string) {
 }
 
 func init() {
-	isCompletion := false
 	rootCmd.AddCommand(completionCmd)
 	rootCmd.AddCommand(runCmd)
 	rootCmd.AddCommand(lastCmd)
@@ -954,24 +949,17 @@ func init() {
 	rootCmd.AddCommand(DownloadCmd)
 	rootCmd.AddCommand(CleanupCmd)
 	rootCmd.AddCommand(LogCmd)
+
 	rootCmd.PersistentPreRun = func(cmd *cobra.Command, args []string) {
-		if len(os.Args) > 1 {
-			if (os.Args[1] == "completion") || (os.Args[1] == "__complete") {
-				isCompletion = true
-
-			}
-		}
-
-		if isCompletion == false {
+		isCompletion := len(os.Args) > 1 && (os.Args[1] == "completion" || os.Args[1] == "__complete")
+		if !isCompletion {
 			rfutils.DisplayVersion()
 		}
 	}
 
 	rootCmd.PersistentFlags().BoolVarP(&common.Disconnected, "disconnect", "q", false, "Don't query updates (disconnected mode)")
 
-	// Adding special commands for Windows
-	os := runtime.GOOS
-	if os == "windows" {
+	if runtime.GOOS == "windows" {
 		rootCmd.AddCommand(winusbCmd)
 		winusbCmd.AddCommand(winusblistCmd)
 		winusbCmd.AddCommand(winusbattachCmd)
@@ -997,7 +985,6 @@ func init() {
 	installCmd.Flags().StringVarP(&ExecCmd, "install", "i", "", "function for installation")
 	installCmd.Flags().StringVarP(&ContID, "container", "c", "", "container to run")
 
-	//pullCmd.MarkFlagRequired("tag")
 	retagCmd.Flags().StringVarP(&ImageRef, "image", "i", "", "image reference")
 	retagCmd.Flags().StringVarP(&ImageTag, "tag", "t", "", "rename to target tag")
 	renameCmd.Flags().StringVarP(&DockerName, "name", "n", "", "Docker current name")
@@ -1014,7 +1001,6 @@ func init() {
 	execCmd.Flags().BoolVar(&RecordSession, "record", false, "Record the container session")
 	execCmd.Flags().StringVar(&RecordOutput, "record-output", "", "Output file for recording (default: auto-generated)")
 
-	//execCmd.MarkFlagRequired("command")
 	runCmd.Flags().StringVarP(&ExtraHost, "extrahosts", "x", "", "set extra hosts (default: 'pluto.local:192.168.1.2', and separate them with commas)")
 	runCmd.Flags().StringVarP(&XDisplay, "display", "d", rfutils.GetDisplayEnv(), "set X Display (duplicates hosts's env by default)")
 	runCmd.Flags().StringVarP(&ExecCmd, "command", "e", "", "command to exec (by default: '/bin/bash')")
@@ -1028,7 +1014,7 @@ func init() {
 	runCmd.Flags().StringVarP(&Caps, "capabilities", "a", "", "extra capabilities (separate them with commas)")
 	runCmd.Flags().StringVarP(&Cgroups, "cgroups", "g", "", "extra cgroup rules (separate them with commas)")
 	runCmd.Flags().StringVarP(&Seccomp, "seccomp", "m", "", "Set Seccomp profile ('default' one used by default)")
-	runCmd.Flags().BoolVar(&NoX11, "no-x11", false, "Disable X11 forwarding") 
+	runCmd.Flags().BoolVar(&NoX11, "no-x11", false, "Disable X11 forwarding")
 	runCmd.MarkFlagRequired("name")
 
 	runCmd.Flags().StringVarP(&NetExporsedPorts, "exposedports", "z", "", "Exposed ports")
@@ -1110,8 +1096,7 @@ func init() {
 	buildCmd.Flags().StringP("tag", "t", "", "Override the tag name from recipe")
 	buildCmd.Flags().Bool("no-cache", false, "Build without using cache")
 
-
-	// Export/Import configuration
+	ExportCmd.AddCommand(ExportContainerCmd)
 	ExportCmd.AddCommand(ExportContainerCmd)
 	ExportCmd.AddCommand(ExportImageCmd)
 	ImportCmd.AddCommand(ImportContainerCmd)
