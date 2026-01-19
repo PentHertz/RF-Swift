@@ -230,6 +230,19 @@ func init() {
 	updateDockerObjFromConfig()
 }
 
+// normalizeImageName ensures image has proper repo:tag format
+func normalizeImageName(imageName string) string {
+	if imageName == "" {
+		return imageName
+	}
+	if !strings.Contains(imageName, ":") {
+		normalized := fmt.Sprintf("%s:%s", dockerObj.repotag, imageName)
+		common.PrintInfoMessage(fmt.Sprintf("Using full image reference: %s", normalized))
+		return normalized
+	}
+	return imageName
+}
+
 func updateDockerObjFromConfig() {
 	config, err := rfutils.ReadOrCreateConfig(common.ConfigFileByPlatform())
 	if err != nil {
@@ -973,13 +986,32 @@ func DockerExec(containerIdentifier string, WorkingDir string) {
 	size := props["Size"]
 	printContainerProperties(ctx, cli, containerName, props, size)
 
+	// Determine shell to use:
+	// Priority: 1) explicitly set via CLI (-e flag) if different from default
+	//           2) container's original shell (from containerJSON.Path)
+	//           3) fallback to /bin/bash
+	shellToUse := dockerObj.shell
+	
+	// If shell is empty or default, prefer container's configured shell
+	if shellToUse == "" || shellToUse == "/bin/bash" {
+		containerShell := containerJSON.Path
+		if containerShell != "" {
+			shellToUse = containerShell
+		}
+	}
+	
+	// Final fallback
+	if shellToUse == "" {
+		shellToUse = "/bin/bash"
+	}
+
 	// Create exec configuration
 	execConfig := container.ExecOptions{
 		AttachStdin:  true,
 		AttachStdout: true,
 		AttachStderr: true,
 		Tty:          true,
-		Cmd:          []string{dockerObj.shell},
+		Cmd:          []string{shellToUse},
 		WorkingDir:   WorkingDir,
 	}
 
@@ -1203,10 +1235,7 @@ func DockerRun(containerName string) {
 	}
 	defer cli.Close()
 
-	if !strings.Contains(dockerObj.imagename, ":") {
-		// Prepend Config.General.RepoTag if the format is missing
-		dockerObj.imagename = fmt.Sprintf("%s:%s", dockerObj.repotag, dockerObj.imagename)
-	}
+	dockerObj.imagename = normalizeImageName(dockerObj.imagename)
 
 	bindings := combineBindings(dockerObj.x11forward, dockerObj.extrabinding)
 	extrahosts := splitAndCombine(dockerObj.extrahosts)
@@ -1477,10 +1506,7 @@ func DockerPull(imageref string, imagetag string) {
 	// Get current architecture
 	architecture := getArchitecture()
 
-	// If imageref doesn't contain ":", prepend the repo tag
-	if !strings.Contains(imageref, ":") {
-		imageref = fmt.Sprintf("%s:%s", dockerObj.repotag, imageref)
-	}
+	imageref = normalizeImageName(imageref)
 
 	// Parse the image reference to get repo and tag
 	parts := strings.Split(imageref, ":")
@@ -1619,6 +1645,9 @@ func DockerTag(imageref string, imagetag string) {
 		panic(err)
 	}
 	defer cli.Close()
+
+	// Normalize source image reference
+	imageref = normalizeImageName(imageref)
 
 	err = cli.ImageTag(ctx, imageref, imagetag)
 	if err != nil {
@@ -1908,6 +1937,11 @@ func DeleteImage(imageIDOrTag string) error {
 		return err
 	}
 	defer cli.Close()
+
+	// Normalize image reference (but not if it looks like an ID)
+	if !strings.HasPrefix(imageIDOrTag, "sha256:") && len(imageIDOrTag) != 12 && len(imageIDOrTag) != 64 {
+		imageIDOrTag = normalizeImageName(imageIDOrTag)
+	}
 
 	common.PrintInfoMessage(fmt.Sprintf("Attempting to delete image: %s", imageIDOrTag))
 
@@ -3181,9 +3215,9 @@ func DockerUpgrade(containerIdentifier string, repositoriesToPreserve string, ne
 		// If no image specified, use the current image's latest version
 		repo, _ := parseImageName(originalImage)
 		newImage = fmt.Sprintf("%s:latest", repo)
-	} else if !strings.Contains(newImage, ":") {
-		// Add repo prefix if needed
-		newImage = fmt.Sprintf("%s:%s", dockerObj.repotag, newImage)
+	} else {
+		// Normalize the provided image name
+		newImage = normalizeImageName(newImage)
 	}
 
 	common.PrintInfoMessage("═══════════════════════════════════════")
@@ -4002,6 +4036,11 @@ func ExportImage(images []string, outputFile string) error {
 	}
 	defer cli.Close()
 
+	// Normalize all image names
+	for i, img := range images {
+		images[i] = normalizeImageName(img)
+	}
+
 	common.PrintInfoMessage(fmt.Sprintf("Exporting %d image(s) to %s", len(images), outputFile))
 	for _, img := range images {
 		common.PrintInfoMessage(fmt.Sprintf("  - %s", img))
@@ -4146,6 +4185,7 @@ func ImportImage(inputFile string) error {
 	return nil
 }
 
+
 // SaveImageToFile pulls an image and saves it to a tar.gz file
 func SaveImageToFile(imageName string, outputFile string, pullFirst bool) error {
 	ctx := context.Background()
@@ -4154,6 +4194,9 @@ func SaveImageToFile(imageName string, outputFile string, pullFirst bool) error 
 		return fmt.Errorf("failed to create Docker client: %v", err)
 	}
 	defer cli.Close()
+
+	// Normalize image name
+	imageName = normalizeImageName(imageName)
 
 	// Check if image exists locally
 	_, _, err = cli.ImageInspectWithRaw(ctx, imageName)
@@ -4986,7 +5029,7 @@ func ListLogs(logDir string) error {
 }
 
 // DockerRunWithRecording runs a container with session recording
-func DockerRunWithRecording(containerName string, outputFile string) error {
+func DockerRunWithRecording(containerName string, recordOutput string, image string, extraArgs map[string]string) error {
 	// Detect recording tool
 	tool, err := detectLoggingTool(false)
 	if err != nil {
@@ -4994,16 +5037,16 @@ func DockerRunWithRecording(containerName string, outputFile string) error {
 	}
 
 	// Generate output filename if not provided
-	if outputFile == "" {
+	if recordOutput == "" {
 		timestamp := time.Now().Format("20060102-150405")
 		if tool == "asciinema" {
-			outputFile = fmt.Sprintf("rfswift-run-%s-%s.cast", containerName, timestamp)
+			recordOutput = fmt.Sprintf("rfswift-run-%s-%s.cast", containerName, timestamp)
 		} else {
-			outputFile = fmt.Sprintf("rfswift-run-%s-%s.log", containerName, timestamp)
+			recordOutput = fmt.Sprintf("rfswift-run-%s-%s.log", containerName, timestamp)
 		}
 	}
 	
-	common.PrintInfoMessage(fmt.Sprintf("🔴 Recording session with %s to: %s", tool, outputFile))
+	common.PrintInfoMessage(fmt.Sprintf("🔴 Recording session with %s to: %s", tool, recordOutput))
 
 	// Get the current executable path
 	executable, err := os.Executable()
@@ -5011,19 +5054,31 @@ func DockerRunWithRecording(containerName string, outputFile string) error {
 		return fmt.Errorf("failed to get executable path: %v", err)
 	}
 
-	// Simple command without PS1 modification
+	// Build the full command with all necessary flags
 	runCmdStr := fmt.Sprintf("%s run -n %s", executable, containerName)
+	
+	// Add image if specified
+	if image != "" {
+		runCmdStr += fmt.Sprintf(" -i %s", image)
+	}
+	
+	// Add extra arguments
+	for flag, value := range extraArgs {
+		if value != "" {
+			runCmdStr += fmt.Sprintf(" %s %s", flag, value)
+		}
+	}
 
 	var recordCmd *exec.Cmd
 	
 	switch tool {
 	case "asciinema":
-		recordCmd = exec.Command("asciinema", "rec", "-c", runCmdStr, outputFile)
+		recordCmd = exec.Command("asciinema", "rec", "-c", runCmdStr, recordOutput)
 	case "script":
 		if runtime.GOOS == "darwin" {
-			recordCmd = exec.Command("script", "-q", "-c", runCmdStr, outputFile)
+			recordCmd = exec.Command("script", "-q", "-c", runCmdStr, recordOutput)
 		} else {
-			recordCmd = exec.Command("script", "-q", "-f", "-c", runCmdStr, outputFile)
+			recordCmd = exec.Command("script", "-q", "-f", "-c", runCmdStr, recordOutput)
 		}
 	}
 
@@ -5031,25 +5086,33 @@ func DockerRunWithRecording(containerName string, outputFile string) error {
 	recordCmd.Stdout = os.Stdout
 	recordCmd.Stderr = os.Stderr
 
-	// Run the recorded session
 	if err := recordCmd.Run(); err != nil {
 		return fmt.Errorf("recording session failed: %v", err)
 	}
 
-	// Reset terminal title
 	fmt.Printf("\033]0;Terminal\007")
-	
-	common.PrintSuccessMessage(fmt.Sprintf("🔴 Session recorded to: %s", outputFile))
+	common.PrintSuccessMessage(fmt.Sprintf("🔴 Session recorded to: %s", recordOutput))
 	
 	return nil
 }
 
 // DockerExecWithRecording executes into a container with session recording
-func DockerExecWithRecording(containerIdentifier string, workingDir string, outputFile string) error {
+func DockerExecWithRecording(containerIdentifier string, workingDir string, recordOutput string, execCommand string) error {
 	// Detect recording tool
 	tool, err := detectLoggingTool(false)
 	if err != nil {
 		return err
+	}
+
+	// If no container specified, get the latest one
+	if containerIdentifier == "" {
+		labelKey := "org.container.project"
+		labelValue := "rfswift"
+		containerIdentifier = latestDockerID(labelKey, labelValue)
+		if containerIdentifier == "" {
+			return fmt.Errorf("no container specified and no recent rfswift container found")
+		}
+		common.PrintInfoMessage(fmt.Sprintf("Using latest container: %s", containerIdentifier))
 	}
 
 	// Get container name for filename
@@ -5060,24 +5123,23 @@ func DockerExecWithRecording(containerIdentifier string, workingDir string, outp
 	}
 	defer cli.Close()
 
+	containerName := containerIdentifier
 	containerJSON, err := cli.ContainerInspect(ctx, containerIdentifier)
-	if err != nil {
-		containerIdentifier = "unknown"
-	} else {
-		containerIdentifier = strings.TrimPrefix(containerJSON.Name, "/")
+	if err == nil {
+		containerName = strings.TrimPrefix(containerJSON.Name, "/")
 	}
 
 	// Generate output filename if not provided
-	if outputFile == "" {
+	if recordOutput == "" {
 		timestamp := time.Now().Format("20060102-150405")
 		if tool == "asciinema" {
-			outputFile = fmt.Sprintf("rfswift-exec-%s-%s.cast", containerIdentifier, timestamp)
+			recordOutput = fmt.Sprintf("rfswift-exec-%s-%s.cast", containerName, timestamp)
 		} else {
-			outputFile = fmt.Sprintf("rfswift-exec-%s-%s.log", containerIdentifier, timestamp)
+			recordOutput = fmt.Sprintf("rfswift-exec-%s-%s.log", containerName, timestamp)
 		}
 	}
 	
-	common.PrintInfoMessage(fmt.Sprintf("🔴 Recording session with %s to: %s", tool, outputFile))
+	common.PrintInfoMessage(fmt.Sprintf("🔴 Recording session with %s to: %s", tool, recordOutput))
 
 	// Get the current executable path
 	executable, err := os.Executable()
@@ -5085,19 +5147,27 @@ func DockerExecWithRecording(containerIdentifier string, workingDir string, outp
 		return fmt.Errorf("failed to get executable path: %v", err)
 	}
 
-	// Simple command without PS1 modification
-	execCmdStr := fmt.Sprintf("%s exec -c %s -w %s", executable, containerIdentifier, workingDir)
+	// Build command with container ID (now guaranteed to be set)
+	execCmdStr := fmt.Sprintf("%s exec -c %s", executable, containerIdentifier)
+	
+	if workingDir != "" && workingDir != "/root" {
+		execCmdStr += fmt.Sprintf(" -w %s", workingDir)
+	}
+	
+	if execCommand != "" && execCommand != "/bin/bash" {
+		execCmdStr += fmt.Sprintf(" -e %s", execCommand)
+	}
 
 	var recordCmd *exec.Cmd
 	
 	switch tool {
 	case "asciinema":
-		recordCmd = exec.Command("asciinema", "rec", "-c", execCmdStr, outputFile)
+		recordCmd = exec.Command("asciinema", "rec", "-c", execCmdStr, recordOutput)
 	case "script":
 		if runtime.GOOS == "darwin" {
-			recordCmd = exec.Command("script", "-q", "-c", execCmdStr, outputFile)
+			recordCmd = exec.Command("script", "-q", "-c", execCmdStr, recordOutput)
 		} else {
-			recordCmd = exec.Command("script", "-q", "-f", "-c", execCmdStr, outputFile)
+			recordCmd = exec.Command("script", "-q", "-f", "-c", execCmdStr, recordOutput)
 		}
 	}
 
@@ -5105,15 +5175,12 @@ func DockerExecWithRecording(containerIdentifier string, workingDir string, outp
 	recordCmd.Stdout = os.Stdout
 	recordCmd.Stderr = os.Stderr
 
-	// Run the recorded session
 	if err := recordCmd.Run(); err != nil {
 		return fmt.Errorf("recording session failed: %v", err)
 	}
 
-	// Reset terminal title
 	fmt.Printf("\033]0;Terminal\007")
-	
-	common.PrintSuccessMessage(fmt.Sprintf("📹 Session recorded to: %s", outputFile))
+	common.PrintSuccessMessage(fmt.Sprintf("📹 Session recorded to: %s", recordOutput))
 	
 	return nil
 }

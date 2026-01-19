@@ -71,30 +71,74 @@ var runCmd = &cobra.Command{
 		recordSession, _ := cmd.Flags().GetBool("record")
 		recordOutput, _ := cmd.Flags().GetString("record-output")
 
-		setupX11(noX11, xDisplay, true)
-		rfdock.DockerSetShell(execCommand)
-		rfdock.DockerAddBinding(extraBind)
-		rfdock.DockerSetImage(image)
-		rfdock.DockerSetExtraHosts(extraHost)
-		rfdock.DockerSetPulse(pulseServer)
-		rfdock.DockerSetNetworkMode(netMode)
-		rfdock.DockerSetExposedPorts(exposedPorts)
-		rfdock.DockerSetBindexPorts(bindedPorts)
-		rfdock.DockerAddDevices(devices)
-		rfdock.DockerAddCaps(caps)
-		rfdock.DockerAddCgroups(cgroups)
-		rfdock.DockerSetPrivileges(privileged)
-		rfdock.DockerSetSeccomp(seccomp)
-		if runtime.GOOS == "linux" {
-			rfutils.SetPulseCTL(pulseServer)
-		}
-
 		if recordSession {
-			if err := rfdock.DockerRunWithRecording(dockerName, recordOutput); err != nil {
+			// Build extra args map for recording subprocess
+			extraArgs := map[string]string{}
+			if extraBind != "" {
+				extraArgs["-b"] = extraBind
+			}
+			if extraHost != "" {
+				extraArgs["-x"] = extraHost
+			}
+			if xDisplay != "" && xDisplay != rfutils.GetDisplayEnv() {
+				extraArgs["-d"] = xDisplay
+			}
+			if execCommand != "" {
+				extraArgs["-e"] = execCommand
+			}
+			if pulseServer != "tcp:127.0.0.1:34567" {
+				extraArgs["-p"] = pulseServer
+			}
+			if netMode != "" {
+				extraArgs["-t"] = netMode
+			}
+			if exposedPorts != "" {
+				extraArgs["-z"] = exposedPorts
+			}
+			if bindedPorts != "" {
+				extraArgs["-w"] = bindedPorts
+			}
+			if devices != "" {
+				extraArgs["-s"] = devices
+			}
+			if privileged != 0 {
+				extraArgs["-u"] = fmt.Sprintf("%d", privileged)
+			}
+			if caps != "" {
+				extraArgs["-a"] = caps
+			}
+			if cgroups != "" {
+				extraArgs["-g"] = cgroups
+			}
+			if seccomp != "" {
+				extraArgs["-m"] = seccomp
+			}
+			if noX11 {
+				extraArgs["--no-x11"] = ""
+			}
+
+			if err := rfdock.DockerRunWithRecording(dockerName, recordOutput, image, extraArgs); err != nil {
 				common.PrintErrorMessage(err)
 				os.Exit(1)
 			}
 		} else {
+			setupX11(noX11, xDisplay, true)
+			rfdock.DockerSetShell(execCommand)
+			rfdock.DockerAddBinding(extraBind)
+			rfdock.DockerSetImage(image)
+			rfdock.DockerSetExtraHosts(extraHost)
+			rfdock.DockerSetPulse(pulseServer)
+			rfdock.DockerSetNetworkMode(netMode)
+			rfdock.DockerSetExposedPorts(exposedPorts)
+			rfdock.DockerSetBindexPorts(bindedPorts)
+			rfdock.DockerAddDevices(devices)
+			rfdock.DockerAddCaps(caps)
+			rfdock.DockerAddCgroups(cgroups)
+			rfdock.DockerSetPrivileges(privileged)
+			rfdock.DockerSetSeccomp(seccomp)
+			if runtime.GOOS == "linux" {
+				rfutils.SetPulseCTL(pulseServer)
+			}
 			rfdock.DockerRun(dockerName)
 		}
 	},
@@ -116,7 +160,7 @@ var execCmd = &cobra.Command{
 		setupX11(noX11, "", false)
 		rfdock.DockerSetShell(execCommand)
 		if recordSession {
-			if err := rfdock.DockerExecWithRecording(contID, workingDir, recordOutput); err != nil {
+			if err := rfdock.DockerExecWithRecording(contID, workingDir, recordOutput, execCommand); err != nil {
 				common.PrintErrorMessage(err)
 				os.Exit(1)
 			}
@@ -1019,6 +1063,8 @@ func init() {
 
 	retagCmd.Flags().StringP("image", "i", "", "image reference")
 	retagCmd.Flags().StringP("tag", "t", "", "rename to target tag")
+	retagCmd.MarkFlagRequired("image")
+	retagCmd.MarkFlagRequired("tag")
 	renameCmd.Flags().StringP("name", "n", "", "Docker current name")
 	renameCmd.Flags().StringP("destination", "d", "", "Docker new name")
 	commitCmd.Flags().StringP("container", "c", "", "container to run")
