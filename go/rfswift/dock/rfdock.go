@@ -19,6 +19,7 @@ import (
 	"context"
 	"gopkg.in/yaml.v3"
 	"compress/gzip"
+	"net/http" 
 	
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
@@ -230,6 +231,169 @@ func init() {
 	updateDockerObjFromConfig()
 }
 
+// formatVersionsMultiLine formats versions into multiple lines with a max per line
+func formatVersionsMultiLine(versions []string, maxPerLine int, maxWidth int) []string {
+	if len(versions) == 0 {
+		return []string{"-"}
+	}
+
+	var lines []string
+	var currentLine strings.Builder
+	countOnLine := 0
+
+	for i, v := range versions {
+		// Check if adding this version would exceed width or count
+		separator := ""
+		if countOnLine > 0 {
+			separator = ", "
+		}
+		
+		testLen := currentLine.Len() + len(separator) + len(v)
+		
+		if countOnLine >= maxPerLine || (maxWidth > 0 && testLen > maxWidth) {
+			// Start new line
+			if currentLine.Len() > 0 {
+				lines = append(lines, currentLine.String())
+			}
+			currentLine.Reset()
+			countOnLine = 0
+			separator = ""
+		}
+
+		if countOnLine > 0 {
+			currentLine.WriteString(", ")
+		}
+		currentLine.WriteString(v)
+		countOnLine++
+
+		// Last item
+		if i == len(versions)-1 && currentLine.Len() > 0 {
+			lines = append(lines, currentLine.String())
+		}
+	}
+
+	if len(lines) == 0 {
+		return []string{"-"}
+	}
+
+	return lines
+}
+
+// printTableWithMultiLineSupport prints a table where cells can have multiple lines
+func printTableWithMultiLineSupport(headers []string, rows [][]interface{}, columnWidths []int, title string, titleColor string) {
+	white := "\033[37m"
+	reset := "\033[0m"
+
+	// Calculate total width
+	totalWidth := 1
+	for _, w := range columnWidths {
+		totalWidth += w + 3
+	}
+
+	// Print title
+	fmt.Printf("%s%s%s%s%s\n", titleColor, strings.Repeat(" ", 2), title, strings.Repeat(" ", totalWidth-2-len(title)), reset)
+	fmt.Print(white)
+
+	// Print top border
+	printHorizontalBorder(columnWidths, "┌", "┬", "┐")
+
+	// Print headers
+	headerStrings := make([]string, len(headers))
+	for i, h := range headers {
+		headerStrings[i] = h
+	}
+	printRow(headerStrings, columnWidths, "│")
+	printHorizontalBorder(columnWidths, "├", "┼", "┤")
+
+	// Print rows with multi-line support
+	for rowIdx, row := range rows {
+		// Convert row to string slices (each cell can be []string for multi-line)
+		cellLines := make([][]string, len(row))
+		maxLines := 1
+
+		for colIdx, cell := range row {
+			switch v := cell.(type) {
+			case string:
+				cellLines[colIdx] = []string{v}
+			case []string:
+				if len(v) == 0 {
+					cellLines[colIdx] = []string{""}
+				} else {
+					cellLines[colIdx] = v
+				}
+			default:
+				cellLines[colIdx] = []string{fmt.Sprintf("%v", v)}
+			}
+			if len(cellLines[colIdx]) > maxLines {
+				maxLines = len(cellLines[colIdx])
+			}
+		}
+
+		// Print each line of this row
+		for lineIdx := 0; lineIdx < maxLines; lineIdx++ {
+			fmt.Print("│")
+			for colIdx, lines := range cellLines {
+				content := ""
+				if lineIdx < len(lines) {
+					content = lines[lineIdx]
+				}
+				
+				// Apply color for specific columns (status, version)
+				color := getColumnColor(colIdx, content, len(row))
+				
+				if color != "" {
+					fmt.Printf(" %s%-*s%s ", color, columnWidths[colIdx], truncateString(content, columnWidths[colIdx]), reset)
+				} else {
+					fmt.Printf(" %-*s ", columnWidths[colIdx], truncateString(content, columnWidths[colIdx]))
+				}
+				fmt.Print("│")
+			}
+			fmt.Println()
+		}
+
+		// Print row separator (except for last row)
+		if rowIdx < len(rows)-1 {
+			printHorizontalBorder(columnWidths, "├", "┼", "┤")
+		}
+	}
+
+	// Print bottom border
+	printHorizontalBorder(columnWidths, "└", "┴", "┘")
+	fmt.Print(reset)
+	fmt.Println()
+}
+
+// getColumnColor returns the color for a specific column value
+func getColumnColor(colIdx int, content string, totalCols int) string {
+	green := "\033[32m"
+	red := "\033[31m"
+	yellow := "\033[33m"
+	cyan := "\033[36m"
+
+	// Status column (usually second to last or specific index)
+	statusKeywords := map[string]string{
+		"Up to date": green,
+		"Obsolete":   red,
+		"Custom":     yellow,
+		"No network": yellow,
+		"Error":      red,
+	}
+
+	if color, ok := statusKeywords[content]; ok {
+		return color
+	}
+
+	// Version column - if it starts with "v" or contains version-like pattern
+	if strings.HasPrefix(content, "v") || strings.Contains(content, ".") {
+		// Check if it looks like a version
+		if len(content) > 0 && content != "-" {
+			return cyan
+		}
+	}
+
+	return ""
+}
+
 // normalizeImageName ensures image has proper repo:tag format
 func normalizeImageName(imageName string) string {
 	if imageName == "" {
@@ -241,6 +405,59 @@ func normalizeImageName(imageName string) string {
 		return normalized
 	}
 	return imageName
+}
+
+
+// getRemoteImageDigest fetches the digest for a specific tag from Docker Hub
+func getRemoteImageDigest(repo, tag, architecture string) (string, error) {
+    var digest string
+    
+    // Normalize tag to include architecture suffix
+    normalizedTag := normalizeTagForRemote(tag, architecture)
+    
+    err := showLoadingIndicatorWithReturn(func() error {
+        url := fmt.Sprintf("https://hub.docker.com/v2/repositories/%s/tags/?page_size=100", repo)
+        client := &http.Client{Timeout: 10 * time.Second}
+        resp, err := client.Get(url)
+        if err != nil {
+            return err
+        }
+        defer resp.Body.Close()
+
+        if resp.StatusCode == http.StatusNotFound {
+            return fmt.Errorf("tag not found")
+        } else if resp.StatusCode != http.StatusOK {
+            return fmt.Errorf("failed to get tags: %s", resp.Status)
+        }
+
+        body, err := io.ReadAll(resp.Body)
+        if err != nil {
+            return err
+        }
+
+        var response DockerHubResponse
+        if err := json.Unmarshal(body, &response); err != nil {
+            return err
+        }
+
+        for _, hubTag := range response.Results {
+            if hubTag.Name == normalizedTag {
+                if strings.HasPrefix(hubTag.Name, "cache_") {
+                    continue
+                }
+                if hubTag.MediaType != "application/vnd.oci.image.index.v1+json" {
+                    continue
+                }
+                
+                digest = hubTag.Digest
+                return nil
+            }
+        }
+
+        return fmt.Errorf("tag not found")
+    }, fmt.Sprintf("Checking Docker Hub for '%s' (%s)", tag, architecture))
+
+    return digest, err
 }
 
 func updateDockerObjFromConfig() {
@@ -350,36 +567,161 @@ func getLocalImageCreationDate(ctx context.Context, cli *client.Client, imageNam
 	return localImageTime, nil
 }
 
+func checkImageStatusWithCache(ctx context.Context, cli *client.Client, repo, tag string, architecture string, cachedVersionsByRepo RepoVersionMap) (bool, bool, error) {
+	if common.Disconnected {
+		return false, true, nil
+	}
+
+	// Check if this is an official image
+	fullImageName := fmt.Sprintf("%s:%s", repo, tag)
+	if !IsOfficialImage(fullImageName) {
+		return false, true, nil // Custom image
+	}
+
+	// Get local image info
+	localImage, _, err := cli.ImageInspectWithRaw(ctx, fullImageName)
+	if err != nil {
+		return false, true, err
+	}
+
+	// Get local digest
+	localDigest := ""
+	for _, repoDigest := range localImage.RepoDigests {
+		if idx := strings.Index(repoDigest, "@"); idx != -1 {
+			localDigest = repoDigest[idx+1:]
+			break
+		}
+	}
+
+	// Parse tag to check if it's a versioned tag (e.g., reversing_0.0.7)
+	baseName, version := parseTagVersion(tag)
+
+	// Get versions for THIS SPECIFIC REPO
+	repoVersions, ok := cachedVersionsByRepo[repo]
+	if !ok || len(repoVersions) == 0 {
+		// Repo not found in cache - likely custom image
+		return false, true, nil
+	}
+
+	versions, ok := repoVersions[baseName]
+	if !ok || len(versions) == 0 {
+		// Base name not found in this repo - likely custom image
+		return false, true, nil
+	}
+
+	// Find the latest non-"latest" version (highest semver) for THIS REPO
+	var latestVersion string
+	var latestVersionDigest string
+	for _, v := range versions {
+		if v.Version != "latest" {
+			if latestVersion == "" {
+				// First non-latest version is the highest due to sorting
+				latestVersion = v.Version
+				latestVersionDigest = v.Digest
+			}
+			break
+		}
+	}
+
+	// If it's a versioned tag (e.g., reversing_0.0.7)
+	if version != "" {
+		// Check if this version is the latest for this repo
+		if latestVersion != "" && compareVersions(version, latestVersion) < 0 {
+			// There's a newer version available in this repo = Obsolete
+			return false, false, nil
+		}
+
+		// This is the latest version (or equal), check if digest matches
+		for _, v := range versions {
+			if v.Version == version {
+				if localDigest != "" && v.Digest == localDigest {
+					return true, false, nil // Up-to-date
+				}
+				// Same version but different digest = Obsolete (rebuilt)
+				return false, false, nil
+			}
+		}
+
+		// Version not found in remote - custom local version
+		return false, true, nil
+	}
+
+	// For non-versioned tags (like "sdr_light", "reversing"):
+	// Find which version the local image matches by digest
+	var matchedVersion string
+	for _, v := range versions {
+		if v.Digest == localDigest {
+			if v.Version != "latest" {
+				matchedVersion = v.Version
+			}
+			break
+		}
+	}
+
+	// If we found a matching version, check if it's the latest for this repo
+	if matchedVersion != "" {
+		if latestVersion != "" && compareVersions(matchedVersion, latestVersion) < 0 {
+			// There's a newer version in this repo = Obsolete
+			return false, false, nil
+		}
+		// Matched version is the latest for this repo = Up to date
+		return true, false, nil
+	}
+
+	// No version match found by digest - compare with latest digest directly
+	if latestVersionDigest != "" && localDigest != "" {
+		if localDigest == latestVersionDigest {
+			return true, false, nil // Up-to-date
+		}
+		return false, false, nil // Obsolete
+	}
+
+	// Fallback: check "latest" tag digest
+	for _, v := range versions {
+		if v.Version == "latest" {
+			if localDigest != "" && v.Digest == localDigest {
+				return true, false, nil
+			}
+			return false, false, nil
+		}
+	}
+
+	// Could not determine - assume custom
+	return false, true, nil
+}
+
 func checkImageStatus(ctx context.Context, cli *client.Client, repo, tag string) (bool, bool, error) {
-	const DefaultMessage = "test"
 	if common.Disconnected {
 		return false, true, nil
 	}
 	architecture := getArchitecture()
 
-	// Get the local image creation date
-	localImageTime, err := getLocalImageCreationDate(ctx, cli, fmt.Sprintf("%s:%s", repo, tag))
-	if err != nil {
-		return false, true, err
+	// Check if this is an official image
+	fullImageName := fmt.Sprintf("%s:%s", repo, tag)
+	if !IsOfficialImage(fullImageName) {
+		return false, true, nil // Custom image
 	}
 
-	// Get the remote image creation date
-	remoteImageTime, err := getRemoteImageCreationDate(repo, tag, architecture)
+	// Fetch versions by repo
+	cachedVersionsByRepo := GetAllRemoteVersionsByRepo(architecture)
+
+	return checkImageStatusWithCache(ctx, cli, repo, tag, architecture, cachedVersionsByRepo)
+}
+
+// getLocalImageDigest gets the digest for a local image
+func getLocalImageDigest(ctx context.Context, cli *client.Client, imageName string) string {
+	imageInspect, _, err := cli.ImageInspectWithRaw(ctx, imageName)
 	if err != nil {
-		if err.Error() == "tag not found" {
-			return false, true, nil // Custom image if tag not found
+		return ""
+	}
+
+	for _, repoDigest := range imageInspect.RepoDigests {
+		if idx := strings.Index(repoDigest, "@"); idx != -1 {
+			return repoDigest[idx+1:]
 		}
-		return false, true, err
 	}
 
-	// Adjust the remote image creation time by an offset of 2 hours
-	remoteImageTimeAdjusted := remoteImageTime.Add(-2 * time.Hour)
-
-	// Compare local and adjusted remote image times
-	if localImageTime.Before(remoteImageTimeAdjusted) {
-		return false, false, nil // Obsolete
-	}
-	return true, false, nil // Up-to-date
+	return ""
 }
 
 func printContainerProperties(ctx context.Context, cli *client.Client, containerName string, props map[string]string, size string) {
@@ -756,26 +1098,6 @@ func DockerLast(ifilter string, labelKey string, labelValue string) {
 	fmt.Println()
 }
 
-func printHorizontalBorder(columnWidths []int, left, middle, right string) {
-	fmt.Print(left)
-	for i, width := range columnWidths {
-		fmt.Print(strings.Repeat("─", width+2))
-		if i < len(columnWidths)-1 {
-			fmt.Print(middle)
-		}
-	}
-	fmt.Println(right)
-}
-
-func printRow(row []string, columnWidths []int, separator string) {
-	fmt.Print(separator)
-	for i, col := range row {
-		fmt.Printf(" %-*s ", columnWidths[i], col)
-		fmt.Print(separator)
-	}
-	fmt.Println()
-}
-
 func distributeColumnWidths(availableWidth int, columnWidths []int) []int {
 	totalCurrentWidth := 0
 	for _, width := range columnWidths {
@@ -788,23 +1110,6 @@ func distributeColumnWidths(availableWidth int, columnWidths []int) []int {
 		}
 	}
 	return columnWidths
-}
-
-func truncateString(s string, maxLength int) string {
-	if maxLength < 0 {
-		return ""
-	}
-	if len(s) <= maxLength {
-		return s
-	}
-	if maxLength < 3 {
-		// If maxLength is too small for ellipsis, just truncate
-		if maxLength <= len(s) {
-			return s[:maxLength]
-		}
-		return s
-	}
-	return s[:maxLength-3] + "..."
 }
 
 func latestDockerID(labelKey string, labelValue string) string {
@@ -1773,7 +2078,7 @@ func ListImages(labelKey string, labelValue string) ([]image.Summary, error) {
 	return filteredImages, nil
 }
 
-func PrintImagesTable(labelKey string, labelValue string) {
+func PrintImagesTable(labelKey string, labelValue string, showVersions bool, filterImage string) {
 	ctx := context.Background()
 	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
 	if err != nil {
@@ -1788,17 +2093,36 @@ func PrintImagesTable(labelKey string, labelValue string) {
 
 	rfutils.ClearScreen()
 
+	// Fetch remote versions ONCE for all checks - BY REPO
+	architecture := getArchitecture()
+	var remoteVersionsByRepo RepoVersionMap
+	if !common.Disconnected {
+		remoteVersionsByRepo = GetAllRemoteVersionsByRepo(architecture)
+	} else {
+		remoteVersionsByRepo = make(RepoVersionMap)
+	}
+
 	// Prepare table data
 	tableData := [][]string{}
 	maxStatusLength := 0
+	maxVersionLength := 0
+
 	for _, image := range images {
 		for _, repoTag := range image.RepoTags {
 			repoTagParts := strings.Split(repoTag, ":")
+			if len(repoTagParts) != 2 {
+				continue
+			}
 			repository := repoTagParts[0]
 			tag := repoTagParts[1]
 
-			// Check image status
-			isUpToDate, isCustom, err := checkImageStatus(ctx, cli, repository, tag)
+			// Apply filter if specified
+			if filterImage != "" && !strings.Contains(strings.ToLower(tag), strings.ToLower(filterImage)) {
+				continue
+			}
+
+			// Check image status using cached versions BY REPO
+			isUpToDate, isCustom, err := checkImageStatusWithCache(ctx, cli, repository, tag, architecture, remoteVersionsByRepo)
 			var status string
 			if err != nil {
 				status = "Error"
@@ -1820,21 +2144,64 @@ func PrintImagesTable(labelKey string, labelValue string) {
 			created := time.Unix(image.Created, 0).Format(time.RFC3339)
 			size := fmt.Sprintf("%.2f MB", float64(image.Size)/1024/1024)
 
-			tableData = append(tableData, []string{
+			// Get version info from cached data FOR THIS REPO
+			versionDisplay := ""
+			if showVersions {
+				baseName, existingVersion := parseTagVersion(tag)
+
+				// If tag already has a version, display it
+				if existingVersion != "" {
+					versionDisplay = existingVersion
+				} else {
+					// Get local image digest and find matching version in THIS REPO
+					localDigest := getLocalImageDigest(ctx, cli, repoTag)
+					if localDigest != "" {
+						if repoVersions, ok := remoteVersionsByRepo[repository]; ok {
+							if versions, ok := repoVersions[baseName]; ok {
+								matchedVersion := GetVersionForDigest(versions, localDigest)
+								if matchedVersion != "" {
+									versionDisplay = matchedVersion
+								}
+							}
+						}
+					}
+				}
+
+				if versionDisplay == "" {
+					versionDisplay = "-"
+				}
+
+				if len(versionDisplay) > maxVersionLength {
+					maxVersionLength = len(versionDisplay)
+				}
+			}
+
+			row := []string{
 				repository,
 				tag,
-				image.ID[:12],
+				image.ID[7:19], // sha256: prefix removed, first 12 chars
 				created,
 				size,
 				status,
-			})
+			}
+
+			if showVersions {
+				row = append(row, versionDisplay)
+			}
+
+			tableData = append(tableData, row)
 		}
 	}
 
+	// Build headers
 	headers := []string{"Repository", "Tag", "Image ID", "Created", "Size", "Status"}
+	if showVersions {
+		headers = append(headers, "Version")
+	}
+
 	width, _, err := terminal.GetSize(int(os.Stdout.Fd()))
 	if err != nil {
-		width = 80 // default width if terminal size cannot be determined
+		width = 80
 	}
 
 	columnWidths := make([]int, len(headers))
@@ -1849,29 +2216,36 @@ func PrintImagesTable(labelKey string, labelValue string) {
 		}
 	}
 
-	// Ensure the "Status" column is wide enough
-	columnWidths[len(columnWidths)-1] = max(columnWidths[len(columnWidths)-1], maxStatusLength)
+	// Ensure Status column is wide enough
+	statusIdx := 5
+	columnWidths[statusIdx] = max(columnWidths[statusIdx], maxStatusLength)
 
-	// Adjust column widths to fit the terminal width
-	totalWidth := len(headers) + 1 // Adding 1 for the left border
+	// Ensure Version column is wide enough if present
+	if showVersions && maxVersionLength > 0 {
+		versionIdx := 6
+		columnWidths[versionIdx] = max(columnWidths[versionIdx], maxVersionLength)
+	}
+
+	// Adjust column widths
+	totalWidth := len(headers) + 1
 	for _, w := range columnWidths {
-		totalWidth += w + 2 // Adding 2 for padding
+		totalWidth += w + 2
 	}
 
 	if totalWidth > width {
-	    excess := totalWidth - width
-	    for i := range columnWidths[:len(columnWidths)-1] { // Don't reduce the last (Status) column
-	        reduction := excess / (len(columnWidths) - 1)
-	        if columnWidths[i] > reduction {
-	            columnWidths[i] -= reduction
-	            // Ensure minimum column width of 5 characters
-	            if columnWidths[i] < 5 {
-	                columnWidths[i] = 5
-	            }
-	            excess -= reduction
-	        }
-	    }
-	    totalWidth = width
+		excess := totalWidth - width
+		colsToAdjust := len(columnWidths) - 2
+		for i := range columnWidths[:colsToAdjust] {
+			reduction := excess / colsToAdjust
+			if columnWidths[i] > reduction {
+				columnWidths[i] -= reduction
+				if columnWidths[i] < 5 {
+					columnWidths[i] = 5
+				}
+				excess -= reduction
+			}
+		}
+		totalWidth = width
 	}
 
 	yellow := "\033[33m"
@@ -1887,7 +2261,7 @@ func PrintImagesTable(labelKey string, labelValue string) {
 	printHorizontalBorder(columnWidths, "├", "┼", "┤")
 
 	for i, row := range tableData {
-		printRowWithColor(row, columnWidths, "│")
+		printRowWithColorAndVersion(row, columnWidths, "│", showVersions)
 		if i < len(tableData)-1 {
 			printHorizontalBorder(columnWidths, "├", "┼", "┤")
 		}
@@ -1896,6 +2270,49 @@ func PrintImagesTable(labelKey string, labelValue string) {
 	printHorizontalBorder(columnWidths, "└", "┴", "┘")
 
 	fmt.Print(reset)
+	fmt.Println()
+}
+
+// max helper function (if not already present)
+func max(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
+}
+
+// printRowWithColorAndVersion prints a row with status and version colors
+func printRowWithColorAndVersion(row []string, columnWidths []int, separator string, showVersions bool) {
+	green := "\033[32m"
+	red := "\033[31m"
+	yellow := "\033[33m"
+	cyan := "\033[36m"
+	reset := "\033[0m"
+
+	fmt.Print(separator)
+	for i, col := range row {
+		color := ""
+
+		if i == 5 { // Status column
+			switch col {
+			case "Custom", "No network":
+				color = yellow
+			case "Up to date":
+				color = green
+			case "Obsolete", "Error":
+				color = red
+			}
+		} else if showVersions && i == 6 && col != "-" { // Version column
+			color = cyan
+		}
+
+		if color != "" {
+			fmt.Printf(" %s%-*s%s ", color, columnWidths[i], truncateString(col, columnWidths[i]), reset)
+		} else {
+			fmt.Printf(" %-*s ", columnWidths[i], truncateString(col, columnWidths[i]))
+		}
+		fmt.Print(separator)
+	}
 	fmt.Println()
 }
 
@@ -5183,4 +5600,110 @@ func DockerExecWithRecording(containerIdentifier string, workingDir string, reco
 	common.PrintSuccessMessage(fmt.Sprintf("📹 Session recorded to: %s", recordOutput))
 	
 	return nil
+}
+
+// DockerPullVersion pulls a specific version of an image
+func DockerPullVersion(imageref string, version string, imagetag string) {
+	ctx := context.Background()
+	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
+	if err != nil {
+		common.PrintErrorMessage(err)
+		return
+	}
+	defer cli.Close()
+
+	architecture := getArchitecture()
+	if architecture == "" {
+		common.PrintErrorMessage(fmt.Errorf("unsupported architecture"))
+		return
+	}
+
+	// If no version specified, use regular pull
+	if version == "" {
+		DockerPull(imageref, imagetag)
+		return
+	}
+
+	common.PrintInfoMessage(fmt.Sprintf("Looking for version %s of %s...", version, imageref))
+
+	// Find the version in remote repos
+	repo, digest, baseName, err := FindVersionInRemote(imageref, version, architecture)
+	if err != nil {
+		common.PrintErrorMessage(err)
+		common.PrintInfoMessage("Use 'rfswift images versions' to see available versions")
+		return
+	}
+
+	common.PrintSuccessMessage(fmt.Sprintf("Found version %s in %s", version, repo))
+	common.PrintInfoMessage(fmt.Sprintf("Digest: %s", digest[:min(32, len(digest))]))
+
+	// Build the versioned tag name with architecture
+	// Format: baseName_version_architecture (e.g., reversing_0.0.7_amd64)
+	versionedTag := fmt.Sprintf("%s_%s_%s", baseName, version, architecture)
+	pullRef := fmt.Sprintf("%s:%s", repo, versionedTag)
+
+	// Set display tag - use underscore format without 'v' prefix
+	// Format: repo:baseName_version (e.g., penthertz/rfswift_noble:reversing_0.0.7)
+	if imagetag == "" {
+		imagetag = fmt.Sprintf("%s:%s_%s", repo, baseName, version)
+	}
+
+	common.PrintInfoMessage(fmt.Sprintf("Pulling %s...", pullRef))
+
+	out, err := cli.ImagePull(ctx, pullRef, image.PullOptions{})
+	if err != nil {
+		common.PrintErrorMessage(fmt.Errorf("failed to pull image: %v", err))
+		return
+	}
+	defer out.Close()
+
+	// Process pull output
+	fd, isTerminal := term.GetFdInfo(os.Stdout)
+	jsonDecoder := json.NewDecoder(out)
+	for {
+		var msg jsonmessage.JSONMessage
+		if err := jsonDecoder.Decode(&msg); err == io.EOF {
+			break
+		} else if err != nil {
+			common.PrintErrorMessage(err)
+			return
+		}
+		if isTerminal {
+			_ = jsonmessage.DisplayJSONMessagesStream(out, os.Stdout, fd, isTerminal, nil)
+		} else {
+			fmt.Println(msg)
+		}
+	}
+
+	// Get the pulled image info
+	remoteInspect, _, err := cli.ImageInspectWithRaw(ctx, pullRef)
+	if err != nil {
+		common.PrintErrorMessage(err)
+		return
+	}
+
+	// Tag with friendly name (without architecture suffix)
+	err = cli.ImageTag(ctx, remoteInspect.ID, imagetag)
+	if err != nil {
+		common.PrintErrorMessage(err)
+		return
+	}
+
+	common.PrintSuccessMessage(fmt.Sprintf("Image tagged as '%s'", imagetag))
+
+	// Optionally remove the architecture-suffixed tag to keep things clean
+	_, err = cli.ImageRemove(ctx, pullRef, image.RemoveOptions{Force: false})
+	if err == nil {
+		common.PrintInfoMessage(fmt.Sprintf("Removed architecture-suffixed tag: %s", pullRef))
+	}
+
+	common.PrintSuccessMessage(fmt.Sprintf("Version %s installed successfully!", version))
+}
+
+// min helper function
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }

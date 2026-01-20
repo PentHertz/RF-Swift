@@ -223,7 +223,13 @@ var pullCmd = &cobra.Command{
 	Run: func(cmd *cobra.Command, args []string) {
 		imageRef, _ := cmd.Flags().GetString("image")
 		imageTag, _ := cmd.Flags().GetString("tag")
-		rfdock.DockerPull(imageRef, imageTag)
+		version, _ := cmd.Flags().GetString("version")
+		
+		if version != "" {
+			rfdock.DockerPullVersion(imageRef, version, imageTag)
+		} else {
+			rfdock.DockerPull(imageRef, imageTag)
+		}
 	},
 }
 
@@ -316,7 +322,9 @@ var ImagesLocalCmd = &cobra.Command{
 	Run: func(cmd *cobra.Command, args []string) {
 		labelKey := "org.container.project"
 		labelValue := "rfswift"
-		rfdock.PrintImagesTable(labelKey, labelValue)
+		showVersions, _ := cmd.Flags().GetBool("show-versions")
+    filterImage, _ := cmd.Flags().GetString("filter")
+		rfdock.PrintImagesTable(labelKey, labelValue, showVersions, filterImage)
 	},
 }
 
@@ -325,7 +333,9 @@ var ImagesRemoteCmd = &cobra.Command{
 	Short: "List remote images",
 	Long:  `Lists RF Swift images from official repository`,
 	Run: func(cmd *cobra.Command, args []string) {
-		rfdock.ListDockerImagesRepo()
+		showVersions, _ := cmd.Flags().GetBool("show-versions")
+    filterImage, _ := cmd.Flags().GetString("filter")
+		rfdock.ListDockerImagesRepo(showVersions, filterImage)
 	},
 }
 
@@ -764,6 +774,16 @@ var CleanupImagesCmd = &cobra.Command{
 	},
 }
 
+var ImagesVersionsCmd = &cobra.Command{
+	Use:   "versions",
+	Short: "List available versions for images",
+	Long:  `List all available versions for RF Swift images`,
+	Run: func(cmd *cobra.Command, args []string) {
+		filterImage, _ := cmd.Flags().GetString("filter")
+		rfdock.ListAvailableVersions(filterImage)
+	},
+}
+
 var LogCmd = &cobra.Command{
 	Use:   "log",
 	Short: "Record and replay terminal sessions",
@@ -1047,9 +1067,16 @@ func init() {
 	ImagesCmd.AddCommand(pullCmd)
 	ImagesCmd.AddCommand(ImagesRemoteCmd)
 	ImagesCmd.AddCommand(ImagesLocalCmd)
+	ImagesCmd.AddCommand(ImagesVersionsCmd)
+	ImagesCmd.PersistentFlags().BoolP("show-versions", "v", false, "Show version information for images")
+	ImagesCmd.PersistentFlags().StringP("filter", "f", "", "Filter images by name")
+	
 	pullCmd.Flags().StringP("image", "i", "", "image reference")
 	pullCmd.Flags().StringP("tag", "t", "", "rename to target tag")
+	pullCmd.Flags().StringP("version", "V", "", "specific version to pull (e.g., '1.2.0')")
 	pullCmd.MarkFlagRequired("image")
+
+	ImagesVersionsCmd.Flags().StringP("filter", "f", "", "Filter by image name")
 
 	HostCmd.AddCommand(HostPulseAudioCmd)
 	HostPulseAudioCmd.AddCommand(HostPulseAudioEnableCmd)
