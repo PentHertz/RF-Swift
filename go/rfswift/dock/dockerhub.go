@@ -1088,9 +1088,6 @@ func ListDockerImagesRepo(showVersions bool, filterImage string) {
 
 	// Print summary and hints
 	common.PrintInfoMessage(fmt.Sprintf("Found %d image(s) for %s architecture", len(tableRows), architecture))
-	if showVersions {
-		common.PrintInfoMessage("Pull specific version: rfswift images pull -i <tag> -V <version>")
-	}
 }
 
 // maxInt returns the larger of two integers
