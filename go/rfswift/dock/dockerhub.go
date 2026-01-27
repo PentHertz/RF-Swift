@@ -311,7 +311,7 @@ func determineArchitectureFromTag(tagName, requestedArch string) string {
 }
 
 func OfficialRepos() []string {
-	return []string{"penthertz/rfswift", "penthertz/rfswift_noble", "penthertz/rfswift_noble_test"}
+	return []string{"penthertz/rfswift_noble"}
 }
 
 func IsOfficialImage(imageName string) bool {
