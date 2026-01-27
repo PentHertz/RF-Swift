@@ -176,7 +176,7 @@ func ReadOrCreateConfig(filename string) (*Config, error) {
 	}
 	if config.General.RepoTag == "[missing]" {
 		printOrange("Repository tag is missing in the config file.")
-		config.General.RepoTag = promptForValue("RepoTag", "penthertz/rfswift")
+		config.General.RepoTag = promptForValue("RepoTag", "penthertz/rfswift_noble")
 	}
 	if config.Container.Shell == "[missing]" {
 		printOrange("Shell is missing in the config file.")

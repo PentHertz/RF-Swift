@@ -1229,7 +1229,7 @@ func init() {
 	ImportImageCmd.MarkFlagRequired("input")
 
 	// Download image to file
-	DownloadCmd.Flags().StringP("image", "i", "", "image name to download (e.g., penthertz/rfswift:latest)")
+	DownloadCmd.Flags().StringP("image", "i", "", "image name to download (e.g., penthertz/rfswift_noble:sdr_light)")
 	DownloadCmd.Flags().StringP("output", "o", "", "output file path (e.g., rfswift-latest.tar.gz)")
 	DownloadCmd.Flags().Bool("pull", false, "pull image first if not present locally")
 	DownloadCmd.MarkFlagRequired("image")
