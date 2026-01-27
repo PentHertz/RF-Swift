@@ -1,22 +1,20 @@
 module penthertz/rfswift
 
-go 1.25.5
-
-replace github.com/docker/docker => github.com/moby/moby v28.5.2+incompatible
+go 1.25.6
 
 require (
 	github.com/FlUxIuS/pulseaudio_2 v0.0.0-20250608163549-43fae16119df
 	github.com/cheggaaa/pb/v3 v3.1.7
-	github.com/docker/docker v0.0.0-00010101000000-000000000000
+	github.com/docker/docker v28.5.2+incompatible
 	github.com/docker/go-connections v0.6.0
 	github.com/fatih/color v1.18.0
 	github.com/go-resty/resty/v2 v2.17.1
 	github.com/mattn/go-runewidth v0.0.19
 	github.com/moby/term v0.5.2
 	github.com/spf13/cobra v1.10.2
-	golang.org/x/crypto v0.46.0
-	golang.org/x/sys v0.39.0
-	golang.org/x/term v0.38.0
+	golang.org/x/crypto v0.47.0
+	golang.org/x/sys v0.40.0
+	golang.org/x/term v0.39.0
 	gopkg.in/yaml.v3 v3.0.1
 )
 
@@ -50,6 +48,7 @@ require (
 	go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp v1.39.0 // indirect
 	go.opentelemetry.io/otel/metric v1.39.0 // indirect
 	go.opentelemetry.io/otel/trace v1.39.0 // indirect
-	golang.org/x/net v0.47.0 // indirect
+	golang.org/x/net v0.48.0 // indirect
+	golang.org/x/time v0.14.0 // indirect
 	gotest.tools/v3 v3.5.2 // indirect
 )
