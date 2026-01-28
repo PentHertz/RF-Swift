@@ -817,7 +817,7 @@ install_docker_compose_steamdeck() {
     mkdir -p $DOCKER_CONFIG/cli-plugins
     
     # Download Docker Compose for x86_64 (Steam Deck architecture)
-    curl -SL https://github.com/docker/compose/releases/download/v2.36.0/docker-compose-linux-x86_64 -o $DOCKER_CONFIG/cli-plugins/docker-compose
+    curl -SL https://github.com/docker/compose/releases/download/v5.0.2/docker-compose-linux-x86_64 -o $DOCKER_CONFIG/cli-plugins/docker-compose
     chmod +x $DOCKER_CONFIG/cli-plugins/docker-compose
 
     echo -e "${GREEN}✅ Docker Compose v2 installed successfully for Steam Deck ✅${NC}"
@@ -826,7 +826,7 @@ install_docker_compose_steamdeck() {
 install_buildx() {
     arch=$(uname -m)
     os=$(uname -s | tr '[:upper:]' '[:lower:]') # Convert OS to lowercase
-    version="v0.30.1"
+    version="v0.31.0"
 
     # Map architecture to buildx naming convention
     case "$arch" in
@@ -871,7 +871,7 @@ install_buildx() {
 install_docker_compose() {
     arch=$(uname -m)
     os=$(uname -s | tr '[:upper:]' '[:lower:]') # Convert OS to lowercase
-    version="v5.0.1"
+    version="v5.0.2"
 
     # Map architecture to Docker Compose naming convention
     case "$arch" in
@@ -938,7 +938,7 @@ install_go() {
     arch=$(uname -m)
     os=$(uname -s | tr '[:upper:]' '[:lower:]') # Normalize OS name to lowercase
     prog=""
-    version="1.25.5"
+    version="1.25.6"
 
     # Map architecture and OS to Go binary tar.gz naming convention
     case "$arch" in
