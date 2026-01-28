@@ -19,7 +19,8 @@ import (
 	"context"
 	"gopkg.in/yaml.v3"
 	"compress/gzip"
-	"net/http" 
+	"net/http"
+	"strconv"
 	
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
@@ -168,6 +169,8 @@ type DockerInst struct {
 	caps          string
 	seccomp       string
 	cgroups       string
+	ulimits       string
+    realtime      bool
 }
 
 var dockerObj = DockerInst{net: "host",
@@ -189,6 +192,8 @@ var dockerObj = DockerInst{net: "host",
 	caps:          "SYS_RAWIO,NET_ADMIN,SYS_TTY_CONFIG,SYS_ADMIN",
 	seccomp:       "unconfined",
 	cgroups:       "c *:* rmw",
+	ulimits:       "",
+    realtime:      false,
 	shell:         "/bin/bash"} // Instance with default values
 
 // Recipe structures
@@ -229,6 +234,492 @@ func setTerminalTitle(title string) {
 
 func init() {
 	updateDockerObjFromConfig()
+}
+
+// DockerSetUlimits sets ulimits for the container
+func DockerSetUlimits(ulimits string) {
+	dockerObj.ulimits = ulimits
+}
+
+// DockerAddUlimit adds an ulimit to existing ulimits
+func DockerAddUlimit(ulimit string) {
+	if ulimit == "" {
+		return
+	}
+	if dockerObj.ulimits == "" {
+		dockerObj.ulimits = ulimit
+	} else {
+		dockerObj.ulimits = dockerObj.ulimits + "," + ulimit
+	}
+}
+
+// DockerSetRealtime enables realtime mode (sets SYS_NICE cap + rtprio ulimit)
+func DockerSetRealtime(enabled bool) {
+	dockerObj.realtime = enabled
+}
+
+// parseUlimitsFromString parses ulimit string into Docker ulimit format
+// Format: "name=soft:hard" or "name=value" (where soft=hard=value)
+// Examples: "rtprio=95", "memlock=-1", "rtprio=95:95,memlock=-1:-1"
+func parseUlimitsFromString(ulimitsStr string) []*container.Ulimit {
+	var ulimits []*container.Ulimit
+
+	if ulimitsStr == "" {
+		return ulimits
+	}
+
+	entries := strings.Split(ulimitsStr, ",")
+	for _, entry := range entries {
+		entry = strings.TrimSpace(entry)
+		if entry == "" {
+			continue
+		}
+
+		// Parse name=value or name=soft:hard
+		parts := strings.SplitN(entry, "=", 2)
+		if len(parts) != 2 {
+			common.PrintWarningMessage(fmt.Sprintf("Invalid ulimit format: %s (expected name=value)", entry))
+			continue
+		}
+
+		name := strings.TrimSpace(parts[0])
+		valueStr := strings.TrimSpace(parts[1])
+
+		var soft, hard int64
+
+		// Check if it's soft:hard format
+		if strings.Contains(valueStr, ":") {
+			valueParts := strings.Split(valueStr, ":")
+			if len(valueParts) != 2 {
+				common.PrintWarningMessage(fmt.Sprintf("Invalid ulimit value format: %s", valueStr))
+				continue
+			}
+
+			var err error
+			// Handle -1 for unlimited
+			if valueParts[0] == "-1" || valueParts[0] == "unlimited" {
+				soft = -1
+			} else {
+				soft, err = strconv.ParseInt(valueParts[0], 10, 64)
+				if err != nil {
+					common.PrintWarningMessage(fmt.Sprintf("Invalid soft limit: %s", valueParts[0]))
+					continue
+				}
+			}
+
+			if valueParts[1] == "-1" || valueParts[1] == "unlimited" {
+				hard = -1
+			} else {
+				hard, err = strconv.ParseInt(valueParts[1], 10, 64)
+				if err != nil {
+					common.PrintWarningMessage(fmt.Sprintf("Invalid hard limit: %s", valueParts[1]))
+					continue
+				}
+			}
+		} else {
+			// Single value: soft = hard
+			var err error
+			if valueStr == "-1" || valueStr == "unlimited" {
+				soft = -1
+				hard = -1
+			} else {
+				soft, err = strconv.ParseInt(valueStr, 10, 64)
+				if err != nil {
+					common.PrintWarningMessage(fmt.Sprintf("Invalid ulimit value: %s", valueStr))
+					continue
+				}
+				hard = soft
+			}
+		}
+
+		ulimits = append(ulimits, &container.Ulimit{
+			Name: name,
+			Soft: soft,
+			Hard: hard,
+		})
+	}
+
+	return ulimits
+}
+
+// convertUlimitsToString converts Docker ulimits to string format
+func convertUlimitsToString(ulimits []*container.Ulimit) string {
+	if len(ulimits) == 0 {
+		return ""
+	}
+
+	var parts []string
+	for _, ulimit := range ulimits {
+		if ulimit.Soft == ulimit.Hard {
+			if ulimit.Soft == -1 {
+				parts = append(parts, fmt.Sprintf("%s=unlimited", ulimit.Name))
+			} else {
+				parts = append(parts, fmt.Sprintf("%s=%d", ulimit.Name, ulimit.Soft))
+			}
+		} else {
+			softStr := fmt.Sprintf("%d", ulimit.Soft)
+			hardStr := fmt.Sprintf("%d", ulimit.Hard)
+			if ulimit.Soft == -1 {
+				softStr = "unlimited"
+			}
+			if ulimit.Hard == -1 {
+				hardStr = "unlimited"
+			}
+			parts = append(parts, fmt.Sprintf("%s=%s:%s", ulimit.Name, softStr, hardStr))
+		}
+	}
+	return strings.Join(parts, ",")
+}
+
+// getRealtimeUlimits returns the ulimits needed for realtime SDR operations
+func getRealtimeUlimits() []*container.Ulimit {
+	return []*container.Ulimit{
+		{
+			Name: "rtprio",
+			Soft: 95,
+			Hard: 95,
+		},
+		{
+			Name: "memlock",
+			Soft: -1, // unlimited
+			Hard: -1, // unlimited
+		},
+		{
+			Name: "nice",
+			Soft: 40, // allows nice values from -20 to 19
+			Hard: 40,
+		},
+	}
+}
+
+// getUlimitsForContainer prepares ulimits for container creation
+func getUlimitsForContainer() []*container.Ulimit {
+	var ulimits []*container.Ulimit
+
+	// If realtime mode is enabled, add realtime ulimits
+	if dockerObj.realtime {
+		ulimits = append(ulimits, getRealtimeUlimits()...)
+
+		// Ensure SYS_NICE capability is added
+		if !strings.Contains(dockerObj.caps, "SYS_NICE") {
+			if dockerObj.caps == "" {
+				dockerObj.caps = "SYS_NICE"
+			} else {
+				dockerObj.caps = dockerObj.caps + ",SYS_NICE"
+			}
+		}
+		common.PrintInfoMessage("Realtime mode enabled: rtprio=95, memlock=unlimited, nice=40, SYS_NICE capability")
+	}
+
+	// Parse additional ulimits from string
+	if dockerObj.ulimits != "" {
+		customUlimits := parseUlimitsFromString(dockerObj.ulimits)
+
+		// Merge: custom ulimits override realtime defaults
+		for _, custom := range customUlimits {
+			found := false
+			for i, existing := range ulimits {
+				if existing.Name == custom.Name {
+					ulimits[i] = custom
+					found = true
+					break
+				}
+			}
+			if !found {
+				ulimits = append(ulimits, custom)
+			}
+		}
+	}
+
+	return ulimits
+}
+
+// UpdateUlimit adds or removes an ulimit from a container
+func UpdateUlimit(containerID string, ulimitName string, ulimitValue string, add bool) error {
+	ctx := context.Background()
+	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
+	if err != nil {
+		common.PrintErrorMessage(err)
+		return err
+	}
+	defer cli.Close()
+
+	// Get container info first
+	containerJSON, err := cli.ContainerInspect(ctx, containerID)
+	if err != nil {
+		common.PrintErrorMessage(fmt.Errorf("failed to inspect container: %v", err))
+		return err
+	}
+	containerName := strings.TrimPrefix(containerJSON.Name, "/")
+
+	// Get container properties
+	props, err := getContainerProperties(ctx, cli, containerID)
+	if err != nil {
+		common.PrintErrorMessage(fmt.Errorf("failed to get container properties: %v", err))
+		return err
+	}
+
+	// Parse existing ulimits
+	existingUlimits := parseUlimitsFromString(props["Ulimits"])
+
+	if add {
+		// Build ulimit to add
+		ulimitEntry := fmt.Sprintf("%s=%s", ulimitName, ulimitValue)
+
+		// Check if already exists with same name
+		found := false
+		for i, ul := range existingUlimits {
+			if ul.Name == ulimitName {
+				// Update existing ulimit
+				newUlimits := parseUlimitsFromString(ulimitEntry)
+				if len(newUlimits) > 0 {
+					existingUlimits[i] = newUlimits[0]
+				}
+				found = true
+				common.PrintInfoMessage(fmt.Sprintf("Updating ulimit '%s' to '%s' on container '%s'", ulimitName, ulimitValue, containerName))
+				break
+			}
+		}
+
+		if !found {
+			newUlimits := parseUlimitsFromString(ulimitEntry)
+			existingUlimits = append(existingUlimits, newUlimits...)
+			common.PrintInfoMessage(fmt.Sprintf("Adding ulimit '%s=%s' to container '%s'", ulimitName, ulimitValue, containerName))
+		}
+	} else {
+		// Remove ulimit
+		newUlimits := []*container.Ulimit{}
+		found := false
+		for _, ul := range existingUlimits {
+			if ul.Name != ulimitName {
+				newUlimits = append(newUlimits, ul)
+			} else {
+				found = true
+			}
+		}
+
+		if !found {
+			common.PrintWarningMessage(fmt.Sprintf("Ulimit '%s' not found in container '%s'", ulimitName, containerName))
+			return nil
+		}
+
+		existingUlimits = newUlimits
+		common.PrintInfoMessage(fmt.Sprintf("Removing ulimit '%s' from container '%s'", ulimitName, containerName))
+	}
+
+	// Update the container
+	props["Ulimits"] = convertUlimitsToString(existingUlimits)
+
+	return recreateContainerWithProperties(ctx, cli, containerID, props)
+}
+
+// EnableRealtimeMode enables realtime mode on an existing container
+func EnableRealtimeMode(containerID string) error {
+	ctx := context.Background()
+	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
+	if err != nil {
+		common.PrintErrorMessage(err)
+		return err
+	}
+	defer cli.Close()
+
+	// Get container info
+	containerJSON, err := cli.ContainerInspect(ctx, containerID)
+	if err != nil {
+		common.PrintErrorMessage(fmt.Errorf("failed to inspect container: %v", err))
+		return err
+	}
+	containerName := strings.TrimPrefix(containerJSON.Name, "/")
+
+	common.PrintInfoMessage(fmt.Sprintf("Enabling realtime mode on container '%s'", containerName))
+	common.PrintInfoMessage("This will add: SYS_NICE capability, rtprio=95, memlock=unlimited, nice=40")
+
+	// Get container properties
+	props, err := getContainerProperties(ctx, cli, containerID)
+	if err != nil {
+		common.PrintErrorMessage(fmt.Errorf("failed to get container properties: %v", err))
+		return err
+	}
+
+	// Add SYS_NICE capability if not present
+	caps := props["Caps"]
+	if !strings.Contains(caps, "SYS_NICE") {
+		if caps == "" {
+			caps = "SYS_NICE"
+		} else {
+			caps = caps + ",SYS_NICE"
+		}
+		props["Caps"] = caps
+	}
+
+	// Parse existing ulimits and add realtime ones
+	existingUlimits := parseUlimitsFromString(props["Ulimits"])
+	realtimeUlimits := getRealtimeUlimits()
+
+	// Merge ulimits (update existing or add new)
+	for _, rtUlimit := range realtimeUlimits {
+		found := false
+		for i, existing := range existingUlimits {
+			if existing.Name == rtUlimit.Name {
+				existingUlimits[i] = rtUlimit
+				found = true
+				break
+			}
+		}
+		if !found {
+			existingUlimits = append(existingUlimits, rtUlimit)
+		}
+	}
+
+	props["Ulimits"] = convertUlimitsToString(existingUlimits)
+
+	err = recreateContainerWithProperties(ctx, cli, containerID, props)
+	if err != nil {
+		return err
+	}
+
+	common.PrintSuccessMessage("Realtime mode enabled successfully!")
+	common.PrintInfoMessage("You can now use chrt and nice commands inside the container for SDR operations")
+	common.PrintInfoMessage("Test with: ulimit -r (should show 95)")
+	return nil
+}
+
+// DisableRealtimeMode disables realtime mode on an existing container
+func DisableRealtimeMode(containerID string) error {
+	ctx := context.Background()
+	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
+	if err != nil {
+		common.PrintErrorMessage(err)
+		return err
+	}
+	defer cli.Close()
+
+	// Get container info
+	containerJSON, err := cli.ContainerInspect(ctx, containerID)
+	if err != nil {
+		common.PrintErrorMessage(fmt.Errorf("failed to inspect container: %v", err))
+		return err
+	}
+	containerName := strings.TrimPrefix(containerJSON.Name, "/")
+
+	common.PrintInfoMessage(fmt.Sprintf("Disabling realtime mode on container '%s'", containerName))
+
+	// Get container properties
+	props, err := getContainerProperties(ctx, cli, containerID)
+	if err != nil {
+		common.PrintErrorMessage(fmt.Errorf("failed to get container properties: %v", err))
+		return err
+	}
+
+	// Remove SYS_NICE capability
+	caps := strings.Split(props["Caps"], ",")
+	newCaps := []string{}
+	for _, cap := range caps {
+		cap = strings.TrimSpace(cap)
+		if cap != "SYS_NICE" && cap != "" {
+			newCaps = append(newCaps, cap)
+		}
+	}
+	props["Caps"] = strings.Join(newCaps, ",")
+
+	// Remove realtime ulimits
+	existingUlimits := parseUlimitsFromString(props["Ulimits"])
+	realtimeNames := map[string]bool{"rtprio": true, "memlock": true, "nice": true}
+
+	newUlimits := []*container.Ulimit{}
+	for _, ul := range existingUlimits {
+		if !realtimeNames[ul.Name] {
+			newUlimits = append(newUlimits, ul)
+		}
+	}
+
+	props["Ulimits"] = convertUlimitsToString(newUlimits)
+
+	err = recreateContainerWithProperties(ctx, cli, containerID, props)
+	if err != nil {
+		return err
+	}
+
+	common.PrintSuccessMessage("Realtime mode disabled successfully!")
+	return nil
+}
+
+// ListContainerUlimits displays the ulimits for a container
+func ListContainerUlimits(containerID string) error {
+	ctx := context.Background()
+	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
+	if err != nil {
+		common.PrintErrorMessage(err)
+		return err
+	}
+	defer cli.Close()
+
+	// Get container info
+	containerJSON, err := cli.ContainerInspect(ctx, containerID)
+	if err != nil {
+		common.PrintErrorMessage(fmt.Errorf("failed to inspect container: %v", err))
+		return err
+	}
+	containerName := strings.TrimPrefix(containerJSON.Name, "/")
+
+	// Get ulimits
+	ulimits := containerJSON.HostConfig.Ulimits
+
+	if len(ulimits) == 0 {
+		common.PrintInfoMessage(fmt.Sprintf("Container '%s' has no custom ulimits set", containerName))
+	} else {
+		fmt.Printf("Ulimits for container '%s':\n", containerName)
+		for _, ul := range ulimits {
+			softStr := fmt.Sprintf("%d", ul.Soft)
+			hardStr := fmt.Sprintf("%d", ul.Hard)
+			if ul.Soft == -1 {
+				softStr = "unlimited"
+			}
+			if ul.Hard == -1 {
+				hardStr = "unlimited"
+			}
+			fmt.Printf("  • %s: soft=%s, hard=%s\n", ul.Name, softStr, hardStr)
+		}
+	}
+
+	// Check if SYS_NICE capability is present
+	hasSysNice := false
+	for _, cap := range containerJSON.HostConfig.CapAdd {
+		if cap == "SYS_NICE" {
+			hasSysNice = true
+			break
+		}
+	}
+
+	// Check if realtime mode is effectively enabled
+	hasRtprio := false
+	hasMemlock := false
+	for _, ul := range ulimits {
+		if ul.Name == "rtprio" && ul.Soft > 0 {
+			hasRtprio = true
+		}
+		if ul.Name == "memlock" && ul.Soft == -1 {
+			hasMemlock = true
+		}
+	}
+
+	fmt.Println()
+	if hasSysNice && hasRtprio && hasMemlock {
+		common.PrintSuccessMessage("Realtime mode: ENABLED")
+	} else {
+		common.PrintInfoMessage("Realtime mode: DISABLED")
+		if !hasSysNice {
+			common.PrintInfoMessage("  - Missing SYS_NICE capability")
+		}
+		if !hasRtprio {
+			common.PrintInfoMessage("  - Missing rtprio ulimit")
+		}
+		if !hasMemlock {
+			common.PrintInfoMessage("  - Missing memlock=unlimited ulimit")
+		}
+	}
+
+	return nil
 }
 
 // formatVersionsMultiLine formats versions into multiple lines with a max per line
@@ -777,6 +1268,7 @@ func printContainerProperties(ctx context.Context, cli *client.Client, container
 		{"Capabilities", props["Caps"]},
 		{"Seccomp profile", seccompValue},
 		{"Cgroup rules", props["Cgroups"]},
+		{"Ulimits", props["Ulimits"]},
 	}
 
 	width, _, err := terminal.GetSize(int(os.Stdout.Fd()))
@@ -1020,9 +1512,14 @@ func DockerLast(ifilter string, labelKey string, labelValue string) {
 			imageDisplay = fmt.Sprintf("%s (%s)", imageTag, shortImageID)
 		}
 
-		containerName := container.Names[0]
-		if containerName[0] == '/' {
-			containerName = containerName[1:]
+		containerName := ""
+		if len(container.Names) > 0 {
+		    containerName = container.Names[0]
+		    if len(containerName) > 0 && containerName[0] == '/' {
+		        containerName = containerName[1:]
+		    }
+		} else {
+		    containerName = container.ID[:12] // fallback to short ID
 		}
 		containerID := container.ID[:12]
 		command := container.Command
@@ -1248,6 +1745,29 @@ func getContainerProperties(ctx context.Context, cli *client.Client, containerID
 		"Seccomp":      convertSecurityOptToString(containerJSON.HostConfig.SecurityOpt),
 		"Cgroups":      strings.Join(containerJSON.HostConfig.DeviceCgroupRules, ","),
 	}
+
+	// Get ulimits
+    var ulimitStrs []string
+    for _, ulimit := range containerJSON.HostConfig.Ulimits {
+        if ulimit.Soft == ulimit.Hard {
+            if ulimit.Soft == -1 {
+                ulimitStrs = append(ulimitStrs, fmt.Sprintf("%s=unlimited", ulimit.Name))
+            } else {
+                ulimitStrs = append(ulimitStrs, fmt.Sprintf("%s=%d", ulimit.Name, ulimit.Soft))
+            }
+        } else {
+            softStr := fmt.Sprintf("%d", ulimit.Soft)
+            hardStr := fmt.Sprintf("%d", ulimit.Hard)
+            if ulimit.Soft == -1 {
+                softStr = "unlimited"
+            }
+            if ulimit.Hard == -1 {
+                hardStr = "unlimited"
+            }
+            ulimitStrs = append(ulimitStrs, fmt.Sprintf("%s=%s:%s", ulimit.Name, softStr, hardStr))
+        }
+    }
+    props["Ulimits"] = strings.Join(ulimitStrs, ",")
 
 	return props, nil
 }
@@ -1556,6 +2076,12 @@ func DockerRun(containerName string) {
 		PortBindings: bindedPorts,
 		Privileged:   dockerObj.privileged,
 	}
+
+	// Handle ulimits
+    ulimits := getUlimitsForContainer()
+    if len(ulimits) > 0 {
+        hostConfig.Resources.Ulimits = ulimits
+    }
 
 	// If not in privileged mode, add device permissions
 	if !dockerObj.privileged {
@@ -3366,6 +3892,11 @@ func recreateContainerWithProperties(ctx context.Context, cli *client.Client, co
 		PortBindings: bindedPorts,
 		Privileged:   privileged,
 	}
+
+	// Handle ulimits
+    if props["Ulimits"] != "" {
+        hostConfig.Resources.Ulimits = parseUlimitsFromString(props["Ulimits"])
+    }
 
 	if !privileged {
 		hostConfig.Devices = devices
