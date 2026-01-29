@@ -1215,12 +1215,16 @@ func getLocalImageDigest(ctx context.Context, cli *client.Client, imageName stri
 	return ""
 }
 
+// Modified printContainerProperties function for dock/dock.go
+// This version displays the image version next to the image name in the container summary
+
 func printContainerProperties(ctx context.Context, cli *client.Client, containerName string, props map[string]string, size string) {
 	white := "\033[37m"
 	blue := "\033[34m"
 	green := "\033[32m"
 	red := "\033[31m"
 	yellow := "\033[33m"
+	cyan := "\033[36m"
 	reset := "\033[0m"
 
 	// Determine if the image is up-to-date, obsolete, or custom
@@ -1232,17 +1236,48 @@ func printContainerProperties(ctx context.Context, cli *client.Client, container
 		}
 	}
 
-	imageStatus := fmt.Sprintf("%s (Custom)", props["ImageName"])
+	// Try to detect the version
+	versionDisplay := ""
+	architecture := getArchitecture()
+	
+	// First check if the tag already contains a version
+	baseName, existingVersion := parseTagVersion(tag)
+	if existingVersion != "" {
+		versionDisplay = existingVersion
+	} else if !common.Disconnected {
+		// Try to find version by matching digest with remote versions
+		fullImageName := fmt.Sprintf("%s:%s", repo, tag)
+		localDigest := getLocalImageDigest(ctx, cli, fullImageName)
+		if localDigest != "" {
+			remoteVersionsByRepo := GetAllRemoteVersionsByRepo(architecture)
+			if repoVersions, ok := remoteVersionsByRepo[repo]; ok {
+				if versions, ok := repoVersions[baseName]; ok {
+					matchedVersion := GetVersionForDigest(versions, localDigest)
+					if matchedVersion != "" && matchedVersion != "latest" {
+						versionDisplay = matchedVersion
+					}
+				}
+			}
+		}
+	}
+
+	// Build image status string with version if available
+	imageNameWithVersion := props["ImageName"]
+	if versionDisplay != "" {
+		imageNameWithVersion = fmt.Sprintf("%s %sv%s%s", props["ImageName"], cyan, versionDisplay, reset)
+	}
+
+	imageStatus := fmt.Sprintf("%s (Custom)", imageNameWithVersion)
 	if common.Disconnected {
-		imageStatus = fmt.Sprintf("%s (No network)", props["ImageName"])
+		imageStatus = fmt.Sprintf("%s (No network)", imageNameWithVersion)
 	}
 	imageStatusColor := yellow
 	if !isCustom {
 		if isUpToDate {
-			imageStatus = fmt.Sprintf("%s (Up to date)", props["ImageName"])
+			imageStatus = fmt.Sprintf("%s (Up to date)", imageNameWithVersion)
 			imageStatusColor = green
 		} else {
-			imageStatus = fmt.Sprintf("%s (Obsolete)", props["ImageName"])
+			imageStatus = fmt.Sprintf("%s (Obsolete)", imageNameWithVersion)
 			imageStatusColor = red
 		}
 	}
