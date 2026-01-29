@@ -857,10 +857,10 @@ install_buildx() {
 
         # Download the Buildx binary
         echo -e "${YELLOW}[+] 📥 Downloading Buildx from ${buildx_url} 📥${NC}"
-        sudo curl -sSL "$buildx_url" -o "${HOME}/.docker/cli-plugins/docker-buildx"
+        sudo curl -sSL "$buildx_url" -o "/usr/local/lib/docker/cli-plugins/docker-buildx"
 
         # Make the binary executable
-        sudo chmod +x "${HOME}/.docker/cli-plugins/docker-buildx"
+        sudo chmod +x "/usr/local/lib/docker/cli-plugins/docker-buildx"
 
         echo -e "${GREEN}✅ Docker Buildx installed successfully. ✅${NC}"
     else
@@ -898,10 +898,10 @@ install_docker_compose() {
 
         # Download the Docker Compose binary
         echo -e "${YELLOW}[+] 📥 Downloading Docker Compose from ${compose_url} 📥${NC}"
-        sudo curl -sSL "$compose_url" -o "$DOCKER_CONFIG/cli-plugins/docker-compose"
+        sudo curl -sSL "$compose_url" -o "/usr/local/lib/docker/cli-plugins/docker-compose"
 
         # Make the binary executable
-        sudo chmod +x "$DOCKER_CONFIG/cli-plugins/docker-compose"
+        sudo chmod +x "/usr/local/lib/docker/cli-plugins/docker-compose"
 
         echo -e "${GREEN}✅ Docker Compose v2 installed successfully. ✅${NC}"
     else
