@@ -2508,7 +2508,7 @@ func DockerRename(currentIdentifier string, newName string) {
 
 	var containerID string
 	for _, container := range containers {
-		if container.ID == currentIdentifier || container.Names[0] == "/"+currentIdentifier {
+		if container.ID == currentIdentifier || (len(container.Names) > 0 && container.Names[0] == "/"+currentIdentifier) {
 			containerID = container.ID
 			break
 		}
@@ -2548,7 +2548,7 @@ func DockerRemove(containerIdentifier string) {
 
 	var containerID string
 	for _, container := range containers {
-		if container.ID == containerIdentifier || container.Names[0] == "/"+containerIdentifier {
+		if container.ID == containerIdentifier || (len(container.Names) > 0 && container.Names[0] == "/"+containerIdentifier) {
 			containerID = container.ID
 			break
 		}
@@ -5357,9 +5357,14 @@ func CleanupContainers(olderThan string, force bool, dryRun bool, onlyStopped bo
 	
 	for _, cont := range toDelete {
 		age := time.Since(time.Unix(cont.Created, 0))
-		containerName := cont.Names[0]
-		if containerName[0] == '/' {
-			containerName = containerName[1:]
+		containerName := ""
+		if len(cont.Names) > 0 {
+			containerName = cont.Names[0]
+			if len(containerName) > 0 && containerName[0] == '/' {
+				containerName = containerName[1:]
+			}
+		} else {
+			containerName = cont.ID[:12]
 		}
 		
 		status := cont.State
@@ -5394,10 +5399,15 @@ func CleanupContainers(olderThan string, force bool, dryRun bool, onlyStopped bo
 	// Remove containers
 	removed := 0
 	for _, cont := range toDelete {
-		containerName := cont.Names[0]
-		if containerName[0] == '/' {
-			containerName = containerName[1:]
-		}
+	    containerName := ""
+	    if len(cont.Names) > 0 {
+	        containerName = cont.Names[0]
+	        if len(containerName) > 0 && containerName[0] == '/' {
+	            containerName = containerName[1:]
+	        }
+	    } else {
+	        containerName = cont.ID[:12]
+	    }
 
 		err := cli.ContainerRemove(ctx, cont.ID, container.RemoveOptions{Force: true})
 		if err != nil {
