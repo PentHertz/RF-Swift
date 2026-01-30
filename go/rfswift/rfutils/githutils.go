@@ -113,10 +113,41 @@ func ReplaceBinary(newBinaryPath, currentBinaryPath string) error {
 		return err
 	}
 
+	// Try rename first (works if same filesystem)
 	err = os.Rename(newBinaryPath, currentBinaryPath)
-	if err != nil {
-		return err
+	if err == nil {
+		return nil
 	}
+
+	// Fall back to copy + delete for cross-device moves
+	srcFile, err := os.Open(newBinaryPath)
+	if err != nil {
+		return fmt.Errorf("failed to open source binary: %v", err)
+	}
+	defer srcFile.Close()
+
+	// Get source file info for permissions
+	srcInfo, err := srcFile.Stat()
+	if err != nil {
+		return fmt.Errorf("failed to stat source binary: %v", err)
+	}
+
+	dstFile, err := os.OpenFile(currentBinaryPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, srcInfo.Mode())
+	if err != nil {
+		return fmt.Errorf("failed to open destination binary: %v", err)
+	}
+	defer dstFile.Close()
+
+	if _, err := io.Copy(dstFile, srcFile); err != nil {
+		return fmt.Errorf("failed to copy binary: %v", err)
+	}
+
+	if err := dstFile.Sync(); err != nil {
+		return fmt.Errorf("failed to sync binary: %v", err)
+	}
+
+	// Clean up source
+	os.Remove(newBinaryPath)
 
 	return nil
 }
