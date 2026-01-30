@@ -113,16 +113,24 @@ func ReplaceBinary(newBinaryPath, currentBinaryPath string) error {
 		return err
 	}
 
-	// Try rename first (works if same filesystem)
+	// Try rename first (works if same filesystem and not busy)
 	err = os.Rename(newBinaryPath, currentBinaryPath)
 	if err == nil {
 		return nil
 	}
 
-	// For cross-device or busy file: remove destination first, then copy
-	// On Linux, removing a running binary is allowed (process keeps running from inode)
-	if err := os.Remove(currentBinaryPath); err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("failed to remove current binary: %v", err)
+	// Cross-device or busy file handling
+	backupPath := currentBinaryPath + ".old"
+
+	// Remove any previous backup
+	os.Remove(backupPath)
+
+	// Rename current binary to .old (works on Windows even while running)
+	if err := os.Rename(currentBinaryPath, backupPath); err != nil && !os.IsNotExist(err) {
+		// Linux fallback: try removing directly (works for running binaries)
+		if err := os.Remove(currentBinaryPath); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("failed to move/remove current binary: %v", err)
+		}
 	}
 
 	srcFile, err := os.Open(newBinaryPath)
@@ -136,7 +144,6 @@ func ReplaceBinary(newBinaryPath, currentBinaryPath string) error {
 		return fmt.Errorf("failed to stat source binary: %v", err)
 	}
 
-	// Create new file (old one is unlinked)
 	dstFile, err := os.OpenFile(currentBinaryPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, srcInfo.Mode())
 	if err != nil {
 		return fmt.Errorf("failed to create destination binary: %v", err)
@@ -151,7 +158,9 @@ func ReplaceBinary(newBinaryPath, currentBinaryPath string) error {
 		return fmt.Errorf("failed to sync binary: %v", err)
 	}
 
+	// Cleanup
 	os.Remove(newBinaryPath)
+	os.Remove(backupPath) // Will fail on Windows (still running), cleaned up next run
 
 	return nil
 }
