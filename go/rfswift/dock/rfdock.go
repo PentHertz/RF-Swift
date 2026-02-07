@@ -179,7 +179,7 @@ var dockerObj = DockerInst{net: "host",
 	entrypoint:    "/bin/bash",
 	x11forward:    "/tmp/.X11-unix:/tmp/.X11-unix",
 	usbforward:    "",
-	extrabinding:  "/run/dbus/system_bus_socket:/run/dbus/system_bus_socket", // Some more if needed /run/dbus/system_bus_socket:/run/dbus/system_bus_socket,/dev/snd:/dev/snd,/dev/dri:/dev/dri
+	extrabinding:  "/run/dbus/system_bus_socket:/run/dbus/system_bus_socket",
 	imagename:     "myrfswift:latest",
 	repotag:       "penthertz/rfswift_noble",
 	extrahosts:    "",
@@ -191,10 +191,11 @@ var dockerObj = DockerInst{net: "host",
 	devices:       "/dev/snd:/dev/snd,/dev/dri:/dev/dri,/dev/input:/dev/input",
 	caps:          "SYS_RAWIO,NET_ADMIN,SYS_TTY_CONFIG,SYS_ADMIN",
 	seccomp:       "unconfined",
-	cgroups:       "c *:* rmw",
+	cgroups:       "c *:* rwm", 
 	ulimits:       "",
-    realtime:      false,
-	shell:         "/bin/bash"} // Instance with default values
+	realtime:      false,
+	shell:         "/bin/bash",
+}
 
 // Recipe structures
 type BuildRecipe struct {
@@ -437,7 +438,7 @@ func getUlimitsForContainer() []*container.Ulimit {
 // UpdateUlimit adds or removes an ulimit from a container
 func UpdateUlimit(containerID string, ulimitName string, ulimitValue string, add bool) error {
 	ctx := context.Background()
-	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
+	cli, err := NewEngineClient()
 	if err != nil {
 		common.PrintErrorMessage(err)
 		return err
@@ -516,7 +517,7 @@ func UpdateUlimit(containerID string, ulimitName string, ulimitValue string, add
 // EnableRealtimeMode enables realtime mode on an existing container
 func EnableRealtimeMode(containerID string) error {
 	ctx := context.Background()
-	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
+	cli, err := NewEngineClient()
 	if err != nil {
 		common.PrintErrorMessage(err)
 		return err
@@ -587,7 +588,7 @@ func EnableRealtimeMode(containerID string) error {
 // DisableRealtimeMode disables realtime mode on an existing container
 func DisableRealtimeMode(containerID string) error {
 	ctx := context.Background()
-	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
+	cli, err := NewEngineClient()
 	if err != nil {
 		common.PrintErrorMessage(err)
 		return err
@@ -647,7 +648,7 @@ func DisableRealtimeMode(containerID string) error {
 // ListContainerUlimits displays the ulimits for a container
 func ListContainerUlimits(containerID string) error {
 	ctx := context.Background()
-	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
+	cli, err := NewEngineClient()
 	if err != nil {
 		common.PrintErrorMessage(err)
 		return err
@@ -951,6 +952,58 @@ func getRemoteImageDigest(repo, tag, architecture string) (string, error) {
     return digest, err
 }
 
+func updateDockerObjFromConfigFixed() {
+	config, err := rfutils.ReadOrCreateConfig(common.ConfigFileByPlatform())
+	if err != nil {
+		log.Printf("Error reading config: %v. Using default values.", err)
+		return
+	}
+
+	// Update dockerObj with values from config — only override if non-empty
+	dockerObj.imagename = config.General.ImageName
+	dockerObj.repotag = config.General.RepoTag
+	dockerObj.shell = config.Container.Shell
+	dockerObj.network_mode = config.Container.Network
+	dockerObj.exposed_ports = config.Container.ExposedPorts
+	dockerObj.binded_ports = config.Container.PortBindings
+	dockerObj.xdisplay = config.Container.XDisplay
+	dockerObj.extrahosts = config.Container.ExtraHost
+	dockerObj.extraenv = config.Container.ExtraEnv
+	dockerObj.devices = config.Container.Devices
+	dockerObj.pulse_server = config.Audio.PulseServer
+	dockerObj.privileged = strings.ToLower(config.Container.Privileged) == "true"
+	dockerObj.caps = config.Container.Caps
+	dockerObj.seccomp = config.Container.Seccomp
+
+	// Only override cgroups if the config file actually specifies something.
+	// This preserves the built-in default "c *:* rwm" when config is empty.
+	if config.Container.Cgroups != "" {
+		dockerObj.cgroups = config.Container.Cgroups
+	}
+
+	// Handle bindings - include ALL bindings from config
+	var bindings []string
+	var x11Bindings []string
+
+	for _, binding := range config.Container.Bindings {
+		if strings.Contains(binding, ".X11-unix") {
+			x11Bindings = append(x11Bindings, binding)
+		} else if strings.Contains(binding, "/dev/bus/usb") {
+			dockerObj.usbforward = binding
+			bindings = append(bindings, binding)
+		} else {
+			bindings = append(bindings, binding)
+		}
+	}
+
+	if len(x11Bindings) > 0 {
+		dockerObj.x11forward = strings.Join(x11Bindings, ",")
+	}
+
+	dockerObj.extrabinding = strings.Join(bindings, ",")
+}
+
+
 func updateDockerObjFromConfig() {
 	config, err := rfutils.ReadOrCreateConfig(common.ConfigFileByPlatform())
 	if err != nil {
@@ -973,7 +1026,9 @@ func updateDockerObjFromConfig() {
 	dockerObj.privileged = strings.ToLower(config.Container.Privileged) == "true"
 	dockerObj.caps = config.Container.Caps
 	dockerObj.seccomp = config.Container.Seccomp
-	dockerObj.cgroups = config.Container.Cgroups
+	if config.Container.Cgroups != "" {
+	    dockerObj.cgroups = config.Container.Cgroups
+	}
 
 	// Handle bindings - include ALL bindings from config
 	var bindings []string
@@ -1405,7 +1460,7 @@ func wrapText(text string, maxWidth int) string {
 
 func DockerLast(ifilter string, labelKey string, labelValue string) {
 	ctx := context.Background()
-	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
+	cli, err := NewEngineClient()
 	if err != nil {
 		panic(err)
 	}
@@ -1651,7 +1706,7 @@ func latestDockerID(labelKey string, labelValue string) string {
 	   out: string container ID
 	*/
 	ctx := context.Background()
-	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
+	cli, err := NewEngineClient()
 	if err != nil {
 		panic(err)
 	}
@@ -1809,7 +1864,7 @@ func getContainerProperties(ctx context.Context, cli *client.Client, containerID
 
 func DockerExec(containerIdentifier string, WorkingDir string) {
 	ctx := context.Background()
-	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
+	cli, err := NewEngineClient()
 	if err != nil {
 		common.PrintErrorMessage(err)
 		return
@@ -1851,7 +1906,7 @@ func DockerExec(containerIdentifier string, WorkingDir string) {
 	//           2) container's original shell (from containerJSON.Path)
 	//           3) fallback to /bin/bash
 	shellToUse := dockerObj.shell
-	
+
 	// If shell is empty or default, prefer container's configured shell
 	if shellToUse == "" || shellToUse == "/bin/bash" {
 		containerShell := containerJSON.Path
@@ -1859,7 +1914,7 @@ func DockerExec(containerIdentifier string, WorkingDir string) {
 			shellToUse = containerShell
 		}
 	}
-	
+
 	// Final fallback
 	if shellToUse == "" {
 		shellToUse = "/bin/bash"
@@ -1904,9 +1959,13 @@ func DockerExec(containerIdentifier string, WorkingDir string) {
 	}
 
 	// Start the exec instance
-	if err := cli.ContainerExecStart(ctx, execID.ID, container.ExecStartOptions{Tty: true}); err != nil {
-		common.PrintErrorMessage(fmt.Errorf("failed to start exec instance: %v", err))
-		return
+	// NOTE: Podman's compat API implicitly starts the exec session during Attach,
+	// so calling ExecStart again causes "exec session state improper". Skip it.
+	if GetEngine().Type() != EnginePodman {
+		if err := cli.ContainerExecStart(ctx, execID.ID, container.ExecStartOptions{Tty: true}); err != nil {
+			common.PrintErrorMessage(fmt.Errorf("failed to start exec instance: %v", err))
+			return
+		}
 	}
 
 	// Handle terminal resize
@@ -2088,7 +2147,7 @@ func DockerRun(containerName string) {
 	 *   Create a container with a specific name and run it
 	 */
 	ctx := context.Background()
-	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
+	cli, err := NewEngineClient()
 	if err != nil {
 		common.PrintErrorMessage(err)
 		return
@@ -2113,10 +2172,10 @@ func DockerRun(containerName string) {
 	}
 
 	// Handle ulimits
-    ulimits := getUlimitsForContainer()
-    if len(ulimits) > 0 {
-        hostConfig.Resources.Ulimits = ulimits
-    }
+	ulimits := getUlimitsForContainer()
+	if len(ulimits) > 0 {
+		hostConfig.Resources.Ulimits = ulimits
+	}
 
 	// If not in privileged mode, add device permissions
 	if !dockerObj.privileged {
@@ -2133,25 +2192,96 @@ func DockerRun(containerName string) {
 			}
 		}
 
-		// Update host config with device-specific permissions
-		hostConfig.Devices = devices
-
-		// adding cgroup rules
-		if dockerObj.cgroups != "" {
-			hostConfig.DeviceCgroupRules = strings.Split(dockerObj.cgroups, ",")
+		// ── Hotplug-aware device filtering ─────────────────────────────
+		//
+		// If a /dev subtree is already bind-mounted (e.g. /dev/bus/usb),
+		// individual device entries under that subtree are redundant and
+		// prevent USB hotplug from working (they are static snapshots of
+		// the device nodes that existed at container creation time).
+		//
+		// We remove them here and rely on the bind mount (filesystem
+		// visibility) + cgroup device rule (kernel access) instead.
+		//
+		bindSet := make(map[string]bool)
+		for _, b := range bindings {
+			parts := strings.SplitN(b, ":", 3)
+			if len(parts) >= 2 {
+				bindSet[parts[1]] = true // destination (container) path
+			}
 		}
 
+		var filteredDevices []container.DeviceMapping
+		for _, dev := range devices {
+			covered := false
+			for bindPath := range bindSet {
+				if strings.HasPrefix(dev.PathOnHost, bindPath+"/") || dev.PathOnHost == bindPath {
+					covered = true
+					break
+				}
+			}
+			if !covered {
+				filteredDevices = append(filteredDevices, dev)
+			}
+		}
+
+		hostConfig.Devices = filteredDevices
+
+		// ── Cgroup rules ───────────────────────────────────────────────
+		if dockerObj.cgroups != "" {
+			rules := strings.Split(dockerObj.cgroups, ",")
+			// Fix permission order: "rmw" → "rwm"
+			for i, rule := range rules {
+				rules[i] = strings.TrimSpace(rule)
+				rules[i] = strings.Replace(rules[i], "rmw", "rwm", 1)
+			}
+			hostConfig.DeviceCgroupRules = rules
+		}
+
+		// Auto-inject cgroup device rules for bind-mounted /dev subtrees
+		// so that hotplug works out-of-the-box without needing explicit
+		// --cgroups flags for common device classes.
+		devMajorRules := map[string]string{
+			"/dev/bus/usb": "c 189:* rwm",
+			"/dev/snd":     "c 116:* rwm",
+			"/dev/dri":     "c 226:* rwm",
+			"/dev/input":   "c 13:* rwm",
+			"/dev/vhci":    "c 137:* rwm",
+		}
+
+		existingRules := make(map[string]bool)
+		for _, rule := range hostConfig.DeviceCgroupRules {
+			existingRules[rule] = true
+		}
+
+		for bindPath := range bindSet {
+			if rule, ok := devMajorRules[bindPath]; ok && !existingRules[rule] {
+				hostConfig.DeviceCgroupRules = append(hostConfig.DeviceCgroupRules, rule)
+				existingRules[rule] = true
+			}
+		}
+
+		// Also inject cgroup rules for remaining individual device entries
+		for _, dev := range filteredDevices {
+			for prefix, rule := range devMajorRules {
+				if strings.HasPrefix(dev.PathOnHost, prefix) && !existingRules[rule] {
+					hostConfig.DeviceCgroupRules = append(hostConfig.DeviceCgroupRules, rule)
+					existingRules[rule] = true
+				}
+			}
+		}
+
+		// ── Seccomp ────────────────────────────────────────────────────
 		if dockerObj.seccomp != "" {
 			seccompOpts := strings.Split(dockerObj.seccomp, ",")
 			for i, opt := range seccompOpts {
-				// Make sure each option has the right format
 				if !strings.Contains(opt, "=") {
-					// If there's no equals sign, assume it's a seccomp value
 					seccompOpts[i] = "seccomp=" + opt
 				}
 			}
 			hostConfig.SecurityOpt = seccompOpts
 		}
+
+		// ── Capabilities ───────────────────────────────────────────────
 		if dockerObj.caps != "" {
 			hostConfig.CapAdd = strings.Split(dockerObj.caps, ",")
 		}
@@ -2343,7 +2473,7 @@ func combineEnv(xdisplay, pulse_server, extraenv string) []string {
 
 func DockerCommit(contid string) {
 	ctx := context.Background()
-	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
+	cli, err := NewEngineClient()
 	if err != nil {
 		panic(err)
 	}
@@ -2362,7 +2492,7 @@ func DockerCommit(contid string) {
 
 func DockerPull(imageref string, imagetag string) {
 	ctx := context.Background()
-	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
+	cli, err := NewEngineClient()
 	if err != nil {
 		common.PrintErrorMessage(err)
 		return
@@ -2506,7 +2636,7 @@ func DockerTag(imageref string, imagetag string) {
 	   in(2): string Image tag target
 	*/
 	ctx := context.Background()
-	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
+	cli, err := NewEngineClient()
 	if err != nil {
 		panic(err)
 	}
@@ -2529,7 +2659,7 @@ func DockerRename(currentIdentifier string, newName string) {
 	   in(2): string new container name
 	*/
 	ctx := context.Background()
-	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
+	cli, err := NewEngineClient()
 	if err != nil {
 		panic(err)
 	}
@@ -2567,7 +2697,7 @@ func DockerRemove(containerIdentifier string) {
 	   in(1): string container ID or name
 	*/
 	ctx := context.Background()
-	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
+	cli, err := NewEngineClient()
 	if err != nil {
 		common.PrintErrorMessage(err)
 		return
@@ -2610,7 +2740,7 @@ func ListImages(labelKey string, labelValue string) ([]image.Summary, error) {
 	   out: Tuple ImageSummary, error
 	*/
 	ctx := context.Background()
-	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
+	cli, err := NewEngineClient()
 	if err != nil {
 		return nil, err
 	}
@@ -2641,7 +2771,7 @@ func ListImages(labelKey string, labelValue string) ([]image.Summary, error) {
 
 func PrintImagesTable(labelKey string, labelValue string, showVersions bool, filterImage string) {
 	ctx := context.Background()
-	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
+	cli, err := NewEngineClient()
 	if err != nil {
 		log.Fatalf("Error creating Docker client: %v", err)
 	}
@@ -2909,7 +3039,7 @@ func stripAnsiCodes(s string) string {
 
 func DeleteImage(imageIDOrTag string) error {
 	ctx := context.Background()
-	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
+	cli, err := NewEngineClient()
 	if err != nil {
 		common.PrintErrorMessage(fmt.Errorf("failed to create Docker client: %v", err))
 		return err
@@ -3080,7 +3210,7 @@ func DeleteImage(imageIDOrTag string) error {
 
 func DockerInstallScript(containerIdentifier, scriptName, functionScript string) error {
 	ctx := context.Background()
-	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
+	cli, err := NewEngineClient()
 	if err != nil {
 		return fmt.Errorf("failed to create Docker client: %v", err)
 	}
@@ -3193,7 +3323,7 @@ func showLoadingIndicator(ctx context.Context, commandFunc func() error, stepNam
 }
 
 func UpdateMountBinding(containerName string, source string, target string, add bool) {
-	var timeout = 10 // Stop timeout
+	var timeout = 10
 
 	// Check if the system is Windows
 	if runtime.GOOS == "windows" {
@@ -3205,7 +3335,7 @@ However, you can achieve similar functionality by using the following commands:
 - "rfswift run" to run a container with new bindings.`
 
 		rfutils.DisplayNotification(title, message, "warning")
-		os.Exit(1) // Exit since this function is not supported on Windows
+		os.Exit(1)
 	}
 
 	if source == "" {
@@ -3236,15 +3366,14 @@ However, you can achieve similar functionality by using the following commands:
 	}
 	common.PrintSuccessMessage(fmt.Sprintf("Container ID: %s", containerID))
 
-	// Stop the container
-	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
+	cli, err := NewEngineClient()
 	if err != nil {
 		common.PrintErrorMessage(fmt.Errorf("Error when instantiating a client"))
 		os.Exit(1)
 	}
-	common.PrintInfoMessage("Stopping the container...")
 
-	// Attempt graceful stop
+	// Stop the container
+	common.PrintInfoMessage("Stopping the container...")
 	if err := showLoadingIndicator(ctx, func() error {
 		return cli.ContainerStop(ctx, containerID, container.StopOptions{Timeout: &timeout})
 	}, "Stopping the container..."); err != nil {
@@ -3270,9 +3399,52 @@ However, you can achieve similar functionality by using the following commands:
 		common.PrintSuccessMessage(fmt.Sprintf("Container '%s' stopped", containerID))
 	}
 
-	// Load and update hostconfig.json
+	newMount := fmt.Sprintf("%s:%s", source, target)
+
+	// ─── Engine-aware code path ────────────────────────────────────────
+	//
+	// Docker:  edit hostconfig.json + config.v2.json on disk, restart daemon
+	// Podman:  recreate the container with updated bind mounts (no direct edit)
+	//
+	if !EngineSupportsDirectConfigEdit() {
+		// ── Podman path: container recreation ──────────────────────────
+		common.PrintInfoMessage(fmt.Sprintf("%s does not support direct config editing — using container recreation", GetEngine().Name()))
+
+		// Get current container config for recreation
+		inspectData, err := cli.ContainerInspect(ctx, containerID)
+		if err != nil {
+			common.PrintErrorMessage(fmt.Errorf("failed to inspect container: %v", err))
+			os.Exit(1)
+		}
+
+		// Update binds
+		currentBinds := inspectData.HostConfig.Binds
+		if add {
+			if !ocontains(currentBinds, newMount) {
+				currentBinds = append(currentBinds, newMount)
+				common.PrintSuccessMessage(fmt.Sprintf("Adding mount: %s", newMount))
+			} else {
+				common.PrintWarningMessage("Mount already exists.")
+				return
+			}
+		} else {
+			currentBinds = removeFromSlice(currentBinds, newMount)
+			common.PrintSuccessMessage(fmt.Sprintf("Removing mount: %s", newMount))
+		}
+
+		// Recreate container with updated binds
+		if err := recreateContainerWithUpdatedBinds(ctx, cli, containerName, containerID, inspectData, currentBinds); err != nil {
+			common.PrintErrorMessage(fmt.Errorf("failed to recreate container: %v", err))
+			os.Exit(1)
+		}
+
+		common.PrintSuccessMessage("Container recreated with updated mount bindings.")
+		return
+	}
+
+	// ── Docker path: direct config file editing ───────────────────────
 	common.PrintInfoMessage("Determining hostconfig.json path...")
-	hostConfigPath, err := GetHostConfigPath(containerID)
+	hostConfigPath, err := EngineGetHostConfigPath(containerID)
 	if err != nil {
 		common.PrintErrorMessage(err)
 		os.Exit(1)
@@ -3300,7 +3472,6 @@ However, you can achieve similar functionality by using the following commands:
 
 	// Update mounts in both files
 	common.PrintInfoMessage("Updating mounts...")
-	newMount := fmt.Sprintf("%s:%s", source, target)
 	if add {
 		if !ocontains(hostConfig.Binds, newMount) {
 			hostConfig.Binds = append(hostConfig.Binds, newMount)
@@ -3330,14 +3501,268 @@ However, you can achieve similar functionality by using the following commands:
 	}
 	common.PrintSuccessMessage("config.v2.json updated successfully.")
 
-	// Restart the container
+	// Restart the engine service
+	engineName := GetEngine().Name()
 	if err := showLoadingIndicator(ctx, func() error {
-		return RestartDockerService()
-	}, "Restarting Docker service..."); err != nil {
-		common.PrintErrorMessage(fmt.Errorf("failed to restart Docker service: %v", err))
+		return EngineRestartService()
+	}, fmt.Sprintf("Restarting %s service...", engineName)); err != nil {
+		common.PrintErrorMessage(fmt.Errorf("failed to restart %s service: %v", engineName, err))
 		os.Exit(1)
 	}
-	common.PrintSuccessMessage("Docker service restarted successfully.")
+	common.PrintSuccessMessage(fmt.Sprintf("%s service restarted successfully.", engineName))
+}
+
+// sanitizeHostConfigForPodman normalizes a Docker-inspected HostConfig so that
+// Podman's stricter compat API and crun runtime accept it without errors.
+func sanitizeHostConfigForPodman(hc *container.HostConfig) {
+	if hc == nil {
+		return
+	}
+
+	// 1. Device permissions — Podman rejects empty CgroupPermissions
+	for i := range hc.Devices {
+		if hc.Devices[i].CgroupPermissions == "" {
+			hc.Devices[i].CgroupPermissions = "rwm"
+		}
+	}
+
+	// 2. MemorySwappiness — crun rejects on cgroup v2
+	swappiness := int64(-1)
+	hc.MemorySwappiness = &swappiness
+
+	// 3. KernelMemory — deprecated, rejected by Podman
+	hc.KernelMemory = 0
+	hc.KernelMemoryTCP = 0
+
+	// 4. PidsLimit — Podman rejects 0 (use -1 for unlimited)
+	if hc.PidsLimit != nil && *hc.PidsLimit == 0 {
+		unlimited := int64(-1)
+		hc.PidsLimit = &unlimited
+	}
+
+	// 5. OomKillDisable — crun rejects on cgroup v2
+	hc.OomKillDisable = nil
+
+	// 6. DeviceCgroupRules — remove empty strings and fix permission order
+	var cleanRules []string
+	for _, rule := range hc.DeviceCgroupRules {
+		rule = strings.TrimSpace(rule)
+		if rule == "" {
+			continue
+		}
+		// Fix common permission order mistake: "rmw" → "rwm"
+		rule = strings.Replace(rule, "rmw", "rwm", 1)
+		cleanRules = append(cleanRules, rule)
+	}
+	hc.DeviceCgroupRules = cleanRules
+
+	// 7. Deduplicate Binds
+	hc.Binds = deduplicateBinds(hc.Binds)
+
+	// 8. Build a set of bind-mounted destination paths
+	bindDests := make(map[string]bool)
+	for _, bind := range hc.Binds {
+		dest := parseBindDestination(bind)
+		bindDests[dest] = true
+	}
+
+	// 9. Remove Binds that conflict with Devices (same destination path)
+	//    Podman rejects "duplicate mount destination" when a path appears
+	//    in both Devices and Binds — but only for exact matches.
+	if len(hc.Devices) > 0 && len(hc.Binds) > 0 {
+		deviceDests := make(map[string]bool)
+		for _, dev := range hc.Devices {
+			deviceDests[dev.PathInContainer] = true
+		}
+		var deduplicatedBinds []string
+		for _, bind := range hc.Binds {
+			dest := parseBindDestination(bind)
+			if deviceDests[dest] {
+				continue // skip — already covered by Devices
+			}
+			deduplicatedBinds = append(deduplicatedBinds, bind)
+		}
+		hc.Binds = deduplicatedBinds
+	}
+
+	// 10. USB / device hotplug support
+	//
+	//     When a /dev subtree is bind-mounted (e.g. /dev/bus/usb), the bind
+	//     gives filesystem visibility for new device nodes.  However, cgroup v2
+	//     still blocks open() unless an explicit device-cgroup rule is present.
+	//
+	//     Additionally, individual device entries under a bind-mounted subtree
+	//     are counter-productive: they are static snapshots captured at container
+	//     creation time and break when devices are unplugged/replugged (the new
+	//     device node number won't match the frozen mapping).
+	//
+	//     Strategy:
+	//       • Inject the correct cgroup major-number rule
+	//       • Remove individual Device entries that fall under the bind mount
+	//
+	devMajorRules := map[string]string{
+		"/dev/bus/usb": "c 189:* rwm", // USB
+		"/dev/snd":     "c 116:* rwm", // ALSA sound
+		"/dev/dri":     "c 226:* rwm", // DRI / GPU
+		"/dev/input":   "c 13:* rwm",  // Input devices (evdev, mice, js)
+		"/dev/vhci":    "c 137:* rwm", // USB/IP VHCI
+	}
+
+	existingRules := make(map[string]bool)
+	for _, rule := range hc.DeviceCgroupRules {
+		existingRules[rule] = true
+	}
+
+	for prefix, rule := range devMajorRules {
+		if !bindDests[prefix] {
+			continue
+		}
+
+		// Inject cgroup rule if missing
+		if !existingRules[rule] {
+			hc.DeviceCgroupRules = append(hc.DeviceCgroupRules, rule)
+			existingRules[rule] = true
+		}
+
+		// Remove individual Device entries under this prefix — the bind
+		// mount + cgroup rule handles them, and keeping static entries
+		// prevents hotplug from working.
+		var cleanDevices []container.DeviceMapping
+		for _, dev := range hc.Devices {
+			if strings.HasPrefix(dev.PathOnHost, prefix) {
+				continue // covered by bind + cgroup
+			}
+			cleanDevices = append(cleanDevices, dev)
+		}
+		hc.Devices = cleanDevices
+	}
+
+	// 11. Also inject cgroup rules for device entries that are NOT covered
+	//     by a bind mount (standalone --device mappings).  This ensures
+	//     that existing device access keeps working after recreation.
+	for _, dev := range hc.Devices {
+		for prefix, rule := range devMajorRules {
+			if strings.HasPrefix(dev.PathOnHost, prefix) && !existingRules[rule] {
+				hc.DeviceCgroupRules = append(hc.DeviceCgroupRules, rule)
+				existingRules[rule] = true
+			}
+		}
+	}
+}
+
+// deduplicateBinds removes bind entries with duplicate destinations.
+// Keeps the last occurrence (so newly added binds take precedence).
+func deduplicateBinds(binds []string) []string {
+	seen := make(map[string]int) // destination → index in result
+	var result []string
+
+	for _, bind := range binds {
+		dest := parseBindDestination(bind)
+		if idx, exists := seen[dest]; exists {
+			// Replace the earlier entry with this one
+			result[idx] = bind
+		} else {
+			seen[dest] = len(result)
+			result = append(result, bind)
+		}
+	}
+	return result
+}
+
+// parseBindDestination extracts the destination (container) path from a bind string.
+// Formats: "source:dest" or "source:dest:opts"
+func parseBindDestination(bind string) string {
+	parts := strings.SplitN(bind, ":", 3)
+	if len(parts) >= 2 {
+		return parts[1]
+	}
+	return bind // bare path
+}
+
+// recreateContainerWithUpdatedBinds handles the Podman code path:
+// commit → create new (temp name) → remove old → rename new → start.
+// This ordering ensures the old container is never lost on failure.
+func recreateContainerWithUpdatedBinds(ctx context.Context, cli *client.Client, containerName string, containerID string, inspectData types.ContainerJSON, newBinds []string) error {
+	// 1. Commit the current container state to a temporary image
+	tempImageTag := fmt.Sprintf("rfswift_rebind_tmp_%s:%s", containerName, time.Now().Format("20060102150405"))
+	common.PrintInfoMessage(fmt.Sprintf("Committing container state to temporary image: %s", tempImageTag))
+
+	commitResp, err := cli.ContainerCommit(ctx, containerID, container.CommitOptions{
+		Reference: tempImageTag,
+		Comment:   "RF Swift: temporary image for mount binding update",
+		Pause:     true,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to commit container: %v", err)
+	}
+	common.PrintSuccessMessage(fmt.Sprintf("Committed as: %s (ID: %s)", tempImageTag, commitResp.ID[:12]))
+
+	// 2. Prepare the new container config
+	oldConfig := inspectData.Config
+	oldHostConfig := inspectData.HostConfig
+
+	// Apply updated binds
+	oldHostConfig.Binds = newBinds
+
+	// Sanitize for Podman compatibility
+	if GetEngine().Type() == EnginePodman {
+		sanitizeHostConfigForPodman(oldHostConfig)
+	}
+
+	// 3. Create new container with a TEMPORARY name (safe: old container still exists)
+	tempContainerName := fmt.Sprintf("%s_rfswift_tmp_%d", containerName, time.Now().UnixNano())
+	common.PrintInfoMessage(fmt.Sprintf("Creating new container (temp: %s)...", tempContainerName))
+
+	resp, err := cli.ContainerCreate(ctx,
+		oldConfig,
+		oldHostConfig,
+		nil, // networking config
+		nil, // platform
+		tempContainerName,
+	)
+	if err != nil {
+		// SAFE: old container still exists, nothing was lost
+		common.PrintWarningMessage("Container creation failed — original container is preserved")
+		// Clean up temp image
+		cli.ImageRemove(ctx, commitResp.ID, image.RemoveOptions{Force: true})
+		return fmt.Errorf("failed to create new container: %v", err)
+	}
+	common.PrintSuccessMessage(fmt.Sprintf("New container created: %s", resp.ID[:12]))
+
+	// 4. NOW safe to remove the old container
+	common.PrintInfoMessage("Removing old container...")
+	err = cli.ContainerRemove(ctx, containerID, container.RemoveOptions{Force: true})
+	if err != nil {
+		// New container exists but old one couldn't be removed — not fatal
+		common.PrintWarningMessage(fmt.Sprintf("Could not remove old container: %v", err))
+		common.PrintWarningMessage(fmt.Sprintf("New container available as: %s", tempContainerName))
+	} else {
+		common.PrintSuccessMessage("Old container removed.")
+	}
+
+	// 5. Rename new container to the original name
+	common.PrintInfoMessage(fmt.Sprintf("Renaming container to '%s'...", containerName))
+	if err := cli.ContainerRename(ctx, resp.ID, containerName); err != nil {
+		common.PrintWarningMessage(fmt.Sprintf("Could not rename to '%s': %v — container is named '%s'", containerName, err, tempContainerName))
+	}
+
+	// 6. Start the new container
+	common.PrintInfoMessage("Starting new container...")
+	if err := cli.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
+		return fmt.Errorf("failed to start new container: %v", err)
+	}
+	common.PrintSuccessMessage("Container started with updated mount bindings.")
+
+	// 7. Clean up temporary image
+	common.PrintInfoMessage("Cleaning up temporary image...")
+	_, err = cli.ImageRemove(ctx, commitResp.ID, image.RemoveOptions{Force: false, PruneChildren: true})
+	if err != nil {
+		common.PrintWarningMessage(fmt.Sprintf("Could not remove temporary image %s: %v (remove manually)", tempImageTag, err))
+	} else {
+		common.PrintSuccessMessage("Temporary image cleaned up.")
+	}
+
+	return nil
 }
 
 // execCommandWithOutput executes a command and returns its output
@@ -3431,7 +3856,7 @@ However, you can achieve similar functionality by using the following commands:
 	common.PrintSuccessMessage(fmt.Sprintf("Container ID: %s", containerID))
 
 	// Stop the container
-	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
+	cli, err := NewEngineClient()
 	if err != nil {
 		common.PrintErrorMessage(fmt.Errorf("Error when instantiating a client"))
 		os.Exit(1)
@@ -3541,7 +3966,7 @@ However, you can achieve similar functionality by using the following commands:
 // UpdateCapability adds or removes a capability from a container
 func UpdateCapability(containerID string, capability string, add bool) error {
 	ctx := context.Background()
-	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
+	cli, err := NewEngineClient()
 	if err != nil {
 		common.PrintErrorMessage(err)
 		return err
@@ -3617,7 +4042,7 @@ func UpdateCapability(containerID string, capability string, add bool) error {
 // UpdateCgroupRule adds or removes a cgroup rule from a container
 func UpdateCgroupRule(containerID string, rule string, add bool) error {
 	ctx := context.Background()
-	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
+	cli, err := NewEngineClient()
 	if err != nil {
 		common.PrintErrorMessage(err)
 		return err
@@ -3693,7 +4118,7 @@ func UpdateCgroupRule(containerID string, rule string, add bool) error {
 // UpdateExposedPort adds or removes an exposed port from a container
 func UpdateExposedPort(containerID string, port string, add bool) error {
 	ctx := context.Background()
-	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
+	cli, err := NewEngineClient()
 	if err != nil {
 		common.PrintErrorMessage(err)
 		return err
@@ -3774,7 +4199,7 @@ func UpdateExposedPort(containerID string, port string, add bool) error {
 // UpdatePortBinding adds or removes a port binding from a container
 func UpdatePortBinding(containerID string, binding string, add bool) error {
 	ctx := context.Background()
-	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
+	cli, err := NewEngineClient()
 	if err != nil {
 		common.PrintErrorMessage(err)
 		return err
@@ -4123,7 +4548,7 @@ func DockerStop(containerIdentifier string) {
 	ctx := context.Background()
 
 	// Initialize Docker client
-	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
+	cli, err := NewEngineClient()
 	if err != nil {
 		common.PrintErrorMessage(err)
 		return
@@ -4166,7 +4591,7 @@ func DockerStop(containerIdentifier string) {
 
 func DockerUpgrade(containerIdentifier string, repositoriesToPreserve string, newImage string) error {
 	ctx := context.Background()
-	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
+	cli, err := NewEngineClient()
 	if err != nil {
 		common.PrintErrorMessage(err)
 		return err
@@ -4728,7 +5153,7 @@ func BuildFromRecipe(recipeFile string, tagOverride string, noCache bool) error 
 	// Build the image
 	common.PrintInfoMessage("Starting Docker build...")
 	ctx := context.Background()
-	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
+	cli, err := NewEngineClient()
 	if err != nil {
 		return fmt.Errorf("failed to create Docker client: %v", err)
 	}
@@ -4965,7 +5390,7 @@ func createBuildContextTar(sourceDir string) (io.ReadCloser, error) {
 // ExportContainer exports a container to a tar.gz file
 func ExportContainer(containerID string, outputFile string) error {
 	ctx := context.Background()
-	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
+	cli, err := NewEngineClient()
 	if err != nil {
 		return fmt.Errorf("failed to create Docker client: %v", err)
 	}
@@ -5013,7 +5438,7 @@ func ExportContainer(containerID string, outputFile string) error {
 // ExportImage exports one or more images to a tar.gz file
 func ExportImage(images []string, outputFile string) error {
 	ctx := context.Background()
-	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
+	cli, err := NewEngineClient()
 	if err != nil {
 		return fmt.Errorf("failed to create Docker client: %v", err)
 	}
@@ -5062,7 +5487,7 @@ func ExportImage(images []string, outputFile string) error {
 // ImportContainer imports a container from a tar.gz file and creates an image
 func ImportContainer(inputFile string, imageName string) error {
 	ctx := context.Background()
-	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
+	cli, err := NewEngineClient()
 	if err != nil {
 		return fmt.Errorf("failed to create Docker client: %v", err)
 	}
@@ -5118,7 +5543,7 @@ func ImportContainer(inputFile string, imageName string) error {
 // ImportImage imports one or more images from a tar.gz file
 func ImportImage(inputFile string) error {
 	ctx := context.Background()
-	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
+	cli, err := NewEngineClient()
 	if err != nil {
 		return fmt.Errorf("failed to create Docker client: %v", err)
 	}
@@ -5172,7 +5597,7 @@ func ImportImage(inputFile string) error {
 // SaveImageToFile pulls an image and saves it to a tar.gz file
 func SaveImageToFile(imageName string, outputFile string, pullFirst bool) error {
 	ctx := context.Background()
-	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
+	cli, err := NewEngineClient()
 	if err != nil {
 		return fmt.Errorf("failed to create Docker client: %v", err)
 	}
@@ -5337,7 +5762,7 @@ func CleanupAll(olderThan string, force bool, dryRun bool) error {
 // CleanupContainers removes old containers
 func CleanupContainers(olderThan string, force bool, dryRun bool, onlyStopped bool) error {
 	ctx := context.Background()
-	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
+	cli, err := NewEngineClient()
 	if err != nil {
 		return fmt.Errorf("failed to create Docker client: %v", err)
 	}
@@ -5460,7 +5885,7 @@ func CleanupContainers(olderThan string, force bool, dryRun bool, onlyStopped bo
 // CleanupImages removes old images
 func CleanupImages(olderThan string, force bool, dryRun bool, onlyDangling bool, pruneChildren bool) error {
 	ctx := context.Background()
-	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
+	cli, err := NewEngineClient()
 	if err != nil {
 		return fmt.Errorf("failed to create Docker client: %v", err)
 	}
@@ -6110,7 +6535,7 @@ func DockerExecWithRecording(containerIdentifier string, workingDir string, reco
 
 	// Get container name for filename
 	ctx := context.Background()
-	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
+	cli, err := NewEngineClient()
 	if err != nil {
 		return err
 	}
@@ -6181,7 +6606,7 @@ func DockerExecWithRecording(containerIdentifier string, workingDir string, reco
 // DockerPullVersion pulls a specific version of an image
 func DockerPullVersion(imageref string, version string, imagetag string) {
 	ctx := context.Background()
-	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
+	cli, err := NewEngineClient()
 	if err != nil {
 		common.PrintErrorMessage(err)
 		return

@@ -972,6 +972,15 @@ var RealtimeStatusCmd = &cobra.Command{
 	},
 }
 
+var engineCmd = &cobra.Command{
+    Use:   "engine",
+    Short: "Display container engine information",
+    Long:  `Show which container engine (Docker/Podman) is active and its status.`,
+    Run: func(cmd *cobra.Command, args []string) {
+        rfdock.PrintEngineInfo()
+    },
+}
+
 func detectShell() string {
 	shell := os.Getenv("SHELL")
 	if shell == "" {
@@ -1173,11 +1182,25 @@ func init() {
 	rootCmd.AddCommand(CleanupCmd)
 	rootCmd.AddCommand(LogCmd)
 
+	// Container engine selection
+  rootCmd.PersistentFlags().String("engine", "auto",
+      "Container engine to use: auto, docker, podman (env: RFSWIFT_ENGINE)")
+  // Engine info command
+  rootCmd.AddCommand(engineCmd)
+
 	rootCmd.PersistentPreRun = func(cmd *cobra.Command, args []string) {
-		isCompletion := len(os.Args) > 1 && (os.Args[1] == "completion" || os.Args[1] == "__complete")
-		if !isCompletion {
-			rfutils.DisplayVersion()
-		}
+	    isCompletion := len(os.Args) > 1 && (os.Args[1] == "completion" || os.Args[1] == "__complete")
+	    if !isCompletion {
+	        // Initialize container engine BEFORE anything else
+	        engineType, _ := cmd.Flags().GetString("engine")
+	        if engineType != "" && engineType != "auto" {
+	            rfdock.SetPreferredEngine(engineType)
+	        }
+	        // Trigger detection (sets DOCKER_HOST for Podman)
+	        rfdock.GetEngine()
+
+	        rfutils.DisplayVersion()
+	    }
 	}
 
 	rootCmd.PersistentFlags().BoolVarP(&common.Disconnected, "disconnect", "q", false, "Don't query updates (disconnected mode)")
