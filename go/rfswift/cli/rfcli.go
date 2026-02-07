@@ -500,7 +500,9 @@ var CapabilitiesAddCmd = &cobra.Command{
 	Run: func(cmd *cobra.Command, args []string) {
 		contID, _ := cmd.Flags().GetString("container")
 		capability, _ := cmd.Flags().GetString("capability")
-		rfdock.UpdateCapability(contID, capability, true)
+		if err := rfdock.UpdateCapability(contID, capability, true); err != nil {
+			os.Exit(1)
+		}
 	},
 }
 
@@ -511,7 +513,9 @@ var CapabilitiesRmCmd = &cobra.Command{
 	Run: func(cmd *cobra.Command, args []string) {
 		contID, _ := cmd.Flags().GetString("container")
 		capability, _ := cmd.Flags().GetString("capability")
-		rfdock.UpdateCapability(contID, capability, false)
+		if err := rfdock.UpdateCapability(contID, capability, false); err != nil {
+		    os.Exit(1)
+		}
 	},
 }
 
@@ -528,7 +532,9 @@ var CgroupsAddCmd = &cobra.Command{
 	Run: func(cmd *cobra.Command, args []string) {
 		contID, _ := cmd.Flags().GetString("container")
 		rule, _ := cmd.Flags().GetString("rule")
-		rfdock.UpdateCgroupRule(contID, rule, true)
+		if err := rfdock.UpdateCgroupRule(contID, rule, true); err != nil {
+		    os.Exit(1)
+		}
 	},
 }
 
@@ -539,7 +545,9 @@ var CgroupsRmCmd = &cobra.Command{
 	Run: func(cmd *cobra.Command, args []string) {
 		contID, _ := cmd.Flags().GetString("container")
 		rule, _ := cmd.Flags().GetString("rule")
-		rfdock.UpdateCgroupRule(contID, rule, false)
+		if err := rfdock.UpdateCgroupRule(contID, rule, false); err != nil {
+		    os.Exit(1)
+		}
 	},
 }
 
@@ -556,7 +564,9 @@ var PortsExposeCmd = &cobra.Command{
 	Run: func(cmd *cobra.Command, args []string) {
 		contID, _ := cmd.Flags().GetString("container")
 		port, _ := cmd.Flags().GetString("port")
-		rfdock.UpdateExposedPort(contID, port, true)
+		if err := rfdock.UpdateExposedPort(contID, port, true); err != nil {
+		    os.Exit(1)
+		}
 	},
 }
 
@@ -567,7 +577,9 @@ var PortsUnexposeCmd = &cobra.Command{
 	Run: func(cmd *cobra.Command, args []string) {
 		contID, _ := cmd.Flags().GetString("container")
 		port, _ := cmd.Flags().GetString("port")
-		rfdock.UpdateExposedPort(contID, port, false)
+		if err := rfdock.UpdateExposedPort(contID, port, false); err != nil {
+		    os.Exit(1)
+		}
 	},
 }
 
@@ -578,7 +590,9 @@ var PortsBindCmd = &cobra.Command{
 	Run: func(cmd *cobra.Command, args []string) {
 		contID, _ := cmd.Flags().GetString("container")
 		binding, _ := cmd.Flags().GetString("binding")
-		rfdock.UpdatePortBinding(contID, binding, true)
+		if err := rfdock.UpdatePortBinding(contID, binding, true); err != nil {
+		    os.Exit(1)
+		}
 	},
 }
 
@@ -589,7 +603,9 @@ var PortsUnbindCmd = &cobra.Command{
 	Run: func(cmd *cobra.Command, args []string) {
 		contID, _ := cmd.Flags().GetString("container")
 		binding, _ := cmd.Flags().GetString("binding")
-		rfdock.UpdatePortBinding(contID, binding, false)
+		if err := rfdock.UpdatePortBinding(contID, binding, false); err != nil {
+		    os.Exit(1)
+		}
 	},
 }
 
