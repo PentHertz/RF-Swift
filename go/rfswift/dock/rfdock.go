@@ -1777,6 +1777,22 @@ func convertPortBindingsToString(portBindings nat.PortMap) string {
 	return strings.Join(result, ", ")
 }
 
+func convertPortBindingsToRoundTrip(portBindings nat.PortMap) string {
+    var result []string
+    for port, bindings := range portBindings {
+        for _, binding := range bindings {
+            // Format: containerPort/protocol:hostAddress:hostPort
+            // or containerPort/protocol:hostPort
+            if binding.HostIP != "" && binding.HostIP != "0.0.0.0" {
+                result = append(result, fmt.Sprintf("%s:%s:%s", port, binding.HostIP, binding.HostPort))
+            } else {
+                result = append(result, fmt.Sprintf("%s:%s", port, binding.HostPort))
+            }
+        }
+    }
+    return strings.Join(result, ";;")
+}
+
 func convertExposedPortsToString(exposedPorts nat.PortSet) string {
 	var result []string
 
@@ -1831,6 +1847,16 @@ func getDisplayImageName(containerJSON types.ContainerJSON) string {
 	return containerJSON.Config.Image
 }
 
+func getExposedPortsFromLabel(containerJSON types.ContainerJSON) string {
+	if label, ok := containerJSON.Config.Labels["org.rfswift.exposed_ports"]; ok {
+		if label == "none" {
+			return ""
+		}
+		return label
+	}
+	return convertExposedPortsToString(containerJSON.Config.ExposedPorts)
+}
+
 func getContainerProperties(ctx context.Context, cli *client.Client, containerID string) (map[string]string, error) {
 	containerJSON, err := cli.ContainerInspect(ctx, containerID)
 	if err != nil {
@@ -1865,11 +1891,11 @@ func getContainerProperties(ctx context.Context, cli *client.Client, containerID
 		"Shell":        containerJSON.Path,
 		"Privileged":   fmt.Sprintf("%v", containerJSON.HostConfig.Privileged),
 		"NetworkMode":  string(containerJSON.HostConfig.NetworkMode),
-		"ExposedPorts": convertExposedPortsToString(containerJSON.Config.ExposedPorts),
-		"PortBindings": convertPortBindingsToString(containerJSON.HostConfig.PortBindings),
+		"ExposedPorts": getExposedPortsFromLabel(containerJSON),
+		"PortBindings": convertPortBindingsToRoundTrip(containerJSON.HostConfig.PortBindings),
 		"ImageName":    getDisplayImageName(containerJSON),
 		"ImageHash":    imageInfo.ID,
-		"Bindings":     strings.Join(containerJSON.HostConfig.Binds, ","),
+		"Bindings":     strings.Join(containerJSON.HostConfig.Binds, ";;"),
 		"ExtraHosts":   strings.Join(containerJSON.HostConfig.ExtraHosts, ","),
 		"Size":         imageSize,
 		"Devices":      convertDevicesToString(containerJSON.HostConfig.Devices),
@@ -2116,8 +2142,13 @@ func ParseBindedPorts(bindedPortsStr string) nat.PortMap {
 	}
 	common.PrintSuccessMessage(fmt.Sprintf("Binded: '%s'", bindedPortsStr))
 
-	// Split the input by ',' to get individual bindings
-	portEntries := strings.Split(bindedPortsStr, ",")
+	// Support both ";;" (internal round-trip) and "," (CLI input) delimiters
+	var portEntries []string
+	if strings.Contains(bindedPortsStr, ";;") {
+		portEntries = strings.Split(bindedPortsStr, ";;")
+	} else {
+		portEntries = strings.Split(bindedPortsStr, ",")
+	}
 	for _, entry := range portEntries {
 		// Expected format: containerPort/protocol:hostPort or containerPort/protocol:hostAddress:hostPort
 		// Example: 80/tcp:8080 or 80/tcp:127.0.0.1:8080
@@ -2334,6 +2365,11 @@ func DockerRun(containerName string) {
 	}
 	if len(hostConfig.DeviceCgroupRules) > 0 {
 		containerLabels["org.rfswift.cgroup_rules"] = strings.Join(hostConfig.DeviceCgroupRules, ",")
+	}
+	if dockerObj.exposed_ports == "" {
+		containerLabels["org.rfswift.exposed_ports"] = "none"
+	} else {
+		containerLabels["org.rfswift.exposed_ports"] = dockerObj.exposed_ports
 	}
 
 	resp, err := cli.ContainerCreate(ctx, &container.Config{
@@ -3678,6 +3714,22 @@ func podmanCreateViaCLI(name string, imageName string, cfg *container.Config, hc
 		args = append(args, "--user", cfg.User)
 	}
 
+	// Exposed ports
+	for port := range cfg.ExposedPorts {
+	    args = append(args, "--expose", string(port))
+	}
+
+	// Port bindings
+	for port, bindings := range hc.PortBindings {
+	    for _, binding := range bindings {
+	        hostPart := binding.HostPort
+	        if binding.HostIP != "" {
+	            hostPart = binding.HostIP + ":" + hostPart
+	        }
+	        args = append(args, "-p", hostPart+":"+string(port))
+	    }
+	}
+
 	// Image (positional, must come before cmd)
 	args = append(args, imageName)
 
@@ -3962,6 +4014,8 @@ func recreateContainerWithUpdatedBinds(ctx context.Context, cli *client.Client, 
 	if len(oldHostConfig.DeviceCgroupRules) > 0 {
 		oldConfig.Labels["org.rfswift.cgroup_rules"] = strings.Join(oldHostConfig.DeviceCgroupRules, ",")
 	}
+
+	oldConfig.Labels["org.rfswift.exposed_ports"] = convertExposedPortsToString(oldConfig.ExposedPorts)
 
 	// ── USB bind-mount sanitization ──
 	// When /dev/bus/usb is bind-mounted, individual /dev/bus/usb/* device
@@ -4595,7 +4649,7 @@ func UpdatePortBinding(containerID string, binding string, add bool) error {
 	portBindingsStr := props["PortBindings"]
 	var portBindings []string
 	if portBindingsStr != "" {
-		portBindings = strings.Split(portBindingsStr, ",")
+		portBindings = strings.Split(portBindingsStr, ";;")
 		// Trim spaces
 		for i := range portBindings {
 			portBindings[i] = strings.TrimSpace(portBindings[i])
@@ -4642,7 +4696,7 @@ func UpdatePortBinding(containerID string, binding string, add bool) error {
 	}
 
 	// Update the container
-	props["PortBindings"] = strings.Join(portBindings, ",")
+	props["PortBindings"] = strings.Join(portBindings, ";;")
 
 	return recreateContainerWithProperties(ctx, cli, containerID, props)
 }
@@ -4675,11 +4729,26 @@ func recreateContainerWithProperties(ctx context.Context, cli *client.Client, co
 	tempImageTag := fmt.Sprintf("rfswift_rebind_tmp_%s:%s", containerName, time.Now().Format("20060102150405"))
 	common.PrintInfoMessage(fmt.Sprintf("Committing container state to temporary image: %s", tempImageTag))
 
+	commitLabels := make(map[string]string)
+	for k, v := range containerJSON.Config.Labels {
+		commitLabels[k] = v
+	}
+	if props["ExposedPorts"] == "" {
+		commitLabels["org.rfswift.exposed_ports"] = "none"
+	} else {
+		commitLabels["org.rfswift.exposed_ports"] = props["ExposedPorts"]
+	}
+
 	commitResp, err := cli.ContainerCommit(ctx, containerID, container.CommitOptions{
 		Reference: tempImageTag,
 		Comment:   "RF Swift: temporary image for container property update",
 		Pause:     true,
+		Config: &container.Config{
+			ExposedPorts: ParseExposedPorts(props["ExposedPorts"]),
+			Labels:       commitLabels,
+		},
 	})
+	
 	if err != nil {
 		common.PrintErrorMessage(fmt.Errorf("failed to commit container: %v", err))
 		return err
@@ -4705,7 +4774,7 @@ func recreateContainerWithProperties(ctx context.Context, cli *client.Client, co
 	// Parse properties for host config
 	bindings := []string{}
 	if props["Bindings"] != "" {
-		bindings = strings.Split(props["Bindings"], ",")
+	    bindings = strings.Split(props["Bindings"], ";;")
 	}
 
 	extrahosts := []string{}
@@ -4781,6 +4850,12 @@ func recreateContainerWithProperties(ctx context.Context, cli *client.Client, co
 	containerLabels["org.rfswift.original_image"] = originalImageName
 	if len(hostConfig.DeviceCgroupRules) > 0 {
 		containerLabels["org.rfswift.cgroup_rules"] = strings.Join(hostConfig.DeviceCgroupRules, ",")
+	}
+
+	if props["ExposedPorts"] == "" {
+		containerLabels["org.rfswift.exposed_ports"] = "none"
+	} else {
+		containerLabels["org.rfswift.exposed_ports"] = props["ExposedPorts"]
 	}
 
 	// Determine shell
@@ -5349,7 +5424,7 @@ func DockerUpgrade(containerIdentifier string, repositoriesToPreserve string, ne
 	props["Privileged"] = fmt.Sprintf("%v", containerJSON.HostConfig.Privileged)
 	props["NetworkMode"] = string(containerJSON.HostConfig.NetworkMode)
 	props["ExposedPorts"] = convertExposedPortsToString(containerJSON.Config.ExposedPorts)
-	props["PortBindings"] = convertPortBindingsToString(containerJSON.HostConfig.PortBindings)
+	props["PortBindings"] = convertPortBindingsToRoundTrip(containerJSON.HostConfig.PortBindings)
 	props["ExtraHosts"] = strings.Join(containerJSON.HostConfig.ExtraHosts, ",")
 	props["Devices"] = convertDevicesToString(containerJSON.HostConfig.Devices)
 	props["Caps"] = convertCapsToString(containerJSON.HostConfig.CapAdd)
