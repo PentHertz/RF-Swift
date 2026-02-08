@@ -315,8 +315,10 @@ func OfficialRepos() []string {
 }
 
 func IsOfficialImage(imageName string) bool {
+	// Podman uses fully qualified names (docker.io/penthertz/...)
+	cleaned := strings.TrimPrefix(imageName, "docker.io/")
 	for _, repo := range OfficialRepos() {
-		if strings.HasPrefix(imageName, repo+":") {
+		if strings.HasPrefix(cleaned, repo+":") {
 			return true
 		}
 	}
@@ -393,6 +395,15 @@ func sortVersionInfos(versions []VersionInfo) {
 func GetVersionForDigest(versions []VersionInfo, digest string) string {
 	for _, v := range versions {
 		if v.Digest == digest && v.Version != "latest" {
+			return v.Version
+		}
+	}
+	return ""
+}
+
+func GetVersionForDigests(versions []VersionInfo, digests []string) string {
+	for _, v := range versions {
+		if v.Version != "latest" && digestMatches(digests, v.Digest) {
 			return v.Version
 		}
 	}

@@ -1116,6 +1116,8 @@ func checkIfImageIsUpToDate(repo, tag string) (bool, error) {
 }
 
 func parseImageName(imageName string) (string, string) {
+	// Podman uses fully qualified names (docker.io/penthertz/...)
+	imageName = strings.TrimPrefix(imageName, "docker.io/")
 	parts := strings.Split(imageName, ":")
 	repo := parts[0]
 	tag := "latest"
@@ -1137,6 +1139,15 @@ func getLocalImageCreationDate(ctx context.Context, cli *client.Client, imageNam
 	return localImageTime, nil
 }
 
+func digestMatches(localDigests []string, remoteDigest string) bool {
+	for _, d := range localDigests {
+		if d == remoteDigest {
+			return true
+		}
+	}
+	return false
+}
+
 func checkImageStatusWithCache(ctx context.Context, cli *client.Client, repo, tag string, architecture string, cachedVersionsByRepo RepoVersionMap) (bool, bool, error) {
 	if common.Disconnected {
 		return false, true, nil
@@ -1154,12 +1165,11 @@ func checkImageStatusWithCache(ctx context.Context, cli *client.Client, repo, ta
 		return false, true, err
 	}
 
-	// Get local digest
-	localDigest := ""
+	// Get local digests (Podman may store multiple)
+	var localDigests []string
 	for _, repoDigest := range localImage.RepoDigests {
 		if idx := strings.Index(repoDigest, "@"); idx != -1 {
-			localDigest = repoDigest[idx+1:]
-			break
+			localDigests = append(localDigests, repoDigest[idx+1:])
 		}
 	}
 
@@ -1204,7 +1214,7 @@ func checkImageStatusWithCache(ctx context.Context, cli *client.Client, repo, ta
 		// This is the latest version (or equal), check if digest matches
 		for _, v := range versions {
 			if v.Version == version {
-				if localDigest != "" && v.Digest == localDigest {
+				if len(localDigests) > 0 && digestMatches(localDigests, v.Digest) {
 					return true, false, nil // Up-to-date
 				}
 				// Same version but different digest = Obsolete (rebuilt)
@@ -1220,7 +1230,7 @@ func checkImageStatusWithCache(ctx context.Context, cli *client.Client, repo, ta
 	// Find which version the local image matches by digest
 	var matchedVersion string
 	for _, v := range versions {
-		if v.Digest == localDigest {
+		if digestMatches(localDigests, v.Digest) {
 			if v.Version != "latest" {
 				matchedVersion = v.Version
 			}
@@ -1239,8 +1249,8 @@ func checkImageStatusWithCache(ctx context.Context, cli *client.Client, repo, ta
 	}
 
 	// No version match found by digest - compare with latest digest directly
-	if latestVersionDigest != "" && localDigest != "" {
-		if localDigest == latestVersionDigest {
+	if latestVersionDigest != "" && len(localDigests) > 0 {
+		if digestMatches(localDigests, latestVersionDigest) {
 			return true, false, nil // Up-to-date
 		}
 		return false, false, nil // Obsolete
@@ -1249,7 +1259,7 @@ func checkImageStatusWithCache(ctx context.Context, cli *client.Client, repo, ta
 	// Fallback: check "latest" tag digest
 	for _, v := range versions {
 		if v.Version == "latest" {
-			if localDigest != "" && v.Digest == localDigest {
+			if len(localDigests) > 0 && digestMatches(localDigests, v.Digest) {
 				return true, false, nil
 			}
 			return false, false, nil
@@ -1294,6 +1304,20 @@ func getLocalImageDigest(ctx context.Context, cli *client.Client, imageName stri
 	return ""
 }
 
+func getLocalImageDigests(ctx context.Context, cli *client.Client, imageName string) []string {
+	imageInspect, _, err := cli.ImageInspectWithRaw(ctx, imageName)
+	if err != nil {
+		return nil
+	}
+	var digests []string
+	for _, repoDigest := range imageInspect.RepoDigests {
+		if idx := strings.Index(repoDigest, "@"); idx != -1 {
+			digests = append(digests, repoDigest[idx+1:])
+		}
+	}
+	return digests
+}
+
 // Modified printContainerProperties function for dock/dock.go
 // This version displays the image version next to the image name in the container summary
 
@@ -1326,12 +1350,12 @@ func printContainerProperties(ctx context.Context, cli *client.Client, container
 	} else if !common.Disconnected {
 		// Try to find version by matching digest with remote versions
 		fullImageName := fmt.Sprintf("%s:%s", repo, tag)
-		localDigest := getLocalImageDigest(ctx, cli, fullImageName)
-		if localDigest != "" {
+		localDigest := getLocalImageDigests(ctx, cli, fullImageName)
+		if len(localDigest) > 0 {
 			remoteVersionsByRepo := GetAllRemoteVersionsByRepo(architecture)
 			if repoVersions, ok := remoteVersionsByRepo[repo]; ok {
 				if versions, ok := repoVersions[baseName]; ok {
-					matchedVersion := GetVersionForDigest(versions, localDigest)
+					matchedVersion := GetVersionForDigests(versions, localDigest)
 					if matchedVersion != "" && matchedVersion != "latest" {
 						versionDisplay = matchedVersion
 					}
@@ -2928,11 +2952,11 @@ func PrintImagesTable(labelKey string, labelValue string, showVersions bool, fil
 					versionDisplay = existingVersion
 				} else {
 					// Get local image digest and find matching version in THIS REPO
-					localDigest := getLocalImageDigest(ctx, cli, repoTag)
-					if localDigest != "" {
+					localDigest := getLocalImageDigests(ctx, cli, repoTag)
+					if len(localDigest) > 0 {
 						if repoVersions, ok := remoteVersionsByRepo[repository]; ok {
 							if versions, ok := repoVersions[baseName]; ok {
-								matchedVersion := GetVersionForDigest(versions, localDigest)
+								matchedVersion := GetVersionForDigests(versions, localDigest)
 								if matchedVersion != "" {
 									versionDisplay = matchedVersion
 								}
