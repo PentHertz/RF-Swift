@@ -4004,13 +4004,6 @@ func recreateContainerWithUpdatedBinds(ctx context.Context, cli *client.Client, 
 	}
 	oldHostConfig.Resources.OomKillDisable = nil
 
-	// ── KEY FIX: create from committed image, not the original base image ──
-	// inspectData.Config.Image points to the original (e.g. sdr_light).
-	// We must create from the committed snapshot to preserve the filesystem
-	// (installed packages, user files, etc.).
-	//
-	// After a previous recreation, Config.Image will be a temp tag — in that
-	// case, read the REAL original from the label we stored last time.
 	originalImageName := oldConfig.Image
 	if label, ok := oldConfig.Labels["org.rfswift.original_image"]; ok && label != "" {
 		originalImageName = label // preserve the true original across multiple recreations
