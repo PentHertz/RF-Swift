@@ -2918,15 +2918,22 @@ func DockerTag(imageref string, imagetag string) {
 		panic(err)
 	}
 	defer cli.Close()
-
 	// Normalize source image reference
 	imageref = normalizeImageName(imageref)
-
 	err = cli.ImageTag(ctx, imageref, imagetag)
 	if err != nil {
 		panic(err)
+	}
+
+	// Remove old tag (only removes the reference, not the image layers)
+	_, err = cli.ImageRemove(ctx, imageref, image.RemoveOptions{
+		Force:         false,
+		PruneChildren: false,
+	})
+	if err != nil {
+		common.PrintWarningMessage(fmt.Sprintf("Retagged to '%s' but could not remove old tag '%s': %v", imagetag, imageref, err))
 	} else {
-		fmt.Println("[+] Image renamed!")
+		common.PrintSuccessMessage(fmt.Sprintf("Image renamed: '%s' → '%s'", imageref, imagetag))
 	}
 }
 
