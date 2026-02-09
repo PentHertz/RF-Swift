@@ -1222,7 +1222,7 @@ get_latest_release() {
   color_echo "blue" "🔍 Detecting the latest RF-Swift release..."
 
   # Default version as fallback
-  DEFAULT_VERSION="0.7.3"
+  DEFAULT_VERSION="1.0.0"
   VERSION="${DEFAULT_VERSION}"  # Initialize with default
   
   # First try: Use GitHub API with a proper User-Agent to avoid rate limiting issues
