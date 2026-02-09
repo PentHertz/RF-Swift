@@ -92,11 +92,18 @@ rfswift --engine podman run -n mycontainer -i penthertz/rfswift:sdr_light
 rfswift --engine docker run -n mycontainer -i penthertz/rfswift:sdr_light
 ```
 
+#### Podman support example
+
+https://github.com/user-attachments/assets/14b6d50f-5250-420e-94e4-474991113372
+
 #### Podman Highlights
 
 - **Rootless containers**: No daemon, no root — ideal for locked-down environments and shared lab machines
 - **OCI-compatible images**: All existing RF Swift images work out of the box with Podman
 - **Seamless device passthrough**: USB SDR dongles, serial adapters, and GPUs work with both engines
+
+
+
 - **Automatic cgroup handling**: RF Swift detects cgroup v1/v2 and configures device access rules accordingly
 
 #### Quick Setup
