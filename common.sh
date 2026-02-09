@@ -152,6 +152,51 @@ prompt_yes_no() {
   done
 }
 
+# Function to prompt user for a numbered choice (output goes to stderr, only result to stdout)
+prompt_choice() {
+  local prompt="$1"
+  shift
+  local options="$@"
+  local response
+  local num=1
+
+  if [ -t 0 ]; then
+    tty_device="/dev/stdin"
+  elif [ -e "/dev/tty" ]; then
+    tty_device="/dev/tty"
+  else
+    printf "${YELLOW}%s: Defaulting to option 1 (no terminal available)${NC}\n" "${prompt}" >&2
+    echo "1"
+    return 0
+  fi
+
+  printf "${YELLOW}%s${NC}\n" "${prompt}" >&2
+  for opt in $options; do
+    printf "  ${CYAN}%d)${NC} %s\n" "$num" "$opt" >&2
+    num=$((num + 1))
+  done
+  num=$((num - 1))
+
+  while true; do
+    printf "${YELLOW}Enter your choice [1-%d]: ${NC}" "$num" >&2
+    if read -r response < "$tty_device" 2>/dev/null; then
+      case "$response" in
+        [1-9]|[1-9][0-9])
+          if [ "$response" -ge 1 ] && [ "$response" -le "$num" ] 2>/dev/null; then
+            echo "$response"
+            return 0
+          fi
+          ;;
+      esac
+      echo "Please enter a number between 1 and $num." >&2
+    else
+      printf "${YELLOW}Defaulting to option 1 (couldn't read from terminal)${NC}\n" >&2
+      echo "1"
+      return 0
+    fi
+  done
+}
+
 # Function to check if a command exists
 command_exists() {
   command -v "$1" >/dev/null 2>&1
@@ -229,11 +274,8 @@ install_pipewire() {
     case "$distro" in
         "arch")
             echo -e "${CYAN}🏛️ Using pacman for PipeWire installation on Arch Linux${NC}"
-            # Update package database first
             sudo pacman -Sy --noconfirm
-            # Install PipeWire and related packages
             sudo pacman -S --noconfirm --needed pipewire pipewire-pulse pipewire-alsa pipewire-jack wireplumber
-            # Optional: install additional tools
             sudo pacman -S --noconfirm --needed pipewire-audio pipewire-media-session || true
             ;;
         "fedora")
@@ -241,10 +283,8 @@ install_pipewire() {
             ;;
         "rhel"|"centos")
             if command -v dnf &> /dev/null; then
-                # RHEL/CentOS 8+
                 sudo dnf install -y pipewire pipewire-pulseaudio pipewire-alsa wireplumber
             else
-                # RHEL/CentOS 7 - PipeWire not available, install PulseAudio instead
                 echo -e "${YELLOW}ℹ️ PipeWire not available on RHEL/CentOS 7, installing PulseAudio instead ℹ️${NC}"
                 sudo yum install -y epel-release
                 sudo yum install -y pulseaudio pulseaudio-utils alsa-utils
@@ -264,7 +304,6 @@ install_pipewire() {
             ;;
     esac
     
-    # Enable PipeWire services
     echo -e "${YELLOW}🔧 Enabling PipeWire services... 🔧${NC}"
     systemctl --user enable pipewire.service pipewire-pulse.service 2>/dev/null || true
     systemctl --user enable wireplumber.service 2>/dev/null || true
@@ -280,11 +319,8 @@ install_pulseaudio() {
     case "$distro" in
         "arch")
             echo -e "${CYAN}🏛️ Using pacman for PulseAudio installation on Arch Linux${NC}"
-            # Update package database first
             sudo pacman -Sy --noconfirm
-            # Install PulseAudio and related packages
             sudo pacman -S --noconfirm --needed pulseaudio pulseaudio-alsa alsa-utils
-            # Optional: install additional tools
             sudo pacman -S --noconfirm --needed pulseaudio-bluetooth pavucontrol || true
             ;;
         "fedora")
@@ -316,12 +352,10 @@ install_pulseaudio() {
 start_pipewire() {
     echo -e "${YELLOW}🎵 Starting PipeWire... 🎵${NC}"
     
-    # Try systemd user services first
     if systemctl --user start pipewire.service pipewire-pulse.service 2>/dev/null; then
         systemctl --user start wireplumber.service 2>/dev/null || true
         echo -e "${GREEN}🎧 PipeWire started via systemd services 🎧${NC}"
     else
-        # Fallback to direct execution
         pipewire &
         pipewire-pulse &
         wireplumber &
@@ -342,24 +376,11 @@ should_prefer_pipewire() {
     local distro="$1"
     
     case "$distro" in
-        "arch")
-            # Arch Linux: PipeWire is modern and well-supported
-            return 0
-            ;;
-        "fedora")
-            # PipeWire is default since Fedora 34
-            return 0
-            ;;
-        "ubuntu"|"debian")
-            # Available in modern versions
-            return 0
-            ;;
-        "opensuse")
-            # OpenSUSE has good PipeWire support
-            return 0
-            ;;
+        "arch")       return 0 ;;
+        "fedora")     return 0 ;;
+        "ubuntu"|"debian") return 0 ;;
+        "opensuse")   return 0 ;;
         "rhel"|"centos")
-            # Check if dnf is available (RHEL 8+)
             command -v dnf &> /dev/null
             ;;
         *)
@@ -388,7 +409,6 @@ check_audio_system() {
         return
     fi
 
-    # Detect Linux distribution and package manager
     local distro=$(detect_distro)
     local pkg_manager=$(get_package_manager)
     local current_audio=$(detect_audio_system)
@@ -396,7 +416,6 @@ check_audio_system() {
     echo -e "${BLUE}🐧 Detected distribution: $distro 🐧${NC}"
     echo -e "${BLUE}📦 Package manager: $pkg_manager 📦${NC}"
     
-    # Check current audio system status
     case "$current_audio" in
         "pipewire")
             echo -e "${GREEN}✅ PipeWire is already running ✅${NC}"
@@ -411,11 +430,9 @@ check_audio_system() {
             ;;
     esac
     
-    # Determine which audio system to install
     if should_prefer_pipewire "$distro"; then
         echo -e "${BLUE}🎯 PipeWire is recommended for $distro 🎯${NC}"
         
-        # Check if PipeWire is available
         if command -v pipewire &> /dev/null || command -v pw-cli &> /dev/null; then
             echo -e "${GREEN}✅ PipeWire is already installed ✅${NC}"
             start_pipewire
@@ -433,7 +450,6 @@ check_audio_system() {
     else
         echo -e "${BLUE}🎯 PulseAudio is recommended for $distro 🎯${NC}"
         
-        # Check if PulseAudio is available
         if command -v pulseaudio &> /dev/null; then
             echo -e "${GREEN}✅ PulseAudio is already installed ✅${NC}"
             start_pulseaudio
@@ -490,21 +506,17 @@ check_agnoster_dependencies() {
   local issues=0
   local distro=$(detect_distro)
   
-  # Check for fonts
   color_echo "blue" "Checking for Powerline fonts..."
   
   case "$(uname -s)" in
     Darwin*)
-      # Check if fonts exist in macOS
       if [ ! -f "$HOME/Library/Fonts/PowerlineSymbols.otf" ] && ! ls "$HOME/Library/Fonts"/*Nerd* >/dev/null 2>&1; then
         color_echo "yellow" "⚠️ Powerline/Nerd fonts not found in user fonts directory"
         issues=$((issues + 1))
       fi
       ;;
     Linux*)
-      # Check if fonts exist in Linux
       if [ ! -f "$HOME/.local/share/fonts/PowerlineSymbols.otf" ] && ! ls "$HOME/.local/share/fonts"/*Nerd* >/dev/null 2>&1; then
-        # Also check system fonts
         if ! fc-list | grep -i powerline >/dev/null 2>&1 && ! fc-list | grep -i nerd >/dev/null 2>&1; then
           color_echo "yellow" "⚠️ Powerline/Nerd fonts not found"
           issues=$((issues + 1))
@@ -513,13 +525,11 @@ check_agnoster_dependencies() {
       ;;
   esac
   
-  # Check terminal capabilities
   if [ -z "$TERM" ] || ! echo "$TERM" | grep -q "256color"; then
     color_echo "yellow" "⚠️ Terminal may not support 256 colors (TERM=$TERM)"
     color_echo "cyan" "💡 Try setting: export TERM=xterm-256color"
   fi
   
-  # Check for Git (agnoster shows git status)
   if ! command_exists git; then
     color_echo "yellow" "⚠️ Git not found (agnoster theme shows git information)"
     issues=$((issues + 1))
@@ -609,10 +619,8 @@ check_curl() {
                     ;;
                 "rhel"|"centos")
                     if command -v dnf &> /dev/null; then
-                        echo -e "${YELLOW}🐧 Installing cURL using dnf... 🐧${NC}"
                         sudo dnf install -y curl
                     else
-                        echo -e "${YELLOW}🐧 Installing cURL using yum... 🐧${NC}"
                         sudo yum install -y curl
                     fi
                     ;;
@@ -640,56 +648,293 @@ check_curl() {
     fi
 }
 
-# Enhanced Docker check with Arch Linux support
-check_docker() {
-    # Enhanced Steam Deck detection
-    if [ "$(uname -s)" == "Linux" ]; then
-        if is_steam_deck; then
-            echo -e "${MAGENTA}🎮 Steam Deck detected automatically! 🎮${NC}"
-            install_docker_steamdeck
-            return
-        else
-            echo -e "${YELLOW}🎮 Are you installing on a Steam Deck? (yes/no) 🎮${NC}"
-            read -p "Choose an option: " steamdeck_install
-            if [ "$steamdeck_install" == "yes" ]; then
-                install_docker_steamdeck
-                return
-            fi
-        fi
+# ═══════════════════════════════════════════════════════════════════════════════
+# Container Engine Detection & Selection (Docker / Podman)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# Global state set by detect_container_engines
+HAS_DOCKER=false
+HAS_PODMAN=false
+DOCKER_DAEMON_DOWN=false
+
+detect_container_engines() {
+    HAS_DOCKER=false
+    HAS_PODMAN=false
+    DOCKER_DAEMON_DOWN=false
+
+    # Check Podman first (may provide a 'docker' shim via podman-docker)
+    if command_exists podman; then
+        HAS_PODMAN=true
     fi
-    
-    # Check if Docker is installed
-    if ! command -v docker &> /dev/null; then
-        echo -e "${RED}🐳 Docker is not installed. Do you want to install it now? (yes/no) 🐳${NC}"
-        read -p "Choose an option: " install_docker
-        if [ "$install_docker" == "yes" ]; then
-            install_docker_standard
+
+    # Check Docker — must distinguish real Docker from podman-docker shim
+    if command_exists docker; then
+        local docker_ver
+        docker_ver=$(docker --version 2>/dev/null || true)
+        if echo "$docker_ver" | grep -qi "podman"; then
+            # podman-docker shim, not real Docker
+            HAS_PODMAN=true
+        elif docker info >/dev/null 2>&1; then
+            HAS_DOCKER=true
         else
-            echo -e "${RED}❌ Docker is required to proceed. Exiting. ❌${NC}"
-            exit 1
-        fi
-    else
-        echo -e "${GREEN}✅ Docker is already installed. Moving on. ✅${NC}"
-        # This part only runs in the full check_docker function
-        if [ "${FUNCNAME[0]}" == "check_docker" ]; then
-            install_buildx
-            install_docker_compose
+            # Docker binary exists but daemon is not running
+            HAS_DOCKER=true
+            DOCKER_DAEMON_DOWN=true
         fi
     fi
 }
 
-# Create an alias for the user-only version
+# Main container engine check — replaces the old check_docker()
+check_container_engine() {
+    echo -e "${BLUE}🔍 Checking for container engines... 🔍${NC}"
+
+    detect_container_engines
+
+    # ── Both already installed ────────────────────────────────────────────
+    if [ "$HAS_DOCKER" = true ] && [ "$HAS_PODMAN" = true ]; then
+        echo -e "${GREEN}✅ Both Docker and Podman are installed. ✅${NC}"
+        if [ "$DOCKER_DAEMON_DOWN" = true ]; then
+            echo -e "${YELLOW}⚠️  Docker daemon is not running. Start it with: sudo systemctl start docker ⚠️${NC}"
+        fi
+        echo -e "${CYAN}ℹ️  RF-Swift auto-detects the engine at runtime.${NC}"
+        echo -e "${CYAN}   Use 'rfswift --engine docker' or 'rfswift --engine podman' to override.${NC}"
+        return 0
+    fi
+
+    # ── Only Docker installed ─────────────────────────────────────────────
+    if [ "$HAS_DOCKER" = true ]; then
+        echo -e "${GREEN}✅ Docker is already installed. ✅${NC}"
+        if [ "$DOCKER_DAEMON_DOWN" = true ]; then
+            echo -e "${YELLOW}⚠️  Docker daemon is not running. Start it with: sudo systemctl start docker ⚠️${NC}"
+        fi
+        if prompt_yes_no "Would you also like to install Podman (rootless containers)?" "n"; then
+            install_podman
+        fi
+        return 0
+    fi
+
+    # ── Only Podman installed ─────────────────────────────────────────────
+    if [ "$HAS_PODMAN" = true ]; then
+        echo -e "${GREEN}✅ Podman is already installed. ✅${NC}"
+        if prompt_yes_no "Would you also like to install Docker?" "n"; then
+            install_docker_standard
+        fi
+        return 0
+    fi
+
+    # ── Neither installed ─────────────────────────────────────────────────
+    echo -e "${YELLOW}⚠️  No container engine found. ⚠️${NC}"
+    echo -e "${BLUE}ℹ️  RF-Swift requires Docker or Podman to run containers.${NC}"
+    echo ""
+    echo -e "${CYAN}📝 Which container engine would you like to install?${NC}"
+    echo ""
+    echo -e "${CYAN}   🐳 Docker  — Industry standard, requires daemon (root)${NC}"
+    echo -e "${CYAN}              Best compatibility, large ecosystem${NC}"
+    echo ""
+    echo -e "${CYAN}   🦭 Podman  — Daemonless, rootless by default${NC}"
+    echo -e "${CYAN}              Drop-in Docker replacement, no root needed${NC}"
+    echo ""
+
+    # Steam Deck special case
+    if [ "$(uname -s)" == "Linux" ] && is_steam_deck; then
+        echo -e "${MAGENTA}🎮 Steam Deck detected! Docker with Steam Deck optimizations is recommended. 🎮${NC}"
+        if prompt_yes_no "Install Docker with Steam Deck optimizations?" "y"; then
+            install_docker_steamdeck
+            return $?
+        fi
+    fi
+
+    local CHOICE
+    CHOICE=$(prompt_choice "Select a container engine to install:" "Docker" "Podman" "Both" "Skip")
+
+    case "$CHOICE" in
+        1)
+            install_docker_standard
+            install_buildx
+            install_docker_compose
+            ;;
+        2)
+            install_podman
+            ;;
+        3)
+            install_docker_standard
+            install_buildx
+            install_docker_compose
+            install_podman
+            ;;
+        4)
+            echo -e "${YELLOW}⚠️  Container engine installation skipped. ⚠️${NC}"
+            echo -e "${YELLOW}   You will need Docker or Podman before using RF-Swift.${NC}"
+            return 1
+            ;;
+    esac
+}
+
+# Legacy wrapper — scripts calling check_docker() still work
+check_docker() {
+    check_container_engine
+}
+
 check_docker_user_only() {
-    check_docker
+    check_container_engine
+}
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Podman Installation
+# ═══════════════════════════════════════════════════════════════════════════════
+
+install_podman() {
+    echo -e "${BLUE}🦭 Installing Podman... 🦭${NC}"
+
+    case "$(uname -s)" in
+        Darwin*)
+            install_podman_macos
+            ;;
+        Linux*)
+            install_podman_linux
+            ;;
+        *)
+            echo -e "${RED}🚨 Unsupported OS: $(uname -s) 🚨${NC}"
+            return 1
+            ;;
+    esac
+}
+
+install_podman_macos() {
+    if command_exists brew; then
+        echo -e "${BLUE}🍏 Installing Podman via Homebrew... 🍏${NC}"
+        brew install podman
+
+        echo -e "${BLUE}🚀 Initialising Podman machine... 🚀${NC}"
+        podman machine init 2>/dev/null || true
+        podman machine start 2>/dev/null || true
+
+        if podman info >/dev/null 2>&1; then
+            echo -e "${GREEN}🎉 Podman is up and running on macOS! 🎉${NC}"
+        else
+            echo -e "${YELLOW}⚠️  Podman installed. Run 'podman machine start' to start the VM. ⚠️${NC}"
+        fi
+    else
+        echo -e "${RED}🚨 Homebrew is not installed! Please install Homebrew first: 🚨${NC}"
+        echo -e "${YELLOW}/bin/bash -c \"\$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)\"${NC}"
+        return 1
+    fi
+}
+
+install_podman_linux() {
+    local distro=$(detect_distro)
+
+    echo -e "${YELLOW}⚠️ This will require sudo privileges to install Podman. ⚠️${NC}"
+
+    case "$distro" in
+        "arch")
+            echo -e "${CYAN}🏛️ Installing Podman using pacman... 📦${NC}"
+            sudo pacman -Sy --noconfirm
+            sudo pacman -S --noconfirm --needed podman podman-compose slirp4netns fuse-overlayfs crun
+            ;;
+        "fedora")
+            echo -e "${BLUE}📦 Installing Podman using dnf... 📦${NC}"
+            sudo dnf install -y podman podman-compose slirp4netns fuse-overlayfs
+            ;;
+        "rhel"|"centos")
+            echo -e "${BLUE}📦 Installing Podman... 📦${NC}"
+            if command -v dnf &> /dev/null; then
+                sudo dnf install -y podman podman-compose slirp4netns fuse-overlayfs
+            else
+                sudo yum install -y podman slirp4netns fuse-overlayfs
+            fi
+            ;;
+        "debian"|"ubuntu")
+            echo -e "${BLUE}📦 Installing Podman using apt... 📦${NC}"
+            sudo apt update
+            sudo apt install -y podman podman-compose slirp4netns fuse-overlayfs uidmap
+            ;;
+        "opensuse")
+            echo -e "${BLUE}📦 Installing Podman using zypper... 📦${NC}"
+            sudo zypper install -y podman podman-compose slirp4netns fuse-overlayfs
+            ;;
+        "alpine")
+            echo -e "${BLUE}📦 Installing Podman using apk... 📦${NC}"
+            sudo apk add podman podman-compose fuse-overlayfs slirp4netns
+            ;;
+        *)
+            echo -e "${RED}❌ Unsupported distribution: $distro ❌${NC}"
+            echo -e "${YELLOW}Please install Podman manually: https://podman.io/docs/installation${NC}"
+            return 1
+            ;;
+    esac
+
+    # Configure rootless Podman
+    configure_podman_rootless
+
+    echo -e "${GREEN}🎉 Podman installed successfully! 🎉${NC}"
+    echo -e "${CYAN}💡 Tip: Podman is a drop-in replacement for Docker.${NC}"
+    echo -e "${CYAN}   RF-Swift will auto-detect Podman at runtime.${NC}"
+    return 0
+}
+
+# Configure rootless Podman (subuid/subgid, lingering, etc.)
+configure_podman_rootless() {
+    local current_user
+    current_user=$(whoami)
+
+    echo -e "${BLUE}🔧 Configuring rootless Podman for '$current_user'... 🔧${NC}"
+
+    # Ensure subuid/subgid ranges
+    if [ -f /etc/subuid ]; then
+        if ! grep -q "^${current_user}:" /etc/subuid 2>/dev/null; then
+            echo -e "${BLUE}   Adding subordinate UID range...${NC}"
+            sudo usermod --add-subuids 100000-165535 "$current_user" 2>/dev/null || true
+        fi
+    fi
+
+    if [ -f /etc/subgid ]; then
+        if ! grep -q "^${current_user}:" /etc/subgid 2>/dev/null; then
+            echo -e "${BLUE}   Adding subordinate GID range...${NC}"
+            sudo usermod --add-subgids 100000-165535 "$current_user" 2>/dev/null || true
+        fi
+    fi
+
+    # Enable lingering so rootless containers survive logout
+    if command_exists loginctl; then
+        echo -e "${BLUE}   Enabling login lingering...${NC}"
+        sudo loginctl enable-linger "$current_user" 2>/dev/null || true
+    fi
+
+    # Enable Podman socket for compatibility with Docker-expecting tools
+    if command_exists systemctl; then
+        echo -e "${BLUE}   Enabling Podman socket...${NC}"
+        systemctl --user enable podman.socket 2>/dev/null || true
+        systemctl --user start podman.socket 2>/dev/null || true
+    fi
+
+    echo -e "${GREEN}   ✅ Rootless Podman configured ✅${NC}"
+}
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Docker Installation
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# Add current user to the docker group
+add_user_to_docker_group() {
+    if command_exists sudo && command_exists groups; then
+        current_user=$(whoami)
+        if ! groups "$current_user" 2>/dev/null | grep -q docker; then
+            echo -e "${BLUE}🔧 Adding '$current_user' to Docker group... 🔧${NC}"
+            sudo usermod -aG docker "$current_user"
+            echo -e "${YELLOW}⚡ You may need to log out and log back in for Docker group changes to take effect. ⚡${NC}"
+        fi
+    fi
 }
 
 # Enhanced Docker installation with Arch Linux support
 install_docker_standard() {
     arch=$(uname -m)
     os=$(uname -s)
+
+    echo -e "${BLUE}🐳 Installing Docker... 🐳${NC}"
     
     if [ "$os" == "Darwin" ]; then
-        # macOS installation using Homebrew
         if ! command -v brew &> /dev/null; then
             echo -e "${RED}❌ Homebrew is not installed. Please install Homebrew first. ❌${NC}"
             echo "Visit https://brew.sh/ for installation instructions."
@@ -702,39 +947,27 @@ install_docker_standard() {
     elif [ "$os" == "Linux" ]; then
         echo -e "${YELLOW}🐧 Installing Docker on your Linux machine... 🐧${NC}"
         
-        # Enhanced Arch Linux Docker installation
         local distro=$(detect_distro)
         if [ "$distro" = "arch" ]; then
             echo -e "${CYAN}🏛️ Arch Linux detected - using pacman for Docker installation${NC}"
-            echo -e "${YELLOW}⚠️ This will require sudo privileges to install Docker. ⚠️${NC}"
             
-            # Update package database and install Docker
             sudo pacman -Sy --noconfirm
             sudo pacman -S --noconfirm --needed docker docker-compose
             
-            # Enable and start Docker service
             if command -v systemctl &> /dev/null; then
                 echo -e "${BLUE}🚀 Enabling and starting Docker service... 🚀${NC}"
                 sudo systemctl enable docker
                 sudo systemctl start docker
             fi
             
-            # Add user to docker group
-            current_user=$(whoami)
-            if ! groups "$current_user" 2>/dev/null | grep -q docker; then
-                echo -e "${BLUE}🔧 Adding '$current_user' to Docker group... 🔧${NC}"
-                sudo usermod -aG docker "$current_user"
-                echo -e "${YELLOW}⚡ You may need to log out and log back in for Docker group changes to take effect. ⚡${NC}"
-            fi
+            add_user_to_docker_group
             
             echo -e "${GREEN}🎉 Docker installed successfully using pacman! 🎉${NC}"
             
-            # Still install buildx and compose for completeness
             install_buildx
             install_docker_compose
             return 0
         else
-            # Standard Docker installation for other distributions
             echo -e "${YELLOW}⚠️ This will require sudo privileges to install Docker. ⚠️${NC}"
             
             echo -e "${BLUE}Using Docker's official installation script... 🐧${NC}"
@@ -748,14 +981,7 @@ install_docker_standard() {
                 exit 1
             fi
 
-            if command -v sudo && command -v groups; then
-                current_user=$(whoami)
-                if ! groups "$current_user" 2>/dev/null | grep -q docker; then
-                    echo -e "${BLUE}🔧 Adding you to the Docker group... 🔧${NC}"
-                    sudo usermod -aG docker "$current_user"
-                    echo -e "${YELLOW}⚡ You may need to log out and log back in for this to take effect. ⚡${NC}"
-                fi
-            fi
+            add_user_to_docker_group
             
             if command -v systemctl &> /dev/null; then
                 echo -e "${BLUE}🚀 Starting Docker service... 🚀${NC}"
@@ -776,7 +1002,6 @@ install_docker_standard() {
 
 # Enhanced Steam Deck Docker installation
 install_docker_steamdeck() {
-    # Installation steps for Docker on Steam Deck (Arch Linux based)
     echo -e "${MAGENTA}🎮 Installing Docker on Steam Deck using Arch Linux methods... 🎮${NC}"
     
     echo -e "${YELLOW}[+] 🎮 Disabling read-only mode on Steam Deck 🎮${NC}"
@@ -790,18 +1015,10 @@ install_docker_steamdeck() {
     echo -e "${YELLOW}[+] 🐳 Installing Docker using pacman 🐳${NC}"
     sudo pacman -Syu --noconfirm docker docker-compose
 
-    # Install Docker Compose for Steam Deck
     install_docker_compose_steamdeck
 
-    # Add user to docker group
-    current_user=$(whoami)
-    if ! groups "$current_user" 2>/dev/null | grep -q docker; then
-        echo -e "${YELLOW}[+] 👥 Adding '$current_user' user to Docker user group 👥${NC}"
-        sudo usermod -aG docker "$current_user"
-        echo -e "${YELLOW}⚡ You may need to log out and log back in for Docker group changes to take effect. ⚡${NC}"
-    fi
+    add_user_to_docker_group
     
-    # Start Docker service
     if command -v systemctl &> /dev/null; then
         echo -e "${BLUE}🚀 Starting Docker service... 🚀${NC}"
         sudo systemctl start docker
@@ -816,7 +1033,6 @@ install_docker_compose_steamdeck() {
     DOCKER_CONFIG=${DOCKER_CONFIG:-$HOME/.docker}
     mkdir -p $DOCKER_CONFIG/cli-plugins
     
-    # Download Docker Compose for x86_64 (Steam Deck architecture)
     curl -SL https://github.com/docker/compose/releases/download/v5.0.2/docker-compose-linux-x86_64 -o $DOCKER_CONFIG/cli-plugins/docker-compose
     chmod +x $DOCKER_CONFIG/cli-plugins/docker-compose
 
@@ -825,41 +1041,30 @@ install_docker_compose_steamdeck() {
 
 install_buildx() {
     arch=$(uname -m)
-    os=$(uname -s | tr '[:upper:]' '[:lower:]') # Convert OS to lowercase
+    os=$(uname -s | tr '[:upper:]' '[:lower:]')
     version="v0.31.0"
 
-    # Map architecture to buildx naming convention
     case "$arch" in
-        x86_64|amd64)
-            arch="amd64";;
-        arm64|aarch64)
-            arch="arm64";;
-        riscv64)
-            arch="riscv64";;
+        x86_64|amd64)  arch="amd64";;
+        arm64|aarch64) arch="arm64";;
+        riscv64)       arch="riscv64";;
         *)
             printf "${RED}❌ Unsupported architecture: \"%s\" -> Unable to install Buildx ❌${NC}\n" "$arch" >&2; exit 2;;
     esac
 
-    # Check if Buildx is already installed
     if ! sudo docker buildx version &> /dev/null; then
         echo -e "${YELLOW}[+] 🏗️ Installing Docker Buildx 🏗️${NC}"
 
-        # Additional setup for Linux
         if [ "$os" = "linux" ]; then
             sudo docker run --privileged --rm tonistiigi/binfmt --install all
         fi
 
-        # Create CLI plugins directory if it doesn't exist
         mkdir -p ~/.docker/cli-plugins/
 
-        # Determine the Buildx binary URL based on OS and architecture
         buildx_url="https://github.com/docker/buildx/releases/download/${version}/buildx-${version}.${os}-${arch}"
 
-        # Download the Buildx binary
         echo -e "${YELLOW}[+] 📥 Downloading Buildx from ${buildx_url} 📥${NC}"
         sudo curl -sSL "$buildx_url" -o "/usr/local/lib/docker/cli-plugins/docker-buildx"
-
-        # Make the binary executable
         sudo chmod +x "/usr/local/lib/docker/cli-plugins/docker-buildx"
 
         echo -e "${GREEN}✅ Docker Buildx installed successfully. ✅${NC}"
@@ -870,37 +1075,27 @@ install_buildx() {
 
 install_docker_compose() {
     arch=$(uname -m)
-    os=$(uname -s | tr '[:upper:]' '[:lower:]') # Convert OS to lowercase
+    os=$(uname -s | tr '[:upper:]' '[:lower:]')
     version="v5.0.2"
 
-    # Map architecture to Docker Compose naming convention
     case "$arch" in
-        x86_64|amd64)
-            arch="x86_64";;
-        arm64|aarch64)
-            arch="aarch64";;
-        riscv64)
-            arch="riscv64";;
+        x86_64|amd64)  arch="x86_64";;
+        arm64|aarch64) arch="aarch64";;
+        riscv64)       arch="riscv64";;
         *)
             printf "${RED}❌ Unsupported architecture: \"%s\" -> Unable to install Docker Compose ❌${NC}\n" "$arch" >&2; exit 2;;
     esac
 
-    # Check if Docker Compose is already installed
     if ! sudo docker compose version &> /dev/null; then
         echo -e "${YELLOW}[+] 🧩 Installing Docker Compose v2 🧩${NC}"
 
-        # Determine the Docker Compose binary URL based on OS and architecture
         compose_url="https://github.com/docker/compose/releases/download/${version}/docker-compose-${os}-${arch}"
 
-        # Set the Docker CLI plugins directory
         DOCKER_CONFIG=${DOCKER_CONFIG:-$HOME/.docker}
         mkdir -p $DOCKER_CONFIG/cli-plugins
 
-        # Download the Docker Compose binary
         echo -e "${YELLOW}[+] 📥 Downloading Docker Compose from ${compose_url} 📥${NC}"
         sudo curl -sSL "$compose_url" -o "/usr/local/lib/docker/cli-plugins/docker-compose"
-
-        # Make the binary executable
         sudo chmod +x "/usr/local/lib/docker/cli-plugins/docker-compose"
 
         echo -e "${GREEN}✅ Docker Compose v2 installed successfully. ✅${NC}"
@@ -908,6 +1103,10 @@ install_docker_compose() {
         echo -e "${GREEN}✅ Docker Compose v2 is already installed. Moving on. ✅${NC}"
     fi
 }
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Go, build, and image management
+# ═══════════════════════════════════════════════════════════════════════════════
 
 # Enhanced Go installation with Arch Linux support
 install_go() {
@@ -922,7 +1121,6 @@ install_go() {
         return 0
     fi
 
-    # Check if Go is available via package manager on Arch Linux
     local distro=$(detect_distro)
     if [ "$distro" = "arch" ]; then
         echo -e "${CYAN}🏛️ Arch Linux detected. Installing Go using pacman... 📦${NC}"
@@ -932,24 +1130,18 @@ install_go() {
         return 0
     fi
 
-    # Fallback to manual installation for other distributions
     [ -d thirdparty ] || mkdir thirdparty
     cd thirdparty
     arch=$(uname -m)
-    os=$(uname -s | tr '[:upper:]' '[:lower:]') # Normalize OS name to lowercase
+    os=$(uname -s | tr '[:upper:]' '[:lower:]')
     prog=""
     version="1.25.6"
 
-    # Map architecture and OS to Go binary tar.gz naming convention
     case "$arch" in
-        x86_64|amd64)
-            arch="amd64";;
-        i?86)
-            arch="386";;
-        arm64|aarch64)
-            arch="arm64";;
-        riscv64)
-            arch="riscv64";;
+        x86_64|amd64)  arch="amd64";;
+        i?86)          arch="386";;
+        arm64|aarch64) arch="arm64";;
+        riscv64)       arch="riscv64";;
         *)
             printf "${RED}❌ Unsupported architecture: \"%s\" -> Unable to install Go ❌${NC}\n" "$arch" >&2; exit 2;;
     esac
@@ -961,7 +1153,6 @@ install_go() {
             printf "${RED}❌ Unsupported OS: \"%s\" -> Unable to install Go ❌${NC}\n" "$os" >&2; exit 2;;
     esac
 
-    # Download and install Go
     echo -e "${YELLOW}[+] 📥 Downloading Go from https://go.dev/dl/${prog} 📥${NC}"
     wget "https://go.dev/dl/${prog}"
     sudo rm -rf /usr/local/go && sudo tar -C /usr/local -xzf $prog
@@ -975,13 +1166,12 @@ building_rfswift() {
     cd go/rfswift/
     echo -e "${YELLOW}🔨 Building RF Swift Go Project... 🔨${NC}"
     go build .
-    mv rfswift ../.. # moving compiled file to project's root
+    mv rfswift ../..
     cd ../..
     echo -e "${GREEN}✅ RF Swift Go Project built successfully. ✅${NC}"
 }
 
 build_docker_image() {
-    # Prompt the user to choose the architecture(s)
     echo -e "${YELLOW}🏗️ Select the architecture(s) to build for: 🏗️${NC}"
     echo "1) amd64 💻"
     echo "2) arm64/v8 📱"
@@ -989,31 +1179,22 @@ build_docker_image() {
     read -p "Choose an option (1, 2, or 3): " arch_option
 
     case "$arch_option" in
-        1)
-            PLATFORM="linux/amd64"
-            ;;
-        2)
-            PLATFORM="linux/arm64/v8"
-            ;;
-        3)
-            PLATFORM="linux/riscv64"
-            ;;
+        1) PLATFORM="linux/amd64" ;;
+        2) PLATFORM="linux/arm64/v8" ;;
+        3) PLATFORM="linux/riscv64" ;;
         *)
             echo -e "${RED}❌ Invalid option. Exiting. ❌${NC}"
             exit 1
             ;;
     esac
 
-    # Set default values
     DEFAULT_IMAGE="myrfswift:latest"
     DEFAULT_DOCKERFILE="Dockerfile"
 
-    # Prompt the user for input with default values
     read -p "Enter you ressources directory (where configs, and scripts are placed): " ressourcesdir
     read -p "Enter image tag value (default: $DEFAULT_IMAGE): " imagename
     read -p "Enter value for Dockerfile to use (default: $DEFAULT_DOCKERFILE): " dockerfile
 
-    # Use default values if variables are empty
     imagename=${imagename:-$DEFAULT_IMAGE}
     dockerfile=${dockerfile:-$DEFAULT_DOCKERFILE}
 
@@ -1030,15 +1211,16 @@ pull_docker_image() {
     sudo docker pull $pull_image
 }
 
-# Enhanced binary installation with better path management
+# ═══════════════════════════════════════════════════════════════════════════════
+# Binary installation and alias management
+# ═══════════════════════════════════════════════════════════════════════════════
+
 install_binary_alias() {
-    # First, ask where to install the binary
     echo -e "${YELLOW}📦 Where would you like to install the rfswift binary? 📦${NC}"
     echo -e "1) /usr/local/bin (requires sudo privileges) 🔐"
     echo -e "2) $HOME/.rfswift/bin/ (user-only installation) 👤"
     read -p "Choose an option (1 or 2): " install_location
 
-    # Set the binary installation path based on user's choice
     if [ "$install_location" == "1" ]; then
         INSTALL_DIR="/usr/local/bin"
         BINARY_PATH="$INSTALL_DIR/rfswift"
@@ -1049,12 +1231,9 @@ install_binary_alias() {
         BINARY_PATH="$INSTALL_DIR/rfswift"
         SUDO_CMD=""
         echo -e "${YELLOW}[+] 🏠 Installing to user location ($INSTALL_DIR) 👤${NC}"
-        
-        # Create the directory if it doesn't exist
         mkdir -p "$INSTALL_DIR"
     fi
 
-    # Copy the binary to the installation directory
     SOURCE_BINARY=$(pwd)/rfswift
     if [ -f "$SOURCE_BINARY" ]; then
         echo -e "${YELLOW}[+] 📋 Copying binary to $INSTALL_DIR 📋${NC}"
@@ -1065,13 +1244,11 @@ install_binary_alias() {
         exit 1
     fi
 
-    # Ask if user wants to create an alias
     read -p "Do you want to create an alias for the binary? (yes/no): " create_alias
     if [ "$create_alias" == "yes" ]; then
         read -p "Enter the alias name for the binary (default: rfswift): " alias_name
         alias_name=${alias_name:-rfswift}
         
-        # Detect the current user and home directory
         if [ -n "${SUDO_USER-}" ]; then
             CURRENT_USER="$SUDO_USER"
             HOME_DIR=$(eval echo "~$SUDO_USER")
@@ -1080,53 +1257,40 @@ install_binary_alias() {
             HOME_DIR=$HOME
         fi
         
-        # Detect the shell for the current user
         SHELL_NAME=$(basename "$SHELL")
         
-        # Choose the alias file based on the detected shell
         case "$SHELL_NAME" in
             bash)
                 if [[ "$OSTYPE" == "darwin"* ]]; then
-                    ALIAS_FILE="$HOME_DIR/.bash_profile"  # macOS
+                    ALIAS_FILE="$HOME_DIR/.bash_profile"
                 else
-                    ALIAS_FILE="$HOME_DIR/.bashrc"        # Linux
+                    ALIAS_FILE="$HOME_DIR/.bashrc"
                 fi
                 ;;
-            zsh)
-                ALIAS_FILE="$HOME_DIR/.zshrc"
-                ;;
+            zsh)  ALIAS_FILE="$HOME_DIR/.zshrc" ;;
             fish)
                 ALIAS_FILE="$HOME_DIR/.config/fish/config.fish"
-                # Create fish config directory if it doesn't exist
                 mkdir -p "$(dirname "$ALIAS_FILE")"
                 ;;
-            *)
-                ALIAS_FILE="$HOME_DIR/.${SHELL_NAME}rc"
-                ;;
+            *)    ALIAS_FILE="$HOME_DIR/.${SHELL_NAME}rc" ;;
         esac
         
-        # Create the alias file if it doesn't exist
         if [[ ! -f "$ALIAS_FILE" ]]; then
             echo -e "${YELLOW}[+] 📝 Alias file $ALIAS_FILE does not exist. Creating it... 🆕${NC}"
             touch "$ALIAS_FILE"
         fi
         
-        # Check if the alias already exists in the config file
         ALIAS_EXISTS=false
         ALIAS_NEEDS_UPDATE=false
         if [ -f "$ALIAS_FILE" ]; then
-            # Handle fish shell syntax differently
             if [ "$SHELL_NAME" = "fish" ]; then
-                EXISTING_ALIAS=$(grep "^alias $alias_name " "$ALIAS_FILE" 2>/dev/null)
-                ALIAS_PATTERN="^alias $alias_name "
+                EXISTING_ALIAS=$(grep "^alias $alias_name " "$ALIAS_FILE" 2>/dev/null || true)
             else
-                EXISTING_ALIAS=$(grep "^alias $alias_name=" "$ALIAS_FILE" 2>/dev/null)
-                ALIAS_PATTERN="^alias $alias_name="
+                EXISTING_ALIAS=$(grep "^alias $alias_name=" "$ALIAS_FILE" 2>/dev/null || true)
             fi
             
             if [ -n "$EXISTING_ALIAS" ]; then
                 ALIAS_EXISTS=true
-                # Extract the path from the existing alias
                 if [ "$SHELL_NAME" = "fish" ]; then
                     EXISTING_PATH=$(echo "$EXISTING_ALIAS" | sed -E "s/^alias $alias_name '?([^']*)'?$/\1/")
                 else
@@ -1140,12 +1304,11 @@ install_binary_alias() {
                     echo -e "${YELLOW}    New: $BINARY_PATH${NC}"
                     read -p "Do you want to update the alias to the new path? (yes/no): " update_alias
                     if [ "$update_alias" == "yes" ]; then
-                        # Remove the existing alias line
-                        sed -i.bak "/$ALIAS_PATTERN/d" "$ALIAS_FILE"
-                        # Add the new alias with appropriate syntax
                         if [ "$SHELL_NAME" = "fish" ]; then
+                            sed -i.bak "/^alias $alias_name /d" "$ALIAS_FILE"
                             echo "alias $alias_name '$BINARY_PATH'" >> "$ALIAS_FILE"
                         else
+                            sed -i.bak "/^alias $alias_name=/d" "$ALIAS_FILE"
                             echo "alias $alias_name='$BINARY_PATH'" >> "$ALIAS_FILE"
                         fi
                         echo -e "${GREEN}✅ Alias '$alias_name' updated successfully. ✅${NC}"
@@ -1158,9 +1321,7 @@ install_binary_alias() {
             fi
         fi
         
-        # Only add the alias if it doesn't exist and doesn't need an update
         if [ "$ALIAS_EXISTS" = false ] && [ "$ALIAS_NEEDS_UPDATE" = false ]; then
-            # Add the alias to the appropriate shell configuration file for the user
             if [ "$SHELL_NAME" = "fish" ]; then
                 echo "alias $alias_name '$BINARY_PATH'" >> "$ALIAS_FILE"
             else
@@ -1169,25 +1330,14 @@ install_binary_alias() {
             echo -e "${GREEN}✅ Alias '$alias_name' installed successfully! ✅${NC}"
         fi
         
-        # Provide instructions to apply changes
         case "$SHELL_NAME" in
-            "zsh")
-                echo -e "${YELLOW}🔄 Zsh configuration updated. Please restart your terminal or run 'exec zsh' to apply the changes. 🔄${NC}"
-                ;;
-            "bash")
-                echo -e "${YELLOW}🔄 Bash configuration updated. Please run 'source $ALIAS_FILE' to apply the changes. 🔄${NC}"
-                ;;
-            "fish")
-                echo -e "${YELLOW}🔄 Fish configuration updated. Please restart your terminal or run 'source $ALIAS_FILE' to apply the changes. 🔄${NC}"
-                ;;
-            *)
-                echo -e "${YELLOW}🔄 Please restart your terminal or source the ${ALIAS_FILE} manually to apply the alias. 🔄${NC}"
-                ;;
+            "zsh")  echo -e "${YELLOW}🔄 Zsh configuration updated. Please restart your terminal or run 'exec zsh' to apply the changes. 🔄${NC}" ;;
+            "bash") echo -e "${YELLOW}🔄 Bash configuration updated. Please run 'source $ALIAS_FILE' to apply the changes. 🔄${NC}" ;;
+            "fish") echo -e "${YELLOW}🔄 Fish configuration updated. Please restart your terminal or run 'source $ALIAS_FILE' to apply the changes. 🔄${NC}" ;;
+            *)      echo -e "${YELLOW}🔄 Please restart your terminal or source ${ALIAS_FILE} manually to apply the alias. 🔄${NC}" ;;
         esac
         
-        # If installed to user directory, add path to PATH if needed
         if [ "$install_location" == "2" ]; then
-            # Check if the directory is already in PATH
             if [[ ":$PATH:" != *":$INSTALL_DIR:"* ]]; then
                 echo -e "${YELLOW}[+] 🔀 Adding $INSTALL_DIR to your PATH 🔀${NC}"
                 if [ "$SHELL_NAME" = "fish" ]; then
@@ -1201,9 +1351,7 @@ install_binary_alias() {
     else
         echo -e "${GREEN}⏭️ Skipping alias creation. ⏭️${NC}"
         
-        # If user-only installation and no alias, still add to PATH if needed
         if [ "$install_location" == "2" ]; then
-            # Detect the shell configuration file
             SHELL_NAME=$(basename "$SHELL")
             case "$SHELL_NAME" in
                 "bash")
@@ -1213,19 +1361,14 @@ install_binary_alias() {
                         [ -f "$HOME/.bashrc" ] && RC_FILE="$HOME/.bashrc" || RC_FILE="$HOME/.profile"
                     fi
                     ;;
-                "zsh")
-                    RC_FILE="$HOME/.zshrc"
-                    ;;
+                "zsh")  RC_FILE="$HOME/.zshrc" ;;
                 "fish")
                     RC_FILE="$HOME/.config/fish/config.fish"
                     mkdir -p "$(dirname "$RC_FILE")"
                     ;;
-                *)
-                    RC_FILE="$HOME/.profile"
-                    ;;
+                *)      RC_FILE="$HOME/.profile" ;;
             esac
             
-            # Check if the directory is already in PATH
             if [[ ":$PATH:" != *":$INSTALL_DIR:"* ]]; then
                 echo -e "${YELLOW}[+] 🔀 Would you like to add $INSTALL_DIR to your PATH? (yes/no) 🔀${NC}"
                 read -p "Choose an option: " add_to_path
@@ -1251,9 +1394,11 @@ install_binary_alias() {
     fi
 }
 
-# Enhanced config file check
+# ═══════════════════════════════════════════════════════════════════════════════
+# Config file check
+# ═══════════════════════════════════════════════════════════════════════════════
+
 check_config_file() {
-    # Determine config file location based on OS
     if [[ "$OSTYPE" == "darwin"* ]]; then
         CONFIG_DIR="$HOME/Library/Application Support/rfswift"
     else
@@ -1263,14 +1408,12 @@ check_config_file() {
     
     echo -e "${YELLOW}🔍 Checking configuration file at: $CONFIG_FILE 🔍${NC}"
     
-    # Check if config file exists
     if [ ! -f "$CONFIG_FILE" ]; then
         echo -e "${YELLOW}📝 Config file not found at $CONFIG_FILE 📝${NC}"
         echo -e "${GREEN}✨ A new config file will be created on first run ;) ✨${NC}"
         return 0
     fi
     
-    # Define required sections and keys - without using declare -A which is not supported in older bash
     GENERAL_KEYS="imagename repotag"
     CONTAINER_KEYS="shell bindings network exposedports portbindings x11forward xdisplay extrahost extraenv devices privileged caps seccomp cgroups"
     AUDIO_KEYS="pulse_server"
@@ -1278,32 +1421,25 @@ check_config_file() {
     missing_fields=0
     current_section=""
     
-    # For debugging
     echo -e "${YELLOW}🔎 Scanning config file for keys... 🔎${NC}"
     
-    # Read config file line by line
     while IFS= read -r line || [ -n "$line" ]; do
-        # Trim leading/trailing whitespace
         line=$(echo "$line" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
         
-        # Skip empty lines and comments
         if [[ -z "$line" || "$line" == \#* ]]; then
             continue
         fi
         
-        # Check if line is a section header
         if [[ "$line" =~ ^\[([a-zA-Z0-9_]+)\]$ ]]; then
             current_section="${BASH_REMATCH[1]}"
             echo -e "${YELLOW}📂 Found section: [$current_section] 📂${NC}"
             continue
         fi
         
-        # Check if line contains a key (regardless of value)
         if [[ "$line" =~ ^([a-zA-Z0-9_]+)[[:space:]]*= ]]; then
             key="${BASH_REMATCH[1]}"
             echo -e "${GREEN}🔑 Found key: $key in section [$current_section] 🔑${NC}"
             
-            # Remove the key from the required keys list based on section
             if [[ "$current_section" == "general" ]]; then
                 GENERAL_KEYS=$(echo "$GENERAL_KEYS" | sed -E "s/(^| )$key( |$)/ /g" | tr -s ' ' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
             elif [[ "$current_section" == "container" ]]; then
@@ -1314,12 +1450,10 @@ check_config_file() {
         fi
     done < "$CONFIG_FILE"
     
-    # Debug: show remaining required keys after parsing
     echo -e "${YELLOW}📋 Remaining required keys in [general]: ${GENERAL_KEYS} 📋${NC}"
     echo -e "${YELLOW}📋 Remaining required keys in [container]: ${CONTAINER_KEYS} 📋${NC}"
     echo -e "${YELLOW}📋 Remaining required keys in [audio]: ${AUDIO_KEYS} 📋${NC}"
     
-    # Check for missing fields in each section
     if [[ -n "$GENERAL_KEYS" ]]; then
         echo -e "${RED}❗ Missing keys in [general] section: ❗${NC}"
         for field in $GENERAL_KEYS; do
@@ -1354,29 +1488,23 @@ check_config_file() {
         echo -e "${GREEN}✅ Config file validation successful! All required keys present. ✅${NC}"
         return 0
     fi
-    
-    # Add option to show the config file content for debugging
-    if [ "$1" = "--debug" ]; then
-        echo -e "${YELLOW}🔍 === Config File Content ==== 🔍${NC}"
-        cat "$CONFIG_FILE"
-        echo -e "${YELLOW}🔍 ========================== 🔍${NC}"
-    fi
 }
 
-# Enhanced rainbow logo display with Arch Linux easter egg
+# ═══════════════════════════════════════════════════════════════════════════════
+# Logo, system info
+# ═══════════════════════════════════════════════════════════════════════════════
+
 display_rainbow_logo_animated() {
-    # Define an array of colors for rainbow effect
     colors=(
-        '\033[1;31m' # Red
-        '\033[1;33m' # Orange/Yellow
-        '\033[1;32m' # Green
-        '\033[1;36m' # Cyan
-        '\033[1;34m' # Blue
-        '\033[1;35m' # Purple
+        '\033[1;31m'
+        '\033[1;33m'
+        '\033[1;32m'
+        '\033[1;36m'
+        '\033[1;34m'
+        '\033[1;35m'
     )
-    NC='\033[0m' # No Color
+    NC='\033[0m'
     
-    # The logo text as an array of lines
     logo=(
         "   888~-_   888~~        ,d88~~\\                ,e,   88~\\   d8   "
         "   888   \\  888___       8888    Y88b    e    /  \"  *888*_ *d88*_ "
@@ -1386,45 +1514,35 @@ display_rainbow_logo_animated() {
         "   888 ~-_  888          \\__88P'     Y    Y     888  888    \"88_/"
     )
     
-    # Clear the screen for better presentation
     clear
     
-    # First, print each line with its own color
     for i in {0..5}; do
         echo -e "${colors[$i]}${logo[$i]}${NC}"
-        sleep 0.1  # Small delay between lines
+        sleep 0.1
     done
     
-    sleep 0.5  # Pause before the animation
+    sleep 0.5
     
-    # Now animate by cycling through colors
-    if [ -t 1 ]; then  # Only run animation if in an interactive terminal
-        for cycle in {1..3}; do  # Run the cycle 3 times
-            # Move cursor back up 6 lines to the start of the logo
+    if [ -t 1 ]; then
+        for cycle in {1..3}; do
             for i in {1..6}; do
                 echo -en "\033[1A"
             done
             
-            # Print each line with the next color in the cycle
             for i in {0..5}; do
                 color_index=$(( (i + cycle) % 6 ))
                 echo -e "${colors[$color_index]}${logo[$i]}${NC}"
             done
             
-            sleep 0.3  # Wait before the next cycle
+            sleep 0.3
         done
     fi
     
-    # Add a tagline with Arch Linux easter egg
     echo -e "\n${colors[5]}🔥 RF Swift by @Penthertz - Radio Frequency Swiss Army Knife 🔥${NC}"
-    
     echo ""
-    
-    # Add a slight delay before continuing
     sleep 0.5
 }
 
-# Enhanced system information display
 show_system_info() {
     echo -e "${BLUE}🖥️ System Information: 🖥️${NC}"
     echo -e "${BLUE}   OS: $(uname -s) 🖥️${NC}"
@@ -1444,10 +1562,22 @@ show_system_info() {
         echo -e "${CYAN}   🏛️ Arch Linux system detected! 🏛️${NC}"
     fi
     
+    # Show container engine status
+    detect_container_engines
+    if [ "$HAS_DOCKER" = true ] && [ "$HAS_PODMAN" = true ]; then
+        echo -e "${BLUE}   Container engines: 🐳 Docker + 🦭 Podman${NC}"
+    elif [ "$HAS_DOCKER" = true ]; then
+        echo -e "${BLUE}   Container engine: 🐳 Docker${NC}"
+    elif [ "$HAS_PODMAN" = true ]; then
+        echo -e "${BLUE}   Container engine: 🦭 Podman${NC}"
+    else
+        echo -e "${YELLOW}   Container engine: ⚠️ None detected${NC}"
+    fi
+    
     echo ""
 }
 
-# Main execution section - if this script is run directly
+# Main execution section — if this script is run directly
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
     display_rainbow_logo_animated
     echo -e "${BLUE}🎵 RF Swift Enhanced Installer with Arch Linux Support 🎵${NC}"
