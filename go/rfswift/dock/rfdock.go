@@ -257,6 +257,11 @@ func removeBindByPrefix(binds []string, mount string) []string {
 	return result
 }
 
+// IsRootlessPodman returns true when running under Podman without root privileges
+func IsRootlessPodman() bool {
+	return GetEngine().Type() == EnginePodman && os.Getuid() != 0
+}
+
 func init() {
 	updateDockerObjFromConfig()
 }
@@ -1611,6 +1616,11 @@ func DockerLast(ifilter string, labelKey string, labelValue string) {
 		// Get the display image name
 		imageTag := container.Image
 
+		// Check for original image label (set during container recreation)
+		if label, ok := container.Labels["org.rfswift.original_image"]; ok && label != "" {
+			imageTag = label
+		}
+
 		// Check if this is a SHA256 hash
 		isSHA256 := strings.HasPrefix(imageTag, "sha256:")
 
@@ -1644,6 +1654,10 @@ func DockerLast(ifilter string, labelKey string, labelValue string) {
 
 		// Prepare the display string
 		imageDisplay := imageTag
+
+		if label, ok := container.Labels["org.rfswift.original_image"]; ok && label != "" {
+			imageDisplay = fmt.Sprintf("%s (temp: %s)", label, shortImageID)
+		}
 
 		// For SHA256 or renamed images, show hash for clarity
 		if isSHA256 || isRenamed {
@@ -2396,6 +2410,50 @@ func DockerRun(containerName string) {
 		containerLabels["org.rfswift.exposed_ports"] = dockerObj.exposed_ports
 	}
 
+	// ── Rootless Podman: strip unsupported features ────────────────
+	if IsRootlessPodman() {
+		// 1. Cgroup rules
+		if len(hostConfig.DeviceCgroupRules) > 0 {
+			common.PrintWarningMessage("Rootless Podman does not support device cgroup rules.")
+			common.PrintWarningMessage(fmt.Sprintf("Rules that will be dropped: %s", strings.Join(hostConfig.DeviceCgroupRules, ", ")))
+			common.PrintInfoMessage("Device hotplug (USB, SDR dongles) may not work without cgroup rules.")
+			common.PrintInfoMessage("To use cgroup rules, run RF Swift with sudo.")
+			fmt.Print("\nContinue without cgroup rules? (y/n): ")
+			reader := bufio.NewReader(os.Stdin)
+			response, _ := reader.ReadString('\n')
+			response = strings.ToLower(strings.TrimSpace(response))
+			if response != "y" && response != "yes" {
+				common.PrintInfoMessage("Aborted. Re-run with: sudo ./rfswift run ...")
+				return
+			}
+			hostConfig.DeviceCgroupRules = nil
+			delete(containerLabels, "org.rfswift.cgroup_rules")
+			common.PrintInfoMessage("Cgroup rules removed — proceeding in rootless mode.")
+		}
+
+		// 2. Filter devices to only those accessible by current user
+		if len(hostConfig.Devices) > 0 {
+			var accessible []container.DeviceMapping
+			var dropped []string
+			for _, dev := range hostConfig.Devices {
+				f, err := os.OpenFile(dev.PathOnHost, os.O_RDONLY, 0)
+				if err == nil {
+					f.Close()
+					accessible = append(accessible, dev)
+				} else {
+					dropped = append(dropped, dev.PathOnHost)
+				}
+			}
+			if len(dropped) > 0 {
+				common.PrintWarningMessage(fmt.Sprintf("Dropping %d inaccessible device(s) for rootless mode:", len(dropped)))
+				for _, d := range dropped {
+					common.PrintWarningMessage(fmt.Sprintf("  - %s", d))
+				}
+			}
+			hostConfig.Devices = accessible
+		}
+	}
+
 	resp, err := cli.ContainerCreate(ctx, &container.Config{
 		Image:        dockerObj.imagename,
 		Cmd:          []string{dockerObj.shell},
@@ -2409,6 +2467,98 @@ func DockerRun(containerName string) {
 		Tty:          true,
 		Labels:       containerLabels,
 	}, hostConfig, &network.NetworkingConfig{}, nil, containerName)
+
+	// ── Podman: use exec-style attach (compat API rejects attach-before-start) ──
+	if GetEngine().Type() == EnginePodman {
+		if err := cli.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
+			common.PrintErrorMessage(err)
+			return
+		}
+
+		props, err := getContainerProperties(ctx, cli, resp.ID)
+		if err != nil {
+			common.PrintErrorMessage(err)
+			return
+		}
+		size := props["Size"]
+		printContainerProperties(ctx, cli, containerName, props, size)
+		common.PrintSuccessMessage(fmt.Sprintf("Container '%s' started successfully", containerName))
+
+		// Attach via exec (same as DockerExec)
+		execConfig := container.ExecOptions{
+			AttachStdin:  true,
+			AttachStdout: true,
+			AttachStderr: true,
+			Tty:          true,
+			Cmd:          []string{dockerObj.shell},
+		}
+
+		execID, err := cli.ContainerExecCreate(ctx, resp.ID, execConfig)
+		if err != nil {
+			common.PrintErrorMessage(err)
+			return
+		}
+
+		attachResp, err := cli.ContainerExecAttach(ctx, execID.ID, container.ExecStartOptions{Tty: true})
+		if err != nil {
+			common.PrintErrorMessage(err)
+			return
+		}
+		defer attachResp.Close()
+
+		inFd, inIsTerminal := term.GetFdInfo(os.Stdin)
+		outFd, outIsTerminal := term.GetFdInfo(os.Stdout)
+
+		if inIsTerminal {
+			state, err := term.SetRawTerminal(inFd)
+			if err != nil {
+				common.PrintErrorMessage(err)
+				return
+			}
+			defer term.RestoreTerminal(inFd, state)
+		}
+
+		// Handle resize
+		go func() {
+			sigchan := make(chan os.Signal, 1)
+			signal.Notify(sigchan, syscallsigwin())
+			defer signal.Stop(sigchan)
+			for range sigchan {
+				if outIsTerminal {
+					if size, err := term.GetWinsize(outFd); err == nil {
+						cli.ContainerExecResize(ctx, execID.ID, container.ResizeOptions{
+							Height: uint(size.Height),
+							Width:  uint(size.Width),
+						})
+					}
+				}
+			}
+		}()
+
+		// Initial resize
+		if outIsTerminal {
+			if size, err := term.GetWinsize(outFd); err == nil {
+				cli.ContainerExecResize(ctx, execID.ID, container.ResizeOptions{
+					Height: uint(size.Height),
+					Width:  uint(size.Width),
+				})
+			}
+		}
+
+		// I/O
+		outputDone := make(chan error)
+		go func() {
+			_, err := io.Copy(os.Stdout, attachResp.Reader)
+			outputDone <- err
+		}()
+		go func() {
+			io.Copy(attachResp.Conn, os.Stdin)
+			attachResp.CloseWrite()
+		}()
+
+		<-outputDone
+		return
+	}
 
 	if err != nil {
 		common.PrintErrorMessage(err)
@@ -2734,6 +2884,17 @@ func DockerPull(imageref string, imagetag string) {
 		}
 	}
 
+	// Warn about Podman root/rootless image store separation
+	if GetEngine().Type() == EnginePodman {
+		if os.Getuid() == 0 {
+			common.PrintWarningMessage("Image pulled as root — it won't be visible in rootless mode.")
+			common.PrintInfoMessage("To copy to rootless: podman image scp root@localhost::<image> <user>@localhost::")
+		} else {
+			common.PrintWarningMessage("Image pulled in rootless mode — it won't be visible with sudo.")
+			common.PrintInfoMessage("To copy to root: sudo podman image scp <user>@localhost::<image> root@localhost::")
+		}
+	}
+
 	common.PrintSuccessMessage(fmt.Sprintf("Image '%s' installed successfully", imagetag))
 }
 
@@ -2800,9 +2961,6 @@ func DockerRename(currentIdentifier string, newName string) {
 }
 
 func DockerRemove(containerIdentifier string) {
-	/* Remove a container by ID or name
-	   in(1): string container ID or name
-	*/
 	ctx := context.Background()
 	cli, err := NewEngineClient()
 	if err != nil {
@@ -2811,7 +2969,6 @@ func DockerRemove(containerIdentifier string) {
 	}
 	defer cli.Close()
 
-	// Attempt to find the container by the identifier (name or ID)
 	containers, err := cli.ContainerList(ctx, container.ListOptions{All: true})
 	if err != nil {
 		common.PrintErrorMessage(err)
@@ -2819,9 +2976,11 @@ func DockerRemove(containerIdentifier string) {
 	}
 
 	var containerID string
+	var containerImage string
 	for _, container := range containers {
 		if container.ID == containerIdentifier || (len(container.Names) > 0 && container.Names[0] == "/"+containerIdentifier) {
 			containerID = container.ID
+			containerImage = container.Image
 			break
 		}
 	}
@@ -2835,8 +2994,17 @@ func DockerRemove(containerIdentifier string) {
 	err = cli.ContainerRemove(ctx, containerID, container.RemoveOptions{Force: true})
 	if err != nil {
 		common.PrintErrorMessage(err)
-	} else {
-		common.PrintSuccessMessage(fmt.Sprintf("Container '%s' removed successfully", containerIdentifier))
+		return
+	}
+	common.PrintSuccessMessage(fmt.Sprintf("Container '%s' removed successfully", containerIdentifier))
+
+	// Clean up associated temp image if any
+	tempPattern := regexp.MustCompile(`_temp_\d{14}`)
+	if tempPattern.MatchString(containerImage) {
+		_, err := cli.ImageRemove(ctx, containerImage, image.RemoveOptions{Force: false})
+		if err == nil {
+			common.PrintSuccessMessage(fmt.Sprintf("Cleaned up temp image: %s", containerImage))
+		}
 	}
 }
 
@@ -3771,24 +3939,34 @@ func podmanCreateViaCLI(name string, imageName string, cfg *container.Config, hc
 	containerID := strings.TrimSpace(string(output))
 	return containerID, nil
 }
-// cleanupStaleTempImages removes any leftover rfswift_rebind_tmp_<name>:* images
-// from previous recreations. These can't be deleted right after creation (the new
-// container references them), but once that container is stopped/removed for the
-// NEXT recreation, they become orphaned and can be cleaned up.
-func cleanupStaleTempImages(ctx context.Context, cli *client.Client, containerName string) {
-	prefix := fmt.Sprintf("rfswift_rebind_tmp_%s:", containerName)
+
+// cleanupStaleTempImages removes old temp images for a specific base image,
+// skipping the one currently in use.
+func cleanupStaleTempImages(ctx context.Context, cli *client.Client, currentTempImage string, repo string, tag string) {
+	tempPattern := regexp.MustCompile(`_temp_\d{14}$`)
+	basePrefix := fmt.Sprintf("%s:%s_temp_", repo, tag)
+	localBasePrefix := fmt.Sprintf("localhost/%s:%s_temp_", repo, tag)
+
 	images, err := cli.ImageList(ctx, image.ListOptions{All: true})
 	if err != nil {
 		return
 	}
 	for _, img := range images {
-		for _, tag := range img.RepoTags {
-			if strings.HasPrefix(tag, prefix) {
-				_, err := cli.ImageRemove(ctx, img.ID, image.RemoveOptions{Force: false, PruneChildren: true})
-				if err == nil {
-					common.PrintSuccessMessage(fmt.Sprintf("Cleaned up stale temp image: %s", tag))
-				}
-				// If still in use, skip silently — will be cleaned next time
+		for _, imgTag := range img.RepoTags {
+			if !tempPattern.MatchString(imgTag) {
+				continue
+			}
+			// Only clean images matching our base repo:tag
+			if !strings.Contains(imgTag, basePrefix) && !strings.Contains(imgTag, localBasePrefix) {
+				continue
+			}
+			// Don't remove the one we're about to use
+			if imgTag == currentTempImage {
+				continue
+			}
+			_, err := cli.ImageRemove(ctx, img.ID, image.RemoveOptions{Force: false})
+			if err == nil {
+				common.PrintSuccessMessage(fmt.Sprintf("Cleaned up old temp image: %s", imgTag))
 			}
 		}
 	}
@@ -3930,6 +4108,35 @@ func sanitizeHostConfigForPodman(hc *container.HostConfig) {
 			}
 		}
 	}
+
+	// 12. Filter out devices whose host path no longer exists
+	if len(hc.Devices) > 0 {
+		var existingDevices []container.DeviceMapping
+		for _, dev := range hc.Devices {
+			if _, err := os.Stat(dev.PathOnHost); err == nil {
+				existingDevices = append(existingDevices, dev)
+			} else {
+				common.PrintWarningMessage(fmt.Sprintf("Skipping non-existent device: %s", dev.PathOnHost))
+			}
+		}
+		hc.Devices = existingDevices
+	}
+
+	// 13. Filter out binds whose host source no longer exists
+	if len(hc.Binds) > 0 {
+		var existingBinds []string
+		for _, bind := range hc.Binds {
+			parts := strings.SplitN(bind, ":", 3)
+			if len(parts) >= 2 {
+				if _, err := os.Stat(parts[0]); err != nil {
+					common.PrintWarningMessage(fmt.Sprintf("Skipping non-existent bind source: %s", parts[0]))
+					continue
+				}
+			}
+			existingBinds = append(existingBinds, bind)
+		}
+		hc.Binds = existingBinds
+	}
 }
 
 // deduplicateBinds removes bind entries with duplicate destinations.
@@ -3964,14 +4171,21 @@ func parseBindDestination(bind string) string {
 // recreateContainerWithUpdatedBinds handles the Podman code path:
 // commit current state → remove old container → create new one with updated binds.
 func recreateContainerWithUpdatedBinds(ctx context.Context, cli *client.Client, containerName string, containerID string, inspectData types.ContainerJSON, newBinds []string) error {
-	// 0. Clean up any stale temp images from previous recreations
-	cleanupStaleTempImages(ctx, cli, containerName)
+
+	// 0. Determine original image name
+	oldConfig := inspectData.Config
+	oldHostConfig := inspectData.HostConfig
+
+	originalImageName := oldConfig.Image
+	if label, ok := oldConfig.Labels["org.rfswift.original_image"]; ok && label != "" {
+		originalImageName = label
+	}
 
 	// 1. Commit the current container state to a temporary image
-	tempImageTag := fmt.Sprintf("rfswift_rebind_tmp_%s:%s", containerName, time.Now().Format("20060102150405"))
+	repo, tag := parseImageName(originalImageName)
+	tempImageTag := fmt.Sprintf("localhost/%s:%s_temp_%s", repo, tag, time.Now().Format("20060102150405"))
 	common.PrintInfoMessage(fmt.Sprintf("Committing container state to temporary image: %s", tempImageTag))
 
-	parts := strings.SplitN(tempImageTag, ":", 2)
 	commitResp, err := cli.ContainerCommit(ctx, containerID, container.CommitOptions{
 		Reference: tempImageTag,
 		Comment:   "RF Swift: temporary image for mount binding update",
@@ -3981,33 +4195,13 @@ func recreateContainerWithUpdatedBinds(ctx context.Context, cli *client.Client, 
 		return fmt.Errorf("failed to commit container: %v", err)
 	}
 	common.PrintSuccessMessage(fmt.Sprintf("Committed as: %s (ID: %s)", tempImageTag, commitResp.ID[:12]))
-	_ = parts // used for reference naming
 
 	// 2. Rebuild container config with updated binds
-	oldConfig := inspectData.Config
-	oldHostConfig := inspectData.HostConfig
-
-	// Apply updated binds
 	oldHostConfig.Binds = newBinds
 
-	// ── Sanitize HostConfig for Podman cgroup v2 compat ──
-	// Podman's inspect returns these fields but rejects them on create.
-	for i := range oldHostConfig.Devices {
-		if oldHostConfig.Devices[i].CgroupPermissions == "" {
-			oldHostConfig.Devices[i].CgroupPermissions = "rwm"
-		}
-	}
-	oldHostConfig.Resources.MemorySwappiness = nil
-	oldHostConfig.Resources.KernelMemory = 0
-	if oldHostConfig.Resources.PidsLimit != nil && *oldHostConfig.Resources.PidsLimit == 0 {
-		oldHostConfig.Resources.PidsLimit = nil
-	}
-	oldHostConfig.Resources.OomKillDisable = nil
+	// ── Sanitize HostConfig for Podman compat ──
+	sanitizeHostConfigForPodman(oldHostConfig)
 
-	originalImageName := oldConfig.Image
-	if label, ok := oldConfig.Labels["org.rfswift.original_image"]; ok && label != "" {
-		originalImageName = label // preserve the true original across multiple recreations
-	}
 	oldConfig.Image = tempImageTag // ← use committed snapshot
 
 	// Store original image name + cgroup rules in labels for display purposes.
@@ -4111,6 +4305,9 @@ func recreateContainerWithUpdatedBinds(ctx context.Context, cli *client.Client, 
 	}
 	common.PrintSuccessMessage("Old container removed.")
 
+	// 4b. Clean up stale temp images (now unreferenced)
+	cleanupStaleTempImages(ctx, cli, tempImageTag, repo, tag)
+
 	// 5. Rename temp container to original name
 	common.PrintInfoMessage(fmt.Sprintf("Renaming container to '%s'...", containerName))
 	if err := cli.ContainerRename(ctx, newContainerID, containerName); err != nil {
@@ -4127,7 +4324,6 @@ func recreateContainerWithUpdatedBinds(ctx context.Context, cli *client.Client, 
 	// NOTE: We intentionally do NOT delete the temp image here.
 	// The new container references it, so Podman would refuse anyway.
 	// It will be cleaned up at the START of the next recreation
-	// (see cleanupStaleTempImages above).
 
 	return nil
 }
@@ -4738,12 +4934,15 @@ func recreateContainerWithProperties(ctx context.Context, cli *client.Client, co
 		common.PrintWarningMessage(fmt.Sprintf("Stop returned: %v (may already be stopped)", err))
 	}
 
-	// ── 0. Clean up stale temp images from previous recreations ──
-	cleanupStaleTempImages(ctx, cli, containerName)
+	// Determine the original image name
+	originalImageName := containerJSON.Config.Image
+	if label, ok := containerJSON.Config.Labels["org.rfswift.original_image"]; ok && label != "" {
+		originalImageName = label
+	}
+	repo, tag := parseImageName(originalImageName)
 
 	// ── 1. Commit the container state to a temporary image ──
-	// This preserves installed packages, user files, etc.
-	tempImageTag := fmt.Sprintf("rfswift_rebind_tmp_%s:%s", containerName, time.Now().Format("20060102150405"))
+	tempImageTag := fmt.Sprintf("localhost/%s:%s_temp_%s", repo, tag, time.Now().Format("20060102150405"))
 	common.PrintInfoMessage(fmt.Sprintf("Committing container state to temporary image: %s", tempImageTag))
 
 	commitLabels := make(map[string]string)
@@ -4780,15 +4979,13 @@ func recreateContainerWithProperties(ctx context.Context, cli *client.Client, co
 	}
 	common.PrintSuccessMessage("Old container removed.")
 
+	// 2b. Clean up stale temp images (now unreferenced)
+	cleanupStaleTempImages(ctx, cli, tempImageTag, repo, tag)
+
 	// ── 3. Rebuild container config from inspected data + prop overrides ──
 
-	// Determine the original image name for label tracking.
-	originalImageName := containerJSON.Config.Image
-	if label, ok := containerJSON.Config.Labels["org.rfswift.original_image"]; ok && label != "" {
-		originalImageName = label
-	}
 
-	// Parse properties for host config
+	// ── 1. Commit the container state to a temporary image ──
 	bindings := []string{}
 	if props["Bindings"] != "" {
 	    bindings = strings.Split(props["Bindings"], ";;")
@@ -4916,7 +5113,7 @@ func recreateContainerWithProperties(ctx context.Context, cli *client.Client, co
 	var newContainerID string
 
 	// Podman: use native CLI when cgroup rules are present
-	if len(hostConfig.DeviceCgroupRules) > 0 && !EngineSupportsDirectConfigEdit() {
+	if len(hostConfig.DeviceCgroupRules) > 0 && !EngineSupportsDirectConfigEdit() && !IsRootlessPodman() {
 		cid, err := podmanCreateViaCLI(tempContainerName, tempImageTag, containerConfig, hostConfig)
 		if err != nil {
 			common.PrintErrorMessage(fmt.Errorf("failed to create container via Podman CLI: %v", err))
@@ -4926,6 +5123,13 @@ func recreateContainerWithProperties(ctx context.Context, cli *client.Client, co
 		}
 		newContainerID = cid
 	} else {
+
+		// ── Rootless Podman: silently drop unsupported cgroup rules ────
+		if IsRootlessPodman() && len(hostConfig.DeviceCgroupRules) > 0 {
+			common.PrintWarningMessage("Rootless Podman: dropping device cgroup rules (not supported)")
+			hostConfig.DeviceCgroupRules = nil
+		}
+
 		// ── Compat API path ──
 		// CRITICAL: pass nil for networking and platform.
 		// Podman's compat API rejects empty structs like &network.NetworkingConfig{}.
