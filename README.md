@@ -44,7 +44,7 @@ https://github.com/user-attachments/assets/518c5045-4380-48d0-a731-6ec0273a02c5
 
 ## 🔍 What is RF Swift?
 
-RF Swift is a revolutionary toolbox that transforms any computer into a powerful RF & Hardware testing laboratory without requiring a dedicated operating system. 🔄 Unlike traditional approaches that force you to sacrifice your primary OS, RF Swift brings containerized RF tools to your existing environment. 🏠
+RF Swift is a revolutionary toolbox that transforms any computer into a powerful RF testing laboratory without requiring a dedicated operating system. 🔄 Unlike traditional approaches that force you to sacrifice your primary OS, RF Swift brings containerized RF tools to your existing environment. 🏠
 
 ### ⚡ Why RF Swift Outperforms Dedicated OS Solutions
 
@@ -88,8 +88,8 @@ RF Swift supports **both Docker and Podman** as container engines, giving you th
 RF Swift **automatically detects** the available container engine at startup. If both are installed, Docker is used by default. Override with:
 
 ```bash
-rfswift --engine podman run -n mycontainer -i penthertz/rfswift_noble:sdr_light
-rfswift --engine docker run -n mycontainer -i penthertz/rfswift_noble:sdr_light
+rfswift --engine podman run -n mycontainer -i penthertz/rfswift:sdr_light
+rfswift --engine docker run -n mycontainer -i penthertz/rfswift:sdr_light
 ```
 
 #### Podman Highlights
@@ -127,19 +127,43 @@ https://github.com/PentHertz/RF-Swift/assets/715195/25a4a857-aa5a-4daa-9a08-28fa
 
 ## 📦 Available Specialized Images
 
-RF Swift's container approach allows for specialized environments optimized for specific tasks:
+RF Swift's container approach allows for specialized environments optimized for specific tasks. All images are **OCI-compatible** and work with both **Docker and Podman**.
 
-| Category | Images | Description |
-|----------|--------|-------------|
-| 📻 SDR | `sdr_light`, `sdr_full` | Software-defined radio tools (RTL-SDR, HackRF, etc.) |
-| 📱 Telecom | `telecom_utils`, `telecom_2Gto3G`, `telecom_4G_5GNSA`, `telecom_5G` | Mobile network analysis and testing |
-| 📶 Short-range | `bluetooth`, `wifi`, `rfid` | Bluetooth, Wi-Fi, and RFID security tools |
-| 🔧 Hardware | `hardware`, `reversing` | Hardware hacking and reverse engineering |
-| 🚗 Automotive | `automotive` | Vehicle communication protocols (CAN, LIN, etc.) |
+```mermaid
+graph TD;
+    A[corebuild]-->B[sdrsa_devices];
+    A-->C[rfid];
+    A-->D[automotive];
+    A-->E[reversing];
+    A-->H[network];
+    B-->I[sdr_light];
+    B-->J[bluetooth];
+    B-->K[telecom_utils];
+    B-->L[hardware];
+    H-->M[wifi];
+    I-->N[sdr_full];
+    K-->P[telecom_2Gto3G];
+    K-->Q[telecom_4G_5GNSA];
+    K-->R[telecom_4Gto5G];
+    K-->S[telecom_5G];
+```
 
-All images are OCI-compatible and work with both Docker and Podman.
+| Category | Images | Key Tools |
+|----------|--------|-----------|
+| 📻 **SDR** | `sdr_light`, `sdr_full` | GNU Radio, GQRX, SDR++, SDRangel, SigDigger, CyberEther, Inspectrum, URH, rtl_433, dump1090, GNSS-SDR, SatDump, Jupyter + 50+ GNU Radio OOT modules (gr-gsm, gr-lora, gr-satellites, gr-ieee802-11, gr-droneid, gr-tempest, …) |
+| 📡 **SDR Devices** | `sdrsa_devices` | Drivers for USRP (UHD), RTL-SDR, HackRF, BladeRF, Airspy, LimeSDR, PlutoSDR, XTRX, RFNM, HydraSDR, LiteX M2SDR, SignalHound, Harogic, LibreSDR, SoapySDR |
+| 📱 **Telecom** | `telecom_utils`, `telecom_2Gto3G`, `telecom_4G_5GNSA`, `telecom_4Gto5G`, `telecom_5G` | PySIM, pycrate, srsRAN 4G/5G, Open5GS, UERANSIM, YateBTS, OpenBTS, OsmoCom BTS Suite, SigPloit, PyHSS, SCAT, jSS7, 5Greplay |
+| 📶 **Bluetooth** | `bluetooth` | BlueZ, WHAD, Mirage, Sniffle, Bluing, bdaddr, ice9-bluetooth, esp32 BT Classic sniffer |
+| 📡 **Wi-Fi** | `wifi` | Aircrack-ng, hcxdumptool, Reaver, Bully, Pixiewps, EAPHammer, Airgeddon, Wifite2, WPA3 attack suite (Dragonslayer/Dragonforce/Wacker), Hostapd-mana, Wifiphisher |
+| 🏷️ **RFID** | `rfid` | Proxmark3 (RRG/Iceman), libnfc, mfoc, mfcuk, RFIDler, miLazyCracker |
+| 🚗 **Automotive** | `automotive` | can-utils, CANtact, Caring Caribou, SavvyCAN, Gallia, V2GInjector |
+| 🔧 **Hardware** | `hardware` | PulseView, DSView, Logic 2 (Saleae), Arduino IDE, Flashrom, OpenOCD, esptool, openFPGALoader, MTKClient, ngscopeclient, dfu-util, SeerGDB, AVRDUDE |
+| 🔍 **Reversing** | `reversing` | Ghidra, Radare2, Cutter, ImHex, Binwalk (v2+v3), Unblob, AFL, Honggfuzz, Semgrep, Joern, Kaitai Struct, Qiling, Unicorn/Keystone |
+| 🌐 **Network** | `network` | Nmap, Wireshark, Metasploit, Burp Suite, Caido, Impacket, NetExec, Responder, Hashcat, John the Ripper, Kismet, Bettercap, SIPVicious, MBTget |
 
-Full image list with detailed tool inventory available at [rfswift.io/docs/guide/list-of-images/](https://rfswift.io/docs/guide/list-of-images/)
+> **200+ tools** across 15+ images, all on **x86_64**, **ARM64**, and **RISC-V64**.
+
+Full image list with detailed tool inventory available at [rfswift.io/docs/guide/list-of-tools/](https://rfswift.io/docs/guide/list-of-tools/)
 
 ## 🌟 Real-World Use Cases
 
