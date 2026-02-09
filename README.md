@@ -12,6 +12,9 @@
   <img alt="arm64" src="https://img.shields.io/badge/arm64%20(aarch64)-supported-success">
   <img alt="riscv64" src="https://img.shields.io/badge/riscv64-supported-success">
   <br><br>
+  <img alt="Docker" src="https://img.shields.io/badge/Docker-supported-blue?logo=docker&logoColor=white">
+  <img alt="Podman" src="https://img.shields.io/badge/Podman-supported-purple?logo=podman&logoColor=white">
+  <br><br>
    <a target="_blank" rel="noopener noreferrer" href="https://www.blackhat.com/eu-24/arsenal/schedule/index.html#rf-swift-a-swifty-toolbox-for-all-wireless-assessments-41157" title="Schedule">
    <img alt="Black Hat Europe 2024" src="https://img.shields.io/badge/Black%20Hat%20Arsenal-Europe%202024-blueviolet">
   </a>
@@ -69,6 +72,48 @@ RF Swift is a revolutionary toolbox that transforms any computer into a powerful
 - **⚡ GPU Acceleration**: Dedicated images with OpenCL support for Intel and NVIDIA GPUs
 - **💾 Space Efficiency**: Use a fraction of the disk space required by dedicated OS solutions
 
+### 🐳🦭 Container Engine Support
+
+RF Swift supports **both Docker and Podman** as container engines, giving you the freedom to choose the runtime that best fits your environment:
+
+| | Docker | Podman |
+|---|---|---|
+| **Architecture** | Client-server daemon | Daemonless, fork-exec |
+| **Root required** | Yes (daemon runs as root) | No (rootless by default) |
+| **Compatibility** | Industry standard | OCI-compatible, drop-in replacement |
+| **Best for** | Broad ecosystem, Windows/macOS | Security-focused, air-gapped, embedded |
+
+#### Auto-detection
+
+RF Swift **automatically detects** the available container engine at startup. If both are installed, Docker is used by default. Override with:
+
+```bash
+rfswift --engine podman run -n mycontainer -i penthertz/rfswift_noble:sdr_light
+rfswift --engine docker run -n mycontainer -i penthertz/rfswift_noble:sdr_light
+```
+
+#### Podman Highlights
+
+- **Rootless containers**: No daemon, no root — ideal for locked-down environments and shared lab machines
+- **OCI-compatible images**: All existing RF Swift images work out of the box with Podman
+- **Seamless device passthrough**: USB SDR dongles, serial adapters, and GPUs work with both engines
+- **Automatic cgroup handling**: RF Swift detects cgroup v1/v2 and configures device access rules accordingly
+
+#### Quick Setup
+
+```bash
+# Install with the interactive installer (offers Docker, Podman, or both)
+curl -fsSL "https://get.rfswift.io/" | sh
+
+# Or install Podman manually
+sudo apt install podman          # Debian/Ubuntu
+sudo dnf install podman          # Fedora/RHEL
+sudo pacman -S podman            # Arch Linux
+brew install podman              # macOS
+```
+
+> **Note**: When using Podman in rootless mode, some operations (like direct device passthrough) may require additional configuration. RF Swift handles most of this automatically, but see the [documentation](https://rfswift.io/docs/guide/) for details.
+
 ## 🎬 Demo Videos
 
 ### 🐧 On Linux
@@ -91,6 +136,8 @@ RF Swift's container approach allows for specialized environments optimized for 
 | 📶 Short-range | `bluetooth`, `wifi`, `rfid` | Bluetooth, Wi-Fi, and RFID security tools |
 | 🔧 Hardware | `hardware`, `reversing` | Hardware hacking and reverse engineering |
 | 🚗 Automotive | `automotive` | Vehicle communication protocols (CAN, LIN, etc.) |
+
+All images are OCI-compatible and work with both Docker and Podman.
 
 Full image list with detailed tool inventory available at [rfswift.io/docs/guide/list-of-images/](https://rfswift.io/docs/guide/list-of-images/)
 
@@ -126,6 +173,12 @@ Full image list with detailed tool inventory available at [rfswift.io/docs/guide
 - **📡 Device Validation**: Test wireless product compliance
 - **🔧 Firmware Analysis**: Isolated environments for firmware testing
 - **📊 Quality Assurance**: Reproducible test configurations
+
+### 🔒 For Security-Conscious Environments
+
+- **🦭 Rootless with Podman**: No privileged daemon required — ideal for SOC-compliant and hardened systems
+- **🏔️ Air-gapped labs**: Pre-pull images, deploy without internet using Podman's daemonless architecture
+- **🛡️ Minimal attack surface**: No long-running daemon socket to protect
 
 ## 📖 Documentation
 
