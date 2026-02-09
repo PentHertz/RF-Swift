@@ -10,7 +10,8 @@ import (
 )
 
 // RF Swift repo
-var Version = "0.7.3"
+var Version = "1.0.0"
+var Codename = "Skywave"
 var Branch = "main"
 var Owner = "PentHertz"
 var Repo = "RF-Swift"
@@ -80,6 +81,17 @@ func PrintASCII() {
 		color := colors[i%len(colors)]
 		fmt.Println(color + line + reset)
 	}
+
+	// Display version and codename
+	cyan := "\033[36m"
+	dim := "\033[2m"
+	versionStr := fmt.Sprintf("v%s \"%s\"", Version, Codename)
+	artWidth := 75 // approximate width of the ASCII art
+	pad := (artWidth - len(versionStr)) / 2
+	if pad < 0 {
+		pad = 0
+	}
+	fmt.Printf("%s%s%s%s%s\n\n", dim, strings.Repeat(" ", pad), cyan, versionStr, reset)
 }
 
 func PrintErrorMessage(err error) {

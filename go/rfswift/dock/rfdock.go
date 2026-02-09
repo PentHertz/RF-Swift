@@ -1600,6 +1600,12 @@ func DockerLast(ifilter string, labelKey string, labelValue string) {
 	}
 
 	for _, container := range filteredContainers {
+		// Skip ghost containers that can't be inspected
+		_, err := cli.ContainerInspect(ctx, container.ID)
+		if err != nil {
+			continue
+		}
+
 		created := time.Unix(container.Created, 0).Format(time.RFC3339)
 
 		// Get the container image ID and associate with tags
@@ -1762,11 +1768,6 @@ func distributeColumnWidths(availableWidth int, columnWidths []int) []int {
 }
 
 func latestDockerID(labelKey string, labelValue string) string {
-	/* Get latest Docker container ID by image label
-	   in(1): string label key
-	   in(2): string label value
-	   out: string container ID
-	*/
 	ctx := context.Background()
 	cli, err := NewEngineClient()
 	if err != nil {
@@ -1774,7 +1775,6 @@ func latestDockerID(labelKey string, labelValue string) string {
 	}
 	defer cli.Close()
 
-	// Filter containers by the specified image label
 	containerFilters := filters.NewArgs()
 	containerFilters.Add("label", fmt.Sprintf("%s=%s", labelKey, labelValue))
 
@@ -1786,19 +1786,17 @@ func latestDockerID(labelKey string, labelValue string) string {
 		panic(err)
 	}
 
-	var latestContainer types.Container
-	for _, container := range containers {
-		if latestContainer.ID == "" || container.Created > latestContainer.Created {
-			latestContainer = container
+	// Sort by creation time descending, validate each candidate
+	for _, cont := range containers {
+		// Verify the container is actually accessible
+		_, err := cli.ContainerInspect(ctx, cont.ID)
+		if err != nil {
+			continue // ghost container — skip
 		}
+		return cont.ID
 	}
 
-	if latestContainer.ID == "" {
-		fmt.Println("No container found with the specified image label.")
-		return ""
-	}
-
-	return latestContainer.ID
+	return ""
 }
 
 func convertPortBindingsToString(portBindings nat.PortMap) string {
@@ -1981,6 +1979,10 @@ func DockerExec(containerIdentifier string, WorkingDir string) {
 		labelKey := "org.container.project"
 		labelValue := "rfswift"
 		containerIdentifier = latestDockerID(labelKey, labelValue)
+		if containerIdentifier == "" {
+			common.PrintErrorMessage(fmt.Errorf("no RF Swift container found. Create one first with: rfswift run -n <name> -i <image>"))
+			return
+		}
 	}
 
 	if err := cli.ContainerStart(ctx, containerIdentifier, container.StartOptions{}); err != nil {
@@ -2452,6 +2454,13 @@ func DockerRun(containerName string) {
 			}
 			hostConfig.Devices = accessible
 		}
+	}
+
+	// Verify the image exists locally before attempting to create container
+	_, _, err = cli.ImageInspectWithRaw(ctx, dockerObj.imagename)
+	if err != nil {
+		common.PrintErrorMessage(fmt.Errorf("image '%s' not found locally. Pull it first with: rfswift pull -i %s", dockerObj.imagename, dockerObj.imagename))
+		return
 	}
 
 	resp, err := cli.ContainerCreate(ctx, &container.Config{
@@ -6682,7 +6691,11 @@ func CleanupContainers(olderThan string, force bool, dryRun bool, onlyStopped bo
 
 		err := cli.ContainerRemove(ctx, cont.ID, container.RemoveOptions{Force: true})
 		if err != nil {
-			common.PrintWarningMessage(fmt.Sprintf("Failed to remove %s: %v", containerName, err))
+			if strings.Contains(err.Error(), "No such container") {
+				common.PrintWarningMessage(fmt.Sprintf("Skipped ghost container: %s (already removed from engine)", containerName))
+			} else {
+				common.PrintWarningMessage(fmt.Sprintf("Failed to remove %s: %v", containerName, err))
+			}
 		} else {
 			common.PrintSuccessMessage(fmt.Sprintf("Removed container: %s", containerName))
 			removed++
