@@ -110,7 +110,7 @@ https://github.com/user-attachments/assets/14b6d50f-5250-420e-94e4-474991113372
 
 ```bash
 # Install with the interactive installer (offers Docker, Podman, or both)
-curl -fsSL "https://get.rfswift.io/" | sh
+curl -fsSL "https://raw.githubusercontent.com/PentHertz/RF-Swift/refs/heads/main/get_rfswift.sh" | sh
 
 # Or install Podman manually
 sudo apt install podman          # Debian/Ubuntu
