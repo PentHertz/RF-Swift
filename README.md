@@ -44,7 +44,7 @@ https://github.com/user-attachments/assets/518c5045-4380-48d0-a731-6ec0273a02c5
 
 ## 🔍 What is RF Swift?
 
-RF Swift is a revolutionary toolbox that transforms any computer into a powerful RF testing laboratory without requiring a dedicated operating system. 🔄 Unlike traditional approaches that force you to sacrifice your primary OS, RF Swift brings containerized RF tools to your existing environment. 🏠
+RF Swift is a revolutionary toolbox that transforms any computer into a powerful RF & Hardware testing laboratory without requiring a dedicated operating system. 🔄 Unlike traditional approaches that force you to sacrifice your primary OS, RF Swift brings containerized RF tools to your existing environment. 🏠
 
 ### ⚡ Why RF Swift Outperforms Dedicated OS Solutions
 
