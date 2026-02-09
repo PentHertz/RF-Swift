@@ -88,8 +88,8 @@ RF Swift supports **both Docker and Podman** as container engines, giving you th
 RF Swift **automatically detects** the available container engine at startup. If both are installed, Docker is used by default. Override with:
 
 ```bash
-rfswift --engine podman run -n mycontainer -i penthertz/rfswift:sdr_light
-rfswift --engine docker run -n mycontainer -i penthertz/rfswift:sdr_light
+rfswift --engine podman run -n mycontainer -i penthertz/rfswift_noble:sdr_light
+rfswift --engine docker run -n mycontainer -i penthertz/rfswift_noble:sdr_light
 ```
 
 #### Podman Highlights
