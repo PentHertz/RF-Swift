@@ -643,6 +643,51 @@ prompt_yes_no() {
   done
 }
 
+# Function to prompt user for a numbered choice
+prompt_choice() {
+  local prompt="$1"
+  shift
+  local options="$@"
+  local response
+  local num=1
+
+  if [ -t 0 ]; then
+    tty_device="/dev/stdin"
+  elif [ -e "/dev/tty" ]; then
+    tty_device="/dev/tty"
+  else
+    printf "${YELLOW}%s: Defaulting to option 1 (no terminal available)${NC}\n" "${prompt}" >&2
+    echo "1"
+    return 0
+  fi
+
+  printf "${YELLOW}%s${NC}\n" "${prompt}" >&2
+  for opt in $options; do
+    printf "  ${CYAN}%d)${NC} %s\n" "$num" "$opt" >&2
+    num=$((num + 1))
+  done
+  num=$((num - 1))
+
+  while true; do
+    printf "${YELLOW}Enter your choice [1-%d]: ${NC}" "$num" >&2
+    if read -r response < "$tty_device" 2>/dev/null; then
+      case "$response" in
+        [1-9]|[1-9][0-9])
+          if [ "$response" -ge 1 ] && [ "$response" -le "$num" ] 2>/dev/null; then
+            echo "$response"
+            return 0
+          fi
+          ;;
+      esac
+      echo "Please enter a number between 1 and $num." >&2
+    else
+      printf "${YELLOW}Defaulting to option 1 (couldn't read from terminal)${NC}\n" >&2
+      echo "1"
+      return 0
+    fi
+  done
+}
+
 # Function to create an alias for RF-Swift in the user's shell configuration
 create_alias() {
   local bin_path="$1"
@@ -739,6 +784,271 @@ create_alias() {
   fi
 }
 
+# ═══════════════════════════════════════════════════════════════════════════════
+# Container Engine Selection: Docker or Podman
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# Check which container engines are already installed
+detect_container_engines() {
+  HAS_DOCKER=false
+  HAS_PODMAN=false
+
+  # Check Podman first (may provide a 'docker' shim via podman-docker)
+  if command_exists podman || [ -x /usr/bin/podman ] || [ -x /usr/local/bin/podman ]; then
+    HAS_PODMAN=true
+  fi
+
+  # Check Docker — must have a running daemon to count
+  # Skip 'docker info' if the binary is actually podman-docker shim
+  if command_exists docker; then
+    # Detect podman-docker shim: 'docker --version' contains "podman"
+    docker_version_output=$(docker --version 2>/dev/null || true)
+    if echo "$docker_version_output" | grep -qi "podman"; then
+      # This is podman-docker, not real Docker
+      HAS_PODMAN=true
+    elif docker info >/dev/null 2>&1; then
+      HAS_DOCKER=true
+    else
+      # Docker binary exists but daemon not running
+      HAS_DOCKER=true
+      DOCKER_DAEMON_DOWN=true
+    fi
+  fi
+}
+
+# Main container engine check — replaces the old check_docker()
+check_container_engine() {
+  color_echo "blue" "🔍 Checking for container engines..."
+
+  detect_container_engines
+
+  # ── Both already installed ──────────────────────────────────────────────
+  if [ "$HAS_DOCKER" = true ] && [ "$HAS_PODMAN" = true ]; then
+    color_echo "green" "✅ Both Docker and Podman are installed."
+    color_echo "cyan" "ℹ️  RF-Swift auto-detects the engine at runtime."
+    color_echo "cyan" "   Use 'rfswift --engine docker' or 'rfswift --engine podman' to override."
+    return 0
+  fi
+
+  # ── Only Docker installed ──────────────────────────────────────────────
+  if [ "$HAS_DOCKER" = true ]; then
+    color_echo "green" "✅ Docker is already installed."
+    if prompt_yes_no "Would you also like to install Podman (rootless containers)?" "n"; then
+      install_podman
+    fi
+    return 0
+  fi
+
+  # ── Only Podman installed ──────────────────────────────────────────────
+  if [ "$HAS_PODMAN" = true ]; then
+    color_echo "green" "✅ Podman is already installed."
+    if prompt_yes_no "Would you also like to install Docker?" "n"; then
+      install_docker
+    fi
+    return 0
+  fi
+
+  # ── Neither installed ──────────────────────────────────────────────────
+  color_echo "yellow" "⚠️  No container engine found."
+  color_echo "blue" "ℹ️  RF-Swift requires Docker or Podman to run containers."
+  echo ""
+  color_echo "cyan" "📝 Which container engine would you like to install?"
+  echo ""
+  color_echo "cyan" "   🐳 Docker  — Industry standard, requires daemon (root)"
+  color_echo "cyan" "              Best compatibility, large ecosystem"
+  echo ""
+  color_echo "cyan" "   🦭 Podman  — Daemonless, rootless by default"
+  color_echo "cyan" "              Drop-in Docker replacement, no root needed"
+  echo ""
+
+  # Check if this is a Steam Deck — special case
+  if [ "$(uname -s)" = "Linux" ] && is_steam_deck; then
+    color_echo "magenta" "🎮 Steam Deck detected! Docker with Steam Deck optimizations is recommended."
+    if prompt_yes_no "Install Docker with Steam Deck optimizations?" "y"; then
+      install_docker_steamdeck
+      return $?
+    fi
+  fi
+
+  CHOICE=$(prompt_choice "Select a container engine to install:" "Docker" "Podman" "Both" "Skip")
+
+  case "$CHOICE" in
+    1)
+      install_docker
+      ;;
+    2)
+      install_podman
+      ;;
+    3)
+      install_docker
+      install_podman
+      ;;
+    4)
+      color_echo "yellow" "⚠️  Container engine installation skipped."
+      color_echo "yellow" "   You will need Docker or Podman before using RF-Swift."
+      return 1
+      ;;
+  esac
+
+  # ── Both already installed ──────────────────────────────────────────────
+  if [ "$HAS_DOCKER" = true ] && [ "$HAS_PODMAN" = true ]; then
+    color_echo "green" "✅ Both Docker and Podman are installed."
+    if [ "$DOCKER_DAEMON_DOWN" = true ]; then
+      color_echo "yellow" "⚠️  Docker daemon is not running. Start it with: sudo systemctl start docker"
+    fi
+    color_echo "cyan" "ℹ️  RF-Swift auto-detects the engine at runtime."
+    return 0
+  fi
+
+  # ── Only Docker installed ──────────────────────────────────────────────
+  if [ "$HAS_DOCKER" = true ]; then
+    color_echo "green" "✅ Docker is already installed."
+    if [ "$DOCKER_DAEMON_DOWN" = true ]; then
+      color_echo "yellow" "⚠️  Docker daemon is not running. Start it with: sudo systemctl start docker"
+    fi
+    color_echo "cyan" "ℹ️  RF-Swift auto-detects the engine at runtime."
+    return 0
+  fi
+}
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Podman Installation
+# ═══════════════════════════════════════════════════════════════════════════════
+
+install_podman() {
+  color_echo "blue" "🦭 Installing Podman..."
+
+  case "$(uname -s)" in
+    Darwin*)
+      install_podman_macos
+      ;;
+    Linux*)
+      install_podman_linux
+      ;;
+    *)
+      color_echo "red" "🚨 Unsupported OS: $(uname -s)"
+      return 1
+      ;;
+  esac
+}
+
+install_podman_macos() {
+  if command_exists brew; then
+    color_echo "blue" "🍏 Installing Podman via Homebrew..."
+    brew install podman
+
+    color_echo "blue" "🚀 Initialising Podman machine..."
+    podman machine init 2>/dev/null || true
+    podman machine start 2>/dev/null || true
+
+    if podman info >/dev/null 2>&1; then
+      color_echo "green" "🎉 Podman is up and running on macOS!"
+    else
+      color_echo "yellow" "⚠️  Podman installed. Run 'podman machine start' to start the VM."
+    fi
+  else
+    color_echo "red" "🚨 Homebrew is not installed! Please install Homebrew first:"
+    color_echo "yellow" '/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"'
+    return 1
+  fi
+}
+
+install_podman_linux() {
+  if ! have_sudo_access; then
+    color_echo "red" "🚨 Podman installation requires sudo privileges."
+    return 1
+  fi
+
+  local distro=$(detect_distro)
+
+  case "$distro" in
+    "arch")
+      color_echo "cyan" "🏛️ Installing Podman using pacman..."
+      sudo pacman -Sy --noconfirm
+      sudo pacman -S --noconfirm --needed podman podman-compose slirp4netns fuse-overlayfs crun
+      ;;
+    "fedora")
+      color_echo "blue" "📦 Installing Podman using dnf..."
+      sudo dnf install -y podman podman-compose slirp4netns fuse-overlayfs
+      ;;
+    "rhel"|"centos")
+      color_echo "blue" "📦 Installing Podman..."
+      if command_exists dnf; then
+        sudo dnf install -y podman podman-compose slirp4netns fuse-overlayfs
+      else
+        sudo yum install -y podman slirp4netns fuse-overlayfs
+      fi
+      ;;
+    "debian"|"ubuntu")
+      color_echo "blue" "📦 Installing Podman using apt..."
+      sudo apt update
+      sudo apt install -y podman podman-compose slirp4netns fuse-overlayfs uidmap
+      ;;
+    "opensuse")
+      color_echo "blue" "📦 Installing Podman using zypper..."
+      sudo zypper install -y podman podman-compose slirp4netns fuse-overlayfs
+      ;;
+    "alpine")
+      color_echo "blue" "📦 Installing Podman using apk..."
+      sudo apk add podman podman-compose fuse-overlayfs slirp4netns
+      ;;
+    *)
+      color_echo "red" "❌ Unsupported distribution: $distro"
+      color_echo "yellow" "Please install Podman manually: https://podman.io/docs/installation"
+      return 1
+      ;;
+  esac
+
+  # ── Configure rootless Podman ──────────────────────────────────────────
+  configure_podman_rootless
+
+  color_echo "green" "🎉 Podman installed successfully!"
+  color_echo "cyan" "💡 Tip: Podman is a drop-in replacement for Docker."
+  color_echo "cyan" "   RF-Swift will auto-detect Podman at runtime."
+  return 0
+}
+
+# Configure rootless Podman (subuid/subgid, lingering, etc.)
+configure_podman_rootless() {
+  local current_user=$(get_real_user)
+
+  color_echo "blue" "🔧 Configuring rootless Podman for '$current_user'..."
+
+  # ── Ensure subuid/subgid ranges ──
+  if [ -f /etc/subuid ]; then
+    if ! grep -q "^${current_user}:" /etc/subuid 2>/dev/null; then
+      color_echo "blue" "   Adding subordinate UID range..."
+      sudo usermod --add-subuids 100000-165535 "$current_user" 2>/dev/null || true
+    fi
+  fi
+
+  if [ -f /etc/subgid ]; then
+    if ! grep -q "^${current_user}:" /etc/subgid 2>/dev/null; then
+      color_echo "blue" "   Adding subordinate GID range..."
+      sudo usermod --add-subgids 100000-165535 "$current_user" 2>/dev/null || true
+    fi
+  fi
+
+  # ── Enable lingering so rootless containers survive logout ──
+  if command_exists loginctl; then
+    color_echo "blue" "   Enabling login lingering..."
+    sudo loginctl enable-linger "$current_user" 2>/dev/null || true
+  fi
+
+  # ── Enable Podman socket for compatibility with Docker-expecting tools ──
+  if command_exists systemctl; then
+    color_echo "blue" "   Enabling Podman socket..."
+    systemctl --user enable podman.socket 2>/dev/null || true
+    systemctl --user start podman.socket 2>/dev/null || true
+  fi
+
+  color_echo "green" "   ✅ Rootless Podman configured"
+}
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Docker Installation (kept from original, with minor refactoring)
+# ═══════════════════════════════════════════════════════════════════════════════
+
 # Enhanced Steam Deck Docker installation with Arch Linux optimization
 install_docker_steamdeck() {
   color_echo "yellow" "🎮 Installing Docker on Steam Deck using Arch Linux methods..."
@@ -764,15 +1074,8 @@ install_docker_steamdeck() {
   install_docker_compose_steamdeck
 
   # Add user to docker group
-  if command_exists sudo && command_exists groups; then
-    current_user=$(get_real_user)
-    if ! groups "$current_user" | grep -q docker; then
-      color_echo "blue" "🔧 Adding '$current_user' to Docker group..."
-      sudo usermod -aG docker "$current_user"
-      color_echo "yellow" "⚡ You may need to log out and log back in for this to take effect."
-    fi
-  fi
-  
+  add_user_to_docker_group
+
   # Start Docker service
   if command_exists systemctl; then
     color_echo "blue" "🚀 Starting Docker service..."
@@ -799,53 +1102,22 @@ install_docker_compose_steamdeck() {
   color_echo "green" "✅ Docker Compose v2 installed successfully for Steam Deck"
 }
 
-# Enhanced Docker check with Arch Linux optimization
-check_docker() {
-  color_echo "blue" "🔍 Checking if Docker is installed..."
-
-  if command_exists docker; then
-    color_echo "green" "✅ Docker is already installed. You're all set for RF-Swift!"
-    return 0
-  fi
-
-  color_echo "yellow" "⚠️ Docker is not installed on your system."
-  color_echo "blue" "ℹ️ Docker is required for RF-Swift to work properly."
-  
-  # Provide advice on running Docker with reduced privileges
-  color_echo "cyan" "📝 Docker Security Advice:"
-  color_echo "cyan" "   - Consider using Docker Desktop which provides a user-friendly interface"
-  color_echo "cyan" "   - On Linux, add your user to the 'docker' group to avoid using sudo with each Docker command"
-  color_echo "cyan" "   - Use rootless Docker mode if you need enhanced security"
-  color_echo "cyan" "   - Always pull container images from trusted sources"
-  
-  # Check if this is a Steam Deck and offer Steam Deck specific installation
-  if [ "$(uname -s)" = "Linux" ]; then
-    if is_steam_deck; then
-      color_echo "magenta" "🎮 Steam Deck detected!"
-      if prompt_yes_no "Would you like to install Docker using Steam Deck optimized method?" "y"; then
-        install_docker_steamdeck
-        return $?
-      fi
-    else
-      if prompt_yes_no "Are you installing on a Steam Deck?" "n"; then
-        install_docker_steamdeck
-        return $?
-      fi
+# Add current user to the docker group
+add_user_to_docker_group() {
+  if command_exists sudo && command_exists groups; then
+    current_user=$(get_real_user)
+    if ! groups "$current_user" 2>/dev/null | grep -q docker; then
+      color_echo "blue" "🔧 Adding '$current_user' to Docker group..."
+      sudo usermod -aG docker "$current_user"
+      color_echo "yellow" "⚡ You may need to log out and log back in for Docker group changes to take effect."
     fi
-  fi
-  
-  # Ask if the user wants to install Docker using standard method
-  if prompt_yes_no "Would you like to install Docker now?" "n"; then
-    install_docker
-    return $?
-  else
-    color_echo "yellow" "⚠️ Docker installation skipped. You'll need to install Docker manually before using RF-Swift."
-    return 1
   fi
 }
 
 # Enhanced Docker installation with Arch Linux support
 install_docker() {
+  color_echo "blue" "🐳 Installing Docker..."
+
   case "$(uname -s)" in
     Darwin*)
       if command_exists brew; then
@@ -898,13 +1170,7 @@ install_docker() {
           sudo systemctl start docker
         fi
         
-        # Add user to docker group
-        current_user=$(get_real_user)
-        if ! groups "$current_user" 2>/dev/null | grep -q docker; then
-          color_echo "blue" "🔧 Adding '$current_user' to Docker group..."
-          sudo usermod -aG docker "$current_user"
-          color_echo "yellow" "⚡ You may need to log out and log back in for Docker group changes to take effect."
-        fi
+        add_user_to_docker_group
         
         color_echo "green" "🎉 Docker installed successfully using pacman!"
         return 0
@@ -928,14 +1194,7 @@ install_docker() {
           return 1
         fi
 
-        if command_exists sudo && command_exists groups; then
-          current_user=$(get_real_user)
-          if ! groups "$current_user" 2>/dev/null | grep -q docker; then
-            color_echo "blue" "🔧 Adding you to the Docker group..."
-            sudo usermod -aG docker "$current_user"
-            color_echo "yellow" "⚡ You may need to log out and log back in for this to take effect."
-          fi
-        fi
+        add_user_to_docker_group
         
         if command_exists systemctl; then
           color_echo "blue" "🚀 Starting Docker service..."
@@ -954,12 +1213,16 @@ install_docker() {
   esac
 }
 
+# ═══════════════════════════════════════════════════════════════════════════════
+# Release download, system detection, and binary installation
+# ═══════════════════════════════════════════════════════════════════════════════
+
 # Function to get the latest release information
 get_latest_release() {
   color_echo "blue" "🔍 Detecting the latest RF-Swift release..."
 
   # Default version as fallback
-  DEFAULT_VERSION="0.6.5"
+  DEFAULT_VERSION="0.7.3"
   VERSION="${DEFAULT_VERSION}"  # Initialize with default
   
   # First try: Use GitHub API with a proper User-Agent to avoid rate limiting issues
@@ -1155,6 +1418,10 @@ install_binary() {
   
   color_echo "green" "🎉 RF-Swift has been installed successfully to ${INSTALL_DIR}/rfswift!"
 }
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Logo, fonts, asciinema, and miscellaneous
+# ═══════════════════════════════════════════════════════════════════════════════
 
 # Enhanced rainbow logo with Arch Linux easter egg
 display_rainbow_logo_animated() {
@@ -1622,22 +1889,6 @@ install_fonts_manually_linux() {
   install_nerd_fonts_linux
 }
 
-# Function to test font installation
-test_font_installation() {
-  color_echo "blue" "🧪 Testing font installation..."
-  
-  color_echo "blue" "Font test symbols:"
-  echo "Powerline symbols: "
-  echo "Branch symbol: "
-  echo "Lock symbol: "
-  echo "Lightning: ⚡"
-  echo "Gear: ⚙"
-  echo "Arrow: ➜"
-  
-  color_echo "yellow" "If you see boxes or question marks instead of symbols,"
-  color_echo "yellow" "restart your terminal and ensure it's using a Nerd Font."
-}
-
 # Check and install asciinema for terminal recording
 check_asciinema() {
     if command -v asciinema >/dev/null 2>&1; then
@@ -1759,7 +2010,10 @@ check_asciinema() {
     fi
 }
 
-# Main function
+# ═══════════════════════════════════════════════════════════════════════════════
+# Main
+# ═══════════════════════════════════════════════════════════════════════════════
+
 main() {
   display_rainbow_logo_animated
 
@@ -1776,8 +2030,8 @@ main() {
     color_echo "magenta" "🎮 Steam Deck detected! Special optimizations will be applied."
   fi
   
-  # Check if Docker is installed and offer to install it if not
-  check_docker
+  # Check container engine (Docker / Podman) and offer to install
+  check_container_engine
   
   # Check and install audio system
   check_audio_system
@@ -1828,6 +2082,18 @@ main() {
     color_echo "cyan" "🚀 You can now run RF-Swift by simply typing: rfswift"
   fi
   
+  # Show container engine status
+  detect_container_engines
+  if [ "$HAS_DOCKER" = true ] && [ "$HAS_PODMAN" = true ]; then
+    color_echo "cyan" "🐳🦭 Both Docker and Podman available — RF-Swift will auto-detect at runtime."
+  elif [ "$HAS_DOCKER" = true ]; then
+    color_echo "cyan" "🐳 Container engine: Docker"
+  elif [ "$HAS_PODMAN" = true ]; then
+    color_echo "cyan" "🦭 Container engine: Podman (rootless)"
+  else
+    color_echo "yellow" "⚠️  No container engine installed — please install Docker or Podman before using RF-Swift."
+  fi
+
   color_echo "magenta" "🎵 Audio system is configured and ready for RF-Swift containers!"
   
   # Arch Linux specific final message
