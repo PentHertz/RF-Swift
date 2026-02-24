@@ -103,6 +103,7 @@ check_xhost() {
     fi
 }
 
+
 # Enhanced Arch Linux detection function
 is_arch_linux() {
   # Primary check: /etc/arch-release file
@@ -553,17 +554,19 @@ show_audio_status() {
   color_echo "blue" "🎵 Audio System Status"
   echo "=================================="
   
+  case "$(uname -s)" in
+    Darwin*)
+      color_echo "yellow" "🍎 macOS: Audio is managed by the system (CoreAudio)"
+      color_echo "cyan" "💡 For container audio, install PulseAudio: brew install pulseaudio"
+      echo "=================================="
+      return 0
+      ;;
+  esac
+  
   local current_audio=$(detect_audio_system)
   case "$current_audio" in
     "pipewire")
       color_echo "green" "✅ PipeWire is running"
-      if command_exists pw-cli; then
-        color_echo "blue" "ℹ️ PipeWire info:"
-        pw-cli info 2>/dev/null | head -5 || echo "Unable to get detailed info"
-      fi
-      ;;
-    "pulseaudio")
-      color_echo "green" "✅ PulseAudio is running"
       if command_exists pactl; then
         color_echo "blue" "ℹ️ PulseAudio info:"
         pactl info 2>/dev/null | grep -E "(Server|Version)" || echo "Unable to get detailed info"
@@ -2120,7 +2123,14 @@ main() {
     color_echo "yellow" "⚠️  No container engine installed — please install Docker or Podman before using RF-Swift."
   fi
 
-  color_echo "magenta" "🎵 Audio system is configured and ready for RF-Swift containers!"
+  case "$(uname -s)" in
+    Darwin*)
+      color_echo "cyan" "🎵 For container audio on macOS, see: brew install pulseaudio"
+      ;;
+    *)
+      color_echo "magenta" "🎵 Audio system is configured and ready for RF-Swift containers!"
+      ;;
+  esac
   
   # Arch Linux specific final message
   if is_arch_linux; then
