@@ -35,43 +35,69 @@ color_echo() {
 # Enhanced xhost check with Arch Linux support
 check_xhost() {
     if ! command -v xhost >/dev/null 2>&1; then
+        # On macOS, xhost may be installed but not in PATH
+        if [[ "$(uname)" == "Darwin" ]] && [[ -x /opt/X11/bin/xhost ]]; then
+            color_echo "yellow" "⚠️ xhost found at /opt/X11/bin/xhost but not in PATH. Adding it."
+            export PATH="/opt/X11/bin:$PATH"
+            color_echo "green" "✅ xhost is now available. ✅"
+            return
+        fi
+
         color_echo "red" "❌ xhost is not installed on this system. ❌"
-        
-        local distro=$(detect_distro)
-        case "$distro" in
-            "arch")
-                color_echo "cyan" "🏛️ Installing xorg-xhost using pacman on Arch Linux... 📦"
-                sudo pacman -Sy --noconfirm
-                sudo pacman -S --noconfirm --needed xorg-xhost
-                ;;
-            "fedora")
-                color_echo "yellow" "📦 Installing xorg-x11-server-utils using dnf... 📦"
-                sudo dnf install -y xorg-x11-server-utils
-                ;;
-            "rhel"|"centos")
-                if command -v dnf >/dev/null 2>&1; then
+
+        if [[ "$(uname)" == "Darwin" ]]; then
+            color_echo "cyan" "🍎 macOS detected. Installing XQuartz via Homebrew... 📦"
+            if ! command -v brew >/dev/null 2>&1; then
+                color_echo "red" "❌ Homebrew is not installed. Please install it first: https://brew.sh ❌"
+                exit 1
+            fi
+            brew install --cask xquartz
+            export PATH="/opt/X11/bin:$PATH"
+            if [[ -x /opt/X11/bin/xhost ]]; then
+                color_echo "green" "✅ XQuartz installed successfully. ✅"
+                color_echo "yellow" "⚠️ You may need to log out and back in for XQuartz to work properly."
+                color_echo "yellow" "⚠️ Make sure to enable 'Allow connections from network clients' in XQuartz → Settings → Security."
+            else
+                color_echo "red" "❌ XQuartz installed but xhost not found. Please reboot and try again. ❌"
+                exit 1
+            fi
+        else
+            local distro=$(detect_distro)
+            case "$distro" in
+                "arch")
+                    color_echo "cyan" "🏛️ Installing xorg-xhost using pacman on Arch Linux... 📦"
+                    sudo pacman -Sy --noconfirm
+                    sudo pacman -S --noconfirm --needed xorg-xhost
+                    ;;
+                "fedora")
                     color_echo "yellow" "📦 Installing xorg-x11-server-utils using dnf... 📦"
                     sudo dnf install -y xorg-x11-server-utils
-                else
-                    color_echo "yellow" "📦 Installing xorg-x11-utils using yum... 📦"
-                    sudo yum install -y xorg-x11-utils
-                fi
-                ;;
-            "debian"|"ubuntu")
-                color_echo "yellow" "📦 Installing x11-xserver-utils using apt... 📦"
-                sudo apt update
-                sudo apt install -y x11-xserver-utils
-                ;;
-            "opensuse")
-                color_echo "yellow" "📦 Installing xorg-x11-server using zypper... 📦"
-                sudo zypper install -y xorg-x11-server
-                ;;
-            *)
-                color_echo "red" "❌ Unsupported package manager. Please install xhost manually. ❌"
-                exit 1
-                ;;
-        esac
-        color_echo "green" "✅ xhost installed successfully. ✅"
+                    ;;
+                "rhel"|"centos")
+                    if command -v dnf >/dev/null 2>&1; then
+                        color_echo "yellow" "📦 Installing xorg-x11-server-utils using dnf... 📦"
+                        sudo dnf install -y xorg-x11-server-utils
+                    else
+                        color_echo "yellow" "📦 Installing xorg-x11-utils using yum... 📦"
+                        sudo yum install -y xorg-x11-utils
+                    fi
+                    ;;
+                "debian"|"ubuntu")
+                    color_echo "yellow" "📦 Installing x11-xserver-utils using apt... 📦"
+                    sudo apt update
+                    sudo apt install -y x11-xserver-utils
+                    ;;
+                "opensuse")
+                    color_echo "yellow" "📦 Installing xorg-x11-server using zypper... 📦"
+                    sudo zypper install -y xorg-x11-server
+                    ;;
+                *)
+                    color_echo "red" "❌ Unsupported package manager. Please install xhost manually. ❌"
+                    exit 1
+                    ;;
+            esac
+            color_echo "green" "✅ xhost installed successfully. ✅"
+        fi
     else
         color_echo "green" "✅ xhost is already installed. Moving on. ✅"
     fi
