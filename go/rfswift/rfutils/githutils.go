@@ -328,6 +328,9 @@ func ExtractTarGz(src, destDir string) error {
 				return fmt.Errorf("error creating directory: %v", err)
 			}
 		case tar.TypeReg:
+			if err := os.MkdirAll(filepath.Dir(targetPath), 0o755); err != nil {
+				return fmt.Errorf("error creating parent directory: %v", err)
+			}
 			outFile, err := os.Create(targetPath)
 			if err != nil {
 				return fmt.Errorf("error creating file: %v", err)
@@ -361,6 +364,10 @@ func ExtractZip(src, destDir string) error {
 				return fmt.Errorf("error creating directory: %v", err)
 			}
 			continue
+		}
+
+		if err := os.MkdirAll(filepath.Dir(targetPath), 0o755); err != nil {
+			return fmt.Errorf("error creating parent directory: %v", err)
 		}
 
 		fileReader, err := file.Open()
