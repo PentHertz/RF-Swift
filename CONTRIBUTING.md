@@ -47,8 +47,13 @@ RF-Swift/
 │   ├── dock/             # Container engine logic (the core)
 │   └── rfutils/          # Host utilities (X11, audio, self-update, USB)
 ├── recipes/              # YAML build recipes for container images
-├── build_project.sh      # Interactive bootstrap script
-├── common.sh             # Shared bash library for shell scripts
+├── scripts/              # Shell scripts
+│   ├── common.sh         # Shared bash library for shell scripts
+│   ├── build_project.sh  # Interactive bootstrap script
+│   ├── build-windows.bat # Windows build script
+│   ├── install.sh        # Binary-only install
+│   ├── install_dev.sh    # Developer install
+│   └── get_rfswift.sh    # Standalone curl-pipe installer
 ├── .goreleaser.yml       # Release automation config
 └── .github/workflows/    # CI/CD (build, test, release)
 ```
