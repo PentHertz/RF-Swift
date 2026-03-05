@@ -10,6 +10,9 @@ import (
 	common "penthertz/rfswift/common"
 )
 
+// main is the program entry point. It suppresses the ASCII banner when the
+// binary is invoked for shell-completion generation, then delegates all
+// command handling to the CLI layer via cli.Execute.
 func main() {
 	isCompletion := false
 

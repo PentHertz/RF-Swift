@@ -2,20 +2,6 @@
  * Author(s): Sebastien Dudek (@FlUxIuS)
  *
  * Container lifecycle management
- *
- * DockerRun              - in(1): string containerName
- * DockerExec             - in(1): string containerIdentifier, in(2): string WorkingDir
- * DockerStop             - in(1): string containerIdentifier
- * DockerCommit           - in(1): string contid
- * DockerRemove           - in(1): string containerIdentifier
- * DockerRename           - in(1): string currentIdentifier, in(2): string newName
- * DockerLast             - in(1): string ifilter, in(2): string labelKey, in(3): string labelValue  (note: DockerLast is NOT included here - it's in display area)
- * DockerInstallScript    - in(1): string containerIdentifier, in(2): string scriptName, in(3): string functionScript
- * latestDockerID         - in(1): string labelKey, in(2): string labelValue, out: string
- * resizeTty              - in(1): ctx, in(2): cli, in(3): string contid, in(4): int fd
- * execCommandInContainer - in(1): ctx, in(2): cli, in(3): string contid, in(4): string WorkingDir
- * execCommand            - in(1): ctx, in(2): cli, in(3): string containerID, in(4): []string cmd
- * execCommandWithOutput  - in(1): ctx, in(2): cli, in(3): string containerID, in(4): []string cmd, out: (string, error)
  */
 
 package dock
@@ -46,6 +32,11 @@ import (
 )
 
 // resizeTty continuously monitors and resizes the container TTY to match the local terminal size.
+//
+//	in(1): context.Context ctx
+//	in(2): *client.Client cli
+//	in(3): string contid container ID
+//	in(4): int fd file descriptor
 func resizeTty(ctx context.Context, cli *client.Client, contid string, fd int) {
 	for {
 		width, height, err := getTerminalSize(fd)
@@ -67,8 +58,12 @@ func resizeTty(ctx context.Context, cli *client.Client, contid string, fd int) {
 	}
 }
 
-// DockerLast lists the most recent RF Swift containers, optionally filtered by image, name, or ID.
-func DockerLast(ifilter string, labelKey string, labelValue string) {
+// ContainerLast lists the most recent RF Swift containers, optionally filtered by image, name, or ID.
+//
+//	in(1): string ifilter filter string
+//	in(2): string labelKey label key
+//	in(3): string labelValue label value
+func ContainerLast(ifilter string, labelKey string, labelValue string) {
 	ctx := context.Background()
 	cli, err := NewEngineClient()
 	if err != nil {
@@ -311,6 +306,10 @@ func DockerLast(ifilter string, labelKey string, labelValue string) {
 }
 
 // latestDockerID returns the ID of the most recently created container matching the given label.
+//
+//	in(1): string labelKey label key
+//	in(2): string labelValue label value
+//	out: string container ID
 func latestDockerID(labelKey string, labelValue string) string {
 	ctx := context.Background()
 	cli, err := NewEngineClient()
@@ -343,8 +342,11 @@ func latestDockerID(labelKey string, labelValue string) string {
 	return ""
 }
 
-// DockerExec attaches to an existing container and opens an interactive shell session.
-func DockerExec(containerIdentifier string, WorkingDir string) {
+// ContainerExec attaches to an existing container and opens an interactive shell session.
+//
+//	in(1): string containerIdentifier container ID or name
+//	in(2): string WorkingDir working directory
+func ContainerExec(containerIdentifier string, WorkingDir string) {
 	ctx := context.Background()
 	cli, err := NewEngineClient()
 	if err != nil {
@@ -391,7 +393,7 @@ func DockerExec(containerIdentifier string, WorkingDir string) {
 	// Priority: 1) explicitly set via CLI (-e flag) if different from default
 	//           2) container's original shell (from containerJSON.Path)
 	//           3) fallback to /bin/bash
-	shellToUse := dockerObj.shell
+	shellToUse := containerCfg.shell
 
 	// If shell is empty or default, prefer container's configured shell
 	if shellToUse == "" || shellToUse == "/bin/bash" {
@@ -406,51 +408,352 @@ func DockerExec(containerIdentifier string, WorkingDir string) {
 		shellToUse = "/bin/bash"
 	}
 
-	// Create exec configuration
+	if err := execInteractiveSession(ctx, cli, containerIdentifier, shellToUse, WorkingDir); err != nil {
+		common.PrintErrorMessage(err)
+		return
+	}
+
+	common.PrintSuccessMessage(fmt.Sprintf("Shell session in container '%s' ended", containerName))
+}
+
+// ContainerRun creates a new container with the given name and starts an interactive session.
+//
+//	in(1): string containerName container name
+func ContainerRun(containerName string) {
+	ctx := context.Background()
+	cli, err := NewEngineClient()
+	if err != nil {
+		common.PrintErrorMessage(err)
+		return
+	}
+	defer cli.Close()
+
+	containerCfg.imagename = normalizeImageName(containerCfg.imagename)
+
+	bindings := combineBindings(containerCfg.x11forward, containerCfg.extrabinding)
+	extrahosts := splitAndCombine(containerCfg.extrahosts)
+	dockerenv := combineEnv(containerCfg.xdisplay, containerCfg.pulseServer, containerCfg.extraenv)
+	exposedPorts := ParseExposedPorts(containerCfg.exposedPorts)
+	bindedPorts := ParseBindedPorts(containerCfg.bindedPorts)
+
+	// Prepare host config based on privileged flag
+	hostConfig := &container.HostConfig{
+		NetworkMode:  container.NetworkMode(containerCfg.networkMode),
+		Binds:        bindings,
+		ExtraHosts:   extrahosts,
+		PortBindings: bindedPorts,
+		Privileged:   containerCfg.privileged,
+	}
+
+	// Handle ulimits
+	ulimits := getUlimitsForContainer()
+	if len(ulimits) > 0 {
+		hostConfig.Resources.Ulimits = ulimits
+	}
+
+	// If not in privileged mode, add device permissions
+	if !containerCfg.privileged {
+		devices := getDeviceMappingsFromString(containerCfg.devices)
+
+		if containerCfg.usbforward != "" {
+			parts := strings.Split(containerCfg.usbforward, ":")
+			if len(parts) == 2 {
+				devices = append(devices, container.DeviceMapping{
+					PathOnHost:        parts[0],
+					PathInContainer:   parts[1],
+					CgroupPermissions: "rwm",
+				})
+			}
+		}
+
+		// ── Hotplug-aware device filtering ─────────────────────────────
+		//
+		// If a /dev subtree is already bind-mounted (e.g. /dev/bus/usb),
+		// individual device entries under that subtree are redundant and
+		// prevent USB hotplug from working (they are static snapshots of
+		// the device nodes that existed at container creation time).
+		//
+		// We remove them here and rely on the bind mount (filesystem
+		// visibility) + cgroup device rule (kernel access) instead.
+		//
+		bindSet := make(map[string]bool)
+		for _, b := range bindings {
+			parts := strings.SplitN(b, ":", 3)
+			if len(parts) >= 2 {
+				bindSet[parts[1]] = true // destination (container) path
+			}
+		}
+
+		var filteredDevices []container.DeviceMapping
+		for _, dev := range devices {
+			covered := false
+			for bindPath := range bindSet {
+				if strings.HasPrefix(dev.PathOnHost, bindPath+"/") || dev.PathOnHost == bindPath {
+					covered = true
+					break
+				}
+			}
+			if !covered {
+				filteredDevices = append(filteredDevices, dev)
+			}
+		}
+
+		hostConfig.Devices = filteredDevices
+
+		// ── Cgroup rules ───────────────────────────────────────────────
+		if containerCfg.cgroups != "" {
+			rules := strings.Split(containerCfg.cgroups, ",")
+			// Fix permission order: "rmw" → "rwm"
+			for i, rule := range rules {
+				rules[i] = strings.TrimSpace(rule)
+				rules[i] = strings.Replace(rules[i], "rmw", "rwm", 1)
+			}
+			hostConfig.DeviceCgroupRules = rules
+		}
+
+		// Auto-inject cgroup device rules for bind-mounted /dev subtrees
+		// so that hotplug works out-of-the-box without needing explicit
+		// --cgroups flags for common device classes.
+		devMajorRules := map[string]string{
+			"/dev/bus/usb": "c 189:* rwm",
+			"/dev/snd":     "c 116:* rwm",
+			"/dev/dri":     "c 226:* rwm",
+			"/dev/input":   "c 13:* rwm",
+			"/dev/vhci":    "c 137:* rwm",
+		}
+
+		existingRules := make(map[string]bool)
+		for _, rule := range hostConfig.DeviceCgroupRules {
+			existingRules[rule] = true
+		}
+
+		for bindPath := range bindSet {
+			if rule, ok := devMajorRules[bindPath]; ok && !existingRules[rule] {
+				hostConfig.DeviceCgroupRules = append(hostConfig.DeviceCgroupRules, rule)
+				existingRules[rule] = true
+			}
+		}
+
+		// Also inject cgroup rules for remaining individual device entries
+		for _, dev := range filteredDevices {
+			for prefix, rule := range devMajorRules {
+				if strings.HasPrefix(dev.PathOnHost, prefix) && !existingRules[rule] {
+					hostConfig.DeviceCgroupRules = append(hostConfig.DeviceCgroupRules, rule)
+					existingRules[rule] = true
+				}
+			}
+		}
+
+		// ── Seccomp ────────────────────────────────────────────────────
+		if containerCfg.seccomp != "" {
+			seccompOpts := strings.Split(containerCfg.seccomp, ",")
+			for i, opt := range seccompOpts {
+				if !strings.Contains(opt, "=") {
+					seccompOpts[i] = "seccomp=" + opt
+				}
+			}
+			hostConfig.SecurityOpt = seccompOpts
+		}
+
+		// ── Capabilities ───────────────────────────────────────────────
+		if containerCfg.caps != "" {
+			hostConfig.CapAdd = strings.Split(containerCfg.caps, ",")
+		}
+	}
+
+	containerLabels := map[string]string{
+		"org.container.project": "rfswift",
+	}
+	if len(hostConfig.DeviceCgroupRules) > 0 {
+		containerLabels["org.rfswift.cgroup_rules"] = strings.Join(hostConfig.DeviceCgroupRules, ",")
+	}
+	if containerCfg.exposedPorts == "" {
+		containerLabels["org.rfswift.exposedPorts"] = "none"
+	} else {
+		containerLabels["org.rfswift.exposedPorts"] = containerCfg.exposedPorts
+	}
+
+	// ── Rootless Podman: strip unsupported features ────────────────
+	if IsRootlessPodman() {
+		// 1. Cgroup rules
+		if len(hostConfig.DeviceCgroupRules) > 0 {
+			common.PrintWarningMessage("Rootless Podman does not support device cgroup rules.")
+			common.PrintWarningMessage(fmt.Sprintf("Rules that will be dropped: %s", strings.Join(hostConfig.DeviceCgroupRules, ", ")))
+			common.PrintInfoMessage("Device hotplug (USB, SDR dongles) may not work without cgroup rules.")
+			common.PrintInfoMessage("To use cgroup rules, run RF Swift with sudo.")
+			fmt.Print("\nContinue without cgroup rules? (y/n): ")
+			reader := bufio.NewReader(os.Stdin)
+			response, _ := reader.ReadString('\n')
+			response = strings.ToLower(strings.TrimSpace(response))
+			if response != "y" && response != "yes" {
+				common.PrintInfoMessage("Aborted. Re-run with: sudo ./rfswift run ...")
+				return
+			}
+			hostConfig.DeviceCgroupRules = nil
+			delete(containerLabels, "org.rfswift.cgroup_rules")
+			common.PrintInfoMessage("Cgroup rules removed — proceeding in rootless mode.")
+		}
+
+		// 2. Filter devices to only those accessible by current user
+		if len(hostConfig.Devices) > 0 {
+			var accessible []container.DeviceMapping
+			var dropped []string
+			for _, dev := range hostConfig.Devices {
+				f, err := os.OpenFile(dev.PathOnHost, os.O_RDONLY, 0)
+				if err == nil {
+					f.Close()
+					accessible = append(accessible, dev)
+				} else {
+					dropped = append(dropped, dev.PathOnHost)
+				}
+			}
+			if len(dropped) > 0 {
+				common.PrintWarningMessage(fmt.Sprintf("Dropping %d inaccessible device(s) for rootless mode:", len(dropped)))
+				for _, d := range dropped {
+					common.PrintWarningMessage(fmt.Sprintf("  - %s", d))
+				}
+			}
+			hostConfig.Devices = accessible
+		}
+	}
+
+	// Verify the image exists locally before attempting to create container
+	_, _, err = cli.ImageInspectWithRaw(ctx, containerCfg.imagename)
+	if err != nil {
+		common.PrintErrorMessage(fmt.Errorf("image '%s' not found locally. Pull it first with: rfswift pull -i %s", containerCfg.imagename, containerCfg.imagename))
+		return
+	}
+
+	resp, err := cli.ContainerCreate(ctx, &container.Config{
+		Image:        containerCfg.imagename,
+		Cmd:          []string{containerCfg.shell},
+		Env:          dockerenv,
+		ExposedPorts: exposedPorts,
+		OpenStdin:    true,
+		StdinOnce:    false,
+		AttachStdin:  true,
+		AttachStdout: true,
+		AttachStderr: true,
+		Tty:          true,
+		Labels:       containerLabels,
+	}, hostConfig, &network.NetworkingConfig{}, nil, containerName)
+
+	// ── Podman: use exec-style attach (compat API rejects attach-before-start) ──
+	if GetEngine().Type() == EnginePodman {
+		if err := cli.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
+			common.PrintErrorMessage(err)
+			return
+		}
+
+		props, err := getContainerProperties(ctx, cli, resp.ID)
+		if err != nil {
+			common.PrintErrorMessage(err)
+			return
+		}
+		size := props["Size"]
+		printContainerProperties(ctx, cli, containerName, props, size)
+		common.PrintSuccessMessage(fmt.Sprintf("Container '%s' started successfully", containerName))
+
+		// Attach via exec (same as ContainerExec)
+		if err := execInteractiveSession(ctx, cli, resp.ID, containerCfg.shell, ""); err != nil {
+			common.PrintErrorMessage(err)
+		}
+		return
+	}
+
+	if err != nil {
+		common.PrintErrorMessage(err)
+		return
+	}
+
+	waiter, err := cli.ContainerAttach(ctx, resp.ID, container.AttachOptions{
+		Stderr: true,
+		Stdout: true,
+		Stdin:  true,
+		Stream: true,
+	})
+	if err != nil {
+		common.PrintErrorMessage(err)
+		return
+	}
+	defer waiter.Close()
+
+	if err := cli.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
+		common.PrintErrorMessage(err)
+		return
+	}
+
+	props, err := getContainerProperties(ctx, cli, resp.ID)
+	if err != nil {
+		common.PrintErrorMessage(err)
+		return
+	}
+	size := props["Size"]
+	printContainerProperties(ctx, cli, containerName, props, size)
+	common.PrintSuccessMessage(fmt.Sprintf("Container '%s' started successfully", containerName))
+
+	handleIOStreams(waiter)
+	fd := int(os.Stdin.Fd())
+	if terminal.IsTerminal(fd) {
+		oldState, err := terminal.MakeRaw(fd)
+		if err != nil {
+			common.PrintErrorMessage(err)
+			return
+		}
+		defer terminal.Restore(fd, oldState)
+		go resizeTty(ctx, cli, resp.ID, fd)
+		go readAndWriteInput(waiter)
+	}
+
+	waitForContainer(ctx, cli, resp.ID)
+}
+
+// execInteractiveSession creates an exec instance in the container and runs an interactive
+// terminal session with raw mode, resize handling, and I/O copying.
+//
+//	in(1): context.Context ctx
+//	in(2): *client.Client cli
+//	in(3): string containerID
+//	in(4): string shell command
+//	in(5): string workingDir working directory
+//	out: error
+func execInteractiveSession(ctx context.Context, cli *client.Client, containerID string, shell string, workingDir string) error {
 	execConfig := container.ExecOptions{
 		AttachStdin:  true,
 		AttachStdout: true,
 		AttachStderr: true,
 		Tty:          true,
-		Cmd:          []string{shellToUse},
-		WorkingDir:   WorkingDir,
+		Cmd:          []string{shell},
+		WorkingDir:   workingDir,
 	}
 
-	// Create exec instance
-	execID, err := cli.ContainerExecCreate(ctx, containerIdentifier, execConfig)
+	execID, err := cli.ContainerExecCreate(ctx, containerID, execConfig)
 	if err != nil {
-		common.PrintErrorMessage(fmt.Errorf("failed to create exec instance: %v", err))
-		return
+		return fmt.Errorf("failed to create exec instance: %v", err)
 	}
 
-	// Attach to the exec instance
 	attachResp, err := cli.ContainerExecAttach(ctx, execID.ID, container.ExecStartOptions{Tty: true})
 	if err != nil {
-		common.PrintErrorMessage(fmt.Errorf("failed to attach to exec instance: %v", err))
-		return
+		return fmt.Errorf("failed to attach to exec instance: %v", err)
 	}
 	defer attachResp.Close()
 
-	// Setup raw terminal
 	inFd, inIsTerminal := term.GetFdInfo(os.Stdin)
 	outFd, outIsTerminal := term.GetFdInfo(os.Stdout)
 
 	if inIsTerminal {
 		state, err := term.SetRawTerminal(inFd)
 		if err != nil {
-			common.PrintErrorMessage(fmt.Errorf("failed to set raw terminal: %v", err))
-			return
+			return fmt.Errorf("failed to set raw terminal: %v", err)
 		}
 		defer term.RestoreTerminal(inFd, state)
 	}
 
-	// Start the exec instance
 	// NOTE: Podman's compat API implicitly starts the exec session during Attach,
 	// so calling ExecStart again causes "exec session state improper". Skip it.
 	if GetEngine().Type() != EnginePodman {
 		if err := cli.ContainerExecStart(ctx, execID.ID, container.ExecStartOptions{Tty: true}); err != nil {
-			common.PrintErrorMessage(fmt.Errorf("failed to start exec instance: %v", err))
-			return
+			return fmt.Errorf("failed to start exec instance: %v", err)
 		}
 	}
 
@@ -512,388 +815,26 @@ func DockerExec(containerIdentifier string, WorkingDir string) {
 	}()
 
 	go func() {
-		if inIsTerminal {
-			io.Copy(attachResp.Conn, os.Stdin)
-		} else {
-			io.Copy(attachResp.Conn, os.Stdin)
-		}
+		io.Copy(attachResp.Conn, os.Stdin)
 		attachResp.CloseWrite()
 	}()
 
-	select {
-	case err := <-outputDone:
-		if err != nil {
-			common.PrintErrorMessage(fmt.Errorf("error in output processing: %v", err))
-		}
+	if err := <-outputDone; err != nil {
+		return fmt.Errorf("error in output processing: %v", err)
 	}
-
-	common.PrintSuccessMessage(fmt.Sprintf("Shell session in container '%s' ended", containerName))
-}
-
-// DockerRun creates a new container with the given name and starts an interactive session.
-func DockerRun(containerName string) {
-	ctx := context.Background()
-	cli, err := NewEngineClient()
-	if err != nil {
-		common.PrintErrorMessage(err)
-		return
-	}
-	defer cli.Close()
-
-	dockerObj.imagename = normalizeImageName(dockerObj.imagename)
-
-	bindings := combineBindings(dockerObj.x11forward, dockerObj.extrabinding)
-	extrahosts := splitAndCombine(dockerObj.extrahosts)
-	dockerenv := combineEnv(dockerObj.xdisplay, dockerObj.pulse_server, dockerObj.extraenv)
-	exposedPorts := ParseExposedPorts(dockerObj.exposed_ports)
-	bindedPorts := ParseBindedPorts(dockerObj.binded_ports)
-
-	// Prepare host config based on privileged flag
-	hostConfig := &container.HostConfig{
-		NetworkMode:  container.NetworkMode(dockerObj.network_mode),
-		Binds:        bindings,
-		ExtraHosts:   extrahosts,
-		PortBindings: bindedPorts,
-		Privileged:   dockerObj.privileged,
-	}
-
-	// Handle ulimits
-	ulimits := getUlimitsForContainer()
-	if len(ulimits) > 0 {
-		hostConfig.Resources.Ulimits = ulimits
-	}
-
-	// If not in privileged mode, add device permissions
-	if !dockerObj.privileged {
-		devices := getDeviceMappingsFromString(dockerObj.devices)
-
-		if dockerObj.usbforward != "" {
-			parts := strings.Split(dockerObj.usbforward, ":")
-			if len(parts) == 2 {
-				devices = append(devices, container.DeviceMapping{
-					PathOnHost:        parts[0],
-					PathInContainer:   parts[1],
-					CgroupPermissions: "rwm",
-				})
-			}
-		}
-
-		// ── Hotplug-aware device filtering ─────────────────────────────
-		//
-		// If a /dev subtree is already bind-mounted (e.g. /dev/bus/usb),
-		// individual device entries under that subtree are redundant and
-		// prevent USB hotplug from working (they are static snapshots of
-		// the device nodes that existed at container creation time).
-		//
-		// We remove them here and rely on the bind mount (filesystem
-		// visibility) + cgroup device rule (kernel access) instead.
-		//
-		bindSet := make(map[string]bool)
-		for _, b := range bindings {
-			parts := strings.SplitN(b, ":", 3)
-			if len(parts) >= 2 {
-				bindSet[parts[1]] = true // destination (container) path
-			}
-		}
-
-		var filteredDevices []container.DeviceMapping
-		for _, dev := range devices {
-			covered := false
-			for bindPath := range bindSet {
-				if strings.HasPrefix(dev.PathOnHost, bindPath+"/") || dev.PathOnHost == bindPath {
-					covered = true
-					break
-				}
-			}
-			if !covered {
-				filteredDevices = append(filteredDevices, dev)
-			}
-		}
-
-		hostConfig.Devices = filteredDevices
-
-		// ── Cgroup rules ───────────────────────────────────────────────
-		if dockerObj.cgroups != "" {
-			rules := strings.Split(dockerObj.cgroups, ",")
-			// Fix permission order: "rmw" → "rwm"
-			for i, rule := range rules {
-				rules[i] = strings.TrimSpace(rule)
-				rules[i] = strings.Replace(rules[i], "rmw", "rwm", 1)
-			}
-			hostConfig.DeviceCgroupRules = rules
-		}
-
-		// Auto-inject cgroup device rules for bind-mounted /dev subtrees
-		// so that hotplug works out-of-the-box without needing explicit
-		// --cgroups flags for common device classes.
-		devMajorRules := map[string]string{
-			"/dev/bus/usb": "c 189:* rwm",
-			"/dev/snd":     "c 116:* rwm",
-			"/dev/dri":     "c 226:* rwm",
-			"/dev/input":   "c 13:* rwm",
-			"/dev/vhci":    "c 137:* rwm",
-		}
-
-		existingRules := make(map[string]bool)
-		for _, rule := range hostConfig.DeviceCgroupRules {
-			existingRules[rule] = true
-		}
-
-		for bindPath := range bindSet {
-			if rule, ok := devMajorRules[bindPath]; ok && !existingRules[rule] {
-				hostConfig.DeviceCgroupRules = append(hostConfig.DeviceCgroupRules, rule)
-				existingRules[rule] = true
-			}
-		}
-
-		// Also inject cgroup rules for remaining individual device entries
-		for _, dev := range filteredDevices {
-			for prefix, rule := range devMajorRules {
-				if strings.HasPrefix(dev.PathOnHost, prefix) && !existingRules[rule] {
-					hostConfig.DeviceCgroupRules = append(hostConfig.DeviceCgroupRules, rule)
-					existingRules[rule] = true
-				}
-			}
-		}
-
-		// ── Seccomp ────────────────────────────────────────────────────
-		if dockerObj.seccomp != "" {
-			seccompOpts := strings.Split(dockerObj.seccomp, ",")
-			for i, opt := range seccompOpts {
-				if !strings.Contains(opt, "=") {
-					seccompOpts[i] = "seccomp=" + opt
-				}
-			}
-			hostConfig.SecurityOpt = seccompOpts
-		}
-
-		// ── Capabilities ───────────────────────────────────────────────
-		if dockerObj.caps != "" {
-			hostConfig.CapAdd = strings.Split(dockerObj.caps, ",")
-		}
-	}
-
-	containerLabels := map[string]string{
-		"org.container.project": "rfswift",
-	}
-	if len(hostConfig.DeviceCgroupRules) > 0 {
-		containerLabels["org.rfswift.cgroup_rules"] = strings.Join(hostConfig.DeviceCgroupRules, ",")
-	}
-	if dockerObj.exposed_ports == "" {
-		containerLabels["org.rfswift.exposed_ports"] = "none"
-	} else {
-		containerLabels["org.rfswift.exposed_ports"] = dockerObj.exposed_ports
-	}
-
-	// ── Rootless Podman: strip unsupported features ────────────────
-	if IsRootlessPodman() {
-		// 1. Cgroup rules
-		if len(hostConfig.DeviceCgroupRules) > 0 {
-			common.PrintWarningMessage("Rootless Podman does not support device cgroup rules.")
-			common.PrintWarningMessage(fmt.Sprintf("Rules that will be dropped: %s", strings.Join(hostConfig.DeviceCgroupRules, ", ")))
-			common.PrintInfoMessage("Device hotplug (USB, SDR dongles) may not work without cgroup rules.")
-			common.PrintInfoMessage("To use cgroup rules, run RF Swift with sudo.")
-			fmt.Print("\nContinue without cgroup rules? (y/n): ")
-			reader := bufio.NewReader(os.Stdin)
-			response, _ := reader.ReadString('\n')
-			response = strings.ToLower(strings.TrimSpace(response))
-			if response != "y" && response != "yes" {
-				common.PrintInfoMessage("Aborted. Re-run with: sudo ./rfswift run ...")
-				return
-			}
-			hostConfig.DeviceCgroupRules = nil
-			delete(containerLabels, "org.rfswift.cgroup_rules")
-			common.PrintInfoMessage("Cgroup rules removed — proceeding in rootless mode.")
-		}
-
-		// 2. Filter devices to only those accessible by current user
-		if len(hostConfig.Devices) > 0 {
-			var accessible []container.DeviceMapping
-			var dropped []string
-			for _, dev := range hostConfig.Devices {
-				f, err := os.OpenFile(dev.PathOnHost, os.O_RDONLY, 0)
-				if err == nil {
-					f.Close()
-					accessible = append(accessible, dev)
-				} else {
-					dropped = append(dropped, dev.PathOnHost)
-				}
-			}
-			if len(dropped) > 0 {
-				common.PrintWarningMessage(fmt.Sprintf("Dropping %d inaccessible device(s) for rootless mode:", len(dropped)))
-				for _, d := range dropped {
-					common.PrintWarningMessage(fmt.Sprintf("  - %s", d))
-				}
-			}
-			hostConfig.Devices = accessible
-		}
-	}
-
-	// Verify the image exists locally before attempting to create container
-	_, _, err = cli.ImageInspectWithRaw(ctx, dockerObj.imagename)
-	if err != nil {
-		common.PrintErrorMessage(fmt.Errorf("image '%s' not found locally. Pull it first with: rfswift pull -i %s", dockerObj.imagename, dockerObj.imagename))
-		return
-	}
-
-	resp, err := cli.ContainerCreate(ctx, &container.Config{
-		Image:        dockerObj.imagename,
-		Cmd:          []string{dockerObj.shell},
-		Env:          dockerenv,
-		ExposedPorts: exposedPorts,
-		OpenStdin:    true,
-		StdinOnce:    false,
-		AttachStdin:  true,
-		AttachStdout: true,
-		AttachStderr: true,
-		Tty:          true,
-		Labels:       containerLabels,
-	}, hostConfig, &network.NetworkingConfig{}, nil, containerName)
-
-	// ── Podman: use exec-style attach (compat API rejects attach-before-start) ──
-	if GetEngine().Type() == EnginePodman {
-		if err := cli.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
-			common.PrintErrorMessage(err)
-			return
-		}
-
-		props, err := getContainerProperties(ctx, cli, resp.ID)
-		if err != nil {
-			common.PrintErrorMessage(err)
-			return
-		}
-		size := props["Size"]
-		printContainerProperties(ctx, cli, containerName, props, size)
-		common.PrintSuccessMessage(fmt.Sprintf("Container '%s' started successfully", containerName))
-
-		// Attach via exec (same as DockerExec)
-		execConfig := container.ExecOptions{
-			AttachStdin:  true,
-			AttachStdout: true,
-			AttachStderr: true,
-			Tty:          true,
-			Cmd:          []string{dockerObj.shell},
-		}
-
-		execID, err := cli.ContainerExecCreate(ctx, resp.ID, execConfig)
-		if err != nil {
-			common.PrintErrorMessage(err)
-			return
-		}
-
-		attachResp, err := cli.ContainerExecAttach(ctx, execID.ID, container.ExecStartOptions{Tty: true})
-		if err != nil {
-			common.PrintErrorMessage(err)
-			return
-		}
-		defer attachResp.Close()
-
-		inFd, inIsTerminal := term.GetFdInfo(os.Stdin)
-		outFd, outIsTerminal := term.GetFdInfo(os.Stdout)
-
-		if inIsTerminal {
-			state, err := term.SetRawTerminal(inFd)
-			if err != nil {
-				common.PrintErrorMessage(err)
-				return
-			}
-			defer term.RestoreTerminal(inFd, state)
-		}
-
-		// Handle resize
-		go func() {
-			sigchan := make(chan os.Signal, 1)
-			signal.Notify(sigchan, syscallsigwin())
-			defer signal.Stop(sigchan)
-			for range sigchan {
-				if outIsTerminal {
-					if size, err := term.GetWinsize(outFd); err == nil {
-						cli.ContainerExecResize(ctx, execID.ID, container.ResizeOptions{
-							Height: uint(size.Height),
-							Width:  uint(size.Width),
-						})
-					}
-				}
-			}
-		}()
-
-		// Initial resize
-		if outIsTerminal {
-			if size, err := term.GetWinsize(outFd); err == nil {
-				cli.ContainerExecResize(ctx, execID.ID, container.ResizeOptions{
-					Height: uint(size.Height),
-					Width:  uint(size.Width),
-				})
-			}
-		}
-
-		// I/O
-		outputDone := make(chan error)
-		go func() {
-			_, err := io.Copy(os.Stdout, attachResp.Reader)
-			outputDone <- err
-		}()
-		go func() {
-			io.Copy(attachResp.Conn, os.Stdin)
-			attachResp.CloseWrite()
-		}()
-
-		<-outputDone
-		return
-	}
-
-	if err != nil {
-		common.PrintErrorMessage(err)
-		return
-	}
-
-	waiter, err := cli.ContainerAttach(ctx, resp.ID, container.AttachOptions{
-		Stderr: true,
-		Stdout: true,
-		Stdin:  true,
-		Stream: true,
-	})
-	if err != nil {
-		common.PrintErrorMessage(err)
-		return
-	}
-	defer waiter.Close()
-
-	if err := cli.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
-		common.PrintErrorMessage(err)
-		return
-	}
-
-	props, err := getContainerProperties(ctx, cli, resp.ID)
-	if err != nil {
-		common.PrintErrorMessage(err)
-		return
-	}
-	size := props["Size"]
-	printContainerProperties(ctx, cli, containerName, props, size)
-	common.PrintSuccessMessage(fmt.Sprintf("Container '%s' started successfully", containerName))
-
-	handleIOStreams(waiter)
-	fd := int(os.Stdin.Fd())
-	if terminal.IsTerminal(fd) {
-		oldState, err := terminal.MakeRaw(fd)
-		if err != nil {
-			common.PrintErrorMessage(err)
-			return
-		}
-		defer terminal.Restore(fd, oldState)
-		go resizeTty(ctx, cli, resp.ID, fd)
-		go readAndWriteInput(waiter)
-	}
-
-	waitForContainer(ctx, cli, resp.ID)
+	return nil
 }
 
 // execCommandInContainer creates an exec session in the container with a shell and attaches to it.
+//
+//	in(1): context.Context ctx
+//	in(2): *client.Client cli
+//	in(3): string contid container ID
+//	in(4): string WorkingDir working directory
 func execCommandInContainer(ctx context.Context, cli *client.Client, contid, WorkingDir string) {
 	execShell := []string{}
-	if dockerObj.shell != "" {
-		execShell = append(execShell, strings.Split(dockerObj.shell, " ")...)
+	if containerCfg.shell != "" {
+		execShell = append(execShell, strings.Split(containerCfg.shell, " ")...)
 	}
 
 	optionsCreate := container.ExecOptions{
@@ -928,6 +869,10 @@ func execCommandInContainer(ctx context.Context, cli *client.Client, contid, Wor
 }
 
 // attachAndInteract attaches to a running container and sets up interactive I/O with TTY resizing.
+//
+//	in(1): context.Context ctx
+//	in(2): *client.Client cli
+//	in(3): string contid container ID
 func attachAndInteract(ctx context.Context, cli *client.Client, contid string) {
 	response, err := cli.ContainerAttach(ctx, contid, container.AttachOptions{
 		Stderr: true,
@@ -958,6 +903,8 @@ func attachAndInteract(ctx context.Context, cli *client.Client, contid string) {
 }
 
 // handleIOStreams sets up goroutines to copy stdout, stderr, and stdin between the terminal and the container.
+//
+//	in(1): types.HijackedResponse response
 func handleIOStreams(response types.HijackedResponse) {
 	go io.Copy(os.Stdout, response.Reader)
 	go io.Copy(os.Stderr, response.Reader)
@@ -965,6 +912,8 @@ func handleIOStreams(response types.HijackedResponse) {
 }
 
 // readAndWriteInput reads bytes from stdin and writes them to the container connection.
+//
+//	in(1): types.HijackedResponse response
 func readAndWriteInput(response types.HijackedResponse) {
 	reader := bufio.NewReaderSize(os.Stdin, 4096) // Increased buffer size for larger inputs
 	for {
@@ -977,6 +926,10 @@ func readAndWriteInput(response types.HijackedResponse) {
 }
 
 // waitForContainer blocks until the container exits or an error occurs.
+//
+//	in(1): context.Context ctx
+//	in(2): *client.Client cli
+//	in(3): string contid container ID
 func waitForContainer(ctx context.Context, cli *client.Client, contid string) {
 	statusCh, errCh := cli.ContainerWait(ctx, contid, container.WaitConditionNextExit)
 	select {
@@ -988,8 +941,10 @@ func waitForContainer(ctx context.Context, cli *client.Client, contid string) {
 	}
 }
 
-// DockerCommit commits the current state of a container as a new image.
-func DockerCommit(contid string) {
+// ContainerCommit commits the current state of a container as a new image.
+//
+//	in(1): string contid container ID
+func ContainerCommit(contid string) {
 	ctx := context.Background()
 	cli, err := NewEngineClient()
 	if err != nil {
@@ -1001,15 +956,38 @@ func DockerCommit(contid string) {
 		panic(err)
 	}
 
-	commitResp, err := cli.ContainerCommit(ctx, contid, container.CommitOptions{Reference: dockerObj.imagename})
+	commitResp, err := cli.ContainerCommit(ctx, contid, container.CommitOptions{Reference: containerCfg.imagename})
 	if err != nil {
 		panic(err)
 	}
 	fmt.Println(commitResp.ID)
 }
 
-// DockerRename renames an existing container identified by ID or name.
-func DockerRename(currentIdentifier string, newName string) {
+// findContainerByIdentifier searches the container list for a container matching by ID or name.
+//
+//	in(1): context.Context ctx
+//	in(2): *client.Client cli
+//	in(3): string identifier container ID or name
+//	out: types.Container, error
+func findContainerByIdentifier(ctx context.Context, cli *client.Client, identifier string) (types.Container, error) {
+	containers, err := cli.ContainerList(ctx, container.ListOptions{All: true})
+	if err != nil {
+		return types.Container{}, err
+	}
+
+	for _, c := range containers {
+		if c.ID == identifier || (len(c.Names) > 0 && c.Names[0] == "/"+identifier) {
+			return c, nil
+		}
+	}
+	return types.Container{}, fmt.Errorf("container with ID or name '%s' not found", identifier)
+}
+
+// ContainerRename renames an existing container identified by ID or name.
+//
+//	in(1): string currentIdentifier current container ID or name
+//	in(2): string newName new container name
+func ContainerRename(currentIdentifier string, newName string) {
 	ctx := context.Background()
 	cli, err := NewEngineClient()
 	if err != nil {
@@ -1017,26 +995,13 @@ func DockerRename(currentIdentifier string, newName string) {
 	}
 	defer cli.Close()
 
-	// Attempt to find the container by the identifier (name or ID)
-	containers, err := cli.ContainerList(ctx, container.ListOptions{All: true})
+	found, err := findContainerByIdentifier(ctx, cli, currentIdentifier)
 	if err != nil {
-		panic(err)
-	}
-
-	var containerID string
-	for _, container := range containers {
-		if container.ID == currentIdentifier || (len(container.Names) > 0 && container.Names[0] == "/"+currentIdentifier) {
-			containerID = container.ID
-			break
-		}
-	}
-
-	if containerID == "" {
 		log.Fatalf("Container with ID or name '%s' not found.", currentIdentifier)
 	}
 
 	// Rename the container
-	err = cli.ContainerRename(ctx, containerID, newName)
+	err = cli.ContainerRename(ctx, found.ID, newName)
 	if err != nil {
 		panic(err)
 	} else {
@@ -1044,8 +1009,10 @@ func DockerRename(currentIdentifier string, newName string) {
 	}
 }
 
-// DockerRemove removes a container by ID or name, including any associated temp images.
-func DockerRemove(containerIdentifier string) {
+// ContainerRemove removes a container by ID or name, including any associated temp images.
+//
+//	in(1): string containerIdentifier container ID or name
+func ContainerRemove(containerIdentifier string) {
 	ctx := context.Background()
 	cli, err := NewEngineClient()
 	if err != nil {
@@ -1054,29 +1021,16 @@ func DockerRemove(containerIdentifier string) {
 	}
 	defer cli.Close()
 
-	containers, err := cli.ContainerList(ctx, container.ListOptions{All: true})
+	found, err := findContainerByIdentifier(ctx, cli, containerIdentifier)
 	if err != nil {
 		common.PrintErrorMessage(err)
 		return
 	}
 
-	var containerID string
-	var containerImage string
-	for _, container := range containers {
-		if container.ID == containerIdentifier || (len(container.Names) > 0 && container.Names[0] == "/"+containerIdentifier) {
-			containerID = container.ID
-			containerImage = container.Image
-			break
-		}
-	}
-
-	if containerID == "" {
-		common.PrintErrorMessage(fmt.Errorf("container with ID or name '%s' not found", containerIdentifier))
-		return
-	}
+	containerImage := found.Image
 
 	// Remove the container
-	err = cli.ContainerRemove(ctx, containerID, container.RemoveOptions{Force: true})
+	err = cli.ContainerRemove(ctx, found.ID, container.RemoveOptions{Force: true})
 	if err != nil {
 		common.PrintErrorMessage(err)
 		return
@@ -1093,8 +1047,13 @@ func DockerRemove(containerIdentifier string) {
 	}
 }
 
-// DockerInstallScript runs an installation script inside a container with apt setup and ldconfig.
-func DockerInstallScript(containerIdentifier, scriptName, functionScript string) error {
+// ContainerInstallScript runs an installation script inside a container with apt setup and ldconfig.
+//
+//	in(1): string containerIdentifier container ID or name
+//	in(2): string scriptName script file name
+//	in(3): string functionScript function to call in the script
+//	out: error
+func ContainerInstallScript(containerIdentifier, scriptName, functionScript string) error {
 	ctx := context.Background()
 	cli, err := NewEngineClient()
 	if err != nil {
@@ -1149,7 +1108,14 @@ func DockerInstallScript(containerIdentifier, scriptName, functionScript string)
 	return nil
 }
 
-// execCommand executes a command in the container, capturing only errors if any
+// execCommand executes a command in the container, capturing only errors if any.
+//
+//	in(1): context.Context ctx
+//	in(2): *client.Client cli
+//	in(3): string containerID
+//	in(4): []string cmd command to execute
+//	in(5): ...string workingDir optional working directory
+//	out: error
 func execCommand(ctx context.Context, cli *client.Client, containerID string, cmd []string, workingDir ...string) error {
 	execConfig := container.ExecOptions{
 		AttachStdout: true,
@@ -1178,7 +1144,13 @@ func execCommand(ctx context.Context, cli *client.Client, containerID string, cm
 	return err
 }
 
-// execCommandWithOutput executes a command and returns its output
+// execCommandWithOutput executes a command and returns its output.
+//
+//	in(1): context.Context ctx
+//	in(2): *client.Client cli
+//	in(3): string containerID
+//	in(4): []string cmd command to execute
+//	out: (string, error)
 func execCommandWithOutput(ctx context.Context, cli *client.Client, containerID string, cmd []string) (string, error) {
 	execConfig := container.ExecOptions{
 		AttachStdout: true,
@@ -1206,8 +1178,10 @@ func execCommandWithOutput(ctx context.Context, cli *client.Client, containerID 
 	return string(output), nil
 }
 
-// DockerStop stops a running container, using the latest RF Swift container if none is specified.
-func DockerStop(containerIdentifier string) {
+// ContainerStop stops a running container, using the latest RF Swift container if none is specified.
+//
+//	in(1): string containerIdentifier container ID or name
+func ContainerStop(containerIdentifier string) {
 	ctx := context.Background()
 
 	// Initialize Docker client

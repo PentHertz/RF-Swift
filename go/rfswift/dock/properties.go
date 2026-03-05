@@ -2,19 +2,6 @@ package dock
 
 /* This code is part of RF Switch by @Penthertz
  * Author(s): Sebastien Dudek (@FlUxIuS)
- *
- * Container property inspection and modification
- *
- * getContainerProperties           - in(1): ctx, in(2): cli, in(3): string containerID, out: (map[string]string, error)
- * printContainerProperties         - in(1): ctx, in(2): cli, in(3): string containerName, in(4): map props, in(5): string size
- * UpdateMountBinding               - in(1): string containerName, in(2): string source, in(3): string target, in(4): bool add
- * UpdateDeviceBinding              - in(1): string containerName, in(2): string deviceHost, in(3): string deviceContainer, in(4): bool add
- * UpdateCapability                 - in(1): string containerID, in(2): string capability, in(3): bool add, out: error
- * UpdateCgroupRule                 - in(1): string containerID, in(2): string rule, in(3): bool add, out: error
- * UpdateExposedPort                - in(1): string containerID, in(2): string port, in(3): bool add, out: error
- * UpdatePortBinding                - in(1): string containerID, in(2): string binding, in(3): bool add, out: error
- * recreateContainerWithProperties  - in(1): ctx, in(2): cli, in(3): string containerID, in(4): map props, out: error
- * recreateContainerWithUpdatedBinds - in(1): ctx, in(2): cli, in(3-6): various, out: error
  */
 
 import (
@@ -35,7 +22,14 @@ import (
 	rfutils "penthertz/rfswift/rfutils"
 )
 
-// printContainerProperties displays a formatted summary table of container properties.
+// printContainerProperties displays a formatted summary table of container properties
+// to stdout, including image status, version, bindings, devices, and capabilities.
+//
+//	in(1): context.Context ctx        request context used for Docker/Podman API calls
+//	in(2): *client.Client cli         engine client used to query image status
+//	in(3): string containerName       human-readable name of the container
+//	in(4): map[string]string props    property map returned by getContainerProperties
+//	in(5): string size                pre-formatted disk size string (e.g. "1.23 MB")
 func printContainerProperties(ctx context.Context, cli *client.Client, containerName string, props map[string]string, size string) {
 	white := "\033[37m"
 	blue := "\033[34m"
@@ -193,7 +187,11 @@ func printContainerProperties(ctx context.Context, cli *client.Client, container
 }
 
 // getDisplayImageName returns the display image name for a container,
-// preferring the original image label if set during recreation.
+// preferring the org.rfswift.original_image label set during recreation
+// over the raw Config.Image field.
+//
+//	in(1): types.ContainerJSON containerJSON   full container inspection result
+//	out:   string                              image name suitable for display
 func getDisplayImageName(containerJSON types.ContainerJSON) string {
 	// Check for original image label first (set during recreation)
 	if label, ok := containerJSON.Config.Labels["org.rfswift.original_image"]; ok && label != "" {
@@ -202,8 +200,12 @@ func getDisplayImageName(containerJSON types.ContainerJSON) string {
 	return containerJSON.Config.Image
 }
 
-// getExposedPortsFromLabel returns the exposed ports string from a container's label,
-// falling back to the actual exposed ports if no label is set.
+// getExposedPortsFromLabel returns the exposed ports string from a container's
+// org.rfswift.exposed_ports label, falling back to the live ExposedPorts map
+// when the label is absent. The special label value "none" is treated as empty.
+//
+//	in(1): types.ContainerJSON containerJSON   full container inspection result
+//	out:   string                              comma-separated exposed ports, or empty string
 func getExposedPortsFromLabel(containerJSON types.ContainerJSON) string {
 	if label, ok := containerJSON.Config.Labels["org.rfswift.exposed_ports"]; ok {
 		if label == "none" {
@@ -214,7 +216,15 @@ func getExposedPortsFromLabel(containerJSON types.ContainerJSON) string {
 	return convertExposedPortsToString(containerJSON.Config.ExposedPorts)
 }
 
-// getContainerProperties inspects a container and returns a map of its key properties.
+// getContainerProperties inspects a container and returns a map of its key
+// runtime properties such as display, shell, network mode, bindings, devices,
+// capabilities, and image information.
+//
+//	in(1): context.Context ctx    request context
+//	in(2): *client.Client cli     engine client used to inspect the container
+//	in(3): string containerID     container ID or name to inspect
+//	out:   map[string]string      property map keyed by property name
+//	out:   error                  non-nil if the inspect or image lookup fails
 func getContainerProperties(ctx context.Context, cli *client.Client, containerID string) (map[string]string, error) {
 	containerJSON, err := cli.ContainerInspect(ctx, containerID)
 	if err != nil {
@@ -288,7 +298,15 @@ func getContainerProperties(ctx context.Context, cli *client.Client, containerID
 	return props, nil
 }
 
-// UpdateMountBinding adds or removes a mount binding from a container.
+// UpdateMountBinding adds or removes a bind-mount from a container. On Docker it
+// edits hostconfig.json and config.v2.json on disk then restarts the daemon; on
+// Podman it recreates the container with the updated bind list. Windows is not
+// supported and will cause the process to exit.
+//
+//	in(1): string containerName   name of the target container
+//	in(2): string source          host-side path of the mount; defaults to target when empty
+//	in(3): string target          container-side mount destination path
+//	in(4): bool add               true to add the binding, false to remove it
 func UpdateMountBinding(containerName string, source string, target string, add bool) {
 	var timeout = 10
 
@@ -480,6 +498,12 @@ However, you can achieve similar functionality by using the following commands:
 	common.PrintSuccessMessage(fmt.Sprintf("%s service restarted successfully.", engineName))
 }
 
+// addMountPoint inserts a bind-mount entry into the MountPoints section of a
+// config.v2.json structure represented as a generic map.
+//
+//	in(1): map[string]interface{} config   parsed config.v2.json document (mutated in place)
+//	in(2): string source                   host-side absolute path of the mount source
+//	in(3): string target                   container-side absolute path of the mount destination
 func addMountPoint(config map[string]interface{}, source string, target string) {
 	mountPoints, ok := config["MountPoints"].(map[string]interface{})
 	if !ok {
@@ -502,6 +526,11 @@ func addMountPoint(config map[string]interface{}, source string, target string) 
 	}
 }
 
+// removeMountPoint deletes the mount-point entry for the given container-side
+// destination from the MountPoints section of a config.v2.json structure.
+//
+//	in(1): map[string]interface{} config   parsed config.v2.json document (mutated in place)
+//	in(2): string target                   container-side destination path to remove
 func removeMountPoint(config map[string]interface{}, target string) {
 	mountPoints, ok := config["MountPoints"].(map[string]interface{})
 	if !ok {
@@ -511,7 +540,15 @@ func removeMountPoint(config map[string]interface{}, target string) {
 	delete(mountPoints, target)
 }
 
-// UpdateDeviceBinding adds or removes a device binding from a container.
+// UpdateDeviceBinding adds or removes a device mapping from a container. On Docker
+// it edits hostconfig.json and config.v2.json on disk then restarts the daemon;
+// on Podman it recreates the container with the updated device list. Windows is
+// not supported and will cause the process to exit.
+//
+//	in(1): string containerName      name of the target container
+//	in(2): string deviceHost         host-side device path; defaults to deviceContainer when empty
+//	in(3): string deviceContainer    container-side device path
+//	in(4): bool add                  true to add the device mapping, false to remove it
 func UpdateDeviceBinding(containerName string, deviceHost string, deviceContainer string, add bool) {
 	var timeout = 10 // Stop timeout
 
@@ -692,16 +729,22 @@ However, you can achieve similar functionality by using the following commands:
 
 	// Restart the container
 	if err := showLoadingIndicator(ctx, func() error {
-		return RestartDockerService()
-	}, "Restarting Docker service..."); err != nil {
-		common.PrintErrorMessage(fmt.Errorf("failed to restart Docker service: %v", err))
+		return RestartContainerService()
+	}, "Restarting container engine service..."); err != nil {
+		common.PrintErrorMessage(fmt.Errorf("failed to restart container engine service: %v", err))
 		os.Exit(1)
 	}
-	common.PrintSuccessMessage("Docker service restarted successfully.")
+	common.PrintSuccessMessage("Container engine service restarted successfully.")
 }
 
-// deviceExistsInSlice checks if a device mapping already exists using the
-// Docker SDK's container.DeviceMapping type (used in Podman recreation path).
+// deviceExistsInSlice reports whether a device mapping with the given host and
+// container paths already exists in the slice. It operates on the Docker SDK's
+// container.DeviceMapping type and is used in the Podman recreation path.
+//
+//	in(1): []container.DeviceMapping devices   slice of current device mappings
+//	in(2): string hostPath                     host-side device path to search for
+//	in(3): string containerPath                container-side device path to search for
+//	out:   bool                                true if the mapping is already present
 func deviceExistsInSlice(devices []container.DeviceMapping, hostPath, containerPath string) bool {
 	for _, d := range devices {
 		if d.PathOnHost == hostPath && d.PathInContainer == containerPath {
@@ -711,8 +754,14 @@ func deviceExistsInSlice(devices []container.DeviceMapping, hostPath, containerP
 	return false
 }
 
-// removeDeviceMappingFromSlice removes a device mapping by host+container path
-// using the Docker SDK's container.DeviceMapping type (used in Podman recreation path).
+// removeDeviceMappingFromSlice returns a new slice with the device mapping
+// identified by hostPath and containerPath removed. It operates on the Docker
+// SDK's container.DeviceMapping type and is used in the Podman recreation path.
+//
+//	in(1): []container.DeviceMapping devices   original slice of device mappings
+//	in(2): string hostPath                     host-side device path of the entry to remove
+//	in(3): string containerPath                container-side device path of the entry to remove
+//	out:   []container.DeviceMapping           new slice with the matching entry omitted
 func removeDeviceMappingFromSlice(devices []container.DeviceMapping, hostPath, containerPath string) []container.DeviceMapping {
 	var result []container.DeviceMapping
 	for _, d := range devices {
@@ -724,7 +773,14 @@ func removeDeviceMappingFromSlice(devices []container.DeviceMapping, hostPath, c
 	return result
 }
 
-// UpdateCapability adds or removes a capability from a container.
+// UpdateCapability adds or removes a Linux capability from a container by
+// recreating the container with the updated CapAdd list via
+// recreateContainerWithProperties.
+//
+//	in(1): string containerID    container ID or name to modify
+//	in(2): string capability     Linux capability name (e.g. "NET_ADMIN")
+//	in(3): bool add              true to add the capability, false to remove it
+//	out:   error                 non-nil if the inspect, property fetch, or recreation fails
 func UpdateCapability(containerID string, capability string, add bool) error {
 	ctx := context.Background()
 	cli, err := NewEngineClient()
@@ -800,7 +856,14 @@ func UpdateCapability(containerID string, capability string, add bool) error {
 	return recreateContainerWithProperties(ctx, cli, containerID, props)
 }
 
-// UpdateCgroupRule adds or removes a cgroup rule from a container.
+// UpdateCgroupRule adds or removes a device cgroup rule from a container by
+// recreating the container with the updated DeviceCgroupRules list via
+// recreateContainerWithProperties.
+//
+//	in(1): string containerID   container ID or name to modify
+//	in(2): string rule          cgroup rule string (e.g. "c 189:* rwm")
+//	in(3): bool add             true to add the rule, false to remove it
+//	out:   error                non-nil if the inspect, property fetch, or recreation fails
 func UpdateCgroupRule(containerID string, rule string, add bool) error {
 	ctx := context.Background()
 	cli, err := NewEngineClient()
@@ -876,7 +939,14 @@ func UpdateCgroupRule(containerID string, rule string, add bool) error {
 	return recreateContainerWithProperties(ctx, cli, containerID, props)
 }
 
-// UpdateExposedPort adds or removes an exposed port from a container.
+// UpdateExposedPort adds or removes an exposed port declaration from a container
+// by recreating the container with the updated ExposedPorts set via
+// recreateContainerWithProperties.
+//
+//	in(1): string containerID   container ID or name to modify
+//	in(2): string port          port specification in "number/proto" form (e.g. "8080/tcp")
+//	in(3): bool add             true to expose the port, false to un-expose it
+//	out:   error                non-nil if the inspect, property fetch, or recreation fails
 func UpdateExposedPort(containerID string, port string, add bool) error {
 	ctx := context.Background()
 	cli, err := NewEngineClient()
@@ -957,7 +1027,14 @@ func UpdateExposedPort(containerID string, port string, add bool) error {
 	return recreateContainerWithProperties(ctx, cli, containerID, props)
 }
 
-// UpdatePortBinding adds or removes a port binding from a container.
+// UpdatePortBinding adds or removes a host-to-container port binding from a
+// container by recreating the container with the updated PortBindings map via
+// recreateContainerWithProperties.
+//
+//	in(1): string containerID   container ID or name to modify
+//	in(2): string binding       port binding in "hostPort:containerPort/proto" form
+//	in(3): bool add             true to add the binding, false to remove it
+//	out:   error                non-nil if the inspect, property fetch, or recreation fails
 func UpdatePortBinding(containerID string, binding string, add bool) error {
 	ctx := context.Background()
 	cli, err := NewEngineClient()
@@ -1038,7 +1115,18 @@ func UpdatePortBinding(containerID string, binding string, add bool) error {
 	return recreateContainerWithProperties(ctx, cli, containerID, props)
 }
 
-// recreateContainerWithProperties recreates a container with updated property overrides.
+// recreateContainerWithProperties stops a container, commits its filesystem state
+// to a temporary image, removes the original container, and creates a fresh
+// replacement using the property overrides supplied in props. The replacement is
+// started automatically and retains the original container name.
+//
+//	in(1): context.Context ctx          request context
+//	in(2): *client.Client cli           engine client
+//	in(3): string containerID           ID or name of the container to recreate
+//	in(4): map[string]string props      property overrides (keys: Caps, Cgroups, ExposedPorts,
+//	                                    PortBindings, Bindings, XDisplay, Shell, NetworkMode,
+//	                                    Privileged, Devices, Seccomp, ExtraHosts, Ulimits)
+//	out:   error                        non-nil if any step of the recreation process fails
 func recreateContainerWithProperties(ctx context.Context, cli *client.Client, containerID string, props map[string]string) error {
 	// Get fresh container info
 	containerJSON, err := cli.ContainerInspect(ctx, containerID)
@@ -1293,8 +1381,16 @@ func recreateContainerWithProperties(ctx context.Context, cli *client.Client, co
 	return nil
 }
 
-// rollbackContainer attempts to recreate a container from the committed image
-// when the primary creation fails.
+// rollbackContainer attempts to recreate a container from a previously committed
+// temporary image when the primary creation step inside recreateContainerWithProperties
+// fails. It logs recovery instructions if the rollback itself also fails.
+//
+//	in(1): context.Context ctx               request context
+//	in(2): *client.Client cli                engine client
+//	in(3): string containerName              original name to restore the container under
+//	in(4): string tempImageTag               tag of the committed temporary image to recover from
+//	in(5): types.ContainerJSON originalJSON  original container inspection data used to
+//	                                         rebuild a minimal host and container config
 func rollbackContainer(ctx context.Context, cli *client.Client, containerName string, tempImageTag string, originalJSON types.ContainerJSON) {
 	common.PrintWarningMessage("Creation failed — attempting rollback from committed image...")
 
@@ -1341,7 +1437,14 @@ func rollbackContainer(ctx context.Context, cli *client.Client, containerName st
 	}
 }
 
-// deviceExists checks if a device mapping already exists in the local DeviceMapping slice.
+// deviceExists reports whether a device mapping with the given host and container
+// paths already exists in the local DeviceMapping slice (used in the Docker
+// direct-config-edit path).
+//
+//	in(1): []DeviceMapping devices   slice of current device mappings
+//	in(2): string hostPath           host-side device path to search for
+//	in(3): string containerPath      container-side device path to search for
+//	out:   bool                      true if the mapping is already present
 func deviceExists(devices []DeviceMapping, hostPath string, containerPath string) bool {
 	for _, device := range devices {
 		if device.PathOnHost == hostPath && device.PathInContainer == containerPath {
@@ -1351,7 +1454,14 @@ func deviceExists(devices []DeviceMapping, hostPath string, containerPath string
 	return false
 }
 
-// removeDeviceFromSlice removes a device mapping from a local DeviceMapping slice.
+// removeDeviceFromSlice returns a new slice with the local DeviceMapping entry
+// identified by hostPath and containerPath removed (used in the Docker
+// direct-config-edit path).
+//
+//	in(1): []DeviceMapping devices   original slice of device mappings
+//	in(2): string hostPath           host-side device path of the entry to remove
+//	in(3): string containerPath      container-side device path of the entry to remove
+//	out:   []DeviceMapping           new slice with the matching entry omitted
 func removeDeviceFromSlice(devices []DeviceMapping, hostPath string, containerPath string) []DeviceMapping {
 	var result []DeviceMapping
 	for _, device := range devices {
@@ -1362,7 +1472,13 @@ func removeDeviceFromSlice(devices []DeviceMapping, hostPath string, containerPa
 	return result
 }
 
-// addDeviceMapping adds a device mapping to config.v2.json.
+// addDeviceMapping inserts a device mapping entry into the HostConfig.Devices
+// array of a config.v2.json structure represented as a generic map. Duplicate
+// entries (same hostPath and containerPath) are silently ignored.
+//
+//	in(1): map[string]interface{} config   parsed config.v2.json document (mutated in place)
+//	in(2): string hostPath                 host-side device path to add
+//	in(3): string containerPath            container-side device path to add
 func addDeviceMapping(config map[string]interface{}, hostPath string, containerPath string) {
 	// Check if "HostConfig" exists in the config
 	hostConfig, ok := config["HostConfig"].(map[string]interface{})
@@ -1403,7 +1519,13 @@ func addDeviceMapping(config map[string]interface{}, hostPath string, containerP
 	}
 }
 
-// removeDeviceMapping removes a device mapping from config.v2.json.
+// removeDeviceMapping deletes the device mapping entry identified by hostPath
+// and containerPath from the HostConfig.Devices array of a config.v2.json
+// structure represented as a generic map.
+//
+//	in(1): map[string]interface{} config   parsed config.v2.json document (mutated in place)
+//	in(2): string hostPath                 host-side device path of the entry to remove
+//	in(3): string containerPath            container-side device path of the entry to remove
 func removeDeviceMapping(config map[string]interface{}, hostPath string, containerPath string) {
 	// Check if "HostConfig" exists in the config
 	hostConfig, ok := config["HostConfig"].(map[string]interface{})
@@ -1431,7 +1553,18 @@ func removeDeviceMapping(config map[string]interface{}, hostPath string, contain
 	hostConfig["Devices"] = updatedDevices
 }
 
-// recreateContainerWithUpdatedBinds recreates a container with updated bind mounts.
+// recreateContainerWithUpdatedBinds commits a container's filesystem state to a
+// temporary image, removes the original container, and creates a replacement with
+// newBinds as the bind-mount list. All other host configuration is preserved from
+// inspectData. The replacement is started automatically under the original name.
+//
+//	in(1): context.Context ctx              request context
+//	in(2): *client.Client cli               engine client
+//	in(3): string containerName             original container name to restore after recreation
+//	in(4): string containerID               ID of the container to replace
+//	in(5): types.ContainerJSON inspectData  full inspection result of the original container
+//	in(6): []string newBinds                complete list of bind-mount strings to apply
+//	out:   error                            non-nil if any step of the recreation process fails
 func recreateContainerWithUpdatedBinds(ctx context.Context, cli *client.Client, containerName string, containerID string, inspectData types.ContainerJSON, newBinds []string) error {
 
 	// 0. Determine original image name
@@ -1495,7 +1628,7 @@ func recreateContainerWithUpdatedBinds(ctx context.Context, cli *client.Client, 
 	// entries must be removed (they create specific allow rules that conflict
 	// with the wildcard cgroup rule needed for hotplug). Also ensure the
 	// USB cgroup rule c 189:* rwm is present.
-	// This mirrors the same sanitization done in DockerRun().
+	// This mirrors the same sanitization done in ContainerRun().
 	hasUSBBind := false
 	for _, b := range newBinds {
 		if strings.HasPrefix(b, "/dev/bus/usb:") || strings.HasPrefix(b, "/dev/bus/usb/") || b == "/dev/bus/usb" {

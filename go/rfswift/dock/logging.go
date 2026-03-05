@@ -1,16 +1,7 @@
 /* This code is part of RF Switch by @Penthertz
  * Author(s): Sebastien Dudek (@FlUxIuS)
- *
- * Session recording and replay
- *
- * detectLoggingTool        - in(1): bool forceScript, out: string tool, error
- * StartLogging             - in(1): string outputFile, in(2): bool useScript, out: error
- * StopLogging              - out: error
- * ReplayLog                - in(1): string inputFile, in(2): float64 speed, out: error
- * ListLogs                 - in(1): string logDir, out: error
- * DockerRunWithRecording   - in(1): string containerName, in(2): string recordOutput, in(3): string image, in(4): map[string]string extraArgs, out: error
- * DockerExecWithRecording  - in(1): string containerIdentifier, in(2): string workingDir, in(3): string recordOutput, in(4): string execCommand, out: error
  */
+
 package dock
 
 import (
@@ -27,7 +18,11 @@ import (
 	common "penthertz/rfswift/common"
 )
 
-// detectLoggingTool detects which terminal recording tool is available.
+// detectLoggingTool detects which terminal recording tool is available on the system.
+//
+//	in(1): bool forceScript when true, bypass asciinema detection and require the script command
+//	out: string name of the detected tool ("asciinema" or "script")
+//	out: error non-nil if no suitable tool is found in PATH
 func detectLoggingTool(forceScript bool) (string, error) {
 	if forceScript {
 		if _, err := exec.LookPath("script"); err != nil {
@@ -48,6 +43,10 @@ func detectLoggingTool(forceScript bool) (string, error) {
 }
 
 // StartLogging starts a terminal recording session using asciinema or script.
+//
+//	in(1): string outputFile path for the recording output file; auto-generated with timestamp when empty
+//	in(2): bool useScript when true, forces use of the script command instead of asciinema
+//	out: error non-nil if a session is already active, no tool is found, or recording fails
 func StartLogging(outputFile string, useScript bool) error {
 	if loggingPID != 0 {
 		return fmt.Errorf("a recording session is already active (PID: %d)", loggingPID)
@@ -129,7 +128,9 @@ func StartLogging(outputFile string, useScript bool) error {
 	return nil
 }
 
-// StopLogging stops the current recording session.
+// StopLogging stops the current recording session by sending an interrupt signal to the recorder process.
+//
+//	out: error non-nil if no active session is found or the process cannot be signalled
 func StopLogging() error {
 	stateFile := filepath.Join(os.TempDir(), "rfswift-logging.state")
 	data, err := ioutil.ReadFile(stateFile)
@@ -167,7 +168,11 @@ func StopLogging() error {
 	return nil
 }
 
-// ReplayLog replays a recorded terminal session.
+// ReplayLog replays a recorded terminal session using asciinema play or cat depending on file type.
+//
+//	in(1): string inputFile path to the .cast or .log recording file to replay
+//	in(2): float64 speed playback speed multiplier passed to asciinema (e.g. 2.0 for double speed)
+//	out: error non-nil if the file does not exist, the required tool is missing, or playback fails
 func ReplayLog(inputFile string, speed float64) error {
 	if _, err := os.Stat(inputFile); os.IsNotExist(err) {
 		return fmt.Errorf("file not found: %s", inputFile)
@@ -207,7 +212,10 @@ func ReplayLog(inputFile string, speed float64) error {
 	return nil
 }
 
-// ListLogs lists all recorded session files in a directory.
+// ListLogs lists all recorded session files found under a directory, printing metadata for each.
+//
+//	in(1): string logDir directory to search for .cast and rfswift-session .log files; defaults to "." when empty
+//	out: error non-nil if the directory walk fails
 func ListLogs(logDir string) error {
 	if logDir == "" {
 		logDir = "."
@@ -261,8 +269,14 @@ func ListLogs(logDir string) error {
 	return nil
 }
 
-// DockerRunWithRecording runs a container with session recording.
-func DockerRunWithRecording(containerName string, recordOutput string, image string, extraArgs map[string]string) error {
+// ContainerRunWithRecording runs a container with session recording via asciinema or script.
+//
+//	in(1): string containerName name to assign to the new container
+//	in(2): string recordOutput path for the recording output file; auto-generated with timestamp when empty
+//	in(3): string image image name to run; passed as -i flag when non-empty
+//	in(4): map[string]string extraArgs additional CLI flag/value pairs to append to the run command
+//	out: error non-nil if the recording tool is unavailable or the recorded session fails
+func ContainerRunWithRecording(containerName string, recordOutput string, image string, extraArgs map[string]string) error {
 	tool, err := detectLoggingTool(false)
 	if err != nil {
 		return err
@@ -323,8 +337,14 @@ func DockerRunWithRecording(containerName string, recordOutput string, image str
 	return nil
 }
 
-// DockerExecWithRecording executes into a container with session recording.
-func DockerExecWithRecording(containerIdentifier string, workingDir string, recordOutput string, execCommand string) error {
+// ContainerExecWithRecording executes into a running container with session recording via asciinema or script.
+//
+//	in(1): string containerIdentifier ID or name of the target container; falls back to the latest rfswift container when empty
+//	in(2): string workingDir working directory inside the container; omitted from the exec command when set to "/root" or empty
+//	in(3): string recordOutput path for the recording output file; auto-generated with timestamp when empty
+//	in(4): string execCommand shell command to run inside the container; omitted when set to "/bin/bash" or empty
+//	out: error non-nil if no container is found, the engine client fails, or the recorded session fails
+func ContainerExecWithRecording(containerIdentifier string, workingDir string, recordOutput string, execCommand string) error {
 	tool, err := detectLoggingTool(false)
 	if err != nil {
 		return err

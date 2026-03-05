@@ -2,12 +2,6 @@
  * Author(s): Sebastien Dudek (@FlUxIuS)
  *
  * Podman-specific helpers for container recreation and compatibility
- *
- * podmanCreateViaCLI          - in(1): string name, in(2): string imageName, in(3): *container.Config, in(4): *container.HostConfig, out: (string, error)
- * cleanupStaleTempImages      - in(1): ctx, in(2): cli, in(3): string currentTempImage, in(4): string repo, in(5): string tag
- * sanitizeHostConfigForPodman - in(1): *container.HostConfig
- * deduplicateBinds            - in(1): []string binds, out: []string
- * parseBindDestination        - in(1): string bind, out: string
  */
 
 package dock
@@ -30,6 +24,13 @@ import (
 
 // podmanCreateViaCLI creates a container via the podman CLI, which supports
 // flags (like --device-cgroup-rule) that the Docker-compat API does not.
+//
+//	in(1): string name           the desired container name
+//	in(2): string imageName      the image to create the container from
+//	in(3): *container.Config cfg container configuration (env, cmd, labels, etc.)
+//	in(4): *container.HostConfig hc host configuration (binds, devices, caps, etc.)
+//	out: string the ID of the newly created container
+//	out: error  non-nil if the podman CLI invocation fails
 func podmanCreateViaCLI(name string, imageName string, cfg *container.Config, hc *container.HostConfig) (string, error) {
 	args := []string{"create", "--name", name}
 
@@ -177,8 +178,17 @@ func podmanCreateViaCLI(name string, imageName string, cfg *container.Config, hc
 	return containerID, nil
 }
 
-// cleanupStaleTempImages removes old temp images for a specific base image,
-// skipping the one currently in use.
+// cleanupStaleTempImages removes old temporary images for a specific base image,
+// skipping the one currently in use. Images are identified by the pattern
+// "<repo>:<tag>_temp_<timestamp>" and any matching image that is not
+// currentTempImage is force-removed.
+//
+//	in(1): context.Context ctx          context for Docker API calls
+//	in(2): *client.Client cli           Docker/Podman API client
+//	in(3): string currentTempImage      full image reference that must not be deleted
+//	in(4): string repo                  repository portion of the base image name
+//	in(5): string tag                   tag portion of the base image name
+//	out: none
 func cleanupStaleTempImages(ctx context.Context, cli *client.Client, currentTempImage string, repo string, tag string) {
 	tempPattern := regexp.MustCompile(`_temp_\d{14}$`)
 	basePrefix := fmt.Sprintf("%s:%s_temp_", repo, tag)
@@ -210,7 +220,12 @@ func cleanupStaleTempImages(ctx context.Context, cli *client.Client, currentTemp
 }
 
 // sanitizeHostConfigForPodman normalizes a Docker-inspected HostConfig so that
-// it is compatible with Podman's stricter validation rules.
+// it is compatible with Podman's stricter validation rules. It patches device
+// permissions, memory settings, cgroup rules, bind deduplication, and device
+// existence checks in-place.
+//
+//	in(1): *container.HostConfig hc the host configuration to sanitize (modified in place)
+//	out: none
 func sanitizeHostConfigForPodman(hc *container.HostConfig) {
 	if hc == nil {
 		return
@@ -376,8 +391,12 @@ func sanitizeHostConfigForPodman(hc *container.HostConfig) {
 	}
 }
 
-// deduplicateBinds removes bind entries with duplicate destinations.
-// Keeps the last occurrence (so newly added binds take precedence).
+// deduplicateBinds removes bind entries with duplicate container destinations,
+// keeping the last occurrence so that newly added binds take precedence over
+// earlier ones.
+//
+//	in(1): []string binds the list of bind-mount specifications to deduplicate
+//	out: []string deduplicated list of bind-mount specifications
 func deduplicateBinds(binds []string) []string {
 	seen := make(map[string]int) // destination → index in result
 	var result []string
@@ -395,8 +414,13 @@ func deduplicateBinds(binds []string) []string {
 	return result
 }
 
-// parseBindDestination extracts the destination (container) path from a bind string.
-// Formats: "source:dest" or "source:dest:opts"
+// parseBindDestination extracts the destination (container-side) path from a
+// bind-mount specification. Accepted formats are "source:dest" and
+// "source:dest:opts". If the string contains no colon the raw value is
+// returned unchanged.
+//
+//	in(1): string bind the bind-mount specification to parse
+//	out: string the container destination path extracted from the specification
 func parseBindDestination(bind string) string {
 	parts := strings.SplitN(bind, ":", 3)
 	if len(parts) >= 2 {

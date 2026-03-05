@@ -1,16 +1,5 @@
 /* This code is part of RF Switch by @Penthertz
  * Author(s): Sebastien Dudek (@FlUxIuS)
- *
- * Ulimit and realtime mode management
- *
- * parseUlimitsFromString   - in(1): string ulimitsStr, out: []*container.Ulimit
- * convertUlimitsToString   - in(1): []*container.Ulimit, out: string
- * getRealtimeUlimits       - out: []*container.Ulimit
- * getUlimitsForContainer   - out: []*container.Ulimit
- * UpdateUlimit             - in(1): string containerID, in(2): string ulimitName, in(3): string ulimitValue, in(4): bool add, out: error
- * EnableRealtimeMode       - in(1): string containerID, out: error
- * DisableRealtimeMode      - in(1): string containerID, out: error
- * ListContainerUlimits     - in(1): string containerID, out: error
  */
 package dock
 
@@ -25,9 +14,12 @@ import (
 	common "penthertz/rfswift/common"
 )
 
-// parseUlimitsFromString parses a ulimit string into Docker ulimit format.
-// Format: "name=soft:hard" or "name=value" (where soft=hard=value).
-// Examples: "rtprio=95", "memlock=-1", "rtprio=95:95,memlock=-1:-1"
+// parseUlimitsFromString parses a comma-separated ulimit string into a slice of Docker ulimit structs.
+// Accepted formats per entry: "name=value" (soft==hard) or "name=soft:hard".
+// The special values -1 and "unlimited" are both treated as unlimited (-1).
+//
+//	in(1): string ulimitsStr comma-separated ulimit definitions (e.g. "rtprio=95,memlock=-1:-1")
+//	out: []*container.Ulimit parsed ulimit structs; empty slice when input is empty
 func parseUlimitsFromString(ulimitsStr string) []*container.Ulimit {
 	var ulimits []*container.Ulimit
 
@@ -105,7 +97,12 @@ func parseUlimitsFromString(ulimitsStr string) []*container.Ulimit {
 	return ulimits
 }
 
-// convertUlimitsToString converts Docker ulimits back to string format.
+// convertUlimitsToString converts a slice of Docker ulimit structs back into a comma-separated string.
+// When soft equals hard the entry is written as "name=value"; otherwise "name=soft:hard".
+// A soft or hard value of -1 is rendered as "unlimited".
+//
+//	in(1): []*container.Ulimit ulimits ulimit structs to serialise
+//	out: string comma-separated ulimit string, or empty string when the slice is empty
 func convertUlimitsToString(ulimits []*container.Ulimit) string {
 	if len(ulimits) == 0 {
 		return ""
@@ -134,7 +131,10 @@ func convertUlimitsToString(ulimits []*container.Ulimit) string {
 	return strings.Join(parts, ",")
 }
 
-// getRealtimeUlimits returns ulimits needed for realtime SDR operations.
+// getRealtimeUlimits returns the fixed set of ulimits required for realtime SDR operations:
+// rtprio=95, memlock=unlimited, and nice=40.
+//
+//	out: []*container.Ulimit hardcoded realtime ulimit structs
 func getRealtimeUlimits() []*container.Ulimit {
 	return []*container.Ulimit{
 		{
@@ -155,26 +155,30 @@ func getRealtimeUlimits() []*container.Ulimit {
 	}
 }
 
-// getUlimitsForContainer prepares ulimits for container creation,
-// merging realtime ulimits (if enabled) with custom ulimits.
+// getUlimitsForContainer prepares the final ulimit slice for container creation by merging
+// realtime ulimits (when containerCfg.realtime is set) with any custom ulimits from containerCfg.ulimits.
+// Custom entries take precedence over realtime defaults when names collide.
+// As a side-effect, SYS_NICE is appended to containerCfg.caps when realtime mode is active.
+//
+//	out: []*container.Ulimit merged ulimit slice ready to pass to the container host config
 func getUlimitsForContainer() []*container.Ulimit {
 	var ulimits []*container.Ulimit
 
-	if dockerObj.realtime {
+	if containerCfg.realtime {
 		ulimits = append(ulimits, getRealtimeUlimits()...)
 
-		if !strings.Contains(dockerObj.caps, "SYS_NICE") {
-			if dockerObj.caps == "" {
-				dockerObj.caps = "SYS_NICE"
+		if !strings.Contains(containerCfg.caps, "SYS_NICE") {
+			if containerCfg.caps == "" {
+				containerCfg.caps = "SYS_NICE"
 			} else {
-				dockerObj.caps = dockerObj.caps + ",SYS_NICE"
+				containerCfg.caps = containerCfg.caps + ",SYS_NICE"
 			}
 		}
 		common.PrintInfoMessage("Realtime mode enabled: rtprio=95, memlock=unlimited, nice=40, SYS_NICE capability")
 	}
 
-	if dockerObj.ulimits != "" {
-		customUlimits := parseUlimitsFromString(dockerObj.ulimits)
+	if containerCfg.ulimits != "" {
+		customUlimits := parseUlimitsFromString(containerCfg.ulimits)
 
 		for _, custom := range customUlimits {
 			found := false
@@ -194,11 +198,14 @@ func getUlimitsForContainer() []*container.Ulimit {
 	return ulimits
 }
 
-// UpdateUlimit adds or removes a ulimit from an existing container.
-//   in(1): string containerID - container to modify
-//   in(2): string ulimitName - ulimit name (e.g., "rtprio")
-//   in(3): string ulimitValue - ulimit value (e.g., "95" or "95:95")
-//   in(4): bool add - true to add/update, false to remove
+// UpdateUlimit adds, updates, or removes a single ulimit on an existing container.
+// The container is recreated with the modified ulimit set to apply the change.
+//
+//	in(1): string containerID target container ID or name
+//	in(2): string ulimitName ulimit resource name (e.g. "rtprio", "memlock")
+//	in(3): string ulimitValue ulimit value in "value" or "soft:hard" format (used only when add is true)
+//	in(4): bool add true to add or update the ulimit, false to remove it
+//	out: error nil on success, or an error describing the failure
 func UpdateUlimit(containerID string, ulimitName string, ulimitValue string, add bool) error {
 	ctx := context.Background()
 	cli, err := NewEngineClient()
@@ -269,8 +276,12 @@ func UpdateUlimit(containerID string, ulimitName string, ulimitValue string, add
 	return recreateContainerWithProperties(ctx, cli, containerID, props)
 }
 
-// EnableRealtimeMode enables realtime mode on an existing container.
-// Adds SYS_NICE capability and realtime ulimits (rtprio=95, memlock=unlimited, nice=40).
+// EnableRealtimeMode enables realtime scheduling on an existing container by adding the
+// SYS_NICE capability and the realtime ulimits (rtprio=95, memlock=unlimited, nice=40).
+// The container is recreated to apply the changes.
+//
+//	in(1): string containerID target container ID or name
+//	out: error nil on success, or an error describing the failure
 func EnableRealtimeMode(containerID string) error {
 	ctx := context.Background()
 	cli, err := NewEngineClient()
@@ -336,8 +347,12 @@ func EnableRealtimeMode(containerID string) error {
 	return nil
 }
 
-// DisableRealtimeMode disables realtime mode on an existing container.
-// Removes SYS_NICE capability and realtime ulimits.
+// DisableRealtimeMode disables realtime scheduling on an existing container by removing the
+// SYS_NICE capability and the realtime ulimits (rtprio, memlock, nice).
+// The container is recreated to apply the changes.
+//
+//	in(1): string containerID target container ID or name
+//	out: error nil on success, or an error describing the failure
 func DisableRealtimeMode(containerID string) error {
 	ctx := context.Background()
 	cli, err := NewEngineClient()
@@ -393,7 +408,11 @@ func DisableRealtimeMode(containerID string) error {
 	return nil
 }
 
-// ListContainerUlimits displays the ulimits for a container and its realtime mode status.
+// ListContainerUlimits prints all ulimits configured on a container and reports whether
+// realtime mode is considered active (SYS_NICE capability + rtprio + memlock=unlimited).
+//
+//	in(1): string containerID target container ID or name
+//	out: error nil on success, or an error describing the failure
 func ListContainerUlimits(containerID string) error {
 	ctx := context.Background()
 	cli, err := NewEngineClient()

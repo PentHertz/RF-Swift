@@ -1,14 +1,5 @@
 /* This code is part of RF Switch by @Penthertz
  * Author(s): Sebastien Dudek (@FlUxIuS)
- *
- * Container and image import/export
- *
- * ExportContainer    - in(1): string containerID, in(2): string outputFile, out: error
- * ExportImage        - in(1): []string images, in(2): string outputFile, out: error
- * ImportContainer    - in(1): string inputFile, in(2): string imageName, out: error
- * ImportImage        - in(1): string inputFile, out: error
- * extractTarArchive  - in(1): io.Reader reader, in(2): string destDir, out: error
- * createTarArchive   - in(1): string srcDir, in(2): string containerPath, out: (io.ReadCloser, error)
  */
 
 package dock
@@ -29,6 +20,11 @@ import (
 	common "penthertz/rfswift/common"
 )
 
+// extractTarArchive extracts a tar archive from a reader into the destination directory.
+//
+//	in(1): io.Reader reader source tar stream to extract from
+//	in(2): string destDir filesystem path where archive contents are written
+//	out: error non-nil if extraction fails at any step
 func extractTarArchive(reader io.Reader, destDir string) error {
 	tarReader := tar.NewReader(reader)
 
@@ -64,6 +60,12 @@ func extractTarArchive(reader io.Reader, destDir string) error {
 	return nil
 }
 
+// createTarArchive creates a tar archive from a local source directory, preserving the container path structure.
+//
+//	in(1): string srcDir local directory whose contents are packed into the archive
+//	in(2): string containerPath destination path inside the container, used as the archive root name
+//	out: io.ReadCloser pipe reader that streams the tar data (caller must close)
+//	out: error non-nil if the archive cannot be started
 func createTarArchive(srcDir string, containerPath string) (io.ReadCloser, error) {
 	pr, pw := io.Pipe()
 
@@ -134,6 +136,10 @@ func createTarArchive(srcDir string, containerPath string) (io.ReadCloser, error
 }
 
 // ExportContainer exports a container's filesystem to a compressed tar.gz file.
+//
+//	in(1): string containerID ID or name of the container to export
+//	in(2): string outputFile path to the output .tar.gz file to create
+//	out: error non-nil if the export or compression fails
 func ExportContainer(containerID string, outputFile string) error {
 	ctx := context.Background()
 	cli, err := NewEngineClient()
@@ -182,6 +188,10 @@ func ExportContainer(containerID string, outputFile string) error {
 }
 
 // ExportImage exports one or more images to a compressed tar.gz file.
+//
+//	in(1): []string images list of image names or IDs to export
+//	in(2): string outputFile path to the output .tar.gz file to create
+//	out: error non-nil if saving or compressing the images fails
 func ExportImage(images []string, outputFile string) error {
 	ctx := context.Background()
 	cli, err := NewEngineClient()
@@ -231,6 +241,10 @@ func ExportImage(images []string, outputFile string) error {
 }
 
 // ImportContainer imports a container from a tar or tar.gz file and creates an image.
+//
+//	in(1): string inputFile path to the .tar or .tar.gz file to import
+//	in(2): string imageName tag to assign to the resulting image
+//	out: error non-nil if opening, decompressing, or importing the file fails
 func ImportContainer(inputFile string, imageName string) error {
 	ctx := context.Background()
 	cli, err := NewEngineClient()
@@ -287,6 +301,9 @@ func ImportContainer(inputFile string, imageName string) error {
 }
 
 // ImportImage imports one or more images from a tar or tar.gz file.
+//
+//	in(1): string inputFile path to the .tar or .tar.gz file to load
+//	out: error non-nil if opening, decompressing, or loading the file fails
 func ImportImage(inputFile string) error {
 	ctx := context.Background()
 	cli, err := NewEngineClient()

@@ -1,31 +1,5 @@
 /* This code is part of RF Switch by @Penthertz
  * Author(s): Sebastien Dudek (@FlUxIuS)
- *
- * Internal utility functions
- *
- * loadJSON                 - in(1): string path, in(2): interface{} v, out: error
- * saveJSON                 - in(1): string path, in(2): interface{} v, out: error
- * ocontains                - in(1): []string slice, in(2): string item, out: bool
- * removeFromSlice          - in(1): []string slice, in(2): string item, out: []string
- * getContainerIDByName     - in(1): context.Context, in(2): string containerName, out: string
- * combineBindings          - in(1): string x11forward, in(2): string extrabinding, out: []string
- * splitAndCombine           - in(1): string commaSeparated, out: []string
- * combineEnv               - in(1): string xdisplay, in(2): string pulse_server, in(3): string extraenv, out: []string
- * normalizeImageName       - in(1): string imageName, out: string
- * parseImageName           - in(1): string imageName, out: string repo, string tag
- * bindExistsByPrefix       - in(1): []string binds, in(2): string mount, out: bool
- * removeBindByPrefix       - in(1): []string binds, in(2): string mount, out: []string
- * IsRootlessPodman         - out: bool
- * ParseExposedPorts        - in(1): string exposedPortsStr, out: nat.PortSet
- * ParseBindedPorts         - in(1): string bindedPortsStr, out: nat.PortMap
- * getDeviceMappingsFromString - in(1): string devicesStr, out: []container.DeviceMapping
- * convertPortBindingsToString - in(1): nat.PortMap, out: string
- * convertPortBindingsToRoundTrip - in(1): nat.PortMap, out: string
- * convertExposedPortsToString - in(1): nat.PortSet, out: string
- * convertDevicesToString      - in(1): []container.DeviceMapping, out: string
- * convertCapsToString         - in(1): []string caps, out: string
- * convertSecurityOptToString  - in(1): []string securityOpts, out: string
- * showLoadingIndicator     - in(1): context.Context, in(2): func() error, in(3): string stepName, out: error
  */
 package dock
 
@@ -45,6 +19,11 @@ import (
 	common "penthertz/rfswift/common"
 )
 
+// loadJSON reads a JSON file from disk and unmarshals its contents into v.
+//
+//	in(1): string path - filesystem path to the JSON file to read
+//	in(2): interface{} v - pointer to the value to unmarshal into
+//	out: error - non-nil if reading or unmarshalling fails
 func loadJSON(path string, v interface{}) error {
 	data, err := ioutil.ReadFile(path)
 	if err != nil {
@@ -53,6 +32,11 @@ func loadJSON(path string, v interface{}) error {
 	return json.Unmarshal(data, v)
 }
 
+// saveJSON marshals v to indented JSON and writes it to the file at path.
+//
+//	in(1): string path - filesystem path of the file to write
+//	in(2): interface{} v - value to marshal into JSON
+//	out: error - non-nil if marshalling or writing fails
 func saveJSON(path string, v interface{}) error {
 	data, err := json.MarshalIndent(v, "", "  ")
 	if err != nil {
@@ -61,6 +45,11 @@ func saveJSON(path string, v interface{}) error {
 	return ioutil.WriteFile(path, data, 0644)
 }
 
+// ocontains reports whether item is present in slice.
+//
+//	in(1): []string slice - the slice to search
+//	in(2): string item - the value to look for
+//	out: bool - true if item is found, false otherwise
 func ocontains(slice []string, item string) bool {
 	for _, s := range slice {
 		if s == item {
@@ -70,6 +59,11 @@ func ocontains(slice []string, item string) bool {
 	return false
 }
 
+// removeFromSlice returns a new slice with all occurrences of item removed.
+//
+//	in(1): []string slice - the original slice
+//	in(2): string item - the value to remove
+//	out: []string - copy of slice with every matching element omitted
 func removeFromSlice(slice []string, item string) []string {
 	newSlice := []string{}
 	for _, s := range slice {
@@ -80,6 +74,12 @@ func removeFromSlice(slice []string, item string) []string {
 	return newSlice
 }
 
+// getContainerIDByName looks up a container's full ID by its name, searching
+// all containers (including stopped ones). Returns an empty string if not found.
+//
+//	in(1): context.Context ctx - context used for the Docker API call
+//	in(2): string containerName - container name to search for (without leading '/')
+//	out: string - container ID, or empty string if no match is found
 func getContainerIDByName(ctx context.Context, containerName string) string {
 	cli, _ := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
 	containers, _ := cli.ContainerList(ctx, container.ListOptions{All: true})
@@ -93,6 +93,12 @@ func getContainerIDByName(ctx context.Context, containerName string) string {
 	return ""
 }
 
+// combineBindings merges X11-forwarding bind mounts and extra bind mounts into
+// a single slice. Each argument is a comma-separated list of bind mount specs.
+//
+//	in(1): string x11forward - comma-separated X11 socket bind mount specs
+//	in(2): string extrabinding - comma-separated additional bind mount specs
+//	out: []string - combined slice of all bind mount specs
 func combineBindings(x11forward, extrabinding string) []string {
 	var bindings []string
 
@@ -105,6 +111,11 @@ func combineBindings(x11forward, extrabinding string) []string {
 	return bindings
 }
 
+// splitAndCombine splits a comma-separated string into a slice of strings.
+// Returns an empty slice when the input is empty.
+//
+//	in(1): string commaSeparated - comma-separated values to split
+//	out: []string - individual values, or an empty slice if input is empty
 func splitAndCombine(commaSeparated string) []string {
 	if commaSeparated == "" {
 		return []string{}
@@ -112,27 +123,46 @@ func splitAndCombine(commaSeparated string) []string {
 	return strings.Split(commaSeparated, ",")
 }
 
-func combineEnv(xdisplay, pulse_server, extraenv string) []string {
-	dockerenv := append(strings.Split(xdisplay, ","), "PULSE_SERVER="+pulse_server)
+// combineEnv assembles the container environment variable slice from the X11
+// display spec, PulseAudio server address, and any extra environment variables.
+//
+//	in(1): string xdisplay - comma-separated DISPLAY-related environment entries
+//	in(2): string pulseServer - PulseAudio server address appended as PULSE_SERVER=<value>
+//	in(3): string extraenv - comma-separated additional KEY=VALUE environment entries
+//	out: []string - combined environment variable slice for the container
+func combineEnv(xdisplay, pulseServer, extraenv string) []string {
+	dockerenv := append(strings.Split(xdisplay, ","), "PULSE_SERVER="+pulseServer)
 	if extraenv != "" {
 		dockerenv = append(dockerenv, strings.Split(extraenv, ",")...)
 	}
 	return dockerenv
 }
 
-// normalizeImageName ensures an image has proper repo:tag format.
+// normalizeImageName ensures an image reference has the proper repo:tag format.
+// If the name does not contain a colon, the configured default repository tag is
+// prepended and an informational message is printed.
+//
+//	in(1): string imageName - raw image name, with or without a tag
+//	out: string - fully-qualified image reference in repo:tag form
 func normalizeImageName(imageName string) string {
 	if imageName == "" {
 		return imageName
 	}
 	if !strings.Contains(imageName, ":") {
-		normalized := fmt.Sprintf("%s:%s", dockerObj.repotag, imageName)
+		normalized := fmt.Sprintf("%s:%s", containerCfg.repotag, imageName)
 		common.PrintInfoMessage(fmt.Sprintf("Using full image reference: %s", normalized))
 		return normalized
 	}
 	return imageName
 }
 
+// parseImageName splits an image reference into its repository and tag parts.
+// A leading "docker.io/" prefix is stripped before splitting. If no tag is
+// present, "latest" is used as the default.
+//
+//	in(1): string imageName - image reference, optionally prefixed with "docker.io/"
+//	out: string - repository portion of the image reference
+//	out: string - tag portion of the image reference (defaults to "latest")
 func parseImageName(imageName string) (string, string) {
 	imageName = strings.TrimPrefix(imageName, "docker.io/")
 	parts := strings.Split(imageName, ":")
@@ -144,8 +174,12 @@ func parseImageName(imageName string) (string, string) {
 	return repo, tag
 }
 
-// bindExistsByPrefix checks if a bind mount already exists in the slice,
-// ignoring trailing mount options (e.g., ":rw,rprivate,nosuid,rbind").
+// bindExistsByPrefix reports whether a bind mount spec matching mount already
+// exists in binds, ignoring trailing mount options (e.g., ":rw,rprivate,nosuid,rbind").
+//
+//	in(1): []string binds - current list of bind mount specs
+//	in(2): string mount - the "src:dst" bind spec to look for
+//	out: bool - true if a matching bind is found, false otherwise
 func bindExistsByPrefix(binds []string, mount string) bool {
 	for _, b := range binds {
 		if b == mount || strings.HasPrefix(b, mount+":") {
@@ -155,7 +189,13 @@ func bindExistsByPrefix(binds []string, mount string) bool {
 	return false
 }
 
-// removeBindByPrefix removes binds matching "src:dst" regardless of trailing mount options.
+// removeBindByPrefix returns a copy of binds with all entries that match mount
+// (as an exact string or as a "mount:" prefix) removed, regardless of trailing
+// mount options.
+//
+//	in(1): []string binds - current list of bind mount specs
+//	in(2): string mount - the "src:dst" bind spec to remove
+//	out: []string - filtered slice with matching entries omitted
 func removeBindByPrefix(binds []string, mount string) []string {
 	var result []string
 	for _, b := range binds {
@@ -167,12 +207,19 @@ func removeBindByPrefix(binds []string, mount string) []string {
 	return result
 }
 
-// IsRootlessPodman returns true when running under Podman without root privileges.
+// IsRootlessPodman reports whether the current process is running under Podman
+// without root privileges.
+//
+//	out: bool - true if the active engine is Podman and the effective UID is not 0
 func IsRootlessPodman() bool {
 	return GetEngine().Type() == EnginePodman && os.Getuid() != 0
 }
 
-// ParseExposedPorts parses a comma-separated port string into a nat.PortSet.
+// ParseExposedPorts parses a comma-separated list of port/protocol entries into
+// a nat.PortSet suitable for use in container configuration.
+//
+//	in(1): string exposedPortsStr - comma-separated port specs (e.g. "80/tcp,443/tcp")
+//	out: nat.PortSet - set of exposed ports, empty if input is empty
 func ParseExposedPorts(exposedPortsStr string) nat.PortSet {
 	exposedPorts := nat.PortSet{}
 
@@ -192,8 +239,13 @@ func ParseExposedPorts(exposedPortsStr string) nat.PortSet {
 	return exposedPorts
 }
 
-// ParseBindedPorts parses a port binding string into a nat.PortMap.
-// Supports both ";;" (internal round-trip) and "," (CLI input) delimiters.
+// ParseBindedPorts parses a port binding string into a nat.PortMap. Entries are
+// separated by ";;" when coming from an internal round-trip representation, or
+// by "," when supplied directly from CLI input. Each entry must follow the form
+// "containerPort/proto:hostPort" or "containerPort/proto:hostIP:hostPort".
+//
+//	in(1): string bindedPortsStr - delimited port binding specs
+//	out: nat.PortMap - map of container ports to host bindings, empty on empty input
 func ParseBindedPorts(bindedPortsStr string) nat.PortMap {
 	portBindings := nat.PortMap{}
 
@@ -244,6 +296,11 @@ func ParseBindedPorts(bindedPortsStr string) nat.PortMap {
 	return portBindings
 }
 
+// getDeviceMappingsFromString parses a comma-separated list of "hostPath:containerPath"
+// device specs into a slice of container.DeviceMapping with "rwm" permissions.
+//
+//	in(1): string devicesStr - comma-separated device mapping specs (e.g. "/dev/sdr0:/dev/sdr0")
+//	out: []container.DeviceMapping - parsed device mappings, empty if input is empty
 func getDeviceMappingsFromString(devicesStr string) []container.DeviceMapping {
 	var devices []container.DeviceMapping
 
@@ -266,6 +323,11 @@ func getDeviceMappingsFromString(devicesStr string) []container.DeviceMapping {
 	return devices
 }
 
+// convertPortBindingsToString formats a nat.PortMap as a human-readable
+// comma-separated string of "hostIP:hostPort -> containerPort/proto" entries.
+//
+//	in(1): nat.PortMap portBindings - port binding map to format
+//	out: string - comma-separated human-readable port binding descriptions
 func convertPortBindingsToString(portBindings nat.PortMap) string {
 	var result []string
 
@@ -279,6 +341,12 @@ func convertPortBindingsToString(portBindings nat.PortMap) string {
 	return strings.Join(result, ", ")
 }
 
+// convertPortBindingsToRoundTrip serialises a nat.PortMap into the internal
+// ";;" -delimited round-trip format so it can be stored and later re-parsed by
+// ParseBindedPorts. Entries with a non-default host IP include it in the output.
+//
+//	in(1): nat.PortMap portBindings - port binding map to serialise
+//	out: string - ";;" -delimited string of "containerPort/proto:hostPort" (or ":hostIP:hostPort") entries
 func convertPortBindingsToRoundTrip(portBindings nat.PortMap) string {
 	var result []string
 	for port, bindings := range portBindings {
@@ -293,6 +361,11 @@ func convertPortBindingsToRoundTrip(portBindings nat.PortMap) string {
 	return strings.Join(result, ";;")
 }
 
+// convertExposedPortsToString formats a nat.PortSet as a comma-separated string
+// of port/protocol entries.
+//
+//	in(1): nat.PortSet exposedPorts - set of exposed ports to format
+//	out: string - comma-separated port/protocol entries (e.g. "80/tcp, 443/tcp")
 func convertExposedPortsToString(exposedPorts nat.PortSet) string {
 	var result []string
 	for port := range exposedPorts {
@@ -301,6 +374,11 @@ func convertExposedPortsToString(exposedPorts nat.PortSet) string {
 	return strings.Join(result, ", ")
 }
 
+// convertDevicesToString formats a slice of container.DeviceMapping as a
+// comma-separated string of "hostPath:containerPath" pairs.
+//
+//	in(1): []container.DeviceMapping devices - device mappings to format
+//	out: string - comma-separated "hostPath:containerPath" device specs
 func convertDevicesToString(devices []container.DeviceMapping) string {
 	deviceStrings := make([]string, len(devices))
 	for i, device := range devices {
@@ -309,6 +387,11 @@ func convertDevicesToString(devices []container.DeviceMapping) string {
 	return strings.Join(deviceStrings, ",")
 }
 
+// convertCapsToString joins a slice of Linux capability names into a single
+// comma-separated string. Returns an empty string when the slice is empty.
+//
+//	in(1): []string caps - capability names (e.g. ["NET_ADMIN", "SYS_PTRACE"])
+//	out: string - comma-separated capability names, or "" if caps is empty
 func convertCapsToString(caps []string) string {
 	if len(caps) == 0 {
 		return ""
@@ -316,6 +399,12 @@ func convertCapsToString(caps []string) string {
 	return strings.Join(caps, ",")
 }
 
+// convertSecurityOptToString extracts the seccomp profile path from a slice of
+// security option strings. It returns the value of the first entry prefixed with
+// "seccomp=", or an empty string if no such entry is found.
+//
+//	in(1): []string securityOpts - security option strings (e.g. ["seccomp=/path/to/profile.json"])
+//	out: string - seccomp profile path, or "" if none is present
 func convertSecurityOptToString(securityOpts []string) string {
 	if len(securityOpts) == 0 {
 		return ""
@@ -328,7 +417,14 @@ func convertSecurityOptToString(securityOpts []string) string {
 	return ""
 }
 
-// showLoadingIndicator displays a rotating clock animation while a command runs.
+// showLoadingIndicator runs commandFunc in a goroutine and displays a rotating
+// clock emoji animation on stdout while it executes. It prints a success or
+// error message when commandFunc returns.
+//
+//	in(1): context.Context ctx - context (reserved for future cancellation support)
+//	in(2): func() error commandFunc - the operation to execute concurrently
+//	in(3): string stepName - human-readable label shown in the loading animation and completion message
+//	out: error - the error returned by commandFunc, or nil on success
 func showLoadingIndicator(ctx context.Context, commandFunc func() error, stepName string) error {
 	done := make(chan error)
 	go func() {

@@ -1,16 +1,5 @@
 /* This code is part of RF Switch by @Penthertz
  * Author(s): Sebastien Dudek (@FlUxIuS)
- *
- * Image operations: pull, tag, list, delete, status checking
- *
- * DockerPull             - in(1): string imageref, in(2): string imagetag
- * DockerPullVersion      - in(1): string imageref, in(2): string version, in(3): string imagetag
- * DockerTag              - in(1): string imageref, in(2): string imagetag
- * ListImages             - in(1): string labelKey, in(2): string labelValue, out: ([]image.Summary, error)
- * PrintImagesTable       - in(1): string labelKey, in(2): string labelValue, in(3): bool showVersions, in(4): string filterImage
- * DeleteImage            - in(1): string imageIDOrTag, out: error
- * SaveImageToFile        - in(1): string imageName, in(2): string outputFile, in(3): bool pullFirst, out: error
- * checkImageStatus       - in(1): ctx, in(2): cli, in(3): string repo, in(4): string tag, out: (bool, bool, error)
  */
 
 package dock
@@ -40,7 +29,14 @@ import (
 	rfutils "penthertz/rfswift/rfutils"
 )
 
-// getRemoteImageDigest fetches the digest for a specific tag from Docker Hub
+// getRemoteImageDigest fetches the digest for a specific tag from Docker Hub,
+// normalizing the tag for the target architecture before querying the registry API.
+//
+//	in(1): string repo         Docker Hub repository path (e.g. "penthertz/rfswift_noble")
+//	in(2): string tag          image tag to look up
+//	in(3): string architecture target architecture string used to normalize the tag
+//	out:   string              digest string for the matched tag, empty on failure
+//	out:   error               non-nil if the tag was not found or the request failed
 func getRemoteImageDigest(repo, tag, architecture string) (string, error) {
     var digest string
 
@@ -92,6 +88,13 @@ func getRemoteImageDigest(repo, tag, architecture string) (string, error) {
     return digest, err
 }
 
+// checkIfImageIsUpToDate reports whether the given tag is listed among the
+// latest Docker Hub tags for the current architecture of the host system.
+//
+//	in(1): string repo  Docker Hub repository path
+//	in(2): string tag   image tag to check
+//	out:   bool         true if the tag matches a current remote tag
+//	out:   error        non-nil if the remote tag list could not be retrieved
 func checkIfImageIsUpToDate(repo, tag string) (bool, error) {
 	architecture := getArchitecture()
 	tags, err := getLatestDockerHubTags(repo, architecture)
@@ -108,6 +111,14 @@ func checkIfImageIsUpToDate(repo, tag string) (bool, error) {
 	return false, nil
 }
 
+// getLocalImageCreationDate returns the creation timestamp of a locally stored image
+// by inspecting its metadata and parsing the RFC3339 Created field.
+//
+//	in(1): context.Context    request context
+//	in(2): *client.Client     Docker/Podman engine client
+//	in(3): string imageName   fully-qualified image name or ID to inspect
+//	out:   time.Time          parsed creation time of the local image
+//	out:   error              non-nil if the image does not exist locally or the timestamp is unparseable
 func getLocalImageCreationDate(ctx context.Context, cli *client.Client, imageName string) (time.Time, error) {
 	localImage, _, err := cli.ImageInspectWithRaw(ctx, imageName)
 	if err != nil {
@@ -120,6 +131,11 @@ func getLocalImageCreationDate(ctx context.Context, cli *client.Client, imageNam
 	return localImageTime, nil
 }
 
+// digestMatches reports whether remoteDigest is present in the localDigests slice.
+//
+//	in(1): []string localDigests  list of digests extracted from a local image's RepoDigests
+//	in(2): string remoteDigest    digest string retrieved from the remote registry
+//	out:   bool                   true if remoteDigest is found in localDigests
 func digestMatches(localDigests []string, remoteDigest string) bool {
 	for _, d := range localDigests {
 		if d == remoteDigest {
@@ -129,6 +145,19 @@ func digestMatches(localDigests []string, remoteDigest string) bool {
 	return false
 }
 
+// checkImageStatusWithCache determines whether a locally stored image is up-to-date,
+// obsolete, or custom by comparing its digest against a pre-fetched remote version map,
+// avoiding repeated network calls when checking many images at once.
+//
+//	in(1): context.Context       request context
+//	in(2): *client.Client        Docker/Podman engine client
+//	in(3): string repo           Docker Hub repository path
+//	in(4): string tag            image tag to evaluate
+//	in(5): string architecture   host architecture string used for tag normalization
+//	in(6): RepoVersionMap        pre-fetched map of remote versions keyed by repository and base name
+//	out:   bool                  true if the local image digest matches the latest remote version
+//	out:   bool                  true if the image is considered custom (not an official RF Swift image)
+//	out:   error                 non-nil if the local image could not be inspected
 func checkImageStatusWithCache(ctx context.Context, cli *client.Client, repo, tag string, architecture string, cachedVersionsByRepo RepoVersionMap) (bool, bool, error) {
 	if common.Disconnected {
 		return false, true, nil
@@ -251,7 +280,17 @@ func checkImageStatusWithCache(ctx context.Context, cli *client.Client, repo, ta
 	return false, true, nil
 }
 
-// checkImageStatus checks whether a local image is up-to-date compared to remote.
+// checkImageStatus checks whether a local image is up-to-date compared to the
+// remote registry by fetching the current remote version map and delegating to
+// checkImageStatusWithCache.
+//
+//	in(1): context.Context  request context
+//	in(2): *client.Client   Docker/Podman engine client
+//	in(3): string repo      Docker Hub repository path
+//	in(4): string tag       image tag to evaluate
+//	out:   bool             true if the local image digest matches the latest remote version
+//	out:   bool             true if the image is considered custom (not an official RF Swift image)
+//	out:   error            non-nil if the local image could not be inspected
 func checkImageStatus(ctx context.Context, cli *client.Client, repo, tag string) (bool, bool, error) {
 	if common.Disconnected {
 		return false, true, nil
@@ -270,7 +309,13 @@ func checkImageStatus(ctx context.Context, cli *client.Client, repo, tag string)
 	return checkImageStatusWithCache(ctx, cli, repo, tag, architecture, cachedVersionsByRepo)
 }
 
-// getLocalImageDigest gets the digest for a local image
+// getLocalImageDigest returns the first RepoDigest hash found for a locally
+// stored image, stripping the "repo@" prefix so only the raw digest is returned.
+//
+//	in(1): context.Context  request context
+//	in(2): *client.Client   Docker/Podman engine client
+//	in(3): string imageName fully-qualified image name or ID to inspect
+//	out:   string           digest string (e.g. "sha256:abc…"), empty string on failure
 func getLocalImageDigest(ctx context.Context, cli *client.Client, imageName string) string {
 	imageInspect, _, err := cli.ImageInspectWithRaw(ctx, imageName)
 	if err != nil {
@@ -286,6 +331,13 @@ func getLocalImageDigest(ctx context.Context, cli *client.Client, imageName stri
 	return ""
 }
 
+// getLocalImageDigests returns all RepoDigest hashes found for a locally stored
+// image, stripping the "repo@" prefix from each entry so only raw digests are returned.
+//
+//	in(1): context.Context  request context
+//	in(2): *client.Client   Docker/Podman engine client
+//	in(3): string imageName fully-qualified image name or ID to inspect
+//	out:   []string         slice of digest strings; nil if the image is not found or has no digests
 func getLocalImageDigests(ctx context.Context, cli *client.Client, imageName string) []string {
 	imageInspect, _, err := cli.ImageInspectWithRaw(ctx, imageName)
 	if err != nil {
@@ -300,8 +352,13 @@ func getLocalImageDigests(ctx context.Context, cli *client.Client, imageName str
 	return digests
 }
 
-// DockerPull pulls a Docker image and optionally retags it locally.
-func DockerPull(imageref string, imagetag string) {
+// ContainerPull pulls a Docker image from the remote registry and optionally
+// retags it with a clean local name, handling architecture-specific tag
+// normalization and prompting the user to preserve any differing local copy.
+//
+//	in(1): string imageref  fully-qualified image reference to pull (e.g. "repo/image:tag")
+//	in(2): string imagetag  local tag to assign after pulling; if empty a clean name is derived
+func ContainerPull(imageref string, imagetag string) {
 	ctx := context.Background()
 	cli, err := NewEngineClient()
 	if err != nil {
@@ -452,8 +509,12 @@ func DockerPull(imageref string, imagetag string) {
 	common.PrintSuccessMessage(fmt.Sprintf("Image '%s' installed successfully", imagetag))
 }
 
-// DockerTag renames an image to another name.
-func DockerTag(imageref string, imagetag string) {
+// ContainerTag renames a local image by tagging it with a new name and then
+// removing the original tag reference (the underlying image layers are kept).
+//
+//	in(1): string imageref  source image reference to rename
+//	in(2): string imagetag  new tag name to assign to the image
+func ContainerTag(imageref string, imagetag string) {
 	ctx := context.Background()
 	cli, err := NewEngineClient()
 	if err != nil {
@@ -479,7 +540,13 @@ func DockerTag(imageref string, imagetag string) {
 	}
 }
 
-// ListImages lists RF Swift images filtered by label.
+// ListImages returns all locally stored images that carry the given label
+// key/value pair and have at least one RepoTag.
+//
+//	in(1): string labelKey    Docker label key to filter on
+//	in(2): string labelValue  required value for the label key
+//	out:   []image.Summary    slice of matching image summaries
+//	out:   error              non-nil if the engine client could not be created or the list call failed
 func ListImages(labelKey string, labelValue string) ([]image.Summary, error) {
 	ctx := context.Background()
 	cli, err := NewEngineClient()
@@ -511,7 +578,14 @@ func ListImages(labelKey string, labelValue string) ([]image.Summary, error) {
 	return filteredImages, nil
 }
 
-// PrintImagesTable prints a formatted table of RF Swift images.
+// PrintImagesTable prints a formatted terminal table of RF Swift images filtered
+// by a Docker label, optionally showing resolved version strings and restricting
+// rows to tags that contain filterImage as a substring.
+//
+//	in(1): string labelKey    Docker label key used to select RF Swift images
+//	in(2): string labelValue  required value for the label key
+//	in(3): bool showVersions  when true, appends a Version column resolved from remote metadata
+//	in(4): string filterImage substring filter applied to tag names; empty string disables filtering
 func PrintImagesTable(labelKey string, labelValue string, showVersions bool, filterImage string) {
 	ctx := context.Background()
 	cli, err := NewEngineClient()
@@ -707,7 +781,11 @@ func PrintImagesTable(labelKey string, labelValue string, showVersions bool, fil
 	fmt.Println()
 }
 
-// DeleteImage deletes a Docker image by ID or tag after user confirmation.
+// DeleteImage removes a local image by ID or tag after interactively confirming
+// with the user, stopping and removing any containers that reference the image first.
+//
+//	in(1): string imageIDOrTag  image ID (short or full) or repo:tag reference to delete
+//	out:   error                non-nil if the image was not found, the user cancelled, or removal failed
 func DeleteImage(imageIDOrTag string) error {
 	ctx := context.Background()
 	cli, err := NewEngineClient()
@@ -751,7 +829,7 @@ func DeleteImage(imageIDOrTag string) error {
 
 			// If the input doesn't contain ":", prepend the repo
 			if !strings.Contains(imageIDOrTag, ":") {
-				imageIDOrTag = fmt.Sprintf("%s:%s", dockerObj.repotag, imageIDOrTag)
+				imageIDOrTag = fmt.Sprintf("%s:%s", containerCfg.repotag, imageIDOrTag)
 			}
 
 			// Check for exact match first
@@ -879,7 +957,13 @@ func DeleteImage(imageIDOrTag string) error {
 	return nil
 }
 
-// SaveImageToFile pulls an image and saves it to a tar.gz file.
+// SaveImageToFile exports a local image to a gzip-compressed tar archive,
+// optionally pulling the latest version from the remote registry first.
+//
+//	in(1): string imageName   fully-qualified image name to export
+//	in(2): string outputFile  destination file path for the .tar.gz archive
+//	in(3): bool pullFirst     when true, always pull the latest image before saving
+//	out:   error              non-nil if pulling, saving, or writing the archive failed
 func SaveImageToFile(imageName string, outputFile string, pullFirst bool) error {
 	ctx := context.Background()
 	cli, err := NewEngineClient()
@@ -999,8 +1083,14 @@ func SaveImageToFile(imageName string, outputFile string, pullFirst bool) error 
 	return nil
 }
 
-// DockerPullVersion pulls a specific version of an image.
-func DockerPullVersion(imageref string, version string, imagetag string) {
+// ContainerPullVersion pulls a specific versioned image from the remote registry
+// by locating the requested version across all official repositories, then
+// tagging the result with a clean local name that omits the architecture suffix.
+//
+//	in(1): string imageref  base image reference used to scope the version search
+//	in(2): string version   semantic version string to look up (e.g. "0.0.7"); empty delegates to ContainerPull
+//	in(3): string imagetag  local tag to assign after pulling; if empty a name is derived from repo and version
+func ContainerPullVersion(imageref string, version string, imagetag string) {
 	ctx := context.Background()
 	cli, err := NewEngineClient()
 	if err != nil {
@@ -1017,7 +1107,7 @@ func DockerPullVersion(imageref string, version string, imagetag string) {
 
 	// If no version specified, use regular pull
 	if version == "" {
-		DockerPull(imageref, imagetag)
+		ContainerPull(imageref, imagetag)
 		return
 	}
 

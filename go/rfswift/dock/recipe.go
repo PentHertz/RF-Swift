@@ -2,13 +2,6 @@
  * Author(s): Sebastien Dudek (@FlUxIuS)
  *
  * YAML recipe-based image building
- *
- * BuildFromRecipe     - in(1): string recipeFile, in(2): string tagOverride, in(3): bool noCache, out: error
- * generateDockerfile  - in(1): BuildRecipe recipe, out: (string, error)
- * copyBuildContext    - in(1): BuildRecipe recipe, in(2): string sourceDir, in(3): string destDir, out: error
- * copyDir             - in(1): string src, in(2): string dst, out: error
- * copyFile            - in(1): string src, in(2): string dst, out: error
- * createBuildContextTar - in(1): string sourceDir, out: (io.ReadCloser, error)
  */
 
 package dock
@@ -32,7 +25,13 @@ import (
 	common "penthertz/rfswift/common"
 )
 
-// BuildFromRecipe builds a Docker image from a YAML recipe file.
+// BuildFromRecipe builds a Docker image from a YAML recipe file, optionally
+// overriding the image tag and disabling the layer cache during the build.
+//
+//	in(1): string recipeFile  path to the YAML recipe file
+//	in(2): string tagOverride image tag to use instead of the one defined in the recipe (empty string keeps the recipe tag)
+//	in(3): bool   noCache     when true, passes --no-cache to the Docker build
+//	out:   error              non-nil if any step of the build process fails
 func BuildFromRecipe(recipeFile string, tagOverride string, noCache bool) error {
 	// Read recipe file
 	common.PrintInfoMessage(fmt.Sprintf("Reading recipe from: %s", recipeFile))
@@ -152,7 +151,14 @@ func BuildFromRecipe(recipeFile string, tagOverride string, noCache bool) error 
 	return nil
 }
 
-// generateDockerfile generates a Dockerfile string from a BuildRecipe.
+// generateDockerfile produces a Dockerfile source string by iterating over the
+// steps defined in the provided BuildRecipe and rendering each step type
+// (run, copy, workdir, script, cleanup) into the appropriate Dockerfile
+// instruction.
+//
+//	in(1): BuildRecipe recipe  the parsed recipe describing the image to build
+//	out:   string              the generated Dockerfile content
+//	out:   error               non-nil if the recipe cannot be rendered
 func generateDockerfile(recipe BuildRecipe) (string, error) {
 	var dockerfile strings.Builder
 
@@ -218,7 +224,14 @@ func generateDockerfile(recipe BuildRecipe) (string, error) {
 	return dockerfile.String(), nil
 }
 
-// copyBuildContext copies the files referenced by COPY steps in the recipe from sourceDir to destDir.
+// copyBuildContext copies every file or directory referenced by "copy" steps in
+// the recipe from sourceDir into destDir, preserving the relative source paths
+// so the generated Dockerfile COPY instructions resolve correctly.
+//
+//	in(1): BuildRecipe recipe  the parsed recipe whose copy steps are inspected
+//	in(2): string      sourceDir  root directory that contains the source files
+//	in(3): string      destDir    destination directory (typically the temp build context)
+//	out:   error                  non-nil if any source path is missing or a copy operation fails
 func copyBuildContext(recipe BuildRecipe, sourceDir, destDir string) error {
 	// Find all files that need to be copied
 	filesToCopy := make(map[string]bool)
@@ -255,6 +268,13 @@ func copyBuildContext(recipe BuildRecipe, sourceDir, destDir string) error {
 	return nil
 }
 
+// copyDir recursively copies the directory tree rooted at src into dst,
+// recreating subdirectory structure and delegating individual file copies to
+// copyFile.
+//
+//	in(1): string src  source directory path
+//	in(2): string dst  destination directory path
+//	out:   error       non-nil if the walk or any copy/mkdir operation fails
 func copyDir(src, dst string) error {
 	return filepath.Walk(src, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
@@ -276,6 +296,13 @@ func copyDir(src, dst string) error {
 	})
 }
 
+// copyFile copies a single file from src to dst, creating any missing parent
+// directories in the destination path with permission 0755.
+//
+//	in(1): string src  path to the source file
+//	in(2): string dst  path to the destination file
+//	out:   error       non-nil if the source cannot be opened, the destination
+//	                   cannot be created, or the data copy fails
 func copyFile(src, dst string) error {
 	srcFile, err := os.Open(src)
 	if err != nil {
@@ -295,6 +322,14 @@ func copyFile(src, dst string) error {
 	return err
 }
 
+// createBuildContextTar produces a streaming tar archive of all files under
+// sourceDir. The archive is written in a background goroutine through a pipe so
+// the caller can begin reading immediately without waiting for the entire
+// directory to be archived.
+//
+//	in(1): string sourceDir  root directory to archive
+//	out:   io.ReadCloser     reader from which the tar stream can be consumed
+//	out:   error             non-nil if the pipe cannot be set up (walk errors are propagated through the pipe)
 func createBuildContextTar(sourceDir string) (io.ReadCloser, error) {
 	pr, pw := io.Pipe()
 

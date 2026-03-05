@@ -1,15 +1,5 @@
 /* This code is part of RF Switch by @Penthertz
  * Author(s): Sebastien Dudek (@FlUxIuS)
- *
- * Type definitions and global state
- *
- * HostConfigFull   - Docker host config JSON representation
- * DockerInst       - Internal container configuration state
- * BuildRecipe      - YAML recipe for image building
- * BuildStep        - Single step in a build recipe
- * CopyItem         - Source/destination pair for COPY steps
- * dockerObj        - Global container configuration instance
- * init             - Loads configuration from file into dockerObj
  */
 package dock
 
@@ -128,58 +118,56 @@ type Ulimit struct {
 	Soft int64  `json:"Soft"`
 }
 
-var inout chan []byte
-
-// DockerInst holds the runtime configuration for container creation.
-type DockerInst struct {
-	net           string
-	privileged    bool
-	xdisplay      string
-	x11forward    string
-	usbforward    string
-	usbdevice     string
-	shell         string
-	imagename     string
-	repotag       string
-	extrabinding  string
-	entrypoint    string
-	extrahosts    string
-	extraenv      string
-	pulse_server  string
-	network_mode  string
-	exposed_ports string
-	binded_ports  string
-	devices       string
-	caps          string
-	seccomp       string
-	cgroups       string
-	ulimits       string
-	realtime      bool
+// ContainerConfig holds the runtime configuration for container creation.
+type ContainerConfig struct {
+	net          string
+	privileged   bool
+	xdisplay     string
+	x11forward   string
+	usbforward   string
+	usbdevice    string
+	shell        string
+	imagename    string
+	repotag      string
+	extrabinding string
+	entrypoint   string
+	extrahosts   string
+	extraenv     string
+	pulseServer  string
+	networkMode  string
+	exposedPorts string
+	bindedPorts  string
+	devices      string
+	caps         string
+	seccomp      string
+	cgroups      string
+	ulimits      string
+	realtime     bool
 }
 
-var dockerObj = DockerInst{
-	net:           "host",
-	privileged:    false,
-	xdisplay:      "DISPLAY=:0",
-	entrypoint:    "/bin/bash",
-	x11forward:    "/tmp/.X11-unix:/tmp/.X11-unix",
-	usbforward:    "",
-	extrabinding:  "/run/dbus/system_bus_socket:/run/dbus/system_bus_socket",
-	imagename:     "myrfswift:latest",
-	repotag:       "penthertz/rfswift_noble",
-	extrahosts:    "",
-	extraenv:      "",
-	network_mode:  "host",
-	exposed_ports: "",
-	binded_ports:  "",
-	pulse_server:  "tcp:localhost:34567",
-	devices:       "/dev/snd:/dev/snd,/dev/dri:/dev/dri,/dev/input:/dev/input",
-	caps:          "SYS_RAWIO,NET_ADMIN,SYS_TTY_CONFIG,SYS_ADMIN",
-	seccomp:       "unconfined",
-	cgroups:       "c *:* rwm",
-	ulimits:       "",
-	realtime:      false,
-	shell:         "/bin/bash",
+var containerCfg = ContainerConfig{
+	net:          "host",
+	privileged:   false,
+	xdisplay:     "DISPLAY=:0",
+	entrypoint:   "/bin/bash",
+	x11forward:   "/tmp/.X11-unix:/tmp/.X11-unix",
+	usbforward:   "",
+	extrabinding: "/run/dbus/system_bus_socket:/run/dbus/system_bus_socket",
+	imagename:    "myrfswift:latest",
+	repotag:      "penthertz/rfswift_noble",
+	extrahosts:   "",
+	extraenv:     "",
+	networkMode:  "host",
+	exposedPorts: "",
+	bindedPorts:  "",
+	pulseServer:  "tcp:localhost:34567",
+	devices:      "/dev/snd:/dev/snd,/dev/dri:/dev/dri,/dev/input:/dev/input",
+	caps:         "SYS_RAWIO,NET_ADMIN,SYS_TTY_CONFIG,SYS_ADMIN",
+	seccomp:      "unconfined",
+	cgroups:      "c *:* rwm",
+	ulimits:      "",
+	realtime:     false,
+	shell:        "/bin/bash",
 }
 
 // BuildRecipe defines a YAML recipe for building container images.
@@ -215,33 +203,42 @@ var loggingPID int
 var loggingFile string
 var loggingTool string
 
+// init loads the persisted configuration from the platform-specific config file
+// into the global containerCfg at package startup.
+//
+//	out: none
 func init() {
-	updateDockerObjFromConfig()
+	updateContainerCfgFromConfig()
 }
 
-func updateDockerObjFromConfig() {
+// updateContainerCfgFromConfig reads the platform-specific configuration file and
+// applies every recognised field to the global containerCfg instance, logging a
+// warning and leaving defaults intact if the file cannot be read.
+//
+//	out: none
+func updateContainerCfgFromConfig() {
 	config, err := rfutils.ReadOrCreateConfig(common.ConfigFileByPlatform())
 	if err != nil {
 		log.Printf("Error reading config: %v. Using default values.", err)
 		return
 	}
 
-	dockerObj.imagename = config.General.ImageName
-	dockerObj.repotag = config.General.RepoTag
-	dockerObj.shell = config.Container.Shell
-	dockerObj.network_mode = config.Container.Network
-	dockerObj.exposed_ports = config.Container.ExposedPorts
-	dockerObj.binded_ports = config.Container.PortBindings
-	dockerObj.xdisplay = config.Container.XDisplay
-	dockerObj.extrahosts = config.Container.ExtraHost
-	dockerObj.extraenv = config.Container.ExtraEnv
-	dockerObj.devices = config.Container.Devices
-	dockerObj.pulse_server = config.Audio.PulseServer
-	dockerObj.privileged = strings.ToLower(config.Container.Privileged) == "true"
-	dockerObj.caps = config.Container.Caps
-	dockerObj.seccomp = config.Container.Seccomp
+	containerCfg.imagename = config.General.ImageName
+	containerCfg.repotag = config.General.RepoTag
+	containerCfg.shell = config.Container.Shell
+	containerCfg.networkMode = config.Container.Network
+	containerCfg.exposedPorts = config.Container.ExposedPorts
+	containerCfg.bindedPorts = config.Container.PortBindings
+	containerCfg.xdisplay = config.Container.XDisplay
+	containerCfg.extrahosts = config.Container.ExtraHost
+	containerCfg.extraenv = config.Container.ExtraEnv
+	containerCfg.devices = config.Container.Devices
+	containerCfg.pulseServer = config.Audio.PulseServer
+	containerCfg.privileged = strings.ToLower(config.Container.Privileged) == "true"
+	containerCfg.caps = config.Container.Caps
+	containerCfg.seccomp = config.Container.Seccomp
 	if config.Container.Cgroups != "" {
-		dockerObj.cgroups = config.Container.Cgroups
+		containerCfg.cgroups = config.Container.Cgroups
 	}
 
 	var bindings []string
@@ -251,7 +248,7 @@ func updateDockerObjFromConfig() {
 		if strings.Contains(binding, ".X11-unix") {
 			x11Bindings = append(x11Bindings, binding)
 		} else if strings.Contains(binding, "/dev/bus/usb") {
-			dockerObj.usbforward = binding
+			containerCfg.usbforward = binding
 			bindings = append(bindings, binding)
 		} else {
 			bindings = append(bindings, binding)
@@ -259,8 +256,8 @@ func updateDockerObjFromConfig() {
 	}
 
 	if len(x11Bindings) > 0 {
-		dockerObj.x11forward = strings.Join(x11Bindings, ",")
+		containerCfg.x11forward = strings.Join(x11Bindings, ",")
 	}
 
-	dockerObj.extrabinding = strings.Join(bindings, ",")
+	containerCfg.extrabinding = strings.Join(bindings, ",")
 }

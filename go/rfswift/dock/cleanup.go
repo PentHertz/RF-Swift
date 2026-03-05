@@ -1,16 +1,5 @@
 /* This code is part of RF Switch by @Penthertz
  * Author(s): Sebastien Dudek (@FlUxIuS)
- *
- * Cleanup and pruning operations
- *
- * parseDuration              - in(1): string duration, out: time.Duration, error
- * formatAge                  - in(1): time.Duration d, out: string
- * CleanupAll                 - in(1): string olderThan, in(2): bool force, in(3): bool dryRun, out: error
- * CleanupContainers          - in(1): string olderThan, in(2): bool force, in(3): bool dryRun, in(4): bool onlyStopped, out: error
- * CleanupImages              - in(1): string olderThan, in(2): bool force, in(3): bool dryRun, in(4): bool onlyDangling, in(5): bool pruneChildren, out: error
- * getChildImages             - in(1): context.Context, in(2): *client.Client, in(3): string parentID, out: []image.Summary
- * getAllDescendants           - in(1): context.Context, in(2): *client.Client, in(3): string parentID, out: []image.Summary
- * removeImageWithDescendants - in(1): context.Context, in(2): *client.Client, in(3): string imageID, in(4): string displayName, out: int, error
  */
 package dock
 
@@ -31,7 +20,12 @@ import (
 	common "penthertz/rfswift/common"
 )
 
-// parseDuration parses duration strings like "24h", "7d", "1m", "1y".
+// parseDuration parses a human-readable duration string into a time.Duration.
+// Accepted units are h (hours), d (days), m (months, 30-day), and y (years, 365-day).
+//
+//	in(1): string duration  the duration string to parse (e.g. "24h", "7d", "1m", "1y")
+//	out: time.Duration      the parsed duration
+//	out: error              non-nil if the format or unit is unrecognised
 func parseDuration(duration string) (time.Duration, error) {
 	if duration == "" {
 		return 0, nil
@@ -58,7 +52,11 @@ func parseDuration(duration string) (time.Duration, error) {
 	}
 }
 
-// formatAge formats a duration into a human-readable string (e.g., "3d 5h", "2mo 10d").
+// formatAge converts a duration into a concise human-readable age string
+// (e.g. "3d 5h", "2mo 10d", "1y 30d").
+//
+//	in(1): time.Duration d  the duration to format
+//	out: string             human-readable representation of the duration
 func formatAge(d time.Duration) string {
 	days := int(d.Hours() / 24)
 	hours := int(d.Hours()) % 24
@@ -87,7 +85,13 @@ func formatAge(d time.Duration) string {
 	}
 }
 
-// CleanupAll removes both old containers and images.
+// CleanupAll removes RF Swift containers and images in sequence, applying
+// the same age filter and confirmation behaviour to both resource types.
+//
+//	in(1): string olderThan  only remove resources older than this duration (e.g. "7d"); empty means no age filter
+//	in(2): bool force        skip interactive confirmation prompt when true
+//	in(3): bool dryRun       list resources that would be removed without actually deleting them when true
+//	out: error               non-nil if container or image cleanup fails
 func CleanupAll(olderThan string, force bool, dryRun bool) error {
 	common.PrintInfoMessage("Cleaning up containers and images...")
 
@@ -104,7 +108,14 @@ func CleanupAll(olderThan string, force bool, dryRun bool) error {
 	return nil
 }
 
-// CleanupContainers removes old RF Swift containers.
+// CleanupContainers lists and removes RF Swift containers that match the
+// supplied age and state criteria, with optional dry-run and force modes.
+//
+//	in(1): string olderThan   only consider containers created before this duration ago; empty means all ages
+//	in(2): bool force         skip interactive confirmation prompt when true
+//	in(3): bool dryRun        report what would be removed without deleting anything when true
+//	in(4): bool onlyStopped   skip running containers when true
+//	out: error                non-nil if the engine client cannot be created, the container list fails, or removal fails
 func CleanupContainers(olderThan string, force bool, dryRun bool, onlyStopped bool) error {
 	ctx := context.Background()
 	cli, err := NewEngineClient()
@@ -221,7 +232,16 @@ func CleanupContainers(olderThan string, force bool, dryRun bool, onlyStopped bo
 	return nil
 }
 
-// CleanupImages removes old RF Swift images.
+// CleanupImages lists and removes RF Swift images that match the supplied age
+// and dangling criteria, optionally recursing into descendant images before
+// removing each parent.
+//
+//	in(1): string olderThan    only consider images created before this duration ago; empty means all ages
+//	in(2): bool force          skip interactive confirmation prompt when true
+//	in(3): bool dryRun         report what would be removed without deleting anything when true
+//	in(4): bool onlyDangling   restrict the candidate set to untagged (dangling) images when true
+//	in(5): bool pruneChildren  remove descendant images before removing each parent image when true
+//	out: error                 non-nil if the engine client cannot be created, the image list fails, or removal fails
 func CleanupImages(olderThan string, force bool, dryRun bool, onlyDangling bool, pruneChildren bool) error {
 	ctx := context.Background()
 	cli, err := NewEngineClient()
@@ -377,6 +397,12 @@ func CleanupImages(olderThan string, force bool, dryRun bool, onlyDangling bool,
 	return nil
 }
 
+// getChildImages returns all images whose ParentID matches parentID.
+//
+//	in(1): context.Context ctx      context used for the image list API call
+//	in(2): *client.Client cli       Docker/Podman engine client
+//	in(3): string parentID          image ID whose direct children are sought
+//	out: []image.Summary            slice of direct child images; empty on error or when none exist
 func getChildImages(ctx context.Context, cli *client.Client, parentID string) []image.Summary {
 	var children []image.Summary
 
@@ -394,6 +420,13 @@ func getChildImages(ctx context.Context, cli *client.Client, parentID string) []
 	return children
 }
 
+// getAllDescendants recursively collects all descendant images of parentID,
+// performing a depth-first traversal through child layers.
+//
+//	in(1): context.Context ctx   context forwarded to getChildImages for each level
+//	in(2): *client.Client cli    Docker/Podman engine client
+//	in(3): string parentID       image ID whose full descendant tree is sought
+//	out: []image.Summary         flat slice of all descendant images in traversal order
 func getAllDescendants(ctx context.Context, cli *client.Client, parentID string) []image.Summary {
 	var descendants []image.Summary
 
@@ -408,6 +441,16 @@ func getAllDescendants(ctx context.Context, cli *client.Client, parentID string)
 	return descendants
 }
 
+// removeImageWithDescendants removes all descendant images of imageID in
+// reverse traversal order and then removes imageID itself. Already-removed
+// images encountered during the walk are silently skipped.
+//
+//	in(1): context.Context ctx   context used for inspect and remove API calls
+//	in(2): *client.Client cli    Docker/Podman engine client
+//	in(3): string imageID        ID of the parent image to remove along with its descendants
+//	in(4): string displayName    human-readable label for imageID used in log messages
+//	out: int                     number of descendant images successfully removed (excludes the parent)
+//	out: error                   non-nil if the final removal of imageID fails for a reason other than "no such image"
 func removeImageWithDescendants(ctx context.Context, cli *client.Client, imageID string, displayName string) (int, error) {
 	removedCount := 0
 

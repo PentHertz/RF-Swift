@@ -68,6 +68,8 @@ var (
 // SetPreferredEngine sets the preferred engine type from a CLI flag or config.
 // Must be called before the first GetEngine() / NewEngineClient() call
 // (typically in PersistentPreRun).
+//
+//	in(1): string engine engine type ("docker", "podman", or "auto")
 func SetPreferredEngine(engine string) {
 	activeEngineMu.Lock()
 	defer activeEngineMu.Unlock()
@@ -90,6 +92,8 @@ func SetPreferredEngine(engine string) {
 // When Podman is selected, DOCKER_HOST is set automatically so that existing
 // client.FromEnv calls throughout rfdock.go use the Podman socket with zero
 // code changes required.
+//
+//	out: ContainerEngine
 func GetEngine() ContainerEngine {
 	activeEngineMu.RLock()
 	if activeEngine != nil {
@@ -124,6 +128,8 @@ func GetEngine() ContainerEngine {
 // NewEngineClient creates a Docker-compatible SDK client routed through the
 // active engine. Recommended replacement for direct
 // client.NewClientWithOpts(client.FromEnv, ...) calls.
+//
+//	out: (*client.Client, error)
 func NewEngineClient() (*client.Client, error) {
 	engine := GetEngine()
 	if engine == nil {
@@ -199,18 +205,25 @@ func detectEngine() ContainerEngine {
 // don't need changes.
 // ---------------------------------------------------------------------------
 
-// EngineRestartService replaces the old RestartDockerService()
+// EngineRestartService replaces the old RestartDockerService().
+//
+//	out: error
 func EngineRestartService() error {
 	return GetEngine().RestartService()
 }
 
-// EngineGetHostConfigPath replaces the old GetHostConfigPath()
+// EngineGetHostConfigPath replaces the old GetHostConfigPath().
+//
+//	in(1): string containerID container identifier
+//	out: (string, error)
 func EngineGetHostConfigPath(containerID string) (string, error) {
 	return GetEngine().GetHostConfigPath(containerID)
 }
 
 // EngineSupportsDirectConfigEdit checks whether direct config file editing
 // is possible (Docker: yes, Podman: no — requires container recreation).
+//
+//	out: bool
 func EngineSupportsDirectConfigEdit() bool {
 	return GetEngine().SupportsDirectConfigEdit()
 }
@@ -289,4 +302,15 @@ func pingClient(cli *client.Client) bool {
 	defer cancel()
 	_, err := cli.Ping(ctx)
 	return err == nil
+}
+
+// engineIsServiceRunning is a shared implementation for IsServiceRunning:
+// get a client, ping, return bool.
+func engineIsServiceRunning(e ContainerEngine) bool {
+	cli, err := e.GetClient()
+	if err != nil {
+		return false
+	}
+	defer cli.Close()
+	return pingClient(cli)
 }

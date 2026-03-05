@@ -27,6 +27,9 @@ type PodmanEngine struct {
 	detected       bool
 }
 
+// Name returns the engine display name including rootless/rootful mode.
+//
+//	out: string
 func (e *PodmanEngine) Name() string {
 	e.ensureDetected()
 	mode := "rootful"
@@ -36,11 +39,16 @@ func (e *PodmanEngine) Name() string {
 	return fmt.Sprintf("Podman (%s)", mode)
 }
 
+// Type returns the engine type identifier.
+//
+//	out: EngineType
 func (e *PodmanEngine) Type() EngineType {
 	return EnginePodman
 }
 
 // IsAvailable checks if the podman binary exists and the API socket is reachable.
+//
+//	out: bool
 func (e *PodmanEngine) IsAvailable() bool {
 	if !binaryExists("podman") {
 		return false
@@ -74,16 +82,15 @@ func (e *PodmanEngine) IsAvailable() bool {
 }
 
 // IsServiceRunning pings the Podman API through the Docker-compatible endpoint.
+//
+//	out: bool
 func (e *PodmanEngine) IsServiceRunning() bool {
-	cli, err := e.GetClient()
-	if err != nil {
-		return false
-	}
-	defer cli.Close()
-	return pingClient(cli)
+	return engineIsServiceRunning(e)
 }
 
 // GetClient returns a Docker SDK client pointed at the Podman socket.
+//
+//	out: (*client.Client, error)
 func (e *PodmanEngine) GetClient() (*client.Client, error) {
 	socketPath := e.GetSocketPath()
 	if socketPath == "" {
@@ -97,12 +104,16 @@ func (e *PodmanEngine) GetClient() (*client.Client, error) {
 }
 
 // GetSocketPath returns the Podman API socket for the current platform.
+//
+//	out: string socket path
 func (e *PodmanEngine) GetSocketPath() string {
 	e.ensureDetected()
 	return e.cachedSocket
 }
 
 // StartService starts the Podman API socket.
+//
+//	out: error
 func (e *PodmanEngine) StartService() error {
 	e.ensureDetected()
 
@@ -129,6 +140,8 @@ func (e *PodmanEngine) StartService() error {
 }
 
 // RestartService restarts the Podman API socket.
+//
+//	out: error
 func (e *PodmanEngine) RestartService() error {
 	e.ensureDetected()
 
@@ -160,6 +173,9 @@ func (e *PodmanEngine) RestartService() error {
 //	<storage_root>/overlay-containers/<id>/userdata/config.json
 //
 // Note: direct editing is NOT supported. Use container recreation instead.
+//
+//	in(1): string containerID
+//	out: (string, error)
 func (e *PodmanEngine) GetHostConfigPath(containerID string) (string, error) {
 	storageRoot := e.GetStorageRoot()
 	configPath := filepath.Join(storageRoot, "overlay-containers", containerID, "userdata", "config.json")
@@ -178,6 +194,9 @@ func (e *PodmanEngine) GetHostConfigPath(containerID string) (string, error) {
 
 // GetConfigV2Path returns the Podman equivalent of Docker's config.v2.json.
 // Podman uses a different layout; the closest equivalent is the OCI spec file.
+//
+//	in(1): string containerID
+//	out: (string, error)
 func (e *PodmanEngine) GetConfigV2Path(containerID string) (string, error) {
 	storageRoot := e.GetStorageRoot()
 
@@ -194,11 +213,15 @@ func (e *PodmanEngine) GetConfigV2Path(containerID string) (string, error) {
 // SupportsDirectConfigEdit returns false — Podman does not support editing
 // container config files on disk. Configuration changes require container
 // recreation, which recreateContainerWithProperties() already handles.
+//
+//	out: bool
 func (e *PodmanEngine) SupportsDirectConfigEdit() bool {
 	return false
 }
 
 // GetStorageRoot returns the Podman storage root directory.
+//
+//	out: string
 func (e *PodmanEngine) GetStorageRoot() string {
 	e.ensureDetected()
 

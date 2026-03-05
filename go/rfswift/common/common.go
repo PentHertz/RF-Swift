@@ -65,6 +65,10 @@ var ascii_art = `
                 RF toolbox for HAMs and professionals                                                                             
 `
 
+// PrintASCII prints the RF-Swift ASCII art banner to stdout with cycling ANSI
+// colors applied line by line, followed by the centered version string.
+//
+//	out: void
 func PrintASCII() {
     colors := []string{
         "\033[31m", // Red
@@ -94,6 +98,11 @@ func PrintASCII() {
     fmt.Printf("%s%s%s%s%s\n\n", dim, strings.Repeat(" ", pad), cyan, versionStr, reset)
 }
 
+// PrintErrorMessage prints a formatted error message to stdout using red and
+// white ANSI colors with a "[!]" prefix.
+//
+//	in(1): error err the error whose message is to be displayed
+//	out: void
 func PrintErrorMessage(err error) {
     red := "\033[31m"
     white := "\033[37m"
@@ -101,6 +110,11 @@ func PrintErrorMessage(err error) {
     fmt.Printf("%s[!] %s%s%s\n", red, white, err.Error(), reset)
 }
 
+// PrintSuccessMessage prints a formatted success message to stdout using green
+// and white ANSI colors with a "[+]" prefix.
+//
+//	in(1): string message the success message to display
+//	out: void
 func PrintSuccessMessage(message string) {
     green := "\033[32m"
     white := "\033[37m"
@@ -108,6 +122,11 @@ func PrintSuccessMessage(message string) {
     fmt.Printf("%s[+] %s%s%s\n", green, white, message, reset)
 }
 
+// PrintWarningMessage prints a formatted warning or notice message to stdout
+// using yellow and white ANSI colors with a "[!]" prefix.
+//
+//	in(1): string message the warning message to display
+//	out: void
 func PrintWarningMessage(message string) {
     yellow := "\033[33m" // Yellow color for warnings or notices
     white := "\033[37m"
@@ -115,12 +134,26 @@ func PrintWarningMessage(message string) {
     fmt.Printf("%s[!] %s%s%s\n", yellow, white, message, reset)
 }
 
+// PrintInfoMessage prints a formatted informational message to stdout using
+// blue ANSI color with a "[i]" prefix. The message accepts any type via an
+// empty interface so callers can pass strings, errors, or other values.
+//
+//	in(1): interface{} message the value to display as an informational message
+//	out: void
 func PrintInfoMessage(message interface{}) {
     blue := "\033[34m"
     reset := "\033[0m"
     fmt.Printf("%s[i] %v%s\n", blue, message, reset)
 }
 
+// ConfigFileByPlatform returns the platform-appropriate absolute path to the
+// rfswift configuration file. On Linux it resolves to
+// ~/.config/rfswift/config.ini, on macOS to
+// ~/Library/Application Support/rfswift/config.ini, and on Windows to
+// %APPDATA%\rfswift\config.ini. When the process is running under sudo the
+// home directory of the original user (SUDO_USER) is used instead of root's.
+//
+//	out: string absolute path to the platform-specific config file
 func ConfigFileByPlatform() string {
     var configPath string
 

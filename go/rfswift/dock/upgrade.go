@@ -2,8 +2,6 @@
  * Author(s): Sebastien Dudek (@FlUxIuS)
  *
  * Container upgrade: migrate a container to a new image while preserving data
- *
- * DockerUpgrade - in(1): string containerIdentifier, in(2): string repositoriesToPreserve, in(3): string newImage, out: error
  */
 
 package dock
@@ -27,8 +25,18 @@ import (
 	common "penthertz/rfswift/common"
 )
 
-// DockerUpgrade upgrades a container to a new image while preserving specified directories.
-func DockerUpgrade(containerIdentifier string, repositoriesToPreserve string, newImage string) error {
+// ContainerUpgrade migrates an existing container to a new image while preserving
+// specified directories and all original host bindings, network settings, and
+// device mappings. The old container is committed as a timestamped backup image
+// before removal. If containerIdentifier is empty the most recently used
+// rfswift container is selected automatically. If newImage is empty the current
+// image repository is re-pulled at the "latest" tag.
+//
+//	in(1): string containerIdentifier - name or ID of the container to upgrade (empty = auto-detect)
+//	in(2): string repositoriesToPreserve - comma-separated list of in-container paths to back up and restore
+//	in(3): string newImage - target image reference to upgrade to (empty = current repo:latest)
+//	out: error - non-nil if any step of the upgrade process fails
+func ContainerUpgrade(containerIdentifier string, repositoriesToPreserve string, newImage string) error {
 	ctx := context.Background()
 	cli, err := NewEngineClient()
 	if err != nil {
@@ -299,8 +307,8 @@ func DockerUpgrade(containerIdentifier string, repositoriesToPreserve string, ne
 	}
 
 	dockerenv := []string{fmt.Sprintf("DISPLAY=%s", props["XDisplay"])}
-	if dockerObj.pulse_server != "" {
-		dockerenv = append(dockerenv, "PULSE_SERVER="+dockerObj.pulse_server)
+	if containerCfg.pulseServer != "" {
+		dockerenv = append(dockerenv, "PULSE_SERVER="+containerCfg.pulseServer)
 	}
 
 	exposedPorts := ParseExposedPorts(props["ExposedPorts"])
