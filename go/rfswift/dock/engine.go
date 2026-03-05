@@ -126,7 +126,8 @@ func GetEngine() ContainerEngine {
 }
 
 // NewEngineClient creates a Docker-compatible SDK client routed through the
-// active engine. Recommended replacement for direct
+// active engine. If the engine service is not running, it attempts to start it.
+// Recommended replacement for direct
 // client.NewClientWithOpts(client.FromEnv, ...) calls.
 //
 //	out: (*client.Client, error)
@@ -135,7 +136,41 @@ func NewEngineClient() (*client.Client, error) {
 	if engine == nil {
 		return nil, fmt.Errorf("no container engine available: install Docker or Podman")
 	}
+
+	if err := EnsureEngineRunning(engine); err != nil {
+		return nil, err
+	}
+
 	return engine.GetClient()
+}
+
+// EnsureEngineRunning checks whether the engine service is reachable and
+// attempts to start it if not. This handles the common case on macOS and
+// Windows where Docker Desktop or a Podman machine must be running before
+// any container operation.
+//
+//	in(1): ContainerEngine engine
+//	out: error
+func EnsureEngineRunning(engine ContainerEngine) error {
+	if engine.IsServiceRunning() {
+		return nil
+	}
+
+	common.PrintWarningMessage(fmt.Sprintf("%s service is not running. Attempting to start it...", engine.Name()))
+	if err := engine.StartService(); err != nil {
+		return fmt.Errorf("failed to start %s: %v", engine.Name(), err)
+	}
+
+	// Wait for the service to become reachable
+	for i := 0; i < 15; i++ {
+		time.Sleep(2 * time.Second)
+		if engine.IsServiceRunning() {
+			common.PrintSuccessMessage(fmt.Sprintf("%s is now running", engine.Name()))
+			return nil
+		}
+	}
+
+	return fmt.Errorf("%s was started but is not reachable after 30 seconds", engine.Name())
 }
 
 // ---------------------------------------------------------------------------

@@ -72,13 +72,25 @@ func (e *PodmanEngine) IsAvailable() bool {
 		return false
 	}
 
-	// Windows: try a client ping
+	// Windows: try a client ping, attempt activation if unreachable
 	cli, err := e.GetClient()
-	if err != nil {
-		return false
+	if err == nil {
+		defer cli.Close()
+		if pingClient(cli) {
+			return true
+		}
 	}
-	defer cli.Close()
-	return pingClient(cli)
+	// Socket might not exist yet — attempt activation
+	if e.tryActivateSocket() {
+		time.Sleep(500 * time.Millisecond)
+		cli2, err := e.GetClient()
+		if err != nil {
+			return false
+		}
+		defer cli2.Close()
+		return pingClient(cli2)
+	}
+	return false
 }
 
 // IsServiceRunning pings the Podman API through the Docker-compatible endpoint.
@@ -274,6 +286,14 @@ func (e *PodmanEngine) tryActivateSocket() bool {
 		return err == nil
 
 	case "darwin", "windows":
+		if !isPodmanMachineExists() {
+			common.PrintInfoMessage("No Podman machine found. Initializing one...")
+			if err := exec.Command("podman", "machine", "init").Run(); err != nil {
+				common.PrintErrorMessage(fmt.Errorf("failed to initialize Podman machine: %v", err))
+				return false
+			}
+			common.PrintSuccessMessage("Podman machine initialized")
+		}
 		if !isPodmanMachineRunning() {
 			common.PrintInfoMessage("Starting Podman machine...")
 			err := exec.Command("podman", "machine", "start").Run()
@@ -283,6 +303,7 @@ func (e *PodmanEngine) tryActivateSocket() bool {
 				e.cachedSocket, e.cachedRootless = detectPodmanSocket()
 				return true
 			}
+			common.PrintErrorMessage(fmt.Errorf("failed to start Podman machine: %v", err))
 		}
 		return false
 
@@ -436,4 +457,13 @@ func isPodmanMachineRunning() bool {
 		}
 	}
 	return false
+}
+
+// isPodmanMachineExists checks if any Podman machine has been initialized (macOS/Windows)
+func isPodmanMachineExists() bool {
+	out, err := exec.Command("podman", "machine", "list", "--format", "{{.Name}}").Output()
+	if err != nil {
+		return false
+	}
+	return strings.TrimSpace(string(out)) != ""
 }

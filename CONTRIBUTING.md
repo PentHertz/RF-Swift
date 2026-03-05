@@ -64,17 +64,17 @@ RF-Swift/
 main.go
   └─▶ cli.Execute()
         │
-  ┌─────▼───────────────────────────────────────────┐
+  ┌─────▼──────────────────────────────────────────┐
   │  package cli   (Cobra commands, flag parsing)   │
   │  No business logic — just maps flags to calls   │
-  └─────┬──────────────────────────┬────────────────┘
-        │                          │
-  ┌─────▼───────────────┐    ┌─────▼───────────┐
-  │  package dock       │    │ package rfutils │
-  │  Container ops      │    │ Host utilities  │
-  │  Engine abstraction │    | X11, audio, USB │
-  │  Docker/Podman      │    │ GitHub updates  │
-  └─────┬───────────────┘    └─────────────────┘
+  └─────┬──────────────────────┬───────────────────┘
+        │                      │
+  ┌─────▼──────────┐    ┌─────▼──────────┐
+  │  package dock   │    │ package rfutils │
+  │  Container ops  │    │ Host utilities  │
+  │  Engine abstraction  │ X11, audio, USB │
+  │  Docker/Podman  │    │ GitHub updates  │
+  └─────┬──────────┘    └────────────────┘
         │
   Docker / Podman engine
 ```
