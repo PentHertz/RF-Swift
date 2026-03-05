@@ -637,6 +637,14 @@ func ContainerRun(containerName string) {
 		Tty:          true,
 		Labels:       containerLabels,
 	}, hostConfig, &network.NetworkingConfig{}, nil, containerName)
+	if err != nil {
+		if strings.Contains(err.Error(), "already in use") || strings.Contains(err.Error(), "already exists") {
+			common.PrintErrorMessage(fmt.Errorf("container name '%s' is already in use. Use a different name with -n, or exec into the existing container with: rfswift exec -c %s", containerName, containerName))
+		} else {
+			common.PrintErrorMessage(err)
+		}
+		return
+	}
 
 	// ── Podman: use exec-style attach (compat API rejects attach-before-start) ──
 	if GetEngine().Type() == EnginePodman {
@@ -658,11 +666,6 @@ func ContainerRun(containerName string) {
 		if err := execInteractiveSession(ctx, cli, resp.ID, containerCfg.shell, ""); err != nil {
 			common.PrintErrorMessage(err)
 		}
-		return
-	}
-
-	if err != nil {
-		common.PrintErrorMessage(err)
 		return
 	}
 
