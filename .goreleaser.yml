@@ -41,8 +41,8 @@ archives:
     files:
       - README.md
       - LICENSE
-      - scripts/install.sh
-      - scripts/common.sh
+      - install.sh
+      - common.sh
     # Use zip for Windows archives
     format_overrides:
       - goos: windows
