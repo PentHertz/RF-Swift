@@ -1,4 +1,4 @@
-/* This code is part of RF Switch by @Penthertz
+/* This code is part of RF Swift by @Penthertz
  * Author(s): Sebastien Dudek (@FlUxIuS)
  */
 package dock
