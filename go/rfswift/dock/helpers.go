@@ -241,8 +241,12 @@ func ParseExposedPorts(exposedPortsStr string) nat.PortSet {
 
 // ParseBindedPorts parses a port binding string into a nat.PortMap. Entries are
 // separated by ";;" when coming from an internal round-trip representation, or
-// by "," when supplied directly from CLI input. Each entry must follow the form
-// "containerPort/proto:hostPort" or "containerPort/proto:hostIP:hostPort".
+// by "," when supplied directly from CLI input.
+//
+// Both Docker-standard format and internal format are accepted:
+//   - Docker-standard: "hostPort:containerPort/proto" (e.g., "8080:80/tcp")
+//   - Internal format: "containerPort/proto:hostPort" (e.g., "80/tcp:8080")
+//   - With host IP:    "hostIP:hostPort:containerPort/proto" or "containerPort/proto:hostIP:hostPort"
 //
 //	in(1): string bindedPortsStr - delimited port binding specs
 //	out: nat.PortMap - map of container ports to host bindings, empty on empty input
@@ -264,25 +268,34 @@ func ParseBindedPorts(bindedPortsStr string) nat.PortMap {
 		entry = strings.TrimSpace(entry)
 		parts := strings.Split(entry, ":")
 		if len(parts) < 2 || len(parts) > 3 {
-			fmt.Printf("Invalid binded port format: %s (expected containerPort/protocol:hostPort or containerPort/protocol:hostAddress:hostPort)\n", entry)
+			fmt.Printf("Invalid port binding format: %s (expected hostPort:containerPort/proto or containerPort/proto:hostPort)\n", entry)
 			continue
 		}
 
 		var containerPortProto, hostPort, hostAddress string
 
-		containerPortProto = strings.TrimSpace(parts[0])
-
-		if !strings.Contains(containerPortProto, "/") {
-			fmt.Printf("Invalid container port format: %s (expected format: port/protocol, e.g., 80/tcp)\n", containerPortProto)
-			continue
-		}
-
-		if len(parts) == 3 {
-			hostAddress = strings.TrimSpace(parts[1])
-			hostPort = strings.TrimSpace(parts[2])
-		} else {
-			hostAddress = ""
+		// Detect format by checking which part contains "/proto"
+		if strings.Contains(parts[0], "/") {
+			// Internal format: containerPort/proto:hostPort or containerPort/proto:hostIP:hostPort
+			containerPortProto = strings.TrimSpace(parts[0])
+			if len(parts) == 3 {
+				hostAddress = strings.TrimSpace(parts[1])
+				hostPort = strings.TrimSpace(parts[2])
+			} else {
+				hostPort = strings.TrimSpace(parts[1])
+			}
+		} else if len(parts) == 2 && strings.Contains(parts[1], "/") {
+			// Docker-standard 2-part: hostPort:containerPort/proto
+			hostPort = strings.TrimSpace(parts[0])
+			containerPortProto = strings.TrimSpace(parts[1])
+		} else if len(parts) == 3 && strings.Contains(parts[2], "/") {
+			// Docker-standard 3-part: hostIP:hostPort:containerPort/proto
+			hostAddress = strings.TrimSpace(parts[0])
 			hostPort = strings.TrimSpace(parts[1])
+			containerPortProto = strings.TrimSpace(parts[2])
+		} else {
+			fmt.Printf("Invalid port binding format: %s (no port/protocol found, expected e.g. 80/tcp)\n", entry)
+			continue
 		}
 
 		portKey := nat.Port(containerPortProto)
@@ -359,6 +372,37 @@ func convertPortBindingsToRoundTrip(portBindings nat.PortMap) string {
 		}
 	}
 	return strings.Join(result, ";;")
+}
+
+// normalizePortBinding converts a port binding from Docker-standard format
+// (hostPort:containerPort/proto) to the internal format (containerPort/proto:hostPort)
+// if needed. If the binding is already in internal format, it is returned as-is.
+//
+//	in(1): string binding - port binding in either format
+//	out: string - binding in internal format (containerPort/proto:hostPort)
+func normalizePortBinding(binding string) string {
+	parts := strings.Split(binding, ":")
+	switch len(parts) {
+	case 2:
+		if strings.Contains(parts[0], "/") {
+			// Already internal: containerPort/proto:hostPort
+			return binding
+		}
+		if strings.Contains(parts[1], "/") {
+			// Docker-standard: hostPort:containerPort/proto
+			return parts[1] + ":" + parts[0]
+		}
+	case 3:
+		if strings.Contains(parts[0], "/") {
+			// Already internal: containerPort/proto:hostIP:hostPort
+			return binding
+		}
+		if strings.Contains(parts[2], "/") {
+			// Docker-standard: hostIP:hostPort:containerPort/proto
+			return parts[2] + ":" + parts[0] + ":" + parts[1]
+		}
+	}
+	return binding
 }
 
 // convertExposedPortsToString formats a nat.PortSet as a comma-separated string

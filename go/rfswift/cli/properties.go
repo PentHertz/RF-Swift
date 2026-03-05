@@ -150,7 +150,7 @@ var PortsUnexposeCmd = &cobra.Command{
 var PortsBindCmd = &cobra.Command{
 	Use:   "bind",
 	Short: "Bind a port",
-	Long:  `Bind a container port to a host port (e.g., '8080/tcp:8080' or '8080/tcp:127.0.0.1:8080')`,
+	Long:  `Bind a container port to a host port (e.g., '8080:80/tcp' or '80/tcp:8080' or '127.0.0.1:8080:80/tcp')`,
 	Run: func(cmd *cobra.Command, args []string) {
 		contID, _ := cmd.Flags().GetString("container")
 		binding, _ := cmd.Flags().GetString("binding")

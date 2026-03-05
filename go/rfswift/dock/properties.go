@@ -1036,6 +1036,9 @@ func UpdateExposedPort(containerID string, port string, add bool) error {
 //	in(3): bool add             true to add the binding, false to remove it
 //	out:   error                non-nil if the inspect, property fetch, or recreation fails
 func UpdatePortBinding(containerID string, binding string, add bool) error {
+	// Normalize binding to internal format (containerPort/proto:hostPort)
+	binding = normalizePortBinding(binding)
+
 	ctx := context.Background()
 	cli, err := NewEngineClient()
 	if err != nil {

@@ -10,7 +10,7 @@ import (
 )
 
 // RF Swift repo
-var Version = "1.0.1-unstable-dev"
+var Version = "1.0.0"
 var Codename = "Skywave"
 var Branch = "main"
 var Owner = "PentHertz"
