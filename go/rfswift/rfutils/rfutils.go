@@ -14,13 +14,19 @@ import (
 	common "penthertz/rfswift/common"
 )
 
-// isCommandAvailable checks if a command is available in the system
+// isCommandAvailable reports whether the executable named name can be found
+// in the directories listed in the PATH environment variable.
+//
+//	in(1): string name  name of the executable to look up (e.g. "xhost")
+//	out: bool  true if the executable exists in PATH, false otherwise
 func isCommandAvailable(name string) bool {
 	_, err := exec.LookPath(name)
 	return err == nil
 }
 
-// printErrorMessage prints the error message in red with installation commands
+// printErrorMessage prints a red error message to stdout explaining that xhost
+// is not installed, together with the appropriate package-manager command for
+// the detected operating system or Linux distribution.
 func printErrorMessage() {
 	red := "\033[0;31m"
 	reset := "\033[0m"
@@ -64,7 +70,10 @@ func printErrorMessage() {
 	}
 }
 
-// HostCmdExec executes the given command
+// HostCmdExec executes cmd as a shell command via "sh -c" and prints an error
+// message to stdout if execution fails.
+//
+//	in(1): string cmd  shell command string to execute
 func HostCmdExec(cmd string) {
 	err := exec.Command("sh", "-c", cmd).Run()
 	if err != nil {
@@ -72,6 +81,9 @@ func HostCmdExec(cmd string) {
 	}
 }
 
+// XHostEnable grants the local root user (Linux/other) or the host's en0 IP
+// address (macOS) access to the X11 display by running the appropriate xhost
+// command. If xhost is not installed, an installation hint is printed instead.
 func XHostEnable() {
 	// Check if xhost is installed
 	if !isCommandAvailable("xhost") {
@@ -95,6 +107,11 @@ func XHostEnable() {
 	}
 }
 
+// displayEnv returns the value of the DISPLAY environment variable, or an
+// error if the variable is not set.
+//
+//	out: string  value of the DISPLAY environment variable
+//	out: error   non-nil when the DISPLAY variable is empty or unset
 func displayEnv() (string, error) {
 	display := os.Getenv("DISPLAY")
 	if display == "" {
@@ -103,6 +120,12 @@ func displayEnv() (string, error) {
 	return display, nil
 }
 
+// GetDisplayEnv returns a DISPLAY environment string suitable for passing to a
+// container. On macOS it resolves the en0 IP address and appends the current
+// display number; on other systems it reads the DISPLAY variable directly,
+// falling back to ":0" on error.
+//
+//	out: string  "DISPLAY=<value>" string ready to be injected as an environment variable
 func GetDisplayEnv() string {
 	var dispenv string
 
@@ -144,12 +167,18 @@ func GetDisplayEnv() string {
 	return dispenv
 }
 
+// ClearScreen clears the terminal by running the "clear" command and writing
+// its output to stdout.
 func ClearScreen() {
 	cmd := exec.Command("clear")
 	cmd.Stdout = os.Stdout
 	cmd.Run()
 }
 
+// DisplayVersion fetches the latest RF-Swift release from GitHub and compares
+// it against the running binary version. If the binary is up-to-date an info
+// notification is shown; otherwise a warning is printed. The function is a
+// no-op when common.Disconnected is true.
 func DisplayVersion() {
 	if common.Disconnected {
 		return

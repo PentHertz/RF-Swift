@@ -40,10 +40,17 @@ const (
 	resetColor  = "\033[0m"
 )
 
+// printOrange prints a message to stdout wrapped in the orange ANSI color code.
+//
+//	in(1): string message the text to display in orange
 func printOrange(message string) {
 	fmt.Printf("%s%s%s\n", orangeColor, message, resetColor)
 }
 
+// getDefaultDevices returns a comma-separated list of default device mappings
+// appropriate for the current operating system.
+//
+//	out: string platform-specific comma-separated device mapping string
 func getDefaultDevices() string {
 	switch runtime.GOOS {
 	case "darwin":
@@ -57,6 +64,13 @@ func getDefaultDevices() string {
 	}
 }
 
+// ReadOrCreateConfig reads an INI-style configuration file and returns a populated
+// Config struct. If the file does not exist, the user is prompted to create one
+// with default values. Any missing fields are interactively filled in via stdin.
+//
+//	in(1): string filename path to the configuration file to read or create
+//	out: *Config pointer to the populated Config struct, or nil on error
+//	out: error non-nil if the file could not be opened, created, or parsed
 func ReadOrCreateConfig(filename string) (*Config, error) {
 	config := &Config{}
 
@@ -239,6 +253,12 @@ func ReadOrCreateConfig(filename string) (*Config, error) {
 	return config, nil
 }
 
+// createDefaultConfig writes a default INI-style configuration file to the given
+// path, creating any necessary parent directories. Device defaults are chosen
+// based on the current operating system.
+//
+//	in(1): string filename destination path for the new configuration file
+//	out: error non-nil if the directory could not be created or the file could not be written
 func createDefaultConfig(filename string) error {
 	// Use platform-specific default devices
 	defaultDevices := getDefaultDevices()
@@ -275,6 +295,13 @@ pulse_server = tcp:localhost:34567
 	return os.WriteFile(filename, []byte(content), 0644)
 }
 
+// promptForValue displays a colored prompt to the user and reads a single line
+// from stdin. If the user enters an empty string, the provided default value is
+// returned instead.
+//
+//	in(1): string prompt label text shown to the user before the input cursor
+//	in(2): string defaultValue value returned when the user provides no input
+//	out: string the user-supplied input, or defaultValue if input was empty
 func promptForValue(prompt, defaultValue string) string {
 	fmt.Printf("%s%s (default: %s):%s ", orangeColor, prompt, defaultValue, resetColor)
 	reader := bufio.NewReader(os.Stdin)

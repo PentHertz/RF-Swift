@@ -61,6 +61,10 @@ type VersionInfo struct {
 // ImageVersionMap maps base image names to their versions
 type ImageVersionMap map[string][]VersionInfo
 
+// getArchitecture returns the current system architecture as a normalised string
+// suitable for Docker Hub tag filtering.
+//
+//	out: string architecture identifier ("amd64", "arm64", "riscv64", "arm") or empty string if unsupported
 func getArchitecture() string {
 	switch runtime.GOARCH {
 	case "amd64":
@@ -76,6 +80,11 @@ func getArchitecture() string {
 	}
 }
 
+// GetAllRemoteVersionsByRepo fetches all remote image versions grouped by repository
+// for the given architecture, logging a warning and skipping any repo that fails.
+//
+//	in(1): string architecture target architecture identifier (e.g. "amd64")
+//	out: RepoVersionMap map of repository name to its ImageVersionMap
 func GetAllRemoteVersionsByRepo(architecture string) RepoVersionMap {
 	allVersions := make(RepoVersionMap)
 
@@ -91,7 +100,14 @@ func GetAllRemoteVersionsByRepo(architecture string) RepoVersionMap {
 	return allVersions
 }
 
-// FormatVersionsMultiLine formats versions into multiple lines for table display
+// FormatVersionsMultiLine formats a slice of VersionInfo into multiple display lines,
+// deduplicating version strings and wrapping when the per-line count or character
+// width limit is exceeded.
+//
+//	in(1): []VersionInfo versions list of version metadata to format
+//	in(2): int maxPerLine maximum number of version strings per output line
+//	in(3): int maxWidth maximum character width per line (0 disables width limiting)
+//	out: []string list of formatted lines, or []string{"-"} when versions is empty
 func FormatVersionsMultiLine(versions []VersionInfo, maxPerLine int, maxWidth int) []string {
 	if len(versions) == 0 {
 		return []string{"-"}
@@ -153,7 +169,16 @@ func FormatVersionsMultiLine(versions []VersionInfo, maxPerLine int, maxWidth in
 	return lines
 }
 
-// FindVersionInRemote searches for a specific version across all repos
+// FindVersionInRemote searches all official repositories for a specific version of the
+// named image and returns the repository, digest, clean tag name, and any error encountered.
+//
+//	in(1): string imageName image name, optionally prefixed with a repo and colon
+//	in(2): string version semver version string to locate (e.g. "1.2.0")
+//	in(3): string architecture target architecture identifier (e.g. "amd64")
+//	out: string repo official repository that contains the version
+//	out: string digest content-addressable digest of the matching tag
+//	out: string tag cleaned base image name (architecture and repo prefix stripped)
+//	out: error non-nil if the version cannot be found or a network error occurs
 func FindVersionInRemote(imageName string, version string, architecture string) (repo string, digest string, tag string, err error) {
 	allVersions := GetAllRemoteVersions(architecture)
 
@@ -194,7 +219,10 @@ func FindVersionInRemote(imageName string, version string, architecture string) 
 	return "", "", "", fmt.Errorf("version %s not found for image %s", version, imageName)
 }
 
-// ListAvailableVersions lists all available versions for images
+// ListAvailableVersions fetches and prints all available remote image versions for
+// the current architecture, optionally narrowed to images whose name contains filterImage.
+//
+//	in(1): string filterImage case-insensitive substring filter; pass "" to list all images
 func ListAvailableVersions(filterImage string) {
 	architecture := getArchitecture()
 	if architecture == "" {
@@ -269,6 +297,13 @@ func ListAvailableVersions(filterImage string) {
 	fmt.Printf("  Example: rfswift images pull -i sdr_full -V 1.2.0\n\n")
 }
 
+// showLoadingIndicatorWithReturn runs commandFunc in a goroutine while displaying a
+// spinning clock-emoji indicator labelled with stepName, then returns the error
+// produced by commandFunc once it completes.
+//
+//	in(1): func() error commandFunc function to execute asynchronously
+//	in(2): string stepName label displayed next to the loading indicator
+//	out: error error returned by commandFunc, or nil on success
 func showLoadingIndicatorWithReturn(commandFunc func() error, stepName string) error {
 	done := make(chan error)
 	go func() {
@@ -292,6 +327,13 @@ func showLoadingIndicatorWithReturn(commandFunc func() error, stepName string) e
 	}
 }
 
+// determineArchitectureFromTag infers the architecture from known tag suffixes
+// (_amd64, _arm64, _riscv64). When no suffix matches it falls back to requestedArch,
+// defaulting to "amd64" when requestedArch is empty.
+//
+//	in(1): string tagName Docker Hub tag name to inspect
+//	in(2): string requestedArch fallback architecture when no suffix is present
+//	out: string resolved architecture string
 func determineArchitectureFromTag(tagName, requestedArch string) string {
 	if strings.HasSuffix(tagName, "_amd64") {
 		return "amd64"
@@ -310,10 +352,18 @@ func determineArchitectureFromTag(tagName, requestedArch string) string {
 	return requestedArch
 }
 
+// OfficialRepos returns the list of official RF-Swift Docker Hub repository names.
+//
+//	out: []string slice of fully-qualified repository names (e.g. "penthertz/rfswift_noble")
 func OfficialRepos() []string {
 	return []string{"penthertz/rfswift_noble"}
 }
 
+// IsOfficialImage reports whether imageName refers to one of the official RF-Swift
+// repositories, stripping a leading "docker.io/" prefix before comparison.
+//
+//	in(1): string imageName fully-qualified or short image name to check
+//	out: bool true if the image belongs to an official repository
 func IsOfficialImage(imageName string) bool {
 	// Podman uses fully qualified names (docker.io/penthertz/...)
 	cleaned := strings.TrimPrefix(imageName, "docker.io/")
@@ -325,7 +375,13 @@ func IsOfficialImage(imageName string) bool {
 	return false
 }
 
-// normalizeTagForRemote ensures tag has architecture suffix for Docker Hub lookup
+// normalizeTagForRemote ensures tag has an architecture suffix required for Docker Hub
+// lookups. If the tag already ends with a known suffix it is returned unchanged;
+// otherwise "_<architecture>" is appended.
+//
+//	in(1): string tag Docker Hub tag name to normalise
+//	in(2): string architecture architecture identifier to append when missing
+//	out: string tag name guaranteed to carry an architecture suffix
 func normalizeTagForRemote(tag, architecture string) string {
 	suffixes := []string{"_amd64", "_arm64", "_riscv64", "_arm"}
 	for _, suffix := range suffixes {
@@ -336,7 +392,12 @@ func normalizeTagForRemote(tag, architecture string) string {
 	return fmt.Sprintf("%s_%s", tag, architecture)
 }
 
-// parseTagVersion extracts base name and version from tag
+// parseTagVersion extracts the base image name and optional semver version string
+// from a Docker Hub tag name, stripping any architecture suffix first.
+//
+//	in(1): string tagName raw Docker Hub tag name (e.g. "sdr_full_1.2.0_amd64")
+//	out: string baseName base image name with architecture and version removed
+//	out: string version semver string (e.g. "1.2.0"), or "" when absent
 func parseTagVersion(tagName string) (baseName string, version string) {
 	// Remove architecture suffix first
 	cleanTag := removeArchitectureSuffix(tagName)
@@ -353,8 +414,11 @@ func parseTagVersion(tagName string) (baseName string, version string) {
 	return cleanTag, ""
 }
 
-// compareVersions compares two semver strings
-// Returns: 1 if v1 > v2, -1 if v1 < v2, 0 if equal
+// compareVersions performs a numeric component-wise comparison of two semver strings.
+//
+//	in(1): string v1 first semver string (e.g. "1.2.3")
+//	in(2): string v2 second semver string (e.g. "1.3.0")
+//	out: int 1 if v1 > v2, -1 if v1 < v2, 0 if equal
 func compareVersions(v1, v2 string) int {
 	parts1 := strings.Split(v1, ".")
 	parts2 := strings.Split(v2, ".")
@@ -378,7 +442,10 @@ func compareVersions(v1, v2 string) int {
 	return 0
 }
 
-// sortVersionInfos sorts versions with "latest" first, then semver descending
+// sortVersionInfos sorts a slice of VersionInfo in-place, placing the "latest" entry
+// first and ordering all remaining entries by semver descending.
+//
+//	in(1): []VersionInfo versions slice to sort in-place
 func sortVersionInfos(versions []VersionInfo) {
 	sort.Slice(versions, func(i, j int) bool {
 		if versions[i].Version == "latest" {
@@ -391,7 +458,12 @@ func sortVersionInfos(versions []VersionInfo) {
 	})
 }
 
-// GetVersionForDigest finds the version that matches a given digest
+// GetVersionForDigest returns the non-"latest" version string whose digest matches
+// the provided digest, or an empty string if no match is found.
+//
+//	in(1): []VersionInfo versions list of version metadata to search
+//	in(2): string digest content-addressable digest to look up
+//	out: string matching version string, or "" when not found
 func GetVersionForDigest(versions []VersionInfo, digest string) string {
 	for _, v := range versions {
 		if v.Digest == digest && v.Version != "latest" {
@@ -401,6 +473,12 @@ func GetVersionForDigest(versions []VersionInfo, digest string) string {
 	return ""
 }
 
+// GetVersionForDigests returns the non-"latest" version string that matches any one
+// of the provided digests, or an empty string if no match is found.
+//
+//	in(1): []VersionInfo versions list of version metadata to search
+//	in(2): []string digests candidate digests to match against
+//	out: string matching version string, or "" when not found
 func GetVersionForDigests(versions []VersionInfo, digests []string) string {
 	for _, v := range versions {
 		if v.Version != "latest" && digestMatches(digests, v.Digest) {
@@ -410,7 +488,13 @@ func GetVersionForDigests(versions []VersionInfo, digests []string) string {
 	return ""
 }
 
-// FormatVersionsString formats versions for display (with deduplication)
+// FormatVersionsString formats a slice of VersionInfo into a comma-separated string,
+// deduplicating version labels and truncating to maxVersions entries with a "+N" suffix
+// indicating how many additional versions were omitted.
+//
+//	in(1): []VersionInfo versions list of version metadata to format
+//	in(2): int maxVersions maximum number of versions to include (0 means unlimited)
+//	out: string comma-separated version string, or "-" when versions is empty
 func FormatVersionsString(versions []VersionInfo, maxVersions int) string {
 	if len(versions) == 0 {
 		return "-"
@@ -443,7 +527,14 @@ func FormatVersionsString(versions []VersionInfo, maxVersions int) string {
 	return strings.Join(versionStrs, ", ")
 }
 
-// GetRemoteImageDigest fetches the digest for a specific tag from Docker Hub
+// GetRemoteImageDigest fetches the content-addressable digest for a specific tag
+// from Docker Hub, normalising the tag name with an architecture suffix before querying.
+//
+//	in(1): string repo Docker Hub repository (e.g. "penthertz/rfswift_noble")
+//	in(2): string tag image tag name, with or without architecture suffix
+//	in(3): string architecture target architecture used to normalise the tag
+//	out: string digest of the matching tag, or "" when not found
+//	out: error non-nil if the HTTP request fails or the tag cannot be located
 func GetRemoteImageDigest(repo, tag, architecture string) (string, error) {
 	var digest string
 
@@ -495,7 +586,13 @@ func GetRemoteImageDigest(repo, tag, architecture string) (string, error) {
 	return digest, err
 }
 
-// GetRemoteVersionsForRepo fetches all versions for images from a single Docker Hub repo
+// GetRemoteVersionsForRepo fetches and parses all image tags from a single Docker Hub
+// repository, returning a map from base image name to its sorted list of VersionInfo entries.
+//
+//	in(1): string repo Docker Hub repository to query (e.g. "penthertz/rfswift_noble")
+//	in(2): string architecture target architecture to filter tags by
+//	out: ImageVersionMap map of base image name to sorted []VersionInfo
+//	out: error non-nil if the Docker Hub request fails
 func GetRemoteVersionsForRepo(repo string, architecture string) (ImageVersionMap, error) {
 	versions := make(ImageVersionMap)
 
@@ -534,7 +631,12 @@ func GetRemoteVersionsForRepo(repo string, architecture string) (ImageVersionMap
 	return versions, nil
 }
 
-// GetAllRemoteVersions fetches versions from all official repos
+// GetAllRemoteVersions aggregates image versions from all official repositories,
+// merging entries by digest+version to avoid duplicates, and returns the combined
+// sorted ImageVersionMap.
+//
+//	in(1): string architecture target architecture identifier (e.g. "amd64")
+//	out: ImageVersionMap merged map of base image name to sorted []VersionInfo
 func GetAllRemoteVersions(architecture string) ImageVersionMap {
 	allVersions := make(ImageVersionMap)
 
@@ -571,6 +673,14 @@ func GetAllRemoteVersions(architecture string) ImageVersionMap {
 	return allVersions
 }
 
+// getRemoteImageCreationDate queries Docker Hub for the push date of the specified tag
+// in repo, filtering by architecture, and returns the parsed timestamp.
+//
+//	in(1): string repo Docker Hub repository (e.g. "penthertz/rfswift_noble")
+//	in(2): string tag image tag name whose creation date is requested
+//	in(3): string architecture target architecture used to match the correct tag variant
+//	out: time.Time UTC timestamp of when the tag was last pushed
+//	out: error non-nil if the HTTP request fails or the tag cannot be found
 func getRemoteImageCreationDate(repo, tag, architecture string) (time.Time, error) {
 	var result time.Time
 
@@ -606,6 +716,15 @@ func getRemoteImageCreationDate(repo, tag, architecture string) (time.Time, erro
 	return result, err
 }
 
+// getRemoteImageCreationDateFallback parses a pre-fetched Docker Hub response body
+// to locate the push timestamp for tag (or its architecture-normalised equivalent),
+// skipping cache tags and non-OCI-index media types.
+//
+//	in(1): []byte body raw JSON body of a Docker Hub tags response
+//	in(2): string tag image tag name to search for
+//	in(3): string architecture target architecture used for fallback tag normalisation
+//	out: time.Time UTC timestamp of when the matching tag was last pushed
+//	out: error non-nil if JSON parsing fails, the date cannot be parsed, or tag is not found
 func getRemoteImageCreationDateFallback(body []byte, tag, architecture string) (time.Time, error) {
 	var response DockerHubResponse
 	if err := json.Unmarshal(body, &response); err != nil {
@@ -641,6 +760,14 @@ func getRemoteImageCreationDateFallback(body []byte, tag, architecture string) (
 	return time.Time{}, fmt.Errorf("tag not found")
 }
 
+// getLatestDockerHubTags fetches all pages of tags from a Docker Hub repository,
+// filters by architecture and OCI index media type, deduplicates by tag name,
+// and returns the results sorted by push date descending.
+//
+//	in(1): string repo Docker Hub repository to paginate (e.g. "penthertz/rfswift_noble")
+//	in(2): string architecture target architecture to filter tags by
+//	out: []Tag deduplicated and sorted list of matching Tag entries
+//	out: error non-nil if any HTTP request or JSON parsing step fails
 func getLatestDockerHubTags(repo string, architecture string) ([]Tag, error) {
 	var latestTags []Tag
 
@@ -742,6 +869,14 @@ func getLatestDockerHubTags(repo string, architecture string) ([]Tag, error) {
 	return result, nil
 }
 
+// getLatestDockerHubTagsFallback parses a pre-fetched Docker Hub tags response body,
+// applies the same architecture and media-type filters as getLatestDockerHubTags,
+// deduplicates by tag name, and returns results sorted by push date descending.
+//
+//	in(1): []byte body raw JSON body of a Docker Hub tags response
+//	in(2): string architecture target architecture to filter tags by
+//	out: []Tag deduplicated and sorted list of matching Tag entries
+//	out: error non-nil if JSON parsing fails
 func getLatestDockerHubTagsFallback(body []byte, architecture string) ([]Tag, error) {
 	var response DockerHubResponse
 	if err := json.Unmarshal(body, &response); err != nil {
@@ -806,6 +941,13 @@ func getLatestDockerHubTagsFallback(body []byte, architecture string) ([]Tag, er
 	return latestTags, nil
 }
 
+// ListDockerImagesRepo fetches tags from all official Docker Hub repositories and
+// renders them as a bordered table in the terminal. When showVersions is true an
+// extra column lists all available semver versions for each image. Results are
+// optionally narrowed to images whose name contains filterImage.
+//
+//	in(1): bool showVersions when true, fetch and display the versions column
+//	in(2): string filterImage case-insensitive substring filter; pass "" to show all images
 func ListDockerImagesRepo(showVersions bool, filterImage string) {
 	repos := OfficialRepos()
 	architecture := getArchitecture()
@@ -1101,7 +1243,11 @@ func ListDockerImagesRepo(showVersions bool, filterImage string) {
 	common.PrintInfoMessage(fmt.Sprintf("Found %d image(s) for %s architecture", len(tableRows), architecture))
 }
 
-// maxInt returns the larger of two integers
+// maxInt returns the larger of two integers.
+//
+//	in(1): int a first integer
+//	in(2): int b second integer
+//	out: int the greater of a and b
 func maxInt(a, b int) int {
 	if a > b {
 		return a
@@ -1109,7 +1255,13 @@ func maxInt(a, b int) int {
 	return b
 }
 
-// printRowWithVersionColor prints a row with version column in cyan
+// printRowWithVersionColor prints a single table row to stdout, colouring the last
+// column in cyan when showVersions is true and the cell is not empty or "-".
+//
+//	in(1): []string row cell values to print
+//	in(2): []int columnWidths per-column width in characters used for padding and truncation
+//	in(3): string separator border character printed between cells (e.g. "│")
+//	in(4): bool showVersions when true, apply cyan colour to the last (versions) column
 func printRowWithVersionColor(row []string, columnWidths []int, separator string, showVersions bool) {
 	cyan := "\033[36m"
 	reset := "\033[0m"
@@ -1127,6 +1279,12 @@ func printRowWithVersionColor(row []string, columnWidths []int, separator string
 	fmt.Println()
 }
 
+// removeArchitectureSuffix strips a known architecture suffix (_amd64, _arm64,
+// _riscv64, _arm) from tagName and returns the result. Returns tagName unchanged
+// when no known suffix is present.
+//
+//	in(1): string tagName Docker Hub tag name to strip
+//	out: string tag name with the architecture suffix removed, or tagName if none matched
 func removeArchitectureSuffix(tagName string) string {
 	suffixes := []string{"_amd64", "_arm64", "_riscv64", "_arm"}
 
@@ -1139,6 +1297,12 @@ func removeArchitectureSuffix(tagName string) string {
 	return tagName
 }
 
+// truncateString shortens s to at most maxLen characters. When truncation is needed
+// and maxLen is greater than 3, the last three characters are replaced with "...".
+//
+//	in(1): string s input string to truncate
+//	in(2): int maxLen maximum allowed length in characters
+//	out: string truncated string, or s unchanged when len(s) <= maxLen
 func truncateString(s string, maxLen int) string {
 	if len(s) <= maxLen {
 		return s
@@ -1149,6 +1313,13 @@ func truncateString(s string, maxLen int) string {
 	return s[:maxLen-3] + "..."
 }
 
+// printHorizontalBorder prints a single horizontal border line for a table, using
+// left, middle, and right corner/junction characters and "─" repeated for each column.
+//
+//	in(1): []int columnWidths per-column width in characters (border spans width+2)
+//	in(2): string left character printed at the start of the line (e.g. "┌", "├", "└")
+//	in(3): string middle character printed between columns (e.g. "┬", "┼", "┴")
+//	in(4): string right character printed at the end of the line (e.g. "┐", "┤", "┘")
 func printHorizontalBorder(columnWidths []int, left, middle, right string) {
 	fmt.Print(left)
 	for i, width := range columnWidths {
@@ -1160,6 +1331,12 @@ func printHorizontalBorder(columnWidths []int, left, middle, right string) {
 	fmt.Println(right)
 }
 
+// printRow prints a single table row to stdout, padding each cell to its column
+// width and separating cells with separator.
+//
+//	in(1): []string row cell values to print
+//	in(2): []int columnWidths per-column width in characters used for padding and truncation
+//	in(3): string separator border character printed between cells (e.g. "│")
 func printRow(row []string, columnWidths []int, separator string) {
 	fmt.Print(separator)
 	for i, col := range row {

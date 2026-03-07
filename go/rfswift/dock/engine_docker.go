@@ -17,16 +17,24 @@ import (
 // DockerEngine implements ContainerEngine for Docker Desktop / Docker CE
 type DockerEngine struct{}
 
+// Name returns the engine display name.
+//
+//	out: string
 func (e *DockerEngine) Name() string {
 	return "Docker"
 }
 
+// Type returns the engine type identifier.
+//
+//	out: EngineType
 func (e *DockerEngine) Type() EngineType {
 	return EngineDocker
 }
 
 // IsAvailable returns true when both the docker binary and a reachable
 // daemon socket are present.
+//
+//	out: bool
 func (e *DockerEngine) IsAvailable() bool {
 	if !binaryExists("docker") {
 		return false
@@ -57,16 +65,15 @@ func (e *DockerEngine) IsAvailable() bool {
 }
 
 // IsServiceRunning pings the Docker daemon API.
+//
+//	out: bool
 func (e *DockerEngine) IsServiceRunning() bool {
-	cli, err := e.GetClient()
-	if err != nil {
-		return false
-	}
-	defer cli.Close()
-	return pingClient(cli)
+	return engineIsServiceRunning(e)
 }
 
 // GetClient returns a standard Docker SDK client.
+//
+//	out: (*client.Client, error)
 func (e *DockerEngine) GetClient() (*client.Client, error) {
 	return client.NewClientWithOpts(
 		client.FromEnv,
@@ -75,6 +82,8 @@ func (e *DockerEngine) GetClient() (*client.Client, error) {
 }
 
 // GetSocketPath returns the Docker daemon socket path for the current platform.
+//
+//	out: string socket path
 func (e *DockerEngine) GetSocketPath() string {
 	if host := os.Getenv("DOCKER_HOST"); host != "" {
 		return host
@@ -105,6 +114,8 @@ func (e *DockerEngine) GetSocketPath() string {
 }
 
 // StartService starts the Docker daemon.
+//
+//	out: error
 func (e *DockerEngine) StartService() error {
 	switch runtime.GOOS {
 	case "linux":
@@ -119,6 +130,8 @@ func (e *DockerEngine) StartService() error {
 }
 
 // RestartService restarts the Docker daemon.
+//
+//	out: error
 func (e *DockerEngine) RestartService() error {
 	switch runtime.GOOS {
 	case "linux":
@@ -134,6 +147,9 @@ func (e *DockerEngine) RestartService() error {
 }
 
 // GetHostConfigPath returns the Docker-internal hostconfig.json path.
+//
+//	in(1): string containerID
+//	out: (string, error)
 func (e *DockerEngine) GetHostConfigPath(containerID string) (string, error) {
 	var configPath string
 
@@ -156,6 +172,9 @@ func (e *DockerEngine) GetHostConfigPath(containerID string) (string, error) {
 }
 
 // GetConfigV2Path returns the Docker config.v2.json path.
+//
+//	in(1): string containerID
+//	out: (string, error)
 func (e *DockerEngine) GetConfigV2Path(containerID string) (string, error) {
 	hostPath, err := e.GetHostConfigPath(containerID)
 	if err != nil {
@@ -166,11 +185,15 @@ func (e *DockerEngine) GetConfigV2Path(containerID string) (string, error) {
 
 // SupportsDirectConfigEdit returns true — Docker allows editing hostconfig.json
 // and config.v2.json on disk (requires service restart to take effect).
+//
+//	out: bool
 func (e *DockerEngine) SupportsDirectConfigEdit() bool {
 	return true
 }
 
 // GetStorageRoot returns the Docker storage root directory.
+//
+//	out: string
 func (e *DockerEngine) GetStorageRoot() string {
 	switch runtime.GOOS {
 	case "linux", "darwin":

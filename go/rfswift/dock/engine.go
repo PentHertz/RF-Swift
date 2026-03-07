@@ -68,6 +68,8 @@ var (
 // SetPreferredEngine sets the preferred engine type from a CLI flag or config.
 // Must be called before the first GetEngine() / NewEngineClient() call
 // (typically in PersistentPreRun).
+//
+//	in(1): string engine engine type ("docker", "podman", or "auto")
 func SetPreferredEngine(engine string) {
 	activeEngineMu.Lock()
 	defer activeEngineMu.Unlock()
@@ -90,6 +92,8 @@ func SetPreferredEngine(engine string) {
 // When Podman is selected, DOCKER_HOST is set automatically so that existing
 // client.FromEnv calls throughout rfdock.go use the Podman socket with zero
 // code changes required.
+//
+//	out: ContainerEngine
 func GetEngine() ContainerEngine {
 	activeEngineMu.RLock()
 	if activeEngine != nil {
@@ -122,14 +126,51 @@ func GetEngine() ContainerEngine {
 }
 
 // NewEngineClient creates a Docker-compatible SDK client routed through the
-// active engine. Recommended replacement for direct
+// active engine. If the engine service is not running, it attempts to start it.
+// Recommended replacement for direct
 // client.NewClientWithOpts(client.FromEnv, ...) calls.
+//
+//	out: (*client.Client, error)
 func NewEngineClient() (*client.Client, error) {
 	engine := GetEngine()
 	if engine == nil {
 		return nil, fmt.Errorf("no container engine available: install Docker or Podman")
 	}
+
+	if err := EnsureEngineRunning(engine); err != nil {
+		return nil, err
+	}
+
 	return engine.GetClient()
+}
+
+// EnsureEngineRunning checks whether the engine service is reachable and
+// attempts to start it if not. This handles the common case on macOS and
+// Windows where Docker Desktop or a Podman machine must be running before
+// any container operation.
+//
+//	in(1): ContainerEngine engine
+//	out: error
+func EnsureEngineRunning(engine ContainerEngine) error {
+	if engine.IsServiceRunning() {
+		return nil
+	}
+
+	common.PrintWarningMessage(fmt.Sprintf("%s service is not running. Attempting to start it...", engine.Name()))
+	if err := engine.StartService(); err != nil {
+		return fmt.Errorf("failed to start %s: %v", engine.Name(), err)
+	}
+
+	// Wait for the service to become reachable
+	for i := 0; i < 15; i++ {
+		time.Sleep(2 * time.Second)
+		if engine.IsServiceRunning() {
+			common.PrintSuccessMessage(fmt.Sprintf("%s is now running", engine.Name()))
+			return nil
+		}
+	}
+
+	return fmt.Errorf("%s was started but is not reachable after 30 seconds", engine.Name())
 }
 
 // ---------------------------------------------------------------------------
@@ -199,18 +240,25 @@ func detectEngine() ContainerEngine {
 // don't need changes.
 // ---------------------------------------------------------------------------
 
-// EngineRestartService replaces the old RestartDockerService()
+// EngineRestartService replaces the old RestartDockerService().
+//
+//	out: error
 func EngineRestartService() error {
 	return GetEngine().RestartService()
 }
 
-// EngineGetHostConfigPath replaces the old GetHostConfigPath()
+// EngineGetHostConfigPath replaces the old GetHostConfigPath().
+//
+//	in(1): string containerID container identifier
+//	out: (string, error)
 func EngineGetHostConfigPath(containerID string) (string, error) {
 	return GetEngine().GetHostConfigPath(containerID)
 }
 
 // EngineSupportsDirectConfigEdit checks whether direct config file editing
 // is possible (Docker: yes, Podman: no — requires container recreation).
+//
+//	out: bool
 func EngineSupportsDirectConfigEdit() bool {
 	return GetEngine().SupportsDirectConfigEdit()
 }
@@ -289,4 +337,15 @@ func pingClient(cli *client.Client) bool {
 	defer cancel()
 	_, err := cli.Ping(ctx)
 	return err == nil
+}
+
+// engineIsServiceRunning is a shared implementation for IsServiceRunning:
+// get a client, ping, return bool.
+func engineIsServiceRunning(e ContainerEngine) bool {
+	cli, err := e.GetClient()
+	if err != nil {
+		return false
+	}
+	defer cli.Close()
+	return pingClient(cli)
 }

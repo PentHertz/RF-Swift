@@ -11,6 +11,12 @@ import (
 	"regexp"
 )
 
+// DisplayNotification renders a formatted notification box in the terminal with a
+// title, message body, and visual style determined by the notification type.
+//
+//	in(1): string title        the heading displayed at the top of the box
+//	in(2): string message      the body text; newlines produce multiple wrapped rows
+//	in(3): string notificationType  style selector: "warning", "error", "info", or any other value for plain
 func DisplayNotification(title string, message string, notificationType string) {
 	// Get terminal width
 	width, _, err := term.GetSize(int(os.Stdout.Fd()))
@@ -71,6 +77,12 @@ func DisplayNotification(title string, message string, notificationType string) 
 	fmt.Printf("└%s┘\n", strings.Repeat("─", boxWidth-2))
 }
 
+// padRight pads the string s on the right with spaces until its visible
+// (ANSI-stripped) rune width reaches width characters.
+//
+//	in(1): string s      the string to pad (may contain ANSI escape codes)
+//	in(2): int    width  the target visible character width
+//	out: string   the padded string with trailing spaces appended as needed
 func padRight(s string, width int) string {
 	padWidth := width - runewidth.StringWidth(stripAnsi(s))
 	if padWidth < 0 {
@@ -79,6 +91,12 @@ func padRight(s string, width int) string {
 	return s + strings.Repeat(" ", padWidth)
 }
 
+// wrapText splits text into lines that do not exceed width visible characters,
+// word-wrapping at space boundaries and expanding tabs to four spaces.
+//
+//	in(1): string text   the input text to wrap
+//	in(2): int    width  maximum visible character width per output line
+//	out: []string  slice of lines, each fitting within width visible characters
 func wrapText(text string, width int) []string {
 	var lines []string
 	words := strings.Fields(strings.ReplaceAll(text, "\t", "    "))
@@ -105,6 +123,11 @@ func wrapText(text string, width int) []string {
 	return lines
 }
 
+// stripAnsi removes all ANSI color/style escape sequences from str, returning
+// the plain text content.
+//
+//	in(1): string str  the string that may contain ANSI escape codes
+//	out: string  the input string with all ANSI escape sequences removed
 func stripAnsi(str string) string {
 	re := regexp.MustCompile(`\x1b\[[0-9;]*m`)
 	return re.ReplaceAllString(str, "")

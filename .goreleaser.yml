@@ -41,8 +41,12 @@ archives:
     files:
       - README.md
       - LICENSE
-      - install.sh
-      - common.sh
+      - src: scripts/install.sh
+        dst: .
+        strip_parent: true
+      - src: scripts/common.sh
+        dst: .
+        strip_parent: true
     # Use zip for Windows archives
     format_overrides:
       - goos: windows

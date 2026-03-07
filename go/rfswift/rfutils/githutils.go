@@ -25,6 +25,13 @@ type Release struct {
 	TagName string `json:"tag_name"`
 }
 
+// GetLatestRelease queries the GitHub Releases API for the most recent release
+// of the given repository and returns a Release value containing its tag name.
+//
+//	in(1): string owner  GitHub organisation or user name that owns the repository
+//	in(2): string repo   repository name
+//	out: Release  the latest release metadata (currently only TagName is populated)
+//	out: error    non-nil if the HTTP request fails or the response cannot be decoded
 func GetLatestRelease(owner string, repo string) (Release, error) {
 	client := resty.New().
 		SetTimeout(2 * time.Second).
@@ -50,10 +57,25 @@ func GetLatestRelease(owner string, repo string) (Release, error) {
 	return release, nil
 }
 
+// ConstructDownloadURL builds the GitHub release asset download URL from its
+// constituent parts.
+//
+//	in(1): string owner     GitHub organisation or user name
+//	in(2): string repo      repository name
+//	in(3): string tag       release tag (e.g. "v1.2.3")
+//	in(4): string fileName  asset file name within the release
+//	out: string  fully-qualified HTTPS download URL for the asset
 func ConstructDownloadURL(owner, repo, tag, fileName string) string {
 	return fmt.Sprintf("https://github.com/%s/%s/releases/download/%s/%s", owner, repo, tag, fileName)
 }
 
+// DownloadFile fetches the file at url and writes it to the local path dest,
+// displaying an animated progress bar in the terminal while the transfer is
+// in progress.
+//
+//	in(1): string url   the HTTP/HTTPS URL of the remote file to download
+//	in(2): string dest  local filesystem path where the file should be written
+//	out: error  non-nil if the download, file creation, or copy fails
 func DownloadFile(url, dest string) error {
 	resp, err := http.Get(url)
 	if err != nil {
@@ -93,6 +115,12 @@ func DownloadFile(url, dest string) error {
 	return err
 }
 
+// MakeExecutable sets the executable permission bits (0755) on the file at
+// path. On Windows this is a no-op because the OS does not use Unix
+// permission bits.
+//
+//	in(1): string path  filesystem path of the file to make executable
+//	out: error  non-nil if os.Chmod fails (always nil on Windows)
 func MakeExecutable(path string) error {
 	if runtime.GOOS == "windows" {
 		// No action needed on Windows
@@ -107,6 +135,14 @@ func MakeExecutable(path string) error {
 	return nil
 }
 
+// ReplaceBinary replaces the running binary at currentBinaryPath with the new
+// binary at newBinaryPath. It first attempts an atomic rename; if that fails
+// (cross-device move or busy file) it falls back to copying the content and
+// cleaning up temporary files.
+//
+//	in(1): string newBinaryPath      filesystem path of the new binary to install
+//	in(2): string currentBinaryPath  filesystem path of the binary to be replaced
+//	out: error  non-nil if the replacement cannot be completed
 func ReplaceBinary(newBinaryPath, currentBinaryPath string) error {
 	err := MakeExecutable(newBinaryPath)
 	if err != nil {
@@ -165,6 +201,14 @@ func ReplaceBinary(newBinaryPath, currentBinaryPath string) error {
 	return nil
 }
 
+// VersionCompare compares two semantic version strings and returns an integer
+// indicating their relative order. Leading "v" prefixes are stripped before
+// comparison. Pre-release suffixes (e.g. "-rc1") are handled so that a stable
+// release is considered newer than its pre-release counterparts.
+//
+//	in(1): string v1  first version string (e.g. "1.2.3" or "v1.2.3-rc1")
+//	in(2): string v2  second version string (e.g. "1.2.3" or "v1.2.3-rc2")
+//	out: int  1 if v1 > v2, -1 if v1 < v2, 0 if v1 == v2
 func VersionCompare(v1, v2 string) int {
 	// Strip 'v' prefix if present
 	v1 = strings.TrimPrefix(v1, "v")
@@ -246,6 +290,12 @@ func VersionCompare(v1, v2 string) int {
 	return 0
 }
 
+// ExtractTarGz decompresses and extracts a gzip-compressed tar archive located
+// at src into destDir, recreating its directory structure.
+//
+//	in(1): string src      filesystem path of the source .tar.gz file
+//	in(2): string destDir  destination directory where archive contents are written
+//	out: error  non-nil if the archive cannot be opened, read, or extracted
 func ExtractTarGz(src, destDir string) error {
 	file, err := os.Open(src)
 	if err != nil {
@@ -278,6 +328,9 @@ func ExtractTarGz(src, destDir string) error {
 				return fmt.Errorf("error creating directory: %v", err)
 			}
 		case tar.TypeReg:
+			if err := os.MkdirAll(filepath.Dir(targetPath), 0o755); err != nil {
+				return fmt.Errorf("error creating parent directory: %v", err)
+			}
 			outFile, err := os.Create(targetPath)
 			if err != nil {
 				return fmt.Errorf("error creating file: %v", err)
@@ -291,6 +344,12 @@ func ExtractTarGz(src, destDir string) error {
 	return nil
 }
 
+// ExtractZip extracts a ZIP archive located at src into destDir, recreating its
+// directory structure.
+//
+//	in(1): string src      filesystem path of the source .zip file
+//	in(2): string destDir  destination directory where archive contents are written
+//	out: error  non-nil if the archive cannot be opened, read, or extracted
 func ExtractZip(src, destDir string) error {
 	r, err := zip.OpenReader(src)
 	if err != nil {
@@ -305,6 +364,10 @@ func ExtractZip(src, destDir string) error {
 				return fmt.Errorf("error creating directory: %v", err)
 			}
 			continue
+		}
+
+		if err := os.MkdirAll(filepath.Dir(targetPath), 0o755); err != nil {
+			return fmt.Errorf("error creating parent directory: %v", err)
 		}
 
 		fileReader, err := file.Open()
@@ -325,6 +388,10 @@ func ExtractZip(src, destDir string) error {
 	return nil
 }
 
+// GetLatestRFSwift checks whether a newer RF-Swift release is available on
+// GitHub, prompts the user for confirmation, and if accepted downloads,
+// extracts, and replaces the running binary with the latest version for the
+// current OS and architecture.
 func GetLatestRFSwift() {
 	owner := "PentHertz"
 	repo := "RF-Swift"

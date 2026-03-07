@@ -1,7 +1,8 @@
 #!/bin/bash
 # This code is part of RF Swift by @Penthertz
 # Author(s): Sébastien Dudek (@FlUxIuS)
-source common.sh
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+source "${SCRIPT_DIR}/common.sh"
 # Call the new functions as part of the setup process
 echo -e "${YELLOW}[+] Checking xhost installation${NC}"
 check_xhost

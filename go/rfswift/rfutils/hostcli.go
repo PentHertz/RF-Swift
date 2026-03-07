@@ -36,12 +36,11 @@ type USBDevice struct {
 	Description string
 }
 
+// ListUSBDevices executes the usbipd.exe command and lists USB devices.
+//
+//	out(1): []USBDevice array of discovered USB devices
+//	out(2): error
 func ListUSBDevices() ([]USBDevice, error) {
-	/*
-		*	ListUSBDevices executes the usbipd.exe command and lists USB devices
-		*	out(1): USBDevice array
-			out(2): Errors
-	*/
 	// Execute the usbipd.exe command
 	cmd := exec.Command("usbipd.exe", "list")
 	output, err := cmd.Output()
@@ -76,12 +75,11 @@ func ListUSBDevices() ([]USBDevice, error) {
 	return devices, nil
 }
 
+// AttachUSBDevice attaches a USB device using its BusID.
+//
+//	in(1): string busID the bus identifier of the USB device to attach
+//	out: error
 func AttachUSBDevice(busID string) error {
-	/*
-	*	AttachUSBDevice attaches a USB device using its BusID
-	*	in(1): bus ID string to attach
-	*	out: error
-	 */
 	cmd := exec.Command("usbipd.exe", "attach", "--wsl", "--busid", busID)
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("failed to attach device %s: %w", busID, err)
@@ -89,12 +87,11 @@ func AttachUSBDevice(busID string) error {
 	return nil
 }
 
+// BindUSBDevice binds a USB device using its BusID.
+//
+//	in(1): string busID the bus identifier of the USB device to bind
+//	out: error
 func BindUSBDevice(busID string) error {
-	/*
-	*	BindUSBDevice binds a USB device using its BusID
-	*	in(1): bus ID string to bind
-	*	out: error
-	 */
 	cmd := exec.Command("usbipd.exe", "bind", "--busid", busID) // autoattach
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("failed to bind device %s: %w", busID, err)
@@ -102,12 +99,10 @@ func BindUSBDevice(busID string) error {
 	return nil
 }
 
+// BindAndAttachDevice binds and then attaches a single USB device by its BusID.
+//
+//	in(1): string busID the bus identifier of the USB device to bind and attach
 func BindAndAttachDevice(busID string) {
-	/*
-	*	BindAndAttachAllDevices binds and attaches all listed USB devices
-	*	in(1): array of bus ID to attach
-	*	out: error
-	 */
 	if err := BindUSBDevice(busID); err != nil {
 		fmt.Println("Error binding devices:", err)
 	}
@@ -117,12 +112,10 @@ func BindAndAttachDevice(busID string) {
 	}
 }
 
+// UnbindAndDetachDevice unbinds and detaches a specific USB device by its BusID.
+//
+//	in(1): string busID the bus identifier of the USB device to unbind and detach
 func UnbindAndDetachDevice(busID string) {
-	/*
-	*	Unbind and detach a specific USB device
-	*	in(1): array of bus ID string to unbind and detach
-	*	out: error
-	 */
 	if err := UnbindUSBDevice(busID); err != nil {
 		fmt.Println("Error unbinding device:", err)
 	}
@@ -132,13 +125,12 @@ func UnbindAndDetachDevice(busID string) {
 	}
 }
 
+// BindAndAttachAllDevices binds and attaches all listed USB devices.
+//
+//	in(1): []USBDevice devices array of USB devices to bind and attach
+//	out: error
 // TODO: find a way to blacklist some buses like the keyboard...
 func BindAndAttachAllDevices(devices []USBDevice) error {
-	/*
-	*	BindAndAttachAllDevices binds and attaches all listed USB devices
-	*	in(1): array of bus ID to attach
-	*	out: error
-	 */
 	for _, device := range devices {
 		if err := BindUSBDevice(device.BusID); err != nil {
 			return err
@@ -150,12 +142,11 @@ func BindAndAttachAllDevices(devices []USBDevice) error {
 	return nil
 }
 
+// UnbindUSBDevice unbinds a USB device using its BusID.
+//
+//	in(1): string busID the bus identifier of the USB device to unbind
+//	out: error
 func UnbindUSBDevice(busID string) error {
-	/*
-	*	UnbindUSBDevice unbinds a USB device using its BusID
-	*	in(1): bus ID string to attach
-	*	out: error
-	 */
 	cmd := exec.Command("usbipd.exe", "unbind", "--busid", busID)
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("failed to unbind device %s: %w", busID, err)
@@ -163,12 +154,11 @@ func UnbindUSBDevice(busID string) error {
 	return nil
 }
 
+// DetachUSBDevice detaches a USB device using its BusID.
+//
+//	in(1): string busID the bus identifier of the USB device to detach
+//	out: error
 func DetachUSBDevice(busID string) error {
-	/*
-	*	DetachUSBDevice detaches a USB device using its BusID
-	*	in(1): bus ID string to attach
-	*	out: error
-	 */
 	cmd := exec.Command("usbipd.exe", "detach", "--busid", busID)
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("failed to detach device %s: %w", busID, err)
@@ -176,13 +166,12 @@ func DetachUSBDevice(busID string) error {
 	return nil
 }
 
+// UnbindAndDetachAllDevices unbinds and detaches all listed USB devices.
+//
+//	in(1): []USBDevice devices array of USB devices to unbind and detach
+//	out: error
 // TODO: find a way to blacklist some buses like the keyboard...
 func UnbindAndDetachAllDevices(devices []USBDevice) error {
-	/*
-	*	Unbind and detach all USB devices
-	*	in(1): array of bus ID string to unbind and detach
-	*	out: error
-	 */
 	for _, device := range devices {
 		if err := UnbindUSBDevice(device.BusID); err != nil {
 			return err
@@ -194,10 +183,10 @@ func UnbindAndDetachAllDevices(devices []USBDevice) error {
 	return nil
 }
 
+// BindAttachUSB_Windows binds and attaches a specific USB device from the Windows host.
+//
+//	in(1): string busID the bus identifier of the USB device to bind and attach
 func BindAttachUSB_Windows(busID string) {
-	/*
-	*	Bind a specific USB device from the Windows host
-	 */
 	devices, err := ListUSBDevices()
 	if err != nil {
 		fmt.Println("Error:", err)
@@ -214,10 +203,10 @@ func BindAttachUSB_Windows(busID string) {
 	}
 }
 
+// AutoBindAttachUSB_Windows automatically lists and binds all USB devices from the Windows host.
+//
+//	out: none (errors are printed to stdout)
 func AutoBindAttachUSB_Windows() {
-	/*
-	*	Automatically bind all USB devices from the Windows host
-	 */
 	devices, err := ListUSBDevices()
 	if err != nil {
 		fmt.Println("Error:", err)
@@ -234,10 +223,10 @@ func AutoBindAttachUSB_Windows() {
 	}
 }
 
+// AutoUnbindDetachUSB_Windows automatically lists, unbinds, and detaches all USB devices from the Windows host.
+//
+//	out: none (errors are printed to stdout)
 func AutoUnbindDetachUSB_Windows() {
-	/*
-	*	Automatically Unbind and detach all USB devices from the Windows host
-	 */
 	devices, err := ListUSBDevices()
 	if err != nil {
 		fmt.Println("Error:", err)
@@ -259,7 +248,9 @@ func AutoUnbindDetachUSB_Windows() {
 	fmt.Println("Operation completed successfully.")
 }
 
-// detectAudioSystem detects whether PulseAudio or PipeWire is running
+// detectAudioSystem detects whether PulseAudio or PipeWire is running.
+//
+//	out: AudioSystem the detected audio system constant (AudioSystemPipeWire, AudioSystemPulse, or AudioSystemUnknown)
 func detectAudioSystem() AudioSystem {
 	// Check if PipeWire is running
 	if isPipeWireRunning() {
@@ -274,7 +265,9 @@ func detectAudioSystem() AudioSystem {
 	return AudioSystemUnknown
 }
 
-// isPipeWireRunning checks if PipeWire is running
+// isPipeWireRunning checks if PipeWire is running.
+//
+//	out: bool true if PipeWire is running, false otherwise
 func isPipeWireRunning() bool {
 	// Check if pipewire process is running
 	cmd := exec.Command("pgrep", "-x", "pipewire")
@@ -290,12 +283,19 @@ func isPipeWireRunning() bool {
 	return false
 }
 
-// isPulseAudioRunning checks if PulseAudio is running
+// isPulseAudioRunning checks if PulseAudio is running.
+//
+//	out: bool true if PulseAudio is running, false otherwise
 func isPulseAudioRunning() bool {
 	cmd := exec.Command("pulseaudio", "--check")
 	return cmd.Run() == nil
 }
 
+// checkPulseServer attempts to connect to an audio server at the given address and port,
+// displaying a warning notification if the connection fails or a success notification if it succeeds.
+//
+//	in(1): string address the IP address or hostname of the audio server
+//	in(2): string port the TCP port of the audio server
 func checkPulseServer(address string, port string) {
 	// Combine address and port to create the endpoint
 	endpoint := net.JoinHostPort(address, port)
@@ -322,7 +322,9 @@ func checkPulseServer(address string, port string) {
 	DisplayNotification(" Audio", successMessage, "info")
 }
 
-// detectLinuxDistribution detects the Linux distribution
+// detectLinuxDistribution detects the Linux distribution by inspecting known release files.
+//
+//	out: string the detected distribution name (e.g. "ubuntu", "debian", "arch", "fedora", "rhel", "centos") or "unknown"
 func detectLinuxDistribution() string {
 	// Check for specific distribution files
 	distributions := map[string]string{
@@ -391,7 +393,9 @@ func detectLinuxDistribution() string {
 	return "unknown"
 }
 
-// getPackageManager returns the appropriate package manager for the current distribution
+// getPackageManager returns the appropriate package manager for the current distribution.
+//
+//	out: string the package manager name (e.g. "apt", "dnf", "yum", "pacman") or "unknown"
 func getPackageManager() string {
 	switch detectLinuxDistribution() {
 	case "arch":
@@ -411,7 +415,9 @@ func getPackageManager() string {
 	}
 }
 
-// getRHELVersion returns the major version number of RHEL/CentOS
+// getRHELVersion returns the major version number of RHEL/CentOS by reading release files.
+//
+//	out: int the major version number (7, 8, or 9), defaulting to 8 if undetermined
 func getRHELVersion() int {
 	// Try to read version from various files
 	files := []string{"/etc/redhat-release", "/etc/centos-release", "/etc/os-release"}
@@ -436,6 +442,10 @@ func getRHELVersion() int {
 	return 8 // Default to 8 if unable to determine
 }
 
+// retInstallationInstructions returns a formatted string with OS/distribution-specific
+// instructions for installing an audio server (PulseAudio or PipeWire).
+//
+//	out: string installation instructions tailored to the current operating system and distribution
 func retInstallationInstructions() string {
 	var retstring strings.Builder
 	os := runtime.GOOS
@@ -532,23 +542,31 @@ func retInstallationInstructions() string {
 	return retstring.String()
 }
 
-// isArchLinux checks if the current Linux distribution is Arch Linux
+// isArchLinux checks if the current Linux distribution is Arch Linux.
+//
+//	out: bool true if the current distribution is Arch Linux, false otherwise
 func isArchLinux() bool {
 	return detectLinuxDistribution() == "arch"
 }
 
-// isFedora checks if the current Linux distribution is Fedora
+// isFedora checks if the current Linux distribution is Fedora.
+//
+//	out: bool true if the current distribution is Fedora, false otherwise
 func isFedora() bool {
 	return detectLinuxDistribution() == "fedora"
 }
 
-// isRedHat checks if the current Linux distribution is Red Hat based
+// isRedHat checks if the current Linux distribution is Red Hat based (RHEL, CentOS, or Fedora).
+//
+//	out: bool true if the current distribution is Red Hat based, false otherwise
 func isRedHat() bool {
 	distro := detectLinuxDistribution()
 	return distro == "rhel" || distro == "centos" || distro == "fedora"
 }
 
-// ensureAudioSystemRunning checks if audio system is running and starts it if not.
+// ensureAudioSystemRunning checks if the audio system is running and starts it if not.
+//
+//	out: error
 func ensureAudioSystemRunning() error {
 	audioSystem := detectAudioSystem()
 
@@ -567,6 +585,8 @@ func ensureAudioSystemRunning() error {
 }
 
 // ensurePulseAudioRunning checks if PulseAudio is running and starts it if not.
+//
+//	out: error
 func ensurePulseAudioRunning() error {
 	cmd := exec.Command("pulseaudio", "--check")
 	if err := cmd.Run(); err != nil {
@@ -583,7 +603,10 @@ func ensurePulseAudioRunning() error {
 	return nil
 }
 
-// ensurePipeWireRunning checks if PipeWire is running and starts it if not.
+// ensurePipeWireRunning checks if PipeWire is running and starts it if not,
+// attempting systemd user services first and falling back to a direct process start.
+//
+//	out: error
 func ensurePipeWireRunning() error {
 	if isPipeWireRunning() {
 		common.PrintInfoMessage("PipeWire is already running.")
@@ -613,7 +636,9 @@ func ensurePipeWireRunning() error {
 	return nil
 }
 
-// startPipeWireSystemd starts PipeWire using systemd user services
+// startPipeWireSystemd starts PipeWire using systemd user services.
+//
+//	out: error
 func startPipeWireSystemd() error {
 	services := []string{"pipewire.service", "pipewire-pulse.service"}
 
@@ -631,7 +656,8 @@ func startPipeWireSystemd() error {
 	return nil
 }
 
-// startRedHatPipeWireServices starts additional PipeWire services specific to Red Hat systems
+// startRedHatPipeWireServices starts additional PipeWire services specific to Red Hat systems.
+// Errors from starting optional services are silently ignored.
 func startRedHatPipeWireServices() {
 	additionalServices := []string{
 		"pipewire-media-session.service", // Legacy session manager
@@ -644,11 +670,12 @@ func startRedHatPipeWireServices() {
 	}
 }
 
+// SetPulseCTL uses pactl to load the TCP module for PulseAudio or PipeWire (via pipewire-pulse),
+// accepting connections on the specified address and port.
+//
+//	in(1): string address the connection address in "protocol:ip:port" format
+//	out: error
 func SetPulseCTL(address string) error {
-	/*
-	 * Use PACTL in command line to accept connection in TCP with defined port
-	 * Works with both PulseAudio and PipeWire (via pipewire-pulse)
-	 */
 	parts := strings.Split(address, ":")
 	if len(parts) != 3 {
 		return fmt.Errorf("invalid address format, expected format 'protocol:ip:port'")
@@ -674,7 +701,11 @@ func SetPulseCTL(address string) error {
 	}
 }
 
-// setPulseAudioTCPModule sets up TCP module for PulseAudio
+// setPulseAudioTCPModule sets up the TCP module for PulseAudio using the native client library.
+//
+//	in(1): string ip the IP address to restrict connections to via auth-ip-acl
+//	in(2): string port the TCP port to listen on
+//	out: error
 func setPulseAudioTCPModule(ip, port string) error {
 	// Connect to PulseAudio
 	client, err := pulseaudio.NewClient()
@@ -695,7 +726,11 @@ func setPulseAudioTCPModule(ip, port string) error {
 	return nil
 }
 
-// setPipeWireTCPModule sets up TCP module for PipeWire using pactl (pipewire-pulse compatibility)
+// setPipeWireTCPModule sets up the TCP module for PipeWire using pactl via pipewire-pulse compatibility.
+//
+//	in(1): string ip the IP address to restrict connections to via auth-ip-acl
+//	in(2): string port the TCP port to listen on
+//	out: error
 func setPipeWireTCPModule(ip, port string) error {
 	// PipeWire with pipewire-pulse should support pactl commands
 	moduleArgs := fmt.Sprintf("port=%s auth-ip-acl=%s", port, ip)
@@ -710,10 +745,11 @@ func setPipeWireTCPModule(ip, port string) error {
 	return nil
 }
 
+// UnloadPulseCTL unloads the audio TCP module (module-native-protocol-tcp) from either
+// PulseAudio or PipeWire using pactl.
+//
+//	out: error
 func UnloadPulseCTL() error {
-	/*
-	*	Unload audio TCP module (works with both PulseAudio and PipeWire)
-	 */
 	cmd := exec.Command("pactl", "list", "modules")
 	output, err := cmd.CombinedOutput()
 	if err != nil {
@@ -761,7 +797,10 @@ func UnloadPulseCTL() error {
 
 // Additional PipeWire-specific functions
 
-// GetPipeWireInfo returns information about the current PipeWire session
+// GetPipeWireInfo returns information about the current PipeWire session via pw-cli.
+//
+//	out(1): string the raw output from pw-cli info
+//	out(2): error
 func GetPipeWireInfo() (string, error) {
 	cmd := exec.Command("pw-cli", "info")
 	output, err := cmd.Output()
@@ -771,7 +810,10 @@ func GetPipeWireInfo() (string, error) {
 	return string(output), nil
 }
 
-// ListPipeWireNodes lists all PipeWire nodes
+// ListPipeWireNodes lists all PipeWire nodes via pw-cli.
+//
+//	out(1): string the raw output listing all Node objects
+//	out(2): error
 func ListPipeWireNodes() (string, error) {
 	cmd := exec.Command("pw-cli", "list-objects", "Node")
 	output, err := cmd.Output()
@@ -781,7 +823,9 @@ func ListPipeWireNodes() (string, error) {
 	return string(output), nil
 }
 
-// GetAudioSystemStatus returns the status of the current audio system
+// GetAudioSystemStatus returns a human-readable status string for the currently detected audio system.
+//
+//	out: string status description of the running audio system or a message if none is detected
 func GetAudioSystemStatus() string {
 	audioSystem := detectAudioSystem()
 
