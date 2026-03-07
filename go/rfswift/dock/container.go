@@ -31,6 +31,48 @@ import (
 	common "penthertz/rfswift/common"
 )
 
+// startDesktopInContainer launches the desktop-start script inside an already-running
+// container by injecting the RFSWIFT_DESKTOP_* environment variables via a detached exec.
+func startDesktopInContainer(ctx context.Context, cli *client.Client, containerID string) error {
+	execConfig := container.ExecOptions{
+		Detach: true,
+		Cmd:    []string{"/usr/sbin/desktop-start"},
+		Env: []string{
+			"RFSWIFT_DESKTOP_PROTO=" + containerCfg.desktopProto,
+			"RFSWIFT_DESKTOP_HOST=" + containerCfg.desktopHost,
+			"RFSWIFT_DESKTOP_PORT=" + containerCfg.desktopPort,
+			"RFSWIFT_DESKTOP_PASS=" + containerCfg.desktopPass,
+		},
+	}
+
+	execID, err := cli.ContainerExecCreate(ctx, containerID, execConfig)
+	if err != nil {
+		return fmt.Errorf("failed to start desktop: %v", err)
+	}
+
+	if err := cli.ContainerExecStart(ctx, execID.ID, container.ExecStartOptions{Detach: true}); err != nil {
+		return fmt.Errorf("failed to start desktop: %v", err)
+	}
+
+	// Give the VNC server a moment to start
+	time.Sleep(2 * time.Second)
+	return nil
+}
+
+// printDesktopURL prints the desktop access URL when desktop mode is enabled.
+func printDesktopURL() {
+	if containerCfg.desktopProto == "" {
+		return
+	}
+	url := fmt.Sprintf("%s://%s:%s", containerCfg.desktopProto, containerCfg.desktopHost, containerCfg.desktopPort)
+	common.PrintInfoMessage(fmt.Sprintf("Desktop available at: %s", url))
+	if containerCfg.desktopProto == "http" {
+		common.PrintInfoMessage("Open the URL above in your browser to access the GUI desktop")
+	} else {
+		common.PrintInfoMessage("Connect with a VNC client to the address above")
+	}
+}
+
 // resizeTty continuously monitors and resizes the container TTY to match the local terminal size.
 //
 //	in(1): context.Context ctx
@@ -389,6 +431,15 @@ func ContainerExec(containerIdentifier string, WorkingDir string) {
 	size := props["Size"]
 	printContainerProperties(ctx, cli, containerName, props, size)
 
+	// Desktop mode: start VNC/noVNC inside the container via exec
+	if containerCfg.desktopProto != "" {
+		if err := startDesktopInContainer(ctx, cli, containerIdentifier); err != nil {
+			common.PrintErrorMessage(err)
+			return
+		}
+		printDesktopURL()
+	}
+
 	// Determine shell to use:
 	// Priority: 1) explicitly set via CLI (-e flag) if different from default
 	//           2) container's original shell (from containerJSON.Path)
@@ -433,6 +484,33 @@ func ContainerRun(containerName string) {
 	bindings := combineBindings(containerCfg.x11forward, containerCfg.extrabinding)
 	extrahosts := splitAndCombine(containerCfg.extrahosts)
 	dockerenv := combineEnv(containerCfg.xdisplay, containerCfg.pulseServer, containerCfg.extraenv)
+
+	// Desktop mode: inject env vars and port configuration
+	if containerCfg.desktopProto != "" {
+		dockerenv = append(dockerenv,
+			"RFSWIFT_DESKTOP_PROTO="+containerCfg.desktopProto,
+			"RFSWIFT_DESKTOP_HOST="+containerCfg.desktopHost,
+			"RFSWIFT_DESKTOP_PORT="+containerCfg.desktopPort,
+			"RFSWIFT_DESKTOP_PASS="+containerCfg.desktopPass,
+		)
+
+		// For non-host network modes, set up port bindings so the desktop is reachable
+		if containerCfg.networkMode != "host" {
+			defaultPort := containerCfg.desktopPort
+			portProto := defaultPort + "/tcp"
+			if containerCfg.exposedPorts != "" {
+				containerCfg.exposedPorts += "," + portProto
+			} else {
+				containerCfg.exposedPorts = portProto
+			}
+			if containerCfg.bindedPorts != "" {
+				containerCfg.bindedPorts += ",," + containerCfg.desktopHost + ":" + containerCfg.desktopPort + ":" + portProto
+			} else {
+				containerCfg.bindedPorts = containerCfg.desktopHost + ":" + containerCfg.desktopPort + ":" + portProto
+			}
+		}
+	}
+
 	exposedPorts := ParseExposedPorts(containerCfg.exposedPorts)
 	bindedPorts := ParseBindedPorts(containerCfg.bindedPorts)
 
@@ -564,6 +642,9 @@ func ContainerRun(containerName string) {
 	containerLabels := map[string]string{
 		"org.container.project": "rfswift",
 	}
+	if containerCfg.desktopProto != "" {
+		containerLabels["org.rfswift.desktop"] = fmt.Sprintf("%s://%s:%s", containerCfg.desktopProto, containerCfg.desktopHost, containerCfg.desktopPort)
+	}
 	if len(hostConfig.DeviceCgroupRules) > 0 {
 		containerLabels["org.rfswift.cgroup_rules"] = strings.Join(hostConfig.DeviceCgroupRules, ",")
 	}
@@ -624,7 +705,8 @@ func ContainerRun(containerName string) {
 		return
 	}
 
-	resp, err := cli.ContainerCreate(ctx, &container.Config{
+	// Build container config
+	containerConfig := &container.Config{
 		Image:        containerCfg.imagename,
 		Cmd:          []string{containerCfg.shell},
 		Env:          dockerenv,
@@ -636,7 +718,14 @@ func ContainerRun(containerName string) {
 		AttachStderr: true,
 		Tty:          true,
 		Labels:       containerLabels,
-	}, hostConfig, &network.NetworkingConfig{}, nil, containerName)
+	}
+
+	// Desktop mode: use entrypoint wrapper that starts VNC before the shell
+	if containerCfg.desktopProto != "" {
+		containerConfig.Entrypoint = []string{"/usr/sbin/rfswift-entrypoint"}
+	}
+
+	resp, err := cli.ContainerCreate(ctx, containerConfig, hostConfig, &network.NetworkingConfig{}, nil, containerName)
 	if err != nil {
 		if strings.Contains(err.Error(), "already in use") || strings.Contains(err.Error(), "already exists") {
 			common.PrintErrorMessage(fmt.Errorf("container name '%s' is already in use. Use a different name with -n, or exec into the existing container with: rfswift exec -c %s", containerName, containerName))
@@ -661,6 +750,7 @@ func ContainerRun(containerName string) {
 		size := props["Size"]
 		printContainerProperties(ctx, cli, containerName, props, size)
 		common.PrintSuccessMessage(fmt.Sprintf("Container '%s' started successfully", containerName))
+		printDesktopURL()
 
 		// Attach via exec (same as ContainerExec)
 		if err := execInteractiveSession(ctx, cli, resp.ID, containerCfg.shell, ""); err != nil {
@@ -694,6 +784,7 @@ func ContainerRun(containerName string) {
 	size := props["Size"]
 	printContainerProperties(ctx, cli, containerName, props, size)
 	common.PrintSuccessMessage(fmt.Sprintf("Container '%s' started successfully", containerName))
+	printDesktopURL()
 
 	handleIOStreams(waiter)
 	fd := int(os.Stdin.Fd())

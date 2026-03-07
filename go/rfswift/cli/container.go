@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"runtime"
+	"strings"
 
 	"github.com/spf13/cobra"
 	common "penthertz/rfswift/common"
@@ -41,6 +42,9 @@ var runCmd = &cobra.Command{
 		recordOutput, _ := cmd.Flags().GetString("record-output")
 		realtime, _ := cmd.Flags().GetBool("realtime")
 		ulimits, _ := cmd.Flags().GetString("ulimits")
+		desktop, _ := cmd.Flags().GetBool("desktop")
+		desktopConfig, _ := cmd.Flags().GetString("desktop-config")
+		desktopPass, _ := cmd.Flags().GetString("desktop-pass")
 
 		if recordSession {
 			// Build extra args map for recording subprocess
@@ -87,6 +91,15 @@ var runCmd = &cobra.Command{
 			if noX11 {
 				extraArgs["--no-x11"] = ""
 			}
+			if desktop {
+				extraArgs["--desktop"] = ""
+			}
+			if desktopConfig != "" {
+				extraArgs["--desktop-config"] = desktopConfig
+			}
+			if desktopPass != "" {
+				extraArgs["--desktop-pass"] = desktopPass
+			}
 
 			if err := rfdock.ContainerRunWithRecording(dockerName, recordOutput, image, extraArgs); err != nil {
 				common.PrintErrorMessage(err)
@@ -116,6 +129,12 @@ var runCmd = &cobra.Command{
 			rfdock.ContainerSetSeccomp(seccomp)
 			rfdock.ContainerSetRealtime(realtime)
 			rfdock.ContainerSetUlimits(ulimits)
+			if desktop {
+				parseAndSetDesktop(desktopConfig)
+				if desktopPass != "" {
+					rfdock.ContainerSetDesktopPassword(desktopPass)
+				}
+			}
 			if runtime.GOOS == "linux" {
 				rfutils.SetPulseCTL(pulseServer)
 			}
@@ -136,9 +155,18 @@ var execCmd = &cobra.Command{
 		noX11, _ := cmd.Flags().GetBool("no-x11")
 		recordSession, _ := cmd.Flags().GetBool("record")
 		recordOutput, _ := cmd.Flags().GetString("record-output")
+		desktop, _ := cmd.Flags().GetBool("desktop")
+		desktopConfig, _ := cmd.Flags().GetString("desktop-config")
+		desktopPass, _ := cmd.Flags().GetString("desktop-pass")
 
 		setupX11(noX11, "", false)
 		rfdock.ContainerSetShell(execCommand)
+		if desktop {
+			parseAndSetDesktop(desktopConfig)
+			if desktopPass != "" {
+				rfdock.ContainerSetDesktopPassword(desktopPass)
+			}
+		}
 		if recordSession {
 			if err := rfdock.ContainerExecWithRecording(contID, workingDir, recordOutput, execCommand); err != nil {
 				common.PrintErrorMessage(err)
@@ -217,6 +245,39 @@ var removeCmd = &cobra.Command{
 	},
 }
 
+// parseAndSetDesktop parses the --desktop-config flag value and configures
+// desktop mode. Format: "proto:host:port" (e.g., "http:0.0.0.0:6080" or "vnc::5900").
+// All parts are optional and fall back to defaults (http, 127.0.0.1, 6080).
+func parseAndSetDesktop(config string) {
+	proto := "http"
+	host := "127.0.0.1"
+	port := "6080"
+
+	if config != "" {
+		parts := strings.Split(config, ":")
+		if len(parts) >= 1 && parts[0] != "" {
+			p := strings.ToLower(parts[0])
+			if p == "http" || p == "vnc" {
+				proto = p
+			} else {
+				common.PrintWarningMessage(fmt.Sprintf("Unknown desktop protocol '%s', using 'http'", parts[0]))
+			}
+		}
+		if len(parts) >= 2 && parts[1] != "" {
+			host = parts[1]
+		}
+		if len(parts) >= 3 && parts[2] != "" {
+			port = parts[2]
+		}
+	}
+
+	if proto == "vnc" && port == "6080" {
+		port = "5900"
+	}
+
+	rfdock.ContainerSetDesktop(proto, host, port)
+}
+
 func registerContainerCommands() {
 	rootCmd.AddCommand(runCmd)
 	rootCmd.AddCommand(execCmd)
@@ -248,6 +309,9 @@ func registerContainerCommands() {
 	runCmd.Flags().String("record-output", "", "Output file for recording (default: auto-generated)")
 	runCmd.Flags().Bool("realtime", false, "Enable realtime mode (SYS_NICE + rtprio=95 + memlock=unlimited)")
 	runCmd.Flags().String("ulimits", "", "Set ulimits (e.g., 'rtprio=95,memlock=-1,nofile=1024:65536')")
+	runCmd.Flags().Bool("desktop", false, "Enable remote desktop via VNC/noVNC (access GUI tools from a browser)")
+	runCmd.Flags().String("desktop-config", "", "Desktop config as proto:host:port (e.g., 'http:0.0.0.0:6080' or 'vnc::5900')")
+	runCmd.Flags().String("desktop-pass", "", "Set VNC password for desktop access (recommended when exposing on 0.0.0.0)")
 
 	execCmd.Flags().StringP("workdir", "w", "/root", "Working directory inside container")
 	execCmd.Flags().StringP("container", "c", "", "container to run")
@@ -256,6 +320,9 @@ func registerContainerCommands() {
 	execCmd.Flags().Bool("no-x11", false, "Disable X11 forwarding")
 	execCmd.Flags().Bool("record", false, "Record the container session")
 	execCmd.Flags().String("record-output", "", "Output file for recording (default: auto-generated)")
+	execCmd.Flags().Bool("desktop", false, "Enable remote desktop via VNC/noVNC (access GUI tools from a browser)")
+	execCmd.Flags().String("desktop-config", "", "Desktop config as proto:host:port (e.g., 'http:0.0.0.0:6080' or 'vnc::5900')")
+	execCmd.Flags().String("desktop-pass", "", "Set VNC password for desktop access (recommended when exposing on 0.0.0.0)")
 
 	lastCmd.Flags().StringP("filter", "f", "", "filter by image name")
 

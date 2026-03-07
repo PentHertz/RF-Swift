@@ -143,6 +143,10 @@ type ContainerConfig struct {
 	cgroups      string
 	ulimits      string
 	realtime     bool
+	desktopProto string
+	desktopHost  string
+	desktopPort  string
+	desktopPass  string
 }
 
 var containerCfg = ContainerConfig{
@@ -168,6 +172,10 @@ var containerCfg = ContainerConfig{
 	ulimits:      "",
 	realtime:     false,
 	shell:        "/bin/bash",
+	desktopProto: "",
+	desktopHost:  "127.0.0.1",
+	desktopPort:  "6080",
+	desktopPass:  "",
 }
 
 // BuildRecipe defines a YAML recipe for building container images.
@@ -260,4 +268,17 @@ func updateContainerCfgFromConfig() {
 	}
 
 	containerCfg.extrabinding = strings.Join(bindings, ",")
+
+	if config.Desktop.Proto != "" {
+		containerCfg.desktopProto = config.Desktop.Proto
+	}
+	if config.Desktop.Host != "" {
+		containerCfg.desktopHost = config.Desktop.Host
+	}
+	if config.Desktop.Port != "" {
+		containerCfg.desktopPort = config.Desktop.Port
+	}
+	if config.Desktop.Password != "" {
+		containerCfg.desktopPass = config.Desktop.Password
+	}
 }

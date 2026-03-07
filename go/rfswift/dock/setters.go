@@ -24,10 +24,11 @@ func appendCommaSeparated(field *string, value string) {
 }
 
 // ContainerSetX11 sets the X11 forward path for the container.
+// Pass an empty string to explicitly disable X11 forwarding.
 //
 //	in(1): string x11forward path
 func ContainerSetX11(x11forward string) {
-	setIfNotEmpty(&containerCfg.x11forward, x11forward)
+	containerCfg.x11forward = x11forward
 }
 
 // ContainerSetShell sets the shell to use in the container.
@@ -90,7 +91,7 @@ func ContainerSetPrivileges(privilege int) {
 //
 //	in(1): string display
 func ContainerSetXDisplay(display string) {
-	setIfNotEmpty(&containerCfg.xdisplay, display)
+	containerCfg.xdisplay = display
 }
 
 // ContainerSetEnv sets extra environment variables for the container.
@@ -154,6 +155,34 @@ func ContainerAddUlimit(ulimit string) {
 //	in(1): bool enabled
 func ContainerSetRealtime(enabled bool) {
 	containerCfg.realtime = enabled
+}
+
+// ContainerSetDesktop configures desktop/VNC access for the container.
+// When proto is non-empty, desktop mode is enabled with the given protocol,
+// host, and port. The protocol can be "http" (noVNC web) or "vnc" (direct VNC).
+//
+//	in(1): string proto desktop protocol ("http" or "vnc")
+//	in(2): string host listening host/IP
+//	in(3): string port listening port
+func ContainerSetDesktop(proto, host, port string) {
+	containerCfg.desktopProto = proto
+	if host != "" {
+		containerCfg.desktopHost = host
+	}
+	if port != "" {
+		containerCfg.desktopPort = port
+	}
+}
+
+// ContainerSetDesktopPassword sets the VNC password for desktop mode.
+// When non-empty, VNC authentication is enabled; otherwise access is unauthenticated.
+func ContainerSetDesktopPassword(password string) {
+	containerCfg.desktopPass = password
+}
+
+// ContainerDesktopEnabled reports whether desktop mode is configured.
+func ContainerDesktopEnabled() bool {
+	return containerCfg.desktopProto != ""
 }
 
 // ContainerInstallFromScript runs hot install inside a created container.

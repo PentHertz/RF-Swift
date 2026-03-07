@@ -24,10 +24,8 @@ import (
 //	out: none
 func setupX11(noX11 bool, xDisplay string, setDisplay bool) {
 	if noX11 {
-		if setDisplay {
-			rfdock.ContainerSetX11("")
-			rfdock.ContainerSetXDisplay("")
-		}
+		rfdock.ContainerSetX11("")
+		rfdock.ContainerSetXDisplay("")
 		return
 	}
 	if runtime.GOOS == "windows" {

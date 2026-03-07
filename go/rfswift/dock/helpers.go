@@ -131,7 +131,11 @@ func splitAndCombine(commaSeparated string) []string {
 //	in(3): string extraenv - comma-separated additional KEY=VALUE environment entries
 //	out: []string - combined environment variable slice for the container
 func combineEnv(xdisplay, pulseServer, extraenv string) []string {
-	dockerenv := append(strings.Split(xdisplay, ","), "PULSE_SERVER="+pulseServer)
+	var dockerenv []string
+	if xdisplay != "" {
+		dockerenv = append(dockerenv, strings.Split(xdisplay, ",")...)
+	}
+	dockerenv = append(dockerenv, "PULSE_SERVER="+pulseServer)
 	if extraenv != "" {
 		dockerenv = append(dockerenv, strings.Split(extraenv, ",")...)
 	}
