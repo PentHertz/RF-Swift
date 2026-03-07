@@ -180,6 +180,11 @@ func ContainerSetDesktopPassword(password string) {
 	containerCfg.desktopPass = password
 }
 
+// ContainerSetDesktopSSL enables or disables SSL/TLS for the desktop connection.
+func ContainerSetDesktopSSL(enabled bool) {
+	containerCfg.desktopSSL = enabled
+}
+
 // ContainerDesktopEnabled reports whether desktop mode is configured.
 func ContainerDesktopEnabled() bool {
 	return containerCfg.desktopProto != ""

@@ -147,6 +147,7 @@ type ContainerConfig struct {
 	desktopHost  string
 	desktopPort  string
 	desktopPass  string
+	desktopSSL   bool
 }
 
 var containerCfg = ContainerConfig{
@@ -176,6 +177,7 @@ var containerCfg = ContainerConfig{
 	desktopHost:  "127.0.0.1",
 	desktopPort:  "6080",
 	desktopPass:  "",
+	desktopSSL:   false,
 }
 
 // BuildRecipe defines a YAML recipe for building container images.
@@ -280,5 +282,8 @@ func updateContainerCfgFromConfig() {
 	}
 	if config.Desktop.Password != "" {
 		containerCfg.desktopPass = config.Desktop.Password
+	}
+	if strings.ToLower(config.Desktop.SSL) == "true" {
+		containerCfg.desktopSSL = true
 	}
 }

@@ -37,12 +37,19 @@ func startDesktopInContainer(ctx context.Context, cli *client.Client, containerI
 	execConfig := container.ExecOptions{
 		Detach: true,
 		Cmd:    []string{"/usr/sbin/desktop-start"},
-		Env: []string{
-			"RFSWIFT_DESKTOP_PROTO=" + containerCfg.desktopProto,
-			"RFSWIFT_DESKTOP_HOST=" + containerCfg.desktopHost,
-			"RFSWIFT_DESKTOP_PORT=" + containerCfg.desktopPort,
-			"RFSWIFT_DESKTOP_PASS=" + containerCfg.desktopPass,
-		},
+		Env: func() []string {
+			sslFlag := ""
+			if containerCfg.desktopSSL {
+				sslFlag = "1"
+			}
+			return []string{
+				"RFSWIFT_DESKTOP_PROTO=" + containerCfg.desktopProto,
+				"RFSWIFT_DESKTOP_HOST=" + containerCfg.desktopHost,
+				"RFSWIFT_DESKTOP_PORT=" + containerCfg.desktopPort,
+				"RFSWIFT_DESKTOP_PASS=" + containerCfg.desktopPass,
+				"RFSWIFT_DESKTOP_SSL=" + sslFlag,
+			}
+		}(),
 	}
 
 	execID, err := cli.ContainerExecCreate(ctx, containerID, execConfig)
@@ -64,7 +71,15 @@ func printDesktopURL() {
 	if containerCfg.desktopProto == "" {
 		return
 	}
-	url := fmt.Sprintf("%s://%s:%s", containerCfg.desktopProto, containerCfg.desktopHost, containerCfg.desktopPort)
+	proto := containerCfg.desktopProto
+	if containerCfg.desktopSSL {
+		if proto == "http" {
+			proto = "https"
+		} else {
+			proto = "vncs"
+		}
+	}
+	url := fmt.Sprintf("%s://%s:%s", proto, containerCfg.desktopHost, containerCfg.desktopPort)
 	common.PrintInfoMessage(fmt.Sprintf("Desktop available at: %s", url))
 	if containerCfg.desktopProto == "http" {
 		common.PrintInfoMessage("Open the URL above in your browser to access the GUI desktop")
@@ -487,11 +502,16 @@ func ContainerRun(containerName string) {
 
 	// Desktop mode: inject env vars and port configuration
 	if containerCfg.desktopProto != "" {
+		sslFlag := ""
+		if containerCfg.desktopSSL {
+			sslFlag = "1"
+		}
 		dockerenv = append(dockerenv,
 			"RFSWIFT_DESKTOP_PROTO="+containerCfg.desktopProto,
 			"RFSWIFT_DESKTOP_HOST="+containerCfg.desktopHost,
 			"RFSWIFT_DESKTOP_PORT="+containerCfg.desktopPort,
 			"RFSWIFT_DESKTOP_PASS="+containerCfg.desktopPass,
+			"RFSWIFT_DESKTOP_SSL="+sslFlag,
 		)
 
 		// For non-host network modes, set up port bindings so the desktop is reachable

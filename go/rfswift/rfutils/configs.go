@@ -37,7 +37,8 @@ type Config struct {
 		Proto    string
 		Host     string
 		Password string
-		Port  string
+		Port     string
+		SSL      string
 	}
 }
 
@@ -192,6 +193,8 @@ func ReadOrCreateConfig(filename string) (*Config, error) {
 				config.Desktop.Port = value
 			case "password":
 				config.Desktop.Password = value
+			case "ssl":
+				config.Desktop.SSL = value
 			}
 		}
 	}
@@ -308,6 +311,7 @@ proto =
 host = 127.0.0.1
 password =
 port = 6080
+ssl =
 `, defaultDevices)
 
 	dir := filepath.Dir(filename)

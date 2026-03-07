@@ -45,6 +45,7 @@ var runCmd = &cobra.Command{
 		desktop, _ := cmd.Flags().GetBool("desktop")
 		desktopConfig, _ := cmd.Flags().GetString("desktop-config")
 		desktopPass, _ := cmd.Flags().GetString("desktop-pass")
+		desktopSSL, _ := cmd.Flags().GetBool("desktop-ssl")
 
 		if recordSession {
 			// Build extra args map for recording subprocess
@@ -100,6 +101,9 @@ var runCmd = &cobra.Command{
 			if desktopPass != "" {
 				extraArgs["--desktop-pass"] = desktopPass
 			}
+			if desktopSSL {
+				extraArgs["--desktop-ssl"] = ""
+			}
 
 			if err := rfdock.ContainerRunWithRecording(dockerName, recordOutput, image, extraArgs); err != nil {
 				common.PrintErrorMessage(err)
@@ -134,6 +138,7 @@ var runCmd = &cobra.Command{
 				if desktopPass != "" {
 					rfdock.ContainerSetDesktopPassword(desktopPass)
 				}
+				rfdock.ContainerSetDesktopSSL(desktopSSL)
 			}
 			if runtime.GOOS == "linux" {
 				rfutils.SetPulseCTL(pulseServer)
@@ -158,6 +163,7 @@ var execCmd = &cobra.Command{
 		desktop, _ := cmd.Flags().GetBool("desktop")
 		desktopConfig, _ := cmd.Flags().GetString("desktop-config")
 		desktopPass, _ := cmd.Flags().GetString("desktop-pass")
+		desktopSSL, _ := cmd.Flags().GetBool("desktop-ssl")
 
 		setupX11(noX11, "", false)
 		rfdock.ContainerSetShell(execCommand)
@@ -166,6 +172,7 @@ var execCmd = &cobra.Command{
 			if desktopPass != "" {
 				rfdock.ContainerSetDesktopPassword(desktopPass)
 			}
+			rfdock.ContainerSetDesktopSSL(desktopSSL)
 		}
 		if recordSession {
 			if err := rfdock.ContainerExecWithRecording(contID, workingDir, recordOutput, execCommand); err != nil {
@@ -312,6 +319,7 @@ func registerContainerCommands() {
 	runCmd.Flags().Bool("desktop", false, "Enable remote desktop via VNC/noVNC (access GUI tools from a browser)")
 	runCmd.Flags().String("desktop-config", "", "Desktop config as proto:host:port (e.g., 'http:0.0.0.0:6080' or 'vnc::5900')")
 	runCmd.Flags().String("desktop-pass", "", "Set VNC password for desktop access (recommended when exposing on 0.0.0.0)")
+	runCmd.Flags().Bool("desktop-ssl", false, "Enable SSL/TLS for desktop connections (auto-generates self-signed certificate)")
 
 	execCmd.Flags().StringP("workdir", "w", "/root", "Working directory inside container")
 	execCmd.Flags().StringP("container", "c", "", "container to run")
@@ -323,6 +331,7 @@ func registerContainerCommands() {
 	execCmd.Flags().Bool("desktop", false, "Enable remote desktop via VNC/noVNC (access GUI tools from a browser)")
 	execCmd.Flags().String("desktop-config", "", "Desktop config as proto:host:port (e.g., 'http:0.0.0.0:6080' or 'vnc::5900')")
 	execCmd.Flags().String("desktop-pass", "", "Set VNC password for desktop access (recommended when exposing on 0.0.0.0)")
+	execCmd.Flags().Bool("desktop-ssl", false, "Enable SSL/TLS for desktop connections (auto-generates self-signed certificate)")
 
 	lastCmd.Flags().StringP("filter", "f", "", "filter by image name")
 
