@@ -722,10 +722,25 @@ func ContainerRun(containerName string) {
 		}
 
 		// 2. Filter devices to only those accessible by current user
+		// Some devices are readable on the host but can't be created as device nodes in rootless containers
+		rootlessBlockedDevices := map[string]bool{
+			"/dev/tty":     true,
+			"/dev/tty0":    true,
+			"/dev/tty1":    true,
+			"/dev/tty2":    true,
+			"/dev/console": true,
+			"/dev/vcsa":    true,
+			"/dev/vhci":    true,
+			"/dev/uinput":  true,
+		}
 		if len(hostConfig.Devices) > 0 {
 			var accessible []container.DeviceMapping
 			var dropped []string
 			for _, dev := range hostConfig.Devices {
+				if rootlessBlockedDevices[dev.PathOnHost] {
+					dropped = append(dropped, dev.PathOnHost)
+					continue
+				}
 				f, err := os.OpenFile(dev.PathOnHost, os.O_RDONLY, 0)
 				if err == nil {
 					f.Close()
