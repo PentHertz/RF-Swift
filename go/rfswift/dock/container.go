@@ -351,6 +351,67 @@ func latestDockerID(labelKey string, labelValue string) string {
 	return ""
 }
 
+// ContainerInfo holds basic container metadata for interactive selection.
+type ContainerInfo struct {
+	ID    string
+	Name  string
+	Image string
+	State string
+}
+
+// ListContainers returns RF Swift containers with their name, image, and state.
+func ListContainers(labelKey string, labelValue string) []ContainerInfo {
+	ctx := context.Background()
+	cli, err := NewEngineClient()
+	if err != nil {
+		return nil
+	}
+	defer cli.Close()
+
+	containerFilters := filters.NewArgs()
+	if labelKey != "" && labelValue != "" {
+		containerFilters.Add("label", fmt.Sprintf("%s=%s", labelKey, labelValue))
+	}
+
+	containers, err := cli.ContainerList(ctx, container.ListOptions{
+		All:     true,
+		Limit:   15,
+		Filters: containerFilters,
+	})
+	if err != nil {
+		return nil
+	}
+
+	var result []ContainerInfo
+	for _, cont := range containers {
+		_, err := cli.ContainerInspect(ctx, cont.ID)
+		if err != nil {
+			continue
+		}
+
+		name := cont.ID[:12]
+		if len(cont.Names) > 0 {
+			name = cont.Names[0]
+			if len(name) > 0 && name[0] == '/' {
+				name = name[1:]
+			}
+		}
+
+		result = append(result, ContainerInfo{
+			ID:    cont.ID[:12],
+			Name:  name,
+			Image: cont.Image,
+			State: cont.State,
+		})
+	}
+	return result
+}
+
+// LatestContainerID returns the ID of the most recent RF Swift container, or empty string.
+func LatestContainerID() string {
+	return latestDockerID("org.container.project", "rfswift")
+}
+
 // ContainerExec attaches to an existing container and opens an interactive shell session.
 //
 //	in(1): string containerIdentifier container ID or name

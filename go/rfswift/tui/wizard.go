@@ -15,6 +15,8 @@ import (
 type RunWizardResult struct {
 	Image       string
 	Name        string
+	Bindings    string // comma-separated host:container volume bindings
+	Devices     string // comma-separated device paths
 	Desktop     bool
 	DesktopSSL  bool
 	NoX11       bool
@@ -74,7 +76,55 @@ func RunWizard(images []string) (*RunWizardResult, error) {
 		return nil, err
 	}
 
-	// Step 3: Feature toggles
+	// Step 3: Volume bindings
+	var addBindings bool
+	err = huh.NewConfirm().
+		Title("Add volume bindings?").
+		Description("Mount host directories into the container (e.g., share data, configs)").
+		Affirmative("Yes").
+		Negative("No").
+		Value(&addBindings).
+		Run()
+	if err != nil {
+		return nil, err
+	}
+	if addBindings {
+		err = huh.NewInput().
+			Title("Volume bindings").
+			Description("host_path:container_path — separate multiple with commas").
+			Placeholder("/home/user/data:/root/data,/tmp/captures:/tmp/captures").
+			Value(&result.Bindings).
+			Run()
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	// Step 4: Device mappings
+	var addDevices bool
+	err = huh.NewConfirm().
+		Title("Add device mappings?").
+		Description("Pass host devices (SDR dongles, serial ports, etc.) into the container").
+		Affirmative("Yes").
+		Negative("No").
+		Value(&addDevices).
+		Run()
+	if err != nil {
+		return nil, err
+	}
+	if addDevices {
+		err = huh.NewInput().
+			Title("Device mappings").
+			Description("Device paths — separate multiple with commas").
+			Placeholder("/dev/ttyUSB0,/dev/bus/usb").
+			Value(&result.Devices).
+			Run()
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	// Step 5: Feature toggles
 	var features []string
 	err = huh.NewMultiSelect[string]().
 		Title("Enable features").
@@ -111,17 +161,19 @@ func RunWizard(images []string) (*RunWizardResult, error) {
 		result.Desktop = true
 	}
 
-	// Step 4: Recap
+	// Recap
 	items := map[string]string{
-		"Image":     result.Image,
-		"Name":      result.Name,
-		"Desktop":   boolStr(result.Desktop),
-		"SSL/TLS":   boolStr(result.DesktopSSL),
-		"X11":       boolStr(!result.NoX11),
+		"Image":      result.Image,
+		"Name":       result.Name,
+		"Bindings":   valueOrNone(result.Bindings),
+		"Devices":    valueOrNone(result.Devices),
+		"Desktop":    boolStr(result.Desktop),
+		"SSL/TLS":    boolStr(result.DesktopSSL),
+		"X11":        boolStr(!result.NoX11),
 		"Privileged": boolStr(result.Privileged == 1),
-		"Realtime":  boolStr(result.Realtime),
+		"Realtime":   boolStr(result.Realtime),
 	}
-	keys := []string{"Image", "Name", "Desktop", "SSL/TLS", "X11", "Privileged", "Realtime"}
+	keys := []string{"Image", "Name", "Bindings", "Devices", "Desktop", "SSL/TLS", "X11", "Privileged", "Realtime"}
 	PrintRecap("Container Configuration", items, keys)
 
 	// Build equivalent CLI command
@@ -140,10 +192,23 @@ func boolStr(b bool) string {
 	return lipgloss.NewStyle().Foreground(ColorMuted).Render("disabled")
 }
 
+func valueOrNone(s string) string {
+	if strings.TrimSpace(s) == "" {
+		return lipgloss.NewStyle().Foreground(ColorMuted).Render("none")
+	}
+	return s
+}
+
 func buildCLICommand(r *RunWizardResult) string {
 	parts := []string{"rfswift run"}
 	parts = append(parts, fmt.Sprintf("-i %s", r.Image))
 	parts = append(parts, fmt.Sprintf("-n %s", r.Name))
+	if r.Bindings != "" {
+		parts = append(parts, fmt.Sprintf("-b %s", r.Bindings))
+	}
+	if r.Devices != "" {
+		parts = append(parts, fmt.Sprintf("-s %s", r.Devices))
+	}
 	if r.Desktop {
 		parts = append(parts, "--desktop")
 	}

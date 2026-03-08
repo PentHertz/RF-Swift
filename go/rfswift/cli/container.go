@@ -62,6 +62,12 @@ var runCmd = &cobra.Command{
 			}
 			image = wizResult.Image
 			dockerName = wizResult.Name
+			if wizResult.Bindings != "" {
+				extraBind = wizResult.Bindings
+			}
+			if wizResult.Devices != "" {
+				devices = wizResult.Devices
+			}
 			desktop = wizResult.Desktop
 			desktopSSL = wizResult.DesktopSSL
 			noX11 = wizResult.NoX11
@@ -189,6 +195,47 @@ var execCmd = &cobra.Command{
 		desktopConfig, _ := cmd.Flags().GetString("desktop-config")
 		desktopPass, _ := cmd.Flags().GetString("desktop-pass")
 		desktopSSL, _ := cmd.Flags().GetBool("desktop-ssl")
+
+		// If no container specified, offer interactive selection
+		if contID == "" && tui.IsInteractive() {
+			containers := rfdock.ListContainers("org.container.project", "rfswift")
+			if len(containers) == 0 {
+				common.PrintErrorMessage(fmt.Errorf("no RF Swift containers found. Create one first with: rfswift run"))
+				return
+			}
+
+			// Build options: latest first with a hint
+			options := make([]string, len(containers))
+			for i, c := range containers {
+				label := fmt.Sprintf("%s  (%s) [%s]", c.Name, c.Image, c.State)
+				if i == 0 {
+					label += "  ← latest"
+				}
+				options[i] = label
+			}
+
+			selected, err := tui.SelectOne("Select a container", options)
+			if err != nil {
+				common.PrintErrorMessage(fmt.Errorf("selection cancelled"))
+				return
+			}
+
+			// Map selection back to container name
+			for i, opt := range options {
+				if opt == selected {
+					contID = containers[i].Name
+					break
+				}
+			}
+		} else if contID == "" {
+			// Non-interactive: fall back to latest container
+			contID = rfdock.LatestContainerID()
+			if contID == "" {
+				common.PrintErrorMessage(fmt.Errorf("no RF Swift container found. Create one first with: rfswift run"))
+				return
+			}
+			common.PrintInfoMessage(fmt.Sprintf("Using latest container: %s", contID))
+		}
 
 		setupX11(noX11, "", false)
 		rfdock.ContainerSetShell(execCommand)
