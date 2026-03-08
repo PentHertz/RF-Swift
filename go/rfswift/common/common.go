@@ -13,8 +13,8 @@ import (
 )
 
 // RF Swift repo
-var Version = "2.0.0-dev"
-var Codename = "Harmonic"
+var Version = "2.0.0"
+var Codename = "Full Duplex"
 var Branch = "main"
 var Owner = "PentHertz"
 var Repo = "RF-Swift"

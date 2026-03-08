@@ -850,6 +850,11 @@ func execInteractiveSession(ctx context.Context, cli *client.Client, containerID
 		WorkingDir:   workingDir,
 	}
 
+	// Propagate recording indicator into the container shell
+	if os.Getenv("RFSWIFT_RECORDING") == "1" {
+		execConfig.Env = []string{"RFSWIFT_RECORDING=1"}
+	}
+
 	execID, err := cli.ContainerExecCreate(ctx, containerID, execConfig)
 	if err != nil {
 		return fmt.Errorf("failed to create exec instance: %v", err)

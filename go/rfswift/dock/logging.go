@@ -85,6 +85,7 @@ func StartLogging(outputFile string, useScript bool) error {
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
+	cmd.Env = append(os.Environ(), "RFSWIFT_RECORDING=1")
 
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("failed to start recording: %v", err)
@@ -99,6 +100,9 @@ func StartLogging(outputFile string, useScript bool) error {
 	if err := ioutil.WriteFile(stateFile, []byte(state), 0644); err != nil {
 		common.PrintWarningMessage(fmt.Sprintf("Failed to save state: %v", err))
 	}
+
+	// Set terminal title to show recording indicator
+	fmt.Printf("\033]0;⏺ REC | RF Swift\007")
 
 	common.PrintSuccessMessage("Recording started!")
 	common.PrintInfoMessage("To stop recording:")
@@ -157,6 +161,9 @@ func StopLogging() error {
 	if err := process.Signal(os.Interrupt); err != nil {
 		return fmt.Errorf("failed to stop recording: %v", err)
 	}
+
+	// Reset terminal title
+	fmt.Printf("\033]0;RF Swift\007")
 
 	common.PrintSuccessMessage(fmt.Sprintf("Recording stopped: %s", loggingFile))
 
@@ -326,6 +333,7 @@ func ContainerRunWithRecording(containerName string, recordOutput string, image 
 	recordCmd.Stdin = os.Stdin
 	recordCmd.Stdout = os.Stdout
 	recordCmd.Stderr = os.Stderr
+	recordCmd.Env = append(os.Environ(), "RFSWIFT_RECORDING=1")
 
 	if err := recordCmd.Run(); err != nil {
 		return fmt.Errorf("recording session failed: %v", err)
@@ -415,6 +423,7 @@ func ContainerExecWithRecording(containerIdentifier string, workingDir string, r
 	recordCmd.Stdin = os.Stdin
 	recordCmd.Stdout = os.Stdout
 	recordCmd.Stderr = os.Stderr
+	recordCmd.Env = append(os.Environ(), "RFSWIFT_RECORDING=1")
 
 	if err := recordCmd.Run(); err != nil {
 		return fmt.Errorf("recording session failed: %v", err)
