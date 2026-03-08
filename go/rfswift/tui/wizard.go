@@ -26,60 +26,93 @@ type RunWizardResult struct {
 	Confirmed   bool
 }
 
+// RunWizardDefaults holds pre-existing CLI flag values to pre-populate the wizard.
+type RunWizardDefaults struct {
+	Image      string
+	Name       string
+	Bindings   string
+	Devices    string
+	Desktop    bool
+	DesktopSSL bool
+	NoX11      bool
+	Privileged int
+	Realtime   bool
+	VPN        string
+}
+
 // RunWizard launches an interactive form to configure a new container.
 // images is a list of available image tags to select from.
+// defaults contains pre-existing CLI flag values to pre-populate wizard fields.
 // Returns the wizard result or an error if cancelled.
-func RunWizard(images []string) (*RunWizardResult, error) {
+func RunWizard(images []string, defaults *RunWizardDefaults) (*RunWizardResult, error) {
 	if !IsInteractive() {
 		return nil, fmt.Errorf("interactive terminal required for wizard mode")
 	}
 
 	result := &RunWizardResult{}
 
-	// Step 1: Image selection
-	if len(images) == 0 {
-		// No images available, ask for manual input
-		err := huh.NewInput().
-			Title("Image name (e.g., penthertz/rfswift:sdr_full)").
-			Value(&result.Image).
-			Run()
-		if err != nil {
-			return nil, err
-		}
-	} else {
-		opts := make([]huh.Option[string], len(images))
-		for i, img := range images {
-			opts[i] = huh.NewOption(img, img)
-		}
-		err := huh.NewSelect[string]().
-			Title("Select an image").
-			Options(opts...).
-			Value(&result.Image).
-			Run()
-		if err != nil {
-			return nil, err
-		}
+	// Seed result with defaults from CLI flags
+	if defaults != nil {
+		result.Image = defaults.Image
+		result.Name = defaults.Name
+		result.Bindings = defaults.Bindings
+		result.Devices = defaults.Devices
+		result.Desktop = defaults.Desktop
+		result.DesktopSSL = defaults.DesktopSSL
+		result.NoX11 = defaults.NoX11
+		result.Privileged = defaults.Privileged
+		result.Realtime = defaults.Realtime
+		result.VPN = defaults.VPN
 	}
 
-	// Step 2: Container name
-	err := huh.NewInput().
-		Title("Container name").
-		Placeholder("my_sdr").
-		Value(&result.Name).
-		Validate(func(s string) error {
-			if strings.TrimSpace(s) == "" {
-				return fmt.Errorf("name is required")
+	// Step 1: Image selection (skip if already provided via CLI)
+	if result.Image == "" {
+		if len(images) == 0 {
+			// No images available, ask for manual input
+			err := huh.NewInput().
+				Title("Image name (e.g., penthertz/rfswift:sdr_full)").
+				Value(&result.Image).
+				Run()
+			if err != nil {
+				return nil, err
 			}
-			return nil
-		}).
-		Run()
-	if err != nil {
-		return nil, err
+		} else {
+			opts := make([]huh.Option[string], len(images))
+			for i, img := range images {
+				opts[i] = huh.NewOption(img, img)
+			}
+			err := huh.NewSelect[string]().
+				Title("Select an image").
+				Options(opts...).
+				Value(&result.Image).
+				Run()
+			if err != nil {
+				return nil, err
+			}
+		}
 	}
 
-	// Step 3: Volume bindings
-	var addBindings bool
-	err = huh.NewConfirm().
+	// Step 2: Container name (skip if already provided via CLI)
+	if result.Name == "" {
+		err := huh.NewInput().
+			Title("Container name").
+			Placeholder("my_sdr").
+			Value(&result.Name).
+			Validate(func(s string) error {
+				if strings.TrimSpace(s) == "" {
+					return fmt.Errorf("name is required")
+				}
+				return nil
+			}).
+			Run()
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	// Step 3: Volume bindings (pre-filled if set via CLI)
+	addBindings := result.Bindings != ""
+	err := huh.NewConfirm().
 		Title("Add volume bindings?").
 		Description("Mount host directories into the container (e.g., share data, configs)").
 		Affirmative("Yes").
@@ -99,10 +132,12 @@ func RunWizard(images []string) (*RunWizardResult, error) {
 		if err != nil {
 			return nil, err
 		}
+	} else {
+		result.Bindings = ""
 	}
 
-	// Step 4: Device mappings
-	var addDevices bool
+	// Step 4: Device mappings (pre-filled if set via CLI)
+	addDevices := result.Devices != ""
 	err = huh.NewConfirm().
 		Title("Add device mappings?").
 		Description("Pass host devices (SDR dongles, serial ports, etc.) into the container").
@@ -123,10 +158,31 @@ func RunWizard(images []string) (*RunWizardResult, error) {
 		if err != nil {
 			return nil, err
 		}
+	} else {
+		result.Devices = ""
 	}
 
-	// Step 5: Feature toggles
+	// Step 5: Feature toggles (pre-select features already enabled via CLI)
 	var features []string
+	// Pre-populate from defaults
+	if result.Desktop {
+		features = append(features, "desktop")
+	}
+	if result.DesktopSSL {
+		features = append(features, "desktop-ssl")
+	}
+	if result.NoX11 {
+		features = append(features, "no-x11")
+	}
+	if result.Privileged == 1 {
+		features = append(features, "privileged")
+	}
+	if result.Realtime {
+		features = append(features, "realtime")
+	}
+	if result.VPN != "" {
+		features = append(features, "vpn")
+	}
 	err = huh.NewMultiSelect[string]().
 		Title("Enable features").
 		Options(
@@ -143,6 +199,28 @@ func RunWizard(images []string) (*RunWizardResult, error) {
 		return nil, err
 	}
 
+	// Reset all togglable fields based on wizard selection (user may have unchecked)
+	result.Desktop = false
+	result.DesktopSSL = false
+	result.NoX11 = false
+	result.Privileged = 0
+	result.Realtime = false
+	// Preserve VPN config temporarily for pre-populating the VPN sub-form
+	savedVPN := result.VPN
+	result.VPN = ""
+
+	// Check if vpn was selected
+	vpnSelected := false
+	for _, f := range features {
+		if f == "vpn" {
+			vpnSelected = true
+			break
+		}
+	}
+	if !vpnSelected {
+		savedVPN = ""
+	}
+
 	for _, f := range features {
 		switch f {
 		case "desktop":
@@ -157,7 +235,15 @@ func RunWizard(images []string) (*RunWizardResult, error) {
 			result.Realtime = true
 		case "vpn":
 			// Follow-up: select VPN type and config
-			var vpnType string
+			// Pre-populate from existing VPN config if set via CLI
+			var vpnType, vpnArg string
+			if savedVPN != "" {
+				parts := strings.SplitN(savedVPN, ":", 2)
+				vpnType = parts[0]
+				if len(parts) > 1 {
+					vpnArg = parts[1]
+				}
+			}
 			err = huh.NewSelect[string]().
 				Title("VPN type").
 				Options(
@@ -172,7 +258,6 @@ func RunWizard(images []string) (*RunWizardResult, error) {
 				return nil, err
 			}
 
-			var vpnArg string
 			switch vpnType {
 			case "wireguard":
 				err = huh.NewInput().

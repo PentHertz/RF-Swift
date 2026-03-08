@@ -52,7 +52,18 @@ var runCmd = &cobra.Command{
 		// Launch interactive wizard if name or image not provided and terminal is interactive
 		if (dockerName == "" || image == "") && tui.IsInteractive() {
 			availableImages := rfdock.ListImageTags("org.container.project", "rfswift")
-			wizResult, err := tui.RunWizard(availableImages)
+			wizResult, err := tui.RunWizard(availableImages, &tui.RunWizardDefaults{
+				Image:      image,
+				Name:       dockerName,
+				Bindings:   extraBind,
+				Devices:    devices,
+				Desktop:    desktop,
+				DesktopSSL: desktopSSL,
+				NoX11:      noX11,
+				Privileged: privileged,
+				Realtime:   realtime,
+				VPN:        vpnConfig,
+			})
 			if err != nil {
 				common.PrintErrorMessage(fmt.Errorf("wizard cancelled: %v", err))
 				return
