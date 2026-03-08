@@ -142,6 +142,7 @@ func init() {
 		registerWinUSBCommands()
 	}
 	rootCmd.AddCommand(engineCmd)
+	registerDoctorCommands()
 }
 
 // Execute runs the root cobra command, invoking the appropriate subcommand based on
