@@ -10,13 +10,13 @@ import (
 	"io/ioutil"
 	"os"
 	"strings"
-	"time"
 
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/client"
 	"github.com/docker/go-connections/nat"
 
 	common "penthertz/rfswift/common"
+	"penthertz/rfswift/tui"
 )
 
 // loadJSON reads a JSON file from disk and unmarshals its contents into v.
@@ -474,29 +474,15 @@ func convertSecurityOptToString(securityOpts []string) string {
 //	in(3): string stepName - human-readable label shown in the loading animation and completion message
 //	out: error - the error returned by commandFunc, or nil on success
 func showLoadingIndicator(ctx context.Context, commandFunc func() error, stepName string) error {
-	done := make(chan error)
-	go func() {
-		done <- commandFunc()
-	}()
+	spinner := tui.NewSpinner(stepName)
+	spinner.Start()
 
-	clockEmojis := []string{"🕛", "🕐", "🕑", "🕒", "🕓", "🕔", "🕕", "🕖", "🕗", "🕘", "🕙", "🕚"}
-	i := 0
-	ticker := time.NewTicker(500 * time.Millisecond)
-	defer ticker.Stop()
+	err := commandFunc()
 
-	for {
-		select {
-		case err := <-done:
-			if err != nil {
-				common.PrintErrorMessage(fmt.Errorf("Error during %s: %v", stepName, err))
-				return err
-			}
-			fmt.Printf("\n")
-			common.PrintSuccessMessage(fmt.Sprintf("%s completed", stepName))
-			return nil
-		case <-ticker.C:
-			fmt.Printf("\r%s %s", clockEmojis[i%len(clockEmojis)], stepName)
-			i++
-		}
+	if err != nil {
+		spinner.StopWithMessage(fmt.Sprintf("Error during %s: %v", stepName, err))
+		return err
 	}
+	spinner.StopWithMessage(fmt.Sprintf("%s completed", stepName))
+	return nil
 }

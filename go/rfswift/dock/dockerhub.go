@@ -6,16 +6,16 @@ import (
 	"io"
 	"log"
 	"net/http"
-	"os"
 	"regexp"
 	"runtime"
 	"sort"
 	"strings"
 	"time"
 
-	"golang.org/x/crypto/ssh/terminal"
+	"github.com/charmbracelet/lipgloss"
 	rfutils "penthertz/rfswift/rfutils"
 	common "penthertz/rfswift/common"
+	"penthertz/rfswift/tui"
 )
 
 type RepoVersionMap map[string]ImageVersionMap
@@ -305,26 +305,11 @@ func ListAvailableVersions(filterImage string) {
 //	in(2): string stepName label displayed next to the loading indicator
 //	out: error error returned by commandFunc, or nil on success
 func showLoadingIndicatorWithReturn(commandFunc func() error, stepName string) error {
-	done := make(chan error)
-	go func() {
-		done <- commandFunc()
-	}()
-
-	clockEmojis := []string{"🕛", "🕐", "🕑", "🕒", "🕓", "🕔", "🕕", "🕖", "🕗", "🕘", "🕙", "🕚"}
-	i := 0
-	ticker := time.NewTicker(200 * time.Millisecond)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case err := <-done:
-			fmt.Print("\r\033[K")
-			return err
-		case <-ticker.C:
-			fmt.Printf("\r%s %s", clockEmojis[i%len(clockEmojis)], stepName)
-			i++
-		}
-	}
+	spinner := tui.NewSpinner(stepName)
+	spinner.Start()
+	err := commandFunc()
+	spinner.Stop()
+	return err
 }
 
 // determineArchitectureFromTag infers the architecture from known tag suffixes
@@ -1082,10 +1067,7 @@ func ListDockerImagesRepo(showVersions bool, filterImage string) {
 	}
 
 	// Get terminal width
-	width, _, err := terminal.GetSize(int(os.Stdout.Fd()))
-	if err != nil {
-		width = 120
-	}
+	width := tui.TerminalWidth()
 
 	// Calculate base column widths
 	baseWidths := []int{20, 18, 35, 12}
@@ -1105,11 +1087,8 @@ func ListDockerImagesRepo(showVersions bool, filterImage string) {
 		baseWidths = append(baseWidths, versionWidth)
 	}
 
-	// Build table data with multi-line support for versions
-	type tableRow struct {
-		cells [][]string // Each cell can have multiple lines
-	}
-	var tableRows []tableRow
+	// Build table data
+	var tableData [][]string
 
 	// Sort by date first
 	type sortableTag struct {
@@ -1141,142 +1120,40 @@ func ListDockerImagesRepo(showVersions bool, filterImage string) {
 			sizeStr = fmt.Sprintf("%.1f MB", float64(info.fullSize)/(1024*1024))
 		}
 
-		row := tableRow{
-			cells: [][]string{
-				{info.cleanName},
-				{info.pushedDate.Format("2006-01-02 15:04")},
-				{fmt.Sprintf("%s:%s", info.repo, info.cleanName)},
-				{sizeStr},
-			},
+		row := []string{
+			info.cleanName,
+			info.pushedDate.Format("2006-01-02 15:04"),
+			fmt.Sprintf("%s:%s", info.repo, info.cleanName),
+			sizeStr,
 		}
 
 		if showVersions {
 			versionWidth := baseWidths[len(baseWidths)-1]
 			versionLines := FormatVersionsMultiLine(info.versions, 4, versionWidth)
-			row.cells = append(row.cells, versionLines)
+			row = append(row, strings.Join(versionLines, "\n"))
 		}
 
-		tableRows = append(tableRows, row)
+		tableData = append(tableData, row)
 	}
 
-	// Use base widths as column widths
-	columnWidths := make([]int, len(baseWidths))
-	copy(columnWidths, baseWidths)
+	versionCol := len(headers) - 1
 
-	// Adjust for terminal width if needed
-	totalWidth := 1
-	for _, w := range columnWidths {
-		totalWidth += w + 3
-	}
-
-	if totalWidth > width {
-		excess := totalWidth - width
-		// Reduce Image column first (index 2)
-		for excess > 0 && columnWidths[2] > 20 {
-			columnWidths[2]--
-			excess--
-		}
-	}
-
-	// Recalculate total width for title
-	totalWidth = 1
-	for _, w := range columnWidths {
-		totalWidth += w + 3
-	}
-
-	// Print table
-	blue := "\033[34m"
-	white := "\033[37m"
-	cyan := "\033[36m"
-	reset := "\033[0m"
-	title := "💿 Official Images"
-
-	fmt.Printf("%s%s%s%s%s\n", blue, strings.Repeat(" ", 2), title, strings.Repeat(" ", maxInt(0, totalWidth-2-len(title))), reset)
-	fmt.Print(white)
-
-	printHorizontalBorder(columnWidths, "┌", "┬", "┐")
-	printRow(headers, columnWidths, "│")
-	printHorizontalBorder(columnWidths, "├", "┼", "┤")
-
-	// Print rows with multi-line support
-	for rowIdx, row := range tableRows {
-		// Find max lines in this row
-		maxLines := 1
-		for _, cell := range row.cells {
-			if len(cell) > maxLines {
-				maxLines = len(cell)
+	tui.RenderTable(tui.TableConfig{
+		Title:      "💿 Official Images",
+		TitleColor: tui.ColorPrimary,
+		Headers:    headers,
+		Rows:       tableData,
+		BorderRow:  true,
+		ColorFunc: func(row, col int, content string) lipgloss.Color {
+			if showVersions && col == versionCol && content != "" && content != "-" {
+				return tui.ColorCyan
 			}
-		}
-
-		// Print each line of the row
-		for lineIdx := 0; lineIdx < maxLines; lineIdx++ {
-			fmt.Print("│")
-			for colIdx, cell := range row.cells {
-				content := ""
-				if lineIdx < len(cell) {
-					content = cell[lineIdx]
-				}
-
-				// Apply cyan color for versions column
-				if showVersions && colIdx == len(row.cells)-1 && content != "" && content != "-" {
-					fmt.Printf(" %s%-*s%s ", cyan, columnWidths[colIdx], truncateString(content, columnWidths[colIdx]), reset)
-				} else {
-					fmt.Printf(" %-*s ", columnWidths[colIdx], truncateString(content, columnWidths[colIdx]))
-				}
-				fmt.Print("│")
-			}
-			fmt.Println()
-		}
-
-		// Print separator between rows (not after last row)
-		if rowIdx < len(tableRows)-1 {
-			printHorizontalBorder(columnWidths, "├", "┼", "┤")
-		}
-	}
-
-	printHorizontalBorder(columnWidths, "└", "┴", "┘")
-
-	fmt.Print(reset)
-	fmt.Println()
+			return lipgloss.Color("")
+		},
+	})
 
 	// Print summary and hints
-	common.PrintInfoMessage(fmt.Sprintf("Found %d image(s) for %s architecture", len(tableRows), architecture))
-}
-
-// maxInt returns the larger of two integers.
-//
-//	in(1): int a first integer
-//	in(2): int b second integer
-//	out: int the greater of a and b
-func maxInt(a, b int) int {
-	if a > b {
-		return a
-	}
-	return b
-}
-
-// printRowWithVersionColor prints a single table row to stdout, colouring the last
-// column in cyan when showVersions is true and the cell is not empty or "-".
-//
-//	in(1): []string row cell values to print
-//	in(2): []int columnWidths per-column width in characters used for padding and truncation
-//	in(3): string separator border character printed between cells (e.g. "│")
-//	in(4): bool showVersions when true, apply cyan colour to the last (versions) column
-func printRowWithVersionColor(row []string, columnWidths []int, separator string, showVersions bool) {
-	cyan := "\033[36m"
-	reset := "\033[0m"
-
-	fmt.Print(separator)
-	for i, col := range row {
-		if showVersions && i == len(row)-1 && col != "-" {
-			// Version column in cyan
-			fmt.Printf(" %s%-*s%s ", cyan, columnWidths[i], truncateString(col, columnWidths[i]), reset)
-		} else {
-			fmt.Printf(" %-*s ", columnWidths[i], truncateString(col, columnWidths[i]))
-		}
-		fmt.Print(separator)
-	}
-	fmt.Println()
+	common.PrintInfoMessage(fmt.Sprintf("Found %d image(s) for %s architecture", len(tableData), architecture))
 }
 
 // removeArchitectureSuffix strips a known architecture suffix (_amd64, _arm64,
@@ -1297,51 +1174,3 @@ func removeArchitectureSuffix(tagName string) string {
 	return tagName
 }
 
-// truncateString shortens s to at most maxLen characters. When truncation is needed
-// and maxLen is greater than 3, the last three characters are replaced with "...".
-//
-//	in(1): string s input string to truncate
-//	in(2): int maxLen maximum allowed length in characters
-//	out: string truncated string, or s unchanged when len(s) <= maxLen
-func truncateString(s string, maxLen int) string {
-	if len(s) <= maxLen {
-		return s
-	}
-	if maxLen <= 3 {
-		return s[:maxLen]
-	}
-	return s[:maxLen-3] + "..."
-}
-
-// printHorizontalBorder prints a single horizontal border line for a table, using
-// left, middle, and right corner/junction characters and "─" repeated for each column.
-//
-//	in(1): []int columnWidths per-column width in characters (border spans width+2)
-//	in(2): string left character printed at the start of the line (e.g. "┌", "├", "└")
-//	in(3): string middle character printed between columns (e.g. "┬", "┼", "┴")
-//	in(4): string right character printed at the end of the line (e.g. "┐", "┤", "┘")
-func printHorizontalBorder(columnWidths []int, left, middle, right string) {
-	fmt.Print(left)
-	for i, width := range columnWidths {
-		fmt.Print(strings.Repeat("─", width+2))
-		if i < len(columnWidths)-1 {
-			fmt.Print(middle)
-		}
-	}
-	fmt.Println(right)
-}
-
-// printRow prints a single table row to stdout, padding each cell to its column
-// width and separating cells with separator.
-//
-//	in(1): []string row cell values to print
-//	in(2): []int columnWidths per-column width in characters used for padding and truncation
-//	in(3): string separator border character printed between cells (e.g. "│")
-func printRow(row []string, columnWidths []int, separator string) {
-	fmt.Print(separator)
-	for i, col := range row {
-		fmt.Printf(" %-*s ", columnWidths[i], truncateString(col, columnWidths[i]))
-		fmt.Print(separator)
-	}
-	fmt.Println()
-}

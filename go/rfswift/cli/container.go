@@ -14,6 +14,7 @@ import (
 	common "penthertz/rfswift/common"
 	rfdock "penthertz/rfswift/dock"
 	rfutils "penthertz/rfswift/rfutils"
+	"penthertz/rfswift/tui"
 )
 
 var runCmd = &cobra.Command{
@@ -46,6 +47,30 @@ var runCmd = &cobra.Command{
 		desktopConfig, _ := cmd.Flags().GetString("desktop-config")
 		desktopPass, _ := cmd.Flags().GetString("desktop-pass")
 		desktopSSL, _ := cmd.Flags().GetBool("desktop-ssl")
+
+		// Launch interactive wizard if name or image not provided and terminal is interactive
+		if (dockerName == "" || image == "") && tui.IsInteractive() {
+			availableImages := rfdock.ListImageTags("org.container.project", "rfswift")
+			wizResult, err := tui.RunWizard(availableImages)
+			if err != nil {
+				common.PrintErrorMessage(fmt.Errorf("wizard cancelled: %v", err))
+				return
+			}
+			if !wizResult.Confirmed {
+				common.PrintInfoMessage("Container creation cancelled.")
+				return
+			}
+			image = wizResult.Image
+			dockerName = wizResult.Name
+			desktop = wizResult.Desktop
+			desktopSSL = wizResult.DesktopSSL
+			noX11 = wizResult.NoX11
+			privileged = wizResult.Privileged
+			realtime = wizResult.Realtime
+		} else if dockerName == "" {
+			common.PrintErrorMessage(fmt.Errorf("container name is required (use -n flag)"))
+			return
+		}
 
 		if recordSession {
 			// Build extra args map for recording subprocess
@@ -309,7 +334,6 @@ func registerContainerCommands() {
 	runCmd.Flags().StringP("cgroups", "g", "", "extra cgroup rules (separate them with commas)")
 	runCmd.Flags().StringP("seccomp", "m", "", "Set Seccomp profile ('default' one used by default)")
 	runCmd.Flags().Bool("no-x11", false, "Disable X11 forwarding")
-	runCmd.MarkFlagRequired("name")
 	runCmd.Flags().StringP("exposedports", "z", "", "Exposed ports")
 	runCmd.Flags().StringP("bindedports", "w", "", "Exposed ports")
 	runCmd.Flags().Bool("record", false, "Record the container session")

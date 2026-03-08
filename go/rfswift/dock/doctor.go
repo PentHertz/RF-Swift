@@ -17,6 +17,7 @@ import (
 	"github.com/docker/docker/api/types/image"
 	common "penthertz/rfswift/common"
 	rfutils "penthertz/rfswift/rfutils"
+	"penthertz/rfswift/tui"
 )
 
 // CheckResult holds the outcome of a single diagnostic check.
@@ -50,11 +51,7 @@ func (r *DoctorReport) add(result CheckResult) {
 func RunDoctor() {
 	report := &DoctorReport{}
 
-	cyan := "\033[36m"
-	reset := "\033[0m"
-
-	fmt.Printf("\n%s🩺 RF Swift Doctor%s\n", cyan, reset)
-	fmt.Printf("%s══════════════════════════════════════════════════════════%s\n\n", cyan, reset)
+	tui.PrintDoctorHeader()
 
 	// Run all checks
 	checkContainerEngine(report)
@@ -73,41 +70,20 @@ func RunDoctor() {
 	printReport(report)
 }
 
-func statusIcon(status string) string {
-	switch status {
-	case "ok":
-		return "\033[32m✓\033[0m" // green check
-	case "warn":
-		return "\033[33m!\033[0m" // yellow warning
-	case "fail":
-		return "\033[31m✗\033[0m" // red cross
-	case "skip":
-		return "\033[90m-\033[0m" // gray dash
-	default:
-		return "?"
-	}
-}
-
 func printReport(report *DoctorReport) {
 	for _, r := range report.Results {
-		fmt.Printf("  %s  %-30s %s\n", statusIcon(r.Status), r.Name, r.Message)
+		tui.PrintDoctorResult(tui.DoctorResult{
+			Name:    r.Name,
+			Status:  r.Status,
+			Message: r.Message,
+		})
 	}
 
-	cyan := "\033[36m"
-	green := "\033[32m"
-	yellow := "\033[33m"
-	red := "\033[31m"
-	reset := "\033[0m"
-
-	fmt.Printf("\n%s──────────────────────────────────────────────────────────%s\n", cyan, reset)
-	fmt.Printf("  %s%d passed%s", green, report.pass, reset)
-	if report.warn > 0 {
-		fmt.Printf("  %s%d warnings%s", yellow, report.warn, reset)
-	}
-	if report.fail > 0 {
-		fmt.Printf("  %s%d failed%s", red, report.fail, reset)
-	}
-	fmt.Printf("\n\n")
+	tui.PrintDoctorSummary(tui.DoctorSummary{
+		Pass: report.pass,
+		Warn: report.warn,
+		Fail: report.fail,
+	})
 }
 
 // ---------------------------------------------------------------------------

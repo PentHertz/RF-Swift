@@ -29,6 +29,7 @@ import (
 	"golang.org/x/crypto/ssh/terminal"
 
 	common "penthertz/rfswift/common"
+	"penthertz/rfswift/tui"
 )
 
 // startDesktopInContainer launches the desktop-start script inside an already-running
@@ -305,61 +306,12 @@ func ContainerLast(ifilter string, labelKey string, labelValue string) {
 		})
 	}
 
-	headers := []string{"Created", "Image Tag (ID)", "Container Name", "Container ID", "Command"}
-	width, _, err := terminal.GetSize(int(os.Stdout.Fd()))
-	if err != nil {
-		width = 80
-	}
-
-	// Calculate column widths
-	columnWidths := make([]int, len(headers))
-	for i, header := range headers {
-		columnWidths[i] = len(header)
-	}
-	for _, row := range tableData {
-		for i, col := range row {
-			if len(col) > columnWidths[i] {
-				columnWidths[i] = len(col)
-			}
-		}
-	}
-
-	// Adjust column widths to fit terminal
-	totalWidth := len(headers) + 1
-	for _, w := range columnWidths {
-		totalWidth += w + 2
-	}
-	if totalWidth > width {
-		excess := totalWidth - width
-		for i := range columnWidths {
-			reduction := excess / len(columnWidths)
-			if columnWidths[i] > reduction {
-				columnWidths[i] -= reduction
-				excess -= reduction
-			}
-		}
-		totalWidth = width
-	}
-
-	// Print fancy table
-	pink := "\033[35m"
-	white := "\033[37m"
-	reset := "\033[0m"
-	title := "🤖 Last Run Containers"
-	fmt.Printf("%s%s%s%s%s\n", pink, strings.Repeat(" ", 2), title, strings.Repeat(" ", totalWidth-2-len(title)), reset)
-	fmt.Print(white)
-	printHorizontalBorder(columnWidths, "┌", "┬", "┐")
-	printRow(headers, columnWidths, "│")
-	printHorizontalBorder(columnWidths, "├", "┼", "┤")
-	for i, row := range tableData {
-		printRow(row, columnWidths, "│")
-		if i < len(tableData)-1 {
-			printHorizontalBorder(columnWidths, "├", "┼", "┤")
-		}
-	}
-	printHorizontalBorder(columnWidths, "└", "┴", "┘")
-	fmt.Print(reset)
-	fmt.Println()
+	tui.RenderTable(tui.TableConfig{
+		Title:      "🤖 Last Run Containers",
+		TitleColor: tui.ColorPink,
+		Headers:    []string{"Created", "Image Tag (ID)", "Container Name", "Container ID", "Command"},
+		Rows:       tableData,
+	})
 }
 
 // latestDockerID returns the ID of the most recently created container matching the given label.
@@ -682,11 +634,7 @@ func ContainerRun(containerName string) {
 			common.PrintWarningMessage(fmt.Sprintf("Rules that will be dropped: %s", strings.Join(hostConfig.DeviceCgroupRules, ", ")))
 			common.PrintInfoMessage("Device hotplug (USB, SDR dongles) may not work without cgroup rules.")
 			common.PrintInfoMessage("To use cgroup rules, run RF Swift with sudo.")
-			fmt.Print("\nContinue without cgroup rules? (y/n): ")
-			reader := bufio.NewReader(os.Stdin)
-			response, _ := reader.ReadString('\n')
-			response = strings.ToLower(strings.TrimSpace(response))
-			if response != "y" && response != "yes" {
+			if !tui.Confirm("Continue without cgroup rules?") {
 				common.PrintInfoMessage("Aborted. Re-run with: sudo ./rfswift run ...")
 				return
 			}
