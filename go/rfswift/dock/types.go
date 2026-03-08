@@ -148,6 +148,7 @@ type ContainerConfig struct {
 	desktopPort  string
 	desktopPass  string
 	desktopSSL   bool
+	vpn          string // format: "type:argument" (e.g., "wireguard:./wg0.conf")
 }
 
 var containerCfg = ContainerConfig{

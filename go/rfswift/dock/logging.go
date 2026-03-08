@@ -428,6 +428,11 @@ func ContainerExecWithRecording(containerIdentifier string, workingDir string, r
 		execCmdStr += fmt.Sprintf(" -e %s", execCommand)
 	}
 
+	// Pass through VPN config to the recording subprocess
+	if containerCfg.vpn != "" {
+		execCmdStr += fmt.Sprintf(" --vpn %s", containerCfg.vpn)
+	}
+
 	var recordCmd *exec.Cmd
 
 	switch tool {

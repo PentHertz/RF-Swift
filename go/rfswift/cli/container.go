@@ -47,6 +47,7 @@ var runCmd = &cobra.Command{
 		desktopConfig, _ := cmd.Flags().GetString("desktop-config")
 		desktopPass, _ := cmd.Flags().GetString("desktop-pass")
 		desktopSSL, _ := cmd.Flags().GetBool("desktop-ssl")
+		vpnConfig, _ := cmd.Flags().GetString("vpn")
 
 		// Launch interactive wizard if name or image not provided and terminal is interactive
 		if (dockerName == "" || image == "") && tui.IsInteractive() {
@@ -73,6 +74,9 @@ var runCmd = &cobra.Command{
 			noX11 = wizResult.NoX11
 			privileged = wizResult.Privileged
 			realtime = wizResult.Realtime
+			if wizResult.VPN != "" {
+				vpnConfig = wizResult.VPN
+			}
 		} else if dockerName == "" {
 			common.PrintErrorMessage(fmt.Errorf("container name is required (use -n flag)"))
 			return
@@ -135,6 +139,9 @@ var runCmd = &cobra.Command{
 			if desktopSSL {
 				extraArgs["--desktop-ssl"] = ""
 			}
+			if vpnConfig != "" {
+				extraArgs["--vpn"] = vpnConfig
+			}
 
 			if err := rfdock.ContainerRunWithRecording(dockerName, recordOutput, image, extraArgs); err != nil {
 				common.PrintErrorMessage(err)
@@ -171,6 +178,7 @@ var runCmd = &cobra.Command{
 				}
 				rfdock.ContainerSetDesktopSSL(desktopSSL)
 			}
+			rfdock.ContainerSetVPN(vpnConfig)
 			if runtime.GOOS == "linux" {
 				rfutils.SetPulseCTL(pulseServer)
 			}
@@ -195,6 +203,7 @@ var execCmd = &cobra.Command{
 		desktopConfig, _ := cmd.Flags().GetString("desktop-config")
 		desktopPass, _ := cmd.Flags().GetString("desktop-pass")
 		desktopSSL, _ := cmd.Flags().GetBool("desktop-ssl")
+		vpnConfig, _ := cmd.Flags().GetString("vpn")
 
 		// If no container specified, offer interactive selection
 		if contID == "" && tui.IsInteractive() {
@@ -246,6 +255,7 @@ var execCmd = &cobra.Command{
 			}
 			rfdock.ContainerSetDesktopSSL(desktopSSL)
 		}
+		rfdock.ContainerSetVPN(vpnConfig)
 		if recordSession {
 			if err := rfdock.ContainerExecWithRecording(contID, workingDir, recordOutput, execCommand); err != nil {
 				common.PrintErrorMessage(err)
@@ -276,6 +286,15 @@ var installCmd = &cobra.Command{
 	Run: func(cmd *cobra.Command, args []string) {
 		contID, _ := cmd.Flags().GetString("container")
 		execCommand, _ := cmd.Flags().GetString("install")
+
+		// Interactive container selection
+		if contID == "" && tui.IsInteractive() {
+			contID = pickContainer("Select a container to install into")
+			if contID == "" {
+				return
+			}
+		}
+
 		rfdock.ContainerSetShell(execCommand)
 		rfdock.ContainerInstallFromScript(contID)
 	},
@@ -288,6 +307,40 @@ var commitCmd = &cobra.Command{
 	Run: func(cmd *cobra.Command, args []string) {
 		contID, _ := cmd.Flags().GetString("container")
 		image, _ := cmd.Flags().GetString("image")
+
+		// Interactive container selection
+		if contID == "" && tui.IsInteractive() {
+			contID = pickContainer("Select a container to commit")
+			if contID == "" {
+				return
+			}
+		}
+
+		// Interactive image name
+		if image == "" && tui.IsInteractive() {
+			// Suggest the container's current image
+			containers := rfdock.ListContainers("org.container.project", "rfswift")
+			for _, c := range containers {
+				if c.Name == contID || c.ID == contID {
+					image = c.Image
+					break
+				}
+			}
+			if image == "" {
+				image = "rfswift/committed:latest"
+			}
+			common.PrintInfoMessage(fmt.Sprintf("Committing as image: %s", image))
+		}
+
+		if contID == "" {
+			common.PrintErrorMessage(fmt.Errorf("container is required (use -c flag)"))
+			return
+		}
+		if image == "" {
+			common.PrintErrorMessage(fmt.Errorf("image name is required (use -i flag)"))
+			return
+		}
+
 		rfdock.ContainerSetImage(image)
 		rfdock.ContainerCommit(contID)
 	},
@@ -299,6 +352,39 @@ var stopCmd = &cobra.Command{
 	Long:  `Stop last or a particular container running`,
 	Run: func(cmd *cobra.Command, args []string) {
 		contID, _ := cmd.Flags().GetString("container")
+
+		// Interactive container selection (show only running)
+		if contID == "" && tui.IsInteractive() {
+			containers := rfdock.ListContainers("org.container.project", "rfswift")
+			var running []rfdock.ContainerInfo
+			for _, c := range containers {
+				if c.State == "running" {
+					running = append(running, c)
+				}
+			}
+			if len(running) == 0 {
+				common.PrintInfoMessage("No running RF Swift containers found")
+				return
+			}
+
+			options := make([]string, len(running))
+			for i, c := range running {
+				options[i] = fmt.Sprintf("%s  (%s, %s)", c.Name, c.ID, c.Image)
+			}
+
+			selected, err := tui.SelectOne("Select a container to stop", options)
+			if err != nil {
+				return
+			}
+
+			for i, opt := range options {
+				if opt == selected {
+					contID = running[i].Name
+					break
+				}
+			}
+		}
+
 		rfdock.ContainerStop(contID)
 	},
 }
@@ -310,6 +396,20 @@ var renameCmd = &cobra.Command{
 	Run: func(cmd *cobra.Command, args []string) {
 		dockerName, _ := cmd.Flags().GetString("name")
 		dockerNewName, _ := cmd.Flags().GetString("destination")
+
+		// Interactive container selection
+		if dockerName == "" && tui.IsInteractive() {
+			dockerName = pickContainer("Select a container to rename")
+			if dockerName == "" {
+				return
+			}
+		}
+
+		if dockerNewName == "" {
+			common.PrintErrorMessage(fmt.Errorf("new name is required (use -d flag)"))
+			return
+		}
+
 		rfdock.ContainerRename(dockerName, dockerNewName)
 	},
 }
@@ -317,11 +417,56 @@ var renameCmd = &cobra.Command{
 var removeCmd = &cobra.Command{
 	Use:   "remove",
 	Short: "Remove a container",
-	Long:  `Remore an existing container`,
+	Long:  `Remove an existing container`,
 	Run: func(cmd *cobra.Command, args []string) {
 		contID, _ := cmd.Flags().GetString("container")
+
+		// Interactive container selection
+		if contID == "" && tui.IsInteractive() {
+			contID = pickContainer("Select a container to remove")
+			if contID == "" {
+				return
+			}
+
+			if !tui.Confirm(fmt.Sprintf("Remove container '%s'?", contID)) {
+				common.PrintInfoMessage("Removal cancelled.")
+				return
+			}
+		}
+
+		if contID == "" {
+			common.PrintErrorMessage(fmt.Errorf("container is required (use -c flag)"))
+			return
+		}
+
 		rfdock.ContainerRemove(contID)
 	},
+}
+
+// pickContainer shows an interactive container picker and returns the selected name.
+func pickContainer(title string) string {
+	containers := rfdock.ListContainers("org.container.project", "rfswift")
+	if len(containers) == 0 {
+		common.PrintErrorMessage(fmt.Errorf("no RF Swift containers found"))
+		return ""
+	}
+
+	options := make([]string, len(containers))
+	for i, c := range containers {
+		options[i] = fmt.Sprintf("%s  (%s, %s) [%s]", c.Name, c.ID, c.Image, c.State)
+	}
+
+	selected, err := tui.SelectOne(title, options)
+	if err != nil {
+		return ""
+	}
+
+	for i, opt := range options {
+		if opt == selected {
+			return containers[i].Name
+		}
+	}
+	return ""
 }
 
 // parseAndSetDesktop parses the --desktop-config flag value and configures
@@ -391,6 +536,7 @@ func registerContainerCommands() {
 	runCmd.Flags().String("desktop-config", "", "Desktop config as proto:host:port (e.g., 'http:0.0.0.0:6080' or 'vnc::5900')")
 	runCmd.Flags().String("desktop-pass", "", "Set VNC password for desktop access (recommended when exposing on 0.0.0.0)")
 	runCmd.Flags().Bool("desktop-ssl", false, "Enable SSL/TLS for desktop connections (auto-generates self-signed certificate)")
+	runCmd.Flags().String("vpn", "", "Enable VPN inside container (wireguard:./wg0.conf, openvpn:./client.ovpn, tailscale:--auth-key=tskey-xxx, netbird:--setup-key=xxx)")
 
 	execCmd.Flags().StringP("workdir", "w", "/root", "Working directory inside container")
 	execCmd.Flags().StringP("container", "c", "", "container to run")
@@ -403,21 +549,20 @@ func registerContainerCommands() {
 	execCmd.Flags().String("desktop-config", "", "Desktop config as proto:host:port (e.g., 'http:0.0.0.0:6080' or 'vnc::5900')")
 	execCmd.Flags().String("desktop-pass", "", "Set VNC password for desktop access (recommended when exposing on 0.0.0.0)")
 	execCmd.Flags().Bool("desktop-ssl", false, "Enable SSL/TLS for desktop connections (auto-generates self-signed certificate)")
+	execCmd.Flags().String("vpn", "", "Start VPN inside container (wireguard:./wg0.conf, openvpn:./client.ovpn, tailscale, netbird)")
 
 	lastCmd.Flags().StringP("filter", "f", "", "filter by image name")
 
-	stopCmd.Flags().StringP("container", "c", "", "container to stop")
+	stopCmd.Flags().StringP("container", "c", "", "container to stop (interactive picker if omitted)")
 
 	installCmd.Flags().StringP("install", "i", "", "function for installation")
-	installCmd.Flags().StringP("container", "c", "", "container to run")
+	installCmd.Flags().StringP("container", "c", "", "container (interactive picker if omitted)")
 
-	commitCmd.Flags().StringP("container", "c", "", "container to run")
-	commitCmd.Flags().StringP("image", "i", "", "image (default: 'myrfswift:latest')")
-	commitCmd.MarkFlagRequired("container")
-	commitCmd.MarkFlagRequired("image")
+	commitCmd.Flags().StringP("container", "c", "", "container to commit (interactive picker if omitted)")
+	commitCmd.Flags().StringP("image", "i", "", "image name for commit (auto-suggested if omitted)")
 
-	renameCmd.Flags().StringP("name", "n", "", "Docker current name")
-	renameCmd.Flags().StringP("destination", "d", "", "Docker new name")
+	renameCmd.Flags().StringP("name", "n", "", "current container name (interactive picker if omitted)")
+	renameCmd.Flags().StringP("destination", "d", "", "new container name")
 
-	removeCmd.Flags().StringP("container", "c", "", "container to remove")
+	removeCmd.Flags().StringP("container", "c", "", "container to remove (interactive picker if omitted)")
 }

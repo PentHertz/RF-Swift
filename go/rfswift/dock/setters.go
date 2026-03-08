@@ -190,6 +190,12 @@ func ContainerDesktopEnabled() bool {
 	return containerCfg.desktopProto != ""
 }
 
+// ContainerSetVPN sets the VPN configuration string.
+// Format: "type:argument" (e.g., "wireguard:./wg0.conf", "tailscale:--auth-key=tskey-xxx")
+func ContainerSetVPN(vpn string) {
+	setIfNotEmpty(&containerCfg.vpn, vpn)
+}
+
 // ContainerInstallFromScript runs hot install inside a created container.
 //
 //	in(1): string contid container identifier

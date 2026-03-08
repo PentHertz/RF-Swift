@@ -22,6 +22,7 @@ type RunWizardResult struct {
 	NoX11       bool
 	Privileged  int
 	Realtime    bool
+	VPN         string // format: "type:argument"
 	Confirmed   bool
 }
 
@@ -134,6 +135,7 @@ func RunWizard(images []string) (*RunWizardResult, error) {
 			huh.NewOption("Disable X11 forwarding", "no-x11"),
 			huh.NewOption("Privileged mode", "privileged"),
 			huh.NewOption("Realtime mode (audio/SDR)", "realtime"),
+			huh.NewOption("VPN (WireGuard/OpenVPN/Tailscale/Netbird)", "vpn"),
 		).
 		Value(&features).
 		Run()
@@ -153,6 +155,67 @@ func RunWizard(images []string) (*RunWizardResult, error) {
 			result.Privileged = 1
 		case "realtime":
 			result.Realtime = true
+		case "vpn":
+			// Follow-up: select VPN type and config
+			var vpnType string
+			err = huh.NewSelect[string]().
+				Title("VPN type").
+				Options(
+					huh.NewOption("WireGuard", "wireguard"),
+					huh.NewOption("OpenVPN", "openvpn"),
+					huh.NewOption("Tailscale", "tailscale"),
+					huh.NewOption("Netbird", "netbird"),
+				).
+				Value(&vpnType).
+				Run()
+			if err != nil {
+				return nil, err
+			}
+
+			var vpnArg string
+			switch vpnType {
+			case "wireguard":
+				err = huh.NewInput().
+					Title("WireGuard config file path").
+					Placeholder("./wg0.conf").
+					Value(&vpnArg).
+					Run()
+				if err != nil {
+					return nil, err
+				}
+			case "openvpn":
+				err = huh.NewInput().
+					Title("OpenVPN config file path").
+					Placeholder("./client.ovpn").
+					Value(&vpnArg).
+					Run()
+				if err != nil {
+					return nil, err
+				}
+			case "tailscale":
+				err = huh.NewInput().
+					Title("Tailscale auth key (leave empty for interactive login)").
+					Placeholder("tskey-auth-xxxxx or empty").
+					Value(&vpnArg).
+					Run()
+				if err != nil {
+					return nil, err
+				}
+			case "netbird":
+				err = huh.NewInput().
+					Title("Netbird setup key (leave empty for interactive login)").
+					Placeholder("setup key or empty").
+					Value(&vpnArg).
+					Run()
+				if err != nil {
+					return nil, err
+				}
+			}
+			if vpnArg != "" {
+				result.VPN = vpnType + ":" + vpnArg
+			} else {
+				result.VPN = vpnType
+			}
 		}
 	}
 
@@ -172,8 +235,9 @@ func RunWizard(images []string) (*RunWizardResult, error) {
 		"X11":        boolStr(!result.NoX11),
 		"Privileged": boolStr(result.Privileged == 1),
 		"Realtime":   boolStr(result.Realtime),
+		"VPN":        valueOrNone(result.VPN),
 	}
-	keys := []string{"Image", "Name", "Bindings", "Devices", "Desktop", "SSL/TLS", "X11", "Privileged", "Realtime"}
+	keys := []string{"Image", "Name", "Bindings", "Devices", "Desktop", "SSL/TLS", "X11", "Privileged", "Realtime", "VPN"}
 	PrintRecap("Container Configuration", items, keys)
 
 	// Build equivalent CLI command
@@ -223,6 +287,9 @@ func buildCLICommand(r *RunWizardResult) string {
 	}
 	if r.Realtime {
 		parts = append(parts, "--realtime")
+	}
+	if r.VPN != "" {
+		parts = append(parts, fmt.Sprintf("--vpn %s", r.VPN))
 	}
 	return strings.Join(parts, " ")
 }

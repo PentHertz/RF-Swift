@@ -468,6 +468,15 @@ func ContainerExec(containerIdentifier string, WorkingDir string) {
 		printDesktopURL()
 	}
 
+	// VPN mode: start VPN client inside the container via exec
+	if containerCfg.vpn != "" {
+		if err := startVPNInContainer(ctx, cli, containerIdentifier); err != nil {
+			common.PrintErrorMessage(err)
+			return
+		}
+		printVPNInfo()
+	}
+
 	// Determine shell to use:
 	// Priority: 1) explicitly set via CLI (-e flag) if different from default
 	//           2) container's original shell (from containerJSON.Path)
@@ -508,6 +517,14 @@ func ContainerRun(containerName string) {
 	defer cli.Close()
 
 	containerCfg.imagename = normalizeImageName(containerCfg.imagename)
+
+	// VPN: adjust caps, devices, bindings, env before container creation
+	if containerCfg.vpn != "" {
+		if err := applyVPNConfig(); err != nil {
+			common.PrintErrorMessage(err)
+			return
+		}
+	}
 
 	bindings := combineBindings(containerCfg.x11forward, containerCfg.extrabinding)
 	extrahosts := splitAndCombine(containerCfg.extrahosts)
@@ -784,6 +801,14 @@ func ContainerRun(containerName string) {
 		common.PrintSuccessMessage(fmt.Sprintf("Container '%s' started successfully", containerName))
 		printDesktopURL()
 
+		// Start VPN if configured
+		if containerCfg.vpn != "" {
+			if err := startVPNInContainer(ctx, cli, resp.ID); err != nil {
+				common.PrintErrorMessage(err)
+			}
+			printVPNInfo()
+		}
+
 		// Attach via exec (same as ContainerExec)
 		if err := execInteractiveSession(ctx, cli, resp.ID, containerCfg.shell, ""); err != nil {
 			common.PrintErrorMessage(err)
@@ -817,6 +842,14 @@ func ContainerRun(containerName string) {
 	printContainerProperties(ctx, cli, containerName, props, size)
 	common.PrintSuccessMessage(fmt.Sprintf("Container '%s' started successfully", containerName))
 	printDesktopURL()
+
+	// Start VPN if configured
+	if containerCfg.vpn != "" {
+		if err := startVPNInContainer(ctx, cli, resp.ID); err != nil {
+			common.PrintErrorMessage(err)
+		}
+		printVPNInfo()
+	}
 
 	handleIOStreams(waiter)
 	fd := int(os.Stdin.Fd())
