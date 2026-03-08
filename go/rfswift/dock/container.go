@@ -764,8 +764,11 @@ func ContainerRun(containerName string) {
 		return
 	}
 
-	// ── Podman: use exec-style attach (compat API rejects attach-before-start) ──
-	if GetEngine().Type() == EnginePodman {
+	// ── Podman or recording: use exec-style attach ──
+	// Podman's compat API rejects attach-before-start.
+	// Recording mode uses exec so RFSWIFT_RECORDING is session-scoped
+	// (not baked into the container env, which would persist forever).
+	if GetEngine().Type() == EnginePodman || os.Getenv("RFSWIFT_RECORDING") == "1" {
 		if err := cli.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
 			common.PrintErrorMessage(err)
 			return
