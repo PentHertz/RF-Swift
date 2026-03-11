@@ -7,11 +7,14 @@ import (
     "path/filepath"
     "runtime"
     "strings"
+
+    "github.com/charmbracelet/lipgloss"
+    "golang.org/x/term"
 )
 
 // RF Swift repo
-var Version = "1.0.1"
-var Codename = "Skywave"
+var Version = "2.0.0-dev"
+var Codename = "Harmonic"
 var Branch = "main"
 var Owner = "PentHertz"
 var Repo = "RF-Swift"
@@ -65,85 +68,161 @@ var ascii_art = `
                 RF toolbox for HAMs and professionals                                                                             
 `
 
-// PrintASCII prints the RF-Swift ASCII art banner to stdout with cycling ANSI
-// colors applied line by line, followed by the centered version string.
-//
-//	out: void
-func PrintASCII() {
-    colors := []string{
-        "\033[31m", // Red
-        "\033[33m", // Yellow
-        "\033[32m", // Green
-        "\033[36m", // Cyan
-        "\033[34m", // Blue
-        "\033[35m", // Magenta
+// termWidth returns the current terminal width, defaulting to 80.
+func termWidth() int {
+    w, _, err := term.GetSize(int(os.Stdout.Fd()))
+    if err != nil || w <= 0 {
+        return 80
     }
-    reset := "\033[0m"
+    return w
+}
+
+// PrintASCII prints the RF-Swift ASCII art banner to stdout with cycling
+// colors applied line by line, followed by the centered version string.
+func PrintASCII() {
+    colors := []lipgloss.Color{
+        lipgloss.Color("#FF4444"), // Red
+        lipgloss.Color("#FFAA00"), // Yellow
+        lipgloss.Color("#00FF00"), // Green
+        lipgloss.Color("#00FFFF"), // Cyan
+        lipgloss.Color("#4488FF"), // Blue
+        lipgloss.Color("#FF69B4"), // Magenta
+    }
 
     lines := strings.Split(ascii_art, "\n")
     for i, line := range lines {
-        color := colors[i%len(colors)]
-        fmt.Println(color + line + reset)
+        s := lipgloss.NewStyle().Foreground(colors[i%len(colors)])
+        fmt.Println(s.Render(line))
     }
 
     // Display version and codename
-    cyan := "\033[36m"
-    dim := "\033[2m"
     versionStr := fmt.Sprintf("v%s \"%s\"", Version, Codename)
-    artWidth := 75 // approximate width of the ASCII art
+    artWidth := 75
     pad := (artWidth - len(versionStr)) / 2
     if pad < 0 {
         pad = 0
     }
-    fmt.Printf("%s%s%s%s%s\n\n", dim, strings.Repeat(" ", pad), cyan, versionStr, reset)
+    styled := lipgloss.NewStyle().
+        Foreground(lipgloss.Color("#00FFFF")).
+        Faint(true).
+        Render(strings.Repeat(" ", pad) + versionStr)
+    fmt.Printf("%s\n\n", styled)
 }
 
-// PrintErrorMessage prints a formatted error message to stdout using red and
-// white ANSI colors with a "[!]" prefix.
-//
-//	in(1): error err the error whose message is to be displayed
-//	out: void
+// messageBox renders a styled message box with a title line and wrapped body.
+func messageBox(icon string, title string, body string, borderColor lipgloss.Color, titleColor lipgloss.Color) {
+    w := termWidth()
+    boxWidth := w - 4
+    if boxWidth < 30 {
+        boxWidth = 30
+    }
+    if boxWidth > 100 {
+        boxWidth = 100
+    }
+
+    innerWidth := boxWidth - 4 // account for "│ " and " │"
+
+    border := lipgloss.NewStyle().Foreground(borderColor)
+    titleStyle := lipgloss.NewStyle().Foreground(titleColor).Bold(true)
+
+    // Top border
+    fmt.Printf("%s\n", border.Render("┌"+strings.Repeat("─", boxWidth-2)+"┐"))
+
+    // Title line — use lipgloss.Width for correct Unicode display width
+    titleText := fmt.Sprintf(" %s %s", icon, title)
+    padded := titleText + strings.Repeat(" ", max(0, innerWidth-lipgloss.Width(titleText)))
+    fmt.Printf("%s%s%s\n", border.Render("│ "), titleStyle.Render(padded), border.Render(" │"))
+
+    // Separator
+    fmt.Printf("%s\n", border.Render("├"+strings.Repeat("─", boxWidth-2)+"┤"))
+
+    // Body lines with word wrapping
+    bodyLines := strings.Split(body, "\n")
+    for _, line := range bodyLines {
+        wrapped := wrapTextSimple(line, innerWidth)
+        for _, wl := range wrapped {
+            padLine := wl + strings.Repeat(" ", max(0, innerWidth-lipgloss.Width(wl)))
+            fmt.Printf("%s%s%s\n", border.Render("│ "), padLine, border.Render(" │"))
+        }
+    }
+
+    // Bottom border
+    fmt.Printf("%s\n", border.Render("└"+strings.Repeat("─", boxWidth-2)+"┘"))
+}
+
+// wrapTextSimple splits text into lines that fit within width characters.
+func wrapTextSimple(text string, width int) []string {
+    if width <= 0 {
+        return []string{text}
+    }
+    words := strings.Fields(text)
+    if len(words) == 0 {
+        return []string{""}
+    }
+
+    var lines []string
+    current := ""
+    for _, word := range words {
+        if current == "" {
+            current = word
+        } else if lipgloss.Width(current)+1+lipgloss.Width(word) <= width {
+            current += " " + word
+        } else {
+            lines = append(lines, current)
+            current = word
+        }
+    }
+    if current != "" {
+        lines = append(lines, current)
+    }
+    return lines
+}
+
+// stripAnsiSimple removes ANSI escape sequences for length calculation.
+func stripAnsiSimple(s string) string {
+    result := s
+    for {
+        start := strings.Index(result, "\033[")
+        if start == -1 {
+            break
+        }
+        end := strings.IndexByte(result[start:], 'm')
+        if end == -1 {
+            break
+        }
+        result = result[:start] + result[start+end+1:]
+    }
+    return result
+}
+
+// PrintErrorMessage prints a styled error box.
 func PrintErrorMessage(err error) {
-    red := "\033[31m"
-    white := "\033[37m"
-    reset := "\033[0m"
-    fmt.Printf("%s[!] %s%s%s\n", red, white, err.Error(), reset)
+    red := lipgloss.Color("#FF4444")
+    messageBox("✗", "Error", err.Error(), red, red)
 }
 
-// PrintSuccessMessage prints a formatted success message to stdout using green
-// and white ANSI colors with a "[+]" prefix.
-//
-//	in(1): string message the success message to display
-//	out: void
+// PrintSuccessMessage prints a styled success box.
 func PrintSuccessMessage(message string) {
-    green := "\033[32m"
-    white := "\033[37m"
-    reset := "\033[0m"
-    fmt.Printf("%s[+] %s%s%s\n", green, white, message, reset)
+    green := lipgloss.Color("#00FF00")
+    messageBox("✓", "Success", message, green, green)
 }
 
-// PrintWarningMessage prints a formatted warning or notice message to stdout
-// using yellow and white ANSI colors with a "[!]" prefix.
-//
-//	in(1): string message the warning message to display
-//	out: void
+// PrintWarningMessage prints a styled warning box.
 func PrintWarningMessage(message string) {
-    yellow := "\033[33m" // Yellow color for warnings or notices
-    white := "\033[37m"
-    reset := "\033[0m"
-    fmt.Printf("%s[!] %s%s%s\n", yellow, white, message, reset)
+    yellow := lipgloss.Color("#FFAA00")
+    messageBox("!", "Warning", message, yellow, yellow)
 }
 
-// PrintInfoMessage prints a formatted informational message to stdout using
-// blue ANSI color with a "[i]" prefix. The message accepts any type via an
-// empty interface so callers can pass strings, errors, or other values.
-//
-//	in(1): interface{} message the value to display as an informational message
-//	out: void
+// PrintInfoMessage prints a styled informational message with a "[i]" prefix.
 func PrintInfoMessage(message interface{}) {
-    blue := "\033[34m"
-    reset := "\033[0m"
-    fmt.Printf("%s[i] %v%s\n", blue, message, reset)
+    blue := lipgloss.NewStyle().Foreground(lipgloss.Color("#4488FF"))
+    fmt.Printf("%s %v\n", blue.Render("[i]"), message)
+}
+
+// PrintInfoBox prints an informational message in a styled box.
+func PrintInfoBox(message string) {
+    cyan := lipgloss.Color("#00BFFF")
+    messageBox("i", "Info", message, cyan, cyan)
 }
 
 // ConfigFileByPlatform returns the platform-appropriate absolute path to the

@@ -24,10 +24,8 @@ import (
 //	out: none
 func setupX11(noX11 bool, xDisplay string, setDisplay bool) {
 	if noX11 {
-		if setDisplay {
-			rfdock.ContainerSetX11("")
-			rfdock.ContainerSetXDisplay("")
-		}
+		rfdock.ContainerSetX11("")
+		rfdock.ContainerSetXDisplay("")
 		return
 	}
 	if runtime.GOOS == "windows" {
@@ -144,6 +142,7 @@ func init() {
 		registerWinUSBCommands()
 	}
 	rootCmd.AddCommand(engineCmd)
+	registerDoctorCommands()
 }
 
 // Execute runs the root cobra command, invoking the appropriate subcommand based on

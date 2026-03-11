@@ -5,11 +5,14 @@
 package cli
 
 import (
+	"fmt"
 	"os"
+	"strings"
 
 	"github.com/spf13/cobra"
 	common "penthertz/rfswift/common"
 	rfdock "penthertz/rfswift/dock"
+	"penthertz/rfswift/tui"
 )
 
 var ImagesCmd = &cobra.Command{
@@ -26,7 +29,7 @@ var ImagesLocalCmd = &cobra.Command{
 		labelKey := "org.container.project"
 		labelValue := "rfswift"
 		showVersions, _ := cmd.Flags().GetBool("show-versions")
-    filterImage, _ := cmd.Flags().GetString("filter")
+		filterImage, _ := cmd.Flags().GetString("filter")
 		rfdock.PrintImagesTable(labelKey, labelValue, showVersions, filterImage)
 	},
 }
@@ -37,7 +40,7 @@ var ImagesRemoteCmd = &cobra.Command{
 	Long:  `Lists RF Swift images from official repository`,
 	Run: func(cmd *cobra.Command, args []string) {
 		showVersions, _ := cmd.Flags().GetBool("show-versions")
-    filterImage, _ := cmd.Flags().GetString("filter")
+		filterImage, _ := cmd.Flags().GetString("filter")
 		rfdock.ListDockerImagesRepo(showVersions, filterImage)
 	},
 }
@@ -76,6 +79,28 @@ var retagCmd = &cobra.Command{
 	Run: func(cmd *cobra.Command, args []string) {
 		imageRef, _ := cmd.Flags().GetString("image")
 		imageTag, _ := cmd.Flags().GetString("tag")
+
+		// Interactive image selection
+		if imageRef == "" && tui.IsInteractive() {
+			tags := rfdock.ListImageTags("org.container.project", "rfswift")
+			if len(tags) == 0 {
+				common.PrintErrorMessage(fmt.Errorf("no RF Swift images found"))
+				os.Exit(1)
+			}
+
+			selected, err := tui.SelectOne("Select an image to retag", tags)
+			if err != nil {
+				common.PrintErrorMessage(err)
+				os.Exit(1)
+			}
+			imageRef = selected
+		}
+
+		if imageTag == "" {
+			common.PrintErrorMessage(fmt.Errorf("target tag is required (use -t flag)"))
+			os.Exit(1)
+		}
+
 		rfdock.ContainerTag(imageRef, imageTag)
 	},
 }
@@ -86,6 +111,33 @@ var DeleteCmd = &cobra.Command{
 	Long:  `Delete an RF Swift image from image name or tag`,
 	Run: func(cmd *cobra.Command, args []string) {
 		image, _ := cmd.Flags().GetString("image")
+
+		// Interactive image selection
+		if image == "" && tui.IsInteractive() {
+			tags := rfdock.ListImageTags("org.container.project", "rfswift")
+			if len(tags) == 0 {
+				common.PrintErrorMessage(fmt.Errorf("no RF Swift images found"))
+				os.Exit(1)
+			}
+
+			selected, err := tui.SelectOne("Select an image to delete", tags)
+			if err != nil {
+				common.PrintErrorMessage(err)
+				os.Exit(1)
+			}
+			image = selected
+
+			if !tui.Confirm(fmt.Sprintf("Delete image '%s'?", image)) {
+				common.PrintInfoMessage("Deletion cancelled.")
+				return
+			}
+		}
+
+		if image == "" {
+			common.PrintErrorMessage(fmt.Errorf("image is required (use -i flag)"))
+			os.Exit(1)
+		}
+
 		rfdock.DeleteImage(image)
 	},
 }
@@ -98,6 +150,33 @@ var DownloadCmd = &cobra.Command{
 		imageName, _ := cmd.Flags().GetString("image")
 		outputFile, _ := cmd.Flags().GetString("output")
 		pullFirst, _ := cmd.Flags().GetBool("pull")
+
+		// Interactive image selection
+		if imageName == "" && tui.IsInteractive() {
+			tags := rfdock.ListImageTags("org.container.project", "rfswift")
+			if len(tags) == 0 {
+				common.PrintErrorMessage(fmt.Errorf("no RF Swift images found"))
+				os.Exit(1)
+			}
+
+			selected, err := tui.SelectOne("Select an image to download", tags)
+			if err != nil {
+				common.PrintErrorMessage(err)
+				os.Exit(1)
+			}
+			imageName = selected
+		}
+
+		if imageName == "" {
+			common.PrintErrorMessage(fmt.Errorf("image is required (use -i flag)"))
+			os.Exit(1)
+		}
+
+		if outputFile == "" {
+			safe := strings.ReplaceAll(imageName, "/", "_")
+			safe = strings.ReplaceAll(safe, ":", "_")
+			outputFile = fmt.Sprintf("%s.tar.gz", safe)
+		}
 
 		if err := rfdock.SaveImageToFile(imageName, outputFile, pullFirst); err != nil {
 			common.PrintErrorMessage(err)
@@ -126,16 +205,12 @@ func registerImageCommands() {
 
 	ImagesVersionsCmd.Flags().StringP("filter", "f", "", "Filter by image name")
 
-	retagCmd.Flags().StringP("image", "i", "", "image reference")
-	retagCmd.Flags().StringP("tag", "t", "", "rename to target tag")
-	retagCmd.MarkFlagRequired("image")
-	retagCmd.MarkFlagRequired("tag")
+	retagCmd.Flags().StringP("image", "i", "", "image to retag (interactive picker if omitted)")
+	retagCmd.Flags().StringP("tag", "t", "", "new target tag")
 
-	DeleteCmd.Flags().StringP("image", "i", "", "image ID or tag")
+	DeleteCmd.Flags().StringP("image", "i", "", "image to delete (interactive picker if omitted)")
 
-	DownloadCmd.Flags().StringP("image", "i", "", "image name to download (e.g., penthertz/rfswift_noble:sdr_light)")
-	DownloadCmd.Flags().StringP("output", "o", "", "output file path (e.g., rfswift-latest.tar.gz)")
+	DownloadCmd.Flags().StringP("image", "i", "", "image to download (interactive picker if omitted)")
+	DownloadCmd.Flags().StringP("output", "o", "", "output file path (auto-generated if omitted)")
 	DownloadCmd.Flags().Bool("pull", false, "pull image first if not present locally")
-	DownloadCmd.MarkFlagRequired("image")
-	DownloadCmd.MarkFlagRequired("output")
 }

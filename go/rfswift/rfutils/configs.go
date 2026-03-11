@@ -33,6 +33,13 @@ type Config struct {
 	Audio struct {
 		PulseServer string
 	}
+	Desktop struct {
+		Proto    string
+		Host     string
+		Password string
+		Port     string
+		SSL      string
+	}
 }
 
 const (
@@ -176,6 +183,19 @@ func ReadOrCreateConfig(filename string) (*Config, error) {
 			if key == "pulse_server" {
 				config.Audio.PulseServer = value
 			}
+		case "desktop":
+			switch key {
+			case "proto":
+				config.Desktop.Proto = value
+			case "host":
+				config.Desktop.Host = value
+			case "port":
+				config.Desktop.Port = value
+			case "password":
+				config.Desktop.Password = value
+			case "ssl":
+				config.Desktop.SSL = value
+			}
 		}
 	}
 
@@ -285,6 +305,13 @@ cgroups = c 189:* rwm,c 166:* rwm,c 188:* rwm
 
 [audio]
 pulse_server = tcp:localhost:34567
+
+[desktop]
+proto =
+host = 127.0.0.1
+password =
+port = 6080
+ssl =
 `, defaultDevices)
 
 	dir := filepath.Dir(filename)

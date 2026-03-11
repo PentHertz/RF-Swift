@@ -4,10 +4,8 @@
 package dock
 
 import (
-	"bufio"
 	"context"
 	"fmt"
-	"os"
 	"strings"
 	"time"
 
@@ -18,6 +16,7 @@ import (
 	"github.com/docker/docker/client"
 
 	common "penthertz/rfswift/common"
+	"penthertz/rfswift/tui"
 )
 
 // parseDuration parses a human-readable duration string into a time.Duration.
@@ -193,11 +192,7 @@ func CleanupContainers(olderThan string, force bool, dryRun bool, onlyStopped bo
 	}
 
 	if !force {
-		reader := bufio.NewReader(os.Stdin)
-		common.PrintWarningMessage(fmt.Sprintf("Are you sure you want to remove %d container(s)? (y/n): ", len(toDelete)))
-		response, _ := reader.ReadString('\n')
-		response = strings.ToLower(strings.TrimSpace(response))
-		if response != "y" && response != "yes" {
+		if !tui.Confirm(fmt.Sprintf("Are you sure you want to remove %d container(s)?", len(toDelete))) {
 			common.PrintInfoMessage("Cleanup cancelled")
 			return nil
 		}
@@ -333,15 +328,11 @@ func CleanupImages(olderThan string, force bool, dryRun bool, onlyDangling bool,
 	}
 
 	if !force {
-		reader := bufio.NewReader(os.Stdin)
 		totalToRemove := len(toDelete)
 		if pruneChildren {
 			totalToRemove += totalDescendants
 		}
-		common.PrintWarningMessage(fmt.Sprintf("Are you sure you want to remove %d image(s) in total? (y/n): ", totalToRemove))
-		response, _ := reader.ReadString('\n')
-		response = strings.ToLower(strings.TrimSpace(response))
-		if response != "y" && response != "yes" {
+		if !tui.Confirm(fmt.Sprintf("Are you sure you want to remove %d image(s) in total?", totalToRemove)) {
 			common.PrintInfoMessage("Cleanup cancelled")
 			return nil
 		}

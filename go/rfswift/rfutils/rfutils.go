@@ -202,11 +202,7 @@ func DisplayVersion() {
 
 	compareResult := VersionCompare(currentVersion, latestVersion)
 	if compareResult >= 0 {
-		DisplayNotification(
-			" Up-to-date",
-			fmt.Sprintf("You are running the latest version: %s", currentVersion),
-			"info",
-		)
+		common.PrintInfoMessage(fmt.Sprintf("Up-to-date: you are running the latest version %s", currentVersion))
 		return
 	}
 

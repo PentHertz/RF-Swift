@@ -5,7 +5,6 @@
 package dock
 
 import (
-	"bufio"
 	"compress/gzip"
 	"context"
 	"encoding/json"
@@ -23,10 +22,10 @@ import (
 	"github.com/docker/docker/client"
 	"github.com/docker/docker/pkg/jsonmessage"
 	"github.com/moby/term"
-	"golang.org/x/crypto/ssh/terminal"
 
 	common "penthertz/rfswift/common"
 	rfutils "penthertz/rfswift/rfutils"
+	"penthertz/rfswift/tui"
 )
 
 // getRemoteImageDigest fetches the digest for a specific tag from Docker Hub,
@@ -427,8 +426,8 @@ func ContainerPull(imageref string, imagetag string) {
 	}
 	defer out.Close()
 
-	// Process pull output
-	fd, isTerminal := term.GetFdInfo(os.Stdout)
+	// Process pull output with per-layer progress
+	pullProgress := tui.NewLayerProgress()
 	jsonDecoder := json.NewDecoder(out)
 	for {
 		var msg jsonmessage.JSONMessage
@@ -438,12 +437,22 @@ func ContainerPull(imageref string, imagetag string) {
 			common.PrintErrorMessage(err)
 			return
 		}
-		if isTerminal {
-			_ = jsonmessage.DisplayJSONMessagesStream(out, os.Stdout, fd, isTerminal, nil)
-		} else {
-			fmt.Println(msg)
+		if msg.ID != "" {
+			var current, total int64
+			if msg.Progress != nil {
+				current = msg.Progress.Current
+				total = msg.Progress.Total
+			}
+			pullProgress.Update(msg.ID, msg.Status, current, total)
+			if pullProgress.Total() > 0 {
+				fmt.Printf("\033[%dA\033[J", pullProgress.Total())
+			}
+			fmt.Print(pullProgress.Render())
+		} else if msg.Status != "" {
+			fmt.Printf("  %s\n", msg.Status)
 		}
 	}
+	tui.PrintSuccess(fmt.Sprintf("Pull complete (%d/%d layers)", pullProgress.Done(), pullProgress.Total()))
 
 	// Get information about the pulled image
 	remoteInspect, _, err := cli.ImageInspectWithRaw(ctx, actualPullRef)
@@ -455,12 +464,7 @@ func ContainerPull(imageref string, imagetag string) {
 	// Compare local and remote images
 	if localExists && localDigest != remoteInspect.ID {
 		common.PrintInfoMessage("The pulled image is different from the local one.")
-		reader := bufio.NewReader(os.Stdin)
-		fmt.Print("Do you want to rename the old image with a date tag? (y/n): ")
-		response, _ := reader.ReadString('\n')
-		response = strings.TrimSpace(strings.ToLower(response))
-
-		if response == "y" || response == "yes" {
+		if tui.Confirm("Do you want to rename the old image with a date tag?") {
 			currentTime := time.Now()
 			dateTag := fmt.Sprintf("%s-%02d%02d%d", imagetag, currentTime.Day(), currentTime.Month(), currentTime.Year())
 			err = cli.ImageTag(ctx, localDigest, dateTag)
@@ -576,6 +580,19 @@ func ListImages(labelKey string, labelValue string) ([]image.Summary, error) {
 	}
 
 	return filteredImages, nil
+}
+
+// ListImageTags returns a flat list of all repo:tag strings for RF Swift images.
+func ListImageTags(labelKey string, labelValue string) []string {
+	images, err := ListImages(labelKey, labelValue)
+	if err != nil {
+		return nil
+	}
+	var tags []string
+	for _, img := range images {
+		tags = append(tags, img.RepoTags...)
+	}
+	return tags
 }
 
 // PrintImagesTable prints a formatted terminal table of RF Swift images filtered
@@ -707,78 +724,16 @@ func PrintImagesTable(labelKey string, labelValue string, showVersions bool, fil
 		headers = append(headers, "Version")
 	}
 
-	width, _, err := terminal.GetSize(int(os.Stdout.Fd()))
-	if err != nil {
-		width = 80
-	}
+	statusCol := 5
+	versionCol := 6
 
-	columnWidths := make([]int, len(headers))
-	for i, header := range headers {
-		columnWidths[i] = len(header)
-	}
-	for _, row := range tableData {
-		for i, col := range row {
-			if len(col) > columnWidths[i] {
-				columnWidths[i] = len(col)
-			}
-		}
-	}
-
-	// Ensure Status column is wide enough
-	statusIdx := 5
-	columnWidths[statusIdx] = max(columnWidths[statusIdx], maxStatusLength)
-
-	// Ensure Version column is wide enough if present
-	if showVersions && maxVersionLength > 0 {
-		versionIdx := 6
-		columnWidths[versionIdx] = max(columnWidths[versionIdx], maxVersionLength)
-	}
-
-	// Adjust column widths
-	totalWidth := len(headers) + 1
-	for _, w := range columnWidths {
-		totalWidth += w + 2
-	}
-
-	if totalWidth > width {
-		excess := totalWidth - width
-		colsToAdjust := len(columnWidths) - 2
-		for i := range columnWidths[:colsToAdjust] {
-			reduction := excess / colsToAdjust
-			if columnWidths[i] > reduction {
-				columnWidths[i] -= reduction
-				if columnWidths[i] < 5 {
-					columnWidths[i] = 5
-				}
-				excess -= reduction
-			}
-		}
-		totalWidth = width
-	}
-
-	yellow := "\033[33m"
-	white := "\033[37m"
-	reset := "\033[0m"
-	title := "📦 RF Swift Images"
-
-	fmt.Printf("%s%s%s%s%s\n", yellow, strings.Repeat(" ", 2), title, strings.Repeat(" ", totalWidth-2-len(title)), reset)
-	fmt.Print(white)
-
-	printHorizontalBorder(columnWidths, "┌", "┬", "┐")
-	printRow(headers, columnWidths, "│")
-	printHorizontalBorder(columnWidths, "├", "┼", "┤")
-
-	for i, row := range tableData {
-		printRowWithColorAndVersion(row, columnWidths, "│", showVersions)
-		if i < len(tableData)-1 {
-			printHorizontalBorder(columnWidths, "├", "┼", "┤")
-		}
-	}
-
-	printHorizontalBorder(columnWidths, "└", "┴", "┘")
-
-	fmt.Print(reset)
-	fmt.Println()
+	tui.RenderTable(tui.TableConfig{
+		Title:      "📦 RF Swift Images",
+		TitleColor: tui.ColorWarning,
+		Headers:    headers,
+		Rows:       tableData,
+		ColorFunc:  tui.ImageTableColorFunc(statusCol, versionCol, showVersions),
+	})
 }
 
 // DeleteImage removes a local image by ID or tag after interactively confirming
@@ -917,15 +872,7 @@ func DeleteImage(imageIDOrTag string) error {
 	common.PrintInfoMessage(fmt.Sprintf("Found image to delete: ID: %s, Tags: %v", strings.TrimPrefix(imageID, "sha256:"), displayTags))
 
 	// Ask for user confirmation
-	reader := bufio.NewReader(os.Stdin)
-	common.PrintWarningMessage(fmt.Sprintf("Are you sure you want to delete this image? (y/n): "))
-	response, err := reader.ReadString('\n')
-	if err != nil {
-		common.PrintErrorMessage(fmt.Errorf("failed to read user input: %v", err))
-		return err
-	}
-	response = strings.ToLower(strings.TrimSpace(response))
-	if response != "y" && response != "yes" {
+	if !tui.Confirm("Are you sure you want to delete this image?") {
 		common.PrintInfoMessage("Image deletion cancelled by user.")
 		return nil
 	}
@@ -1144,8 +1091,8 @@ func ContainerPullVersion(imageref string, version string, imagetag string) {
 	}
 	defer out.Close()
 
-	// Process pull output
-	fd, isTerminal := term.GetFdInfo(os.Stdout)
+	// Process pull output with per-layer progress
+	pullProgress := tui.NewLayerProgress()
 	jsonDecoder := json.NewDecoder(out)
 	for {
 		var msg jsonmessage.JSONMessage
@@ -1155,12 +1102,22 @@ func ContainerPullVersion(imageref string, version string, imagetag string) {
 			common.PrintErrorMessage(err)
 			return
 		}
-		if isTerminal {
-			_ = jsonmessage.DisplayJSONMessagesStream(out, os.Stdout, fd, isTerminal, nil)
-		} else {
-			fmt.Println(msg)
+		if msg.ID != "" {
+			var current, total int64
+			if msg.Progress != nil {
+				current = msg.Progress.Current
+				total = msg.Progress.Total
+			}
+			pullProgress.Update(msg.ID, msg.Status, current, total)
+			if pullProgress.Total() > 0 {
+				fmt.Printf("\033[%dA\033[J", pullProgress.Total())
+			}
+			fmt.Print(pullProgress.Render())
+		} else if msg.Status != "" {
+			fmt.Printf("  %s\n", msg.Status)
 		}
 	}
+	tui.PrintSuccess(fmt.Sprintf("Pull complete (%d/%d layers)", pullProgress.Done(), pullProgress.Total()))
 
 	// Get the pulled image info
 	remoteInspect, _, err := cli.ImageInspectWithRaw(ctx, pullRef)

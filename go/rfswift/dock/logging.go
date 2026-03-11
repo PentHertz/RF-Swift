@@ -16,6 +16,7 @@ import (
 	"time"
 
 	common "penthertz/rfswift/common"
+	"penthertz/rfswift/tui"
 )
 
 // detectLoggingTool detects which terminal recording tool is available on the system.
@@ -85,6 +86,7 @@ func StartLogging(outputFile string, useScript bool) error {
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
+	cmd.Env = append(os.Environ(), "RFSWIFT_RECORDING=1")
 
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("failed to start recording: %v", err)
@@ -99,6 +101,9 @@ func StartLogging(outputFile string, useScript bool) error {
 	if err := ioutil.WriteFile(stateFile, []byte(state), 0644); err != nil {
 		common.PrintWarningMessage(fmt.Sprintf("Failed to save state: %v", err))
 	}
+
+	// Set terminal title to show recording indicator
+	fmt.Printf("\033]0;⏺ REC | RF Swift\007")
 
 	common.PrintSuccessMessage("Recording started!")
 	common.PrintInfoMessage("To stop recording:")
@@ -158,6 +163,9 @@ func StopLogging() error {
 		return fmt.Errorf("failed to stop recording: %v", err)
 	}
 
+	// Reset terminal title
+	fmt.Printf("\033]0;RF Swift\007")
+
 	common.PrintSuccessMessage(fmt.Sprintf("Recording stopped: %s", loggingFile))
 
 	loggingPID = 0
@@ -212,59 +220,79 @@ func ReplayLog(inputFile string, speed float64) error {
 	return nil
 }
 
-// ListLogs lists all recorded session files found under a directory, printing metadata for each.
+// LogEntry holds metadata about a recorded session file.
+type LogEntry struct {
+	Path    string
+	Tool    string
+	Size    float64 // KB
+	ModTime string
+}
+
+// FindLogs searches a directory for rfswift session recordings and returns metadata.
 //
-//	in(1): string logDir directory to search for .cast and rfswift-session .log files; defaults to "." when empty
-//	out: error non-nil if the directory walk fails
-func ListLogs(logDir string) error {
+//	in(1): string logDir directory to search; defaults to "." when empty
+//	out: ([]LogEntry, error)
+func FindLogs(logDir string) ([]LogEntry, error) {
 	if logDir == "" {
 		logDir = "."
 	}
 
-	common.PrintInfoMessage(fmt.Sprintf("Searching for session logs in: %s", logDir))
-
-	var logs []string
+	var entries []LogEntry
 
 	err := filepath.Walk(logDir, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
 		}
-		if !info.IsDir() {
-			if strings.HasSuffix(path, ".cast") || (strings.HasSuffix(path, ".log") && strings.Contains(path, "rfswift-session")) {
-				logs = append(logs, path)
-			}
+		if info.IsDir() {
+			return nil
 		}
+		isRfswiftLog := strings.HasSuffix(path, ".cast") ||
+			(strings.HasSuffix(path, ".log") && strings.Contains(path, "rfswift"))
+		if !isRfswiftLog {
+			return nil
+		}
+
+		tool := "script"
+		if strings.HasSuffix(path, ".cast") {
+			tool = "asciinema"
+		}
+		entries = append(entries, LogEntry{
+			Path:    path,
+			Tool:    tool,
+			Size:    float64(info.Size()) / 1024,
+			ModTime: info.ModTime().Format("2006-01-02 15:04"),
+		})
 		return nil
 	})
 
+	return entries, err
+}
+
+// ListLogs lists all recorded session files found under a directory in a styled table.
+//
+//	in(1): string logDir directory to search for .cast and rfswift-session .log files; defaults to "." when empty
+//	out: error non-nil if the directory walk fails
+func ListLogs(logDir string) error {
+	entries, err := FindLogs(logDir)
 	if err != nil {
 		return fmt.Errorf("failed to search directory: %v", err)
 	}
 
-	if len(logs) == 0 {
-		common.PrintInfoMessage("No session logs found")
+	if len(entries) == 0 {
+		common.PrintInfoMessage("No session recordings found")
 		return nil
 	}
 
-	cyan := "\033[36m"
-	reset := "\033[0m"
-	fmt.Printf("%s📹 Session Logs: %d%s\n", cyan, len(logs), reset)
-
-	for _, log := range logs {
-		info, _ := os.Stat(log)
-		size := float64(info.Size()) / 1024
-		modTime := info.ModTime().Format("2006-01-02 15:04:05")
-
-		var tool string
-		if strings.HasSuffix(log, ".cast") {
-			tool = "asciinema"
-		} else {
-			tool = "script"
-		}
-
-		fmt.Printf("  • %s\n", log)
-		fmt.Printf("    Tool: %s | Size: %.2f KB | Modified: %s\n", tool, size, modTime)
+	rows := make([][]string, len(entries))
+	for i, e := range entries {
+		rows[i] = []string{fmt.Sprintf("%d", i+1), e.Path, e.Tool, fmt.Sprintf("%.1f KB", e.Size), e.ModTime}
 	}
+
+	tui.RenderTable(tui.TableConfig{
+		Title:   "Session Recordings",
+		Headers: []string{"#", "File", "Tool", "Size", "Date"},
+		Rows:    rows,
+	})
 
 	return nil
 }
@@ -326,6 +354,7 @@ func ContainerRunWithRecording(containerName string, recordOutput string, image 
 	recordCmd.Stdin = os.Stdin
 	recordCmd.Stdout = os.Stdout
 	recordCmd.Stderr = os.Stderr
+	recordCmd.Env = append(os.Environ(), "RFSWIFT_RECORDING=1")
 
 	if err := recordCmd.Run(); err != nil {
 		return fmt.Errorf("recording session failed: %v", err)
@@ -399,6 +428,11 @@ func ContainerExecWithRecording(containerIdentifier string, workingDir string, r
 		execCmdStr += fmt.Sprintf(" -e %s", execCommand)
 	}
 
+	// Pass through VPN config to the recording subprocess
+	if containerCfg.vpn != "" {
+		execCmdStr += fmt.Sprintf(" --vpn %s", containerCfg.vpn)
+	}
+
 	var recordCmd *exec.Cmd
 
 	switch tool {
@@ -415,6 +449,7 @@ func ContainerExecWithRecording(containerIdentifier string, workingDir string, r
 	recordCmd.Stdin = os.Stdin
 	recordCmd.Stdout = os.Stdout
 	recordCmd.Stderr = os.Stderr
+	recordCmd.Env = append(os.Environ(), "RFSWIFT_RECORDING=1")
 
 	if err := recordCmd.Run(); err != nil {
 		return fmt.Errorf("recording session failed: %v", err)

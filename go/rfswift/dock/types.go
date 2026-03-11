@@ -143,6 +143,12 @@ type ContainerConfig struct {
 	cgroups      string
 	ulimits      string
 	realtime     bool
+	desktopProto string
+	desktopHost  string
+	desktopPort  string
+	desktopPass  string
+	desktopSSL   bool
+	vpn          string // format: "type:argument" (e.g., "wireguard:./wg0.conf")
 }
 
 var containerCfg = ContainerConfig{
@@ -168,6 +174,11 @@ var containerCfg = ContainerConfig{
 	ulimits:      "",
 	realtime:     false,
 	shell:        "/bin/bash",
+	desktopProto: "",
+	desktopHost:  "127.0.0.1",
+	desktopPort:  "6080",
+	desktopPass:  "",
+	desktopSSL:   false,
 }
 
 // BuildRecipe defines a YAML recipe for building container images.
@@ -260,4 +271,20 @@ func updateContainerCfgFromConfig() {
 	}
 
 	containerCfg.extrabinding = strings.Join(bindings, ",")
+
+	if config.Desktop.Proto != "" {
+		containerCfg.desktopProto = config.Desktop.Proto
+	}
+	if config.Desktop.Host != "" {
+		containerCfg.desktopHost = config.Desktop.Host
+	}
+	if config.Desktop.Port != "" {
+		containerCfg.desktopPort = config.Desktop.Port
+	}
+	if config.Desktop.Password != "" {
+		containerCfg.desktopPass = config.Desktop.Password
+	}
+	if strings.ToLower(config.Desktop.SSL) == "true" {
+		containerCfg.desktopSSL = true
+	}
 }

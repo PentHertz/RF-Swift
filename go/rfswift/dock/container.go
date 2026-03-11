@@ -29,7 +29,65 @@ import (
 	"golang.org/x/crypto/ssh/terminal"
 
 	common "penthertz/rfswift/common"
+	"penthertz/rfswift/tui"
 )
+
+// startDesktopInContainer launches the desktop-start script inside an already-running
+// container by injecting the RFSWIFT_DESKTOP_* environment variables via a detached exec.
+func startDesktopInContainer(ctx context.Context, cli *client.Client, containerID string) error {
+	execConfig := container.ExecOptions{
+		Detach: true,
+		Cmd:    []string{"/usr/sbin/desktop-start"},
+		Env: func() []string {
+			sslFlag := ""
+			if containerCfg.desktopSSL {
+				sslFlag = "1"
+			}
+			return []string{
+				"RFSWIFT_DESKTOP_PROTO=" + containerCfg.desktopProto,
+				"RFSWIFT_DESKTOP_HOST=" + containerCfg.desktopHost,
+				"RFSWIFT_DESKTOP_PORT=" + containerCfg.desktopPort,
+				"RFSWIFT_DESKTOP_PASS=" + containerCfg.desktopPass,
+				"RFSWIFT_DESKTOP_SSL=" + sslFlag,
+			}
+		}(),
+	}
+
+	execID, err := cli.ContainerExecCreate(ctx, containerID, execConfig)
+	if err != nil {
+		return fmt.Errorf("failed to start desktop: %v", err)
+	}
+
+	if err := cli.ContainerExecStart(ctx, execID.ID, container.ExecStartOptions{Detach: true}); err != nil {
+		return fmt.Errorf("failed to start desktop: %v", err)
+	}
+
+	// Give the VNC server a moment to start
+	time.Sleep(2 * time.Second)
+	return nil
+}
+
+// printDesktopURL prints the desktop access URL when desktop mode is enabled.
+func printDesktopURL() {
+	if containerCfg.desktopProto == "" {
+		return
+	}
+	proto := containerCfg.desktopProto
+	if containerCfg.desktopSSL {
+		if proto == "http" {
+			proto = "https"
+		} else {
+			proto = "vncs"
+		}
+	}
+	url := fmt.Sprintf("%s://%s:%s", proto, containerCfg.desktopHost, containerCfg.desktopPort)
+	common.PrintInfoMessage(fmt.Sprintf("Desktop available at: %s", url))
+	if containerCfg.desktopProto == "http" {
+		common.PrintInfoMessage("Open the URL above in your browser to access the GUI desktop")
+	} else {
+		common.PrintInfoMessage("Connect with a VNC client to the address above")
+	}
+}
 
 // resizeTty continuously monitors and resizes the container TTY to match the local terminal size.
 //
@@ -248,61 +306,12 @@ func ContainerLast(ifilter string, labelKey string, labelValue string) {
 		})
 	}
 
-	headers := []string{"Created", "Image Tag (ID)", "Container Name", "Container ID", "Command"}
-	width, _, err := terminal.GetSize(int(os.Stdout.Fd()))
-	if err != nil {
-		width = 80
-	}
-
-	// Calculate column widths
-	columnWidths := make([]int, len(headers))
-	for i, header := range headers {
-		columnWidths[i] = len(header)
-	}
-	for _, row := range tableData {
-		for i, col := range row {
-			if len(col) > columnWidths[i] {
-				columnWidths[i] = len(col)
-			}
-		}
-	}
-
-	// Adjust column widths to fit terminal
-	totalWidth := len(headers) + 1
-	for _, w := range columnWidths {
-		totalWidth += w + 2
-	}
-	if totalWidth > width {
-		excess := totalWidth - width
-		for i := range columnWidths {
-			reduction := excess / len(columnWidths)
-			if columnWidths[i] > reduction {
-				columnWidths[i] -= reduction
-				excess -= reduction
-			}
-		}
-		totalWidth = width
-	}
-
-	// Print fancy table
-	pink := "\033[35m"
-	white := "\033[37m"
-	reset := "\033[0m"
-	title := "🤖 Last Run Containers"
-	fmt.Printf("%s%s%s%s%s\n", pink, strings.Repeat(" ", 2), title, strings.Repeat(" ", totalWidth-2-len(title)), reset)
-	fmt.Print(white)
-	printHorizontalBorder(columnWidths, "┌", "┬", "┐")
-	printRow(headers, columnWidths, "│")
-	printHorizontalBorder(columnWidths, "├", "┼", "┤")
-	for i, row := range tableData {
-		printRow(row, columnWidths, "│")
-		if i < len(tableData)-1 {
-			printHorizontalBorder(columnWidths, "├", "┼", "┤")
-		}
-	}
-	printHorizontalBorder(columnWidths, "└", "┴", "┘")
-	fmt.Print(reset)
-	fmt.Println()
+	tui.RenderTable(tui.TableConfig{
+		Title:      "🤖 Last Run Containers",
+		TitleColor: tui.ColorPink,
+		Headers:    []string{"Created", "Image Tag (ID)", "Container Name", "Container ID", "Command"},
+		Rows:       tableData,
+	})
 }
 
 // latestDockerID returns the ID of the most recently created container matching the given label.
@@ -340,6 +349,67 @@ func latestDockerID(labelKey string, labelValue string) string {
 	}
 
 	return ""
+}
+
+// ContainerInfo holds basic container metadata for interactive selection.
+type ContainerInfo struct {
+	ID    string
+	Name  string
+	Image string
+	State string
+}
+
+// ListContainers returns RF Swift containers with their name, image, and state.
+func ListContainers(labelKey string, labelValue string) []ContainerInfo {
+	ctx := context.Background()
+	cli, err := NewEngineClient()
+	if err != nil {
+		return nil
+	}
+	defer cli.Close()
+
+	containerFilters := filters.NewArgs()
+	if labelKey != "" && labelValue != "" {
+		containerFilters.Add("label", fmt.Sprintf("%s=%s", labelKey, labelValue))
+	}
+
+	containers, err := cli.ContainerList(ctx, container.ListOptions{
+		All:     true,
+		Limit:   15,
+		Filters: containerFilters,
+	})
+	if err != nil {
+		return nil
+	}
+
+	var result []ContainerInfo
+	for _, cont := range containers {
+		_, err := cli.ContainerInspect(ctx, cont.ID)
+		if err != nil {
+			continue
+		}
+
+		name := cont.ID[:12]
+		if len(cont.Names) > 0 {
+			name = cont.Names[0]
+			if len(name) > 0 && name[0] == '/' {
+				name = name[1:]
+			}
+		}
+
+		result = append(result, ContainerInfo{
+			ID:    cont.ID[:12],
+			Name:  name,
+			Image: cont.Image,
+			State: cont.State,
+		})
+	}
+	return result
+}
+
+// LatestContainerID returns the ID of the most recent RF Swift container, or empty string.
+func LatestContainerID() string {
+	return latestDockerID("org.container.project", "rfswift")
 }
 
 // ContainerExec attaches to an existing container and opens an interactive shell session.
@@ -389,6 +459,24 @@ func ContainerExec(containerIdentifier string, WorkingDir string) {
 	size := props["Size"]
 	printContainerProperties(ctx, cli, containerName, props, size)
 
+	// Desktop mode: start VNC/noVNC inside the container via exec
+	if containerCfg.desktopProto != "" {
+		if err := startDesktopInContainer(ctx, cli, containerIdentifier); err != nil {
+			common.PrintErrorMessage(err)
+			return
+		}
+		printDesktopURL()
+	}
+
+	// VPN mode: start VPN client inside the container via exec
+	if containerCfg.vpn != "" {
+		if err := startVPNInContainer(ctx, cli, containerIdentifier); err != nil {
+			common.PrintErrorMessage(err)
+			return
+		}
+		printVPNInfo()
+	}
+
 	// Determine shell to use:
 	// Priority: 1) explicitly set via CLI (-e flag) if different from default
 	//           2) container's original shell (from containerJSON.Path)
@@ -430,9 +518,49 @@ func ContainerRun(containerName string) {
 
 	containerCfg.imagename = normalizeImageName(containerCfg.imagename)
 
+	// VPN: adjust caps, devices, bindings, env before container creation
+	if containerCfg.vpn != "" {
+		if err := applyVPNConfig(); err != nil {
+			common.PrintErrorMessage(err)
+			return
+		}
+	}
+
 	bindings := combineBindings(containerCfg.x11forward, containerCfg.extrabinding)
 	extrahosts := splitAndCombine(containerCfg.extrahosts)
 	dockerenv := combineEnv(containerCfg.xdisplay, containerCfg.pulseServer, containerCfg.extraenv)
+
+	// Desktop mode: inject env vars and port configuration
+	if containerCfg.desktopProto != "" {
+		sslFlag := ""
+		if containerCfg.desktopSSL {
+			sslFlag = "1"
+		}
+		dockerenv = append(dockerenv,
+			"RFSWIFT_DESKTOP_PROTO="+containerCfg.desktopProto,
+			"RFSWIFT_DESKTOP_HOST="+containerCfg.desktopHost,
+			"RFSWIFT_DESKTOP_PORT="+containerCfg.desktopPort,
+			"RFSWIFT_DESKTOP_PASS="+containerCfg.desktopPass,
+			"RFSWIFT_DESKTOP_SSL="+sslFlag,
+		)
+
+		// For non-host network modes, set up port bindings so the desktop is reachable
+		if containerCfg.networkMode != "host" {
+			defaultPort := containerCfg.desktopPort
+			portProto := defaultPort + "/tcp"
+			if containerCfg.exposedPorts != "" {
+				containerCfg.exposedPorts += "," + portProto
+			} else {
+				containerCfg.exposedPorts = portProto
+			}
+			if containerCfg.bindedPorts != "" {
+				containerCfg.bindedPorts += ",," + containerCfg.desktopHost + ":" + containerCfg.desktopPort + ":" + portProto
+			} else {
+				containerCfg.bindedPorts = containerCfg.desktopHost + ":" + containerCfg.desktopPort + ":" + portProto
+			}
+		}
+	}
+
 	exposedPorts := ParseExposedPorts(containerCfg.exposedPorts)
 	bindedPorts := ParseBindedPorts(containerCfg.bindedPorts)
 
@@ -564,6 +692,9 @@ func ContainerRun(containerName string) {
 	containerLabels := map[string]string{
 		"org.container.project": "rfswift",
 	}
+	if containerCfg.desktopProto != "" {
+		containerLabels["org.rfswift.desktop"] = fmt.Sprintf("%s://%s:%s", containerCfg.desktopProto, containerCfg.desktopHost, containerCfg.desktopPort)
+	}
 	if len(hostConfig.DeviceCgroupRules) > 0 {
 		containerLabels["org.rfswift.cgroup_rules"] = strings.Join(hostConfig.DeviceCgroupRules, ",")
 	}
@@ -581,11 +712,7 @@ func ContainerRun(containerName string) {
 			common.PrintWarningMessage(fmt.Sprintf("Rules that will be dropped: %s", strings.Join(hostConfig.DeviceCgroupRules, ", ")))
 			common.PrintInfoMessage("Device hotplug (USB, SDR dongles) may not work without cgroup rules.")
 			common.PrintInfoMessage("To use cgroup rules, run RF Swift with sudo.")
-			fmt.Print("\nContinue without cgroup rules? (y/n): ")
-			reader := bufio.NewReader(os.Stdin)
-			response, _ := reader.ReadString('\n')
-			response = strings.ToLower(strings.TrimSpace(response))
-			if response != "y" && response != "yes" {
+			if !tui.Confirm("Continue without cgroup rules?") {
 				common.PrintInfoMessage("Aborted. Re-run with: sudo ./rfswift run ...")
 				return
 			}
@@ -595,10 +722,25 @@ func ContainerRun(containerName string) {
 		}
 
 		// 2. Filter devices to only those accessible by current user
+		// Some devices are readable on the host but can't be created as device nodes in rootless containers
+		rootlessBlockedDevices := map[string]bool{
+			"/dev/tty":     true,
+			"/dev/tty0":    true,
+			"/dev/tty1":    true,
+			"/dev/tty2":    true,
+			"/dev/console": true,
+			"/dev/vcsa":    true,
+			"/dev/vhci":    true,
+			"/dev/uinput":  true,
+		}
 		if len(hostConfig.Devices) > 0 {
 			var accessible []container.DeviceMapping
 			var dropped []string
 			for _, dev := range hostConfig.Devices {
+				if rootlessBlockedDevices[dev.PathOnHost] {
+					dropped = append(dropped, dev.PathOnHost)
+					continue
+				}
 				f, err := os.OpenFile(dev.PathOnHost, os.O_RDONLY, 0)
 				if err == nil {
 					f.Close()
@@ -624,7 +766,8 @@ func ContainerRun(containerName string) {
 		return
 	}
 
-	resp, err := cli.ContainerCreate(ctx, &container.Config{
+	// Build container config
+	containerConfig := &container.Config{
 		Image:        containerCfg.imagename,
 		Cmd:          []string{containerCfg.shell},
 		Env:          dockerenv,
@@ -636,7 +779,14 @@ func ContainerRun(containerName string) {
 		AttachStderr: true,
 		Tty:          true,
 		Labels:       containerLabels,
-	}, hostConfig, &network.NetworkingConfig{}, nil, containerName)
+	}
+
+	// Desktop mode: use entrypoint wrapper that starts VNC before the shell
+	if containerCfg.desktopProto != "" {
+		containerConfig.Entrypoint = []string{"/usr/sbin/rfswift-entrypoint"}
+	}
+
+	resp, err := cli.ContainerCreate(ctx, containerConfig, hostConfig, &network.NetworkingConfig{}, nil, containerName)
 	if err != nil {
 		if strings.Contains(err.Error(), "already in use") || strings.Contains(err.Error(), "already exists") {
 			common.PrintErrorMessage(fmt.Errorf("container name '%s' is already in use. Use a different name with -n, or exec into the existing container with: rfswift exec -c %s", containerName, containerName))
@@ -646,8 +796,11 @@ func ContainerRun(containerName string) {
 		return
 	}
 
-	// ── Podman: use exec-style attach (compat API rejects attach-before-start) ──
-	if GetEngine().Type() == EnginePodman {
+	// ── Podman or recording: use exec-style attach ──
+	// Podman's compat API rejects attach-before-start.
+	// Recording mode uses exec so RFSWIFT_RECORDING is session-scoped
+	// (not baked into the container env, which would persist forever).
+	if GetEngine().Type() == EnginePodman || os.Getenv("RFSWIFT_RECORDING") == "1" {
 		if err := cli.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
 			common.PrintErrorMessage(err)
 			return
@@ -661,6 +814,15 @@ func ContainerRun(containerName string) {
 		size := props["Size"]
 		printContainerProperties(ctx, cli, containerName, props, size)
 		common.PrintSuccessMessage(fmt.Sprintf("Container '%s' started successfully", containerName))
+		printDesktopURL()
+
+		// Start VPN if configured
+		if containerCfg.vpn != "" {
+			if err := startVPNInContainer(ctx, cli, resp.ID); err != nil {
+				common.PrintErrorMessage(err)
+			}
+			printVPNInfo()
+		}
 
 		// Attach via exec (same as ContainerExec)
 		if err := execInteractiveSession(ctx, cli, resp.ID, containerCfg.shell, ""); err != nil {
@@ -694,6 +856,15 @@ func ContainerRun(containerName string) {
 	size := props["Size"]
 	printContainerProperties(ctx, cli, containerName, props, size)
 	common.PrintSuccessMessage(fmt.Sprintf("Container '%s' started successfully", containerName))
+	printDesktopURL()
+
+	// Start VPN if configured
+	if containerCfg.vpn != "" {
+		if err := startVPNInContainer(ctx, cli, resp.ID); err != nil {
+			common.PrintErrorMessage(err)
+		}
+		printVPNInfo()
+	}
 
 	handleIOStreams(waiter)
 	fd := int(os.Stdin.Fd())
@@ -728,6 +899,11 @@ func execInteractiveSession(ctx context.Context, cli *client.Client, containerID
 		Tty:          true,
 		Cmd:          []string{shell},
 		WorkingDir:   workingDir,
+	}
+
+	// Propagate recording indicator into the container shell
+	if os.Getenv("RFSWIFT_RECORDING") == "1" {
+		execConfig.Env = []string{"RFSWIFT_RECORDING=1"}
 	}
 
 	execID, err := cli.ContainerExecCreate(ctx, containerID, execConfig)

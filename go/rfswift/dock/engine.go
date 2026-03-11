@@ -13,8 +13,10 @@ import (
 	"sync"
 	"time"
 
+	"github.com/charmbracelet/lipgloss"
 	"github.com/docker/docker/client"
 	common "penthertz/rfswift/common"
+	"penthertz/rfswift/tui"
 )
 
 // EngineType represents the container engine backend
@@ -271,35 +273,31 @@ func EngineSupportsDirectConfigEdit() bool {
 func PrintEngineInfo() {
 	engine := GetEngine()
 
-	cyan := "\033[36m"
-	green := "\033[32m"
-	red := "\033[31m"
-	yellow := "\033[33m"
-	reset := "\033[0m"
+	statusAvail := lipgloss.NewStyle().Foreground(tui.ColorSuccess).Render("● available")
+	statusUnavail := lipgloss.NewStyle().Foreground(tui.ColorDanger).Render("● not available")
+	statusRunning := lipgloss.NewStyle().Foreground(tui.ColorSuccess).Render("● running")
+	statusStopped := lipgloss.NewStyle().Foreground(tui.ColorDanger).Render("● stopped")
 
-	fmt.Printf("\n%s🔧 Container Engine%s\n", cyan, reset)
-	fmt.Printf("%s──────────────────────────────────────%s\n", cyan, reset)
-	fmt.Printf("  Engine:         %s%s%s\n", yellow, engine.Name(), reset)
-	fmt.Printf("  Type:           %s\n", engine.Type())
-	fmt.Printf("  Socket:         %s\n", engine.GetSocketPath())
-
+	avail := statusUnavail
 	if engine.IsAvailable() {
-		fmt.Printf("  Status:         %s● available%s\n", green, reset)
-	} else {
-		fmt.Printf("  Status:         %s● not available%s\n", red, reset)
+		avail = statusAvail
 	}
-
+	svc := statusStopped
 	if engine.IsServiceRunning() {
-		fmt.Printf("  Service:        %s● running%s\n", green, reset)
-	} else {
-		fmt.Printf("  Service:        %s● stopped%s\n", red, reset)
+		svc = statusRunning
 	}
 
-	fmt.Printf("  Direct config:  %v\n", engine.SupportsDirectConfigEdit())
-	fmt.Printf("  Storage root:   %s\n", engine.GetStorageRoot())
-	fmt.Println()
+	items := []tui.PropertyItem{
+		{Key: "Engine", Value: engine.Name(), ValueColor: tui.ColorWarning},
+		{Key: "Type", Value: string(engine.Type())},
+		{Key: "Socket", Value: engine.GetSocketPath()},
+		{Key: "Status", Value: avail},
+		{Key: "Service", Value: svc},
+		{Key: "Direct config", Value: fmt.Sprintf("%v", engine.SupportsDirectConfigEdit())},
+		{Key: "Storage root", Value: engine.GetStorageRoot()},
+	}
 
-	// Show alternative engine status
+	// Show alternative engine
 	var other ContainerEngine
 	if engine.Type() == EngineDocker {
 		other = &PodmanEngine{}
@@ -307,10 +305,14 @@ func PrintEngineInfo() {
 		other = &DockerEngine{}
 	}
 	if other.IsAvailable() {
-		fmt.Printf("  %sAlternative:%s    %s (available, use --engine %s)\n",
-			cyan, reset, other.Name(), other.Type())
+		items = append(items, tui.PropertyItem{
+			Key:        "Alternative",
+			Value:      fmt.Sprintf("%s (use --engine %s)", other.Name(), other.Type()),
+			ValueColor: tui.ColorCyan,
+		})
 	}
-	fmt.Println()
+
+	tui.RenderPropertySheet("🔧 Container Engine", tui.ColorPrimary, items)
 }
 
 // ---------------------------------------------------------------------------

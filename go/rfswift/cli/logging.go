@@ -5,11 +5,13 @@
 package cli
 
 import (
+	"fmt"
 	"os"
 
 	"github.com/spf13/cobra"
 	common "penthertz/rfswift/common"
 	rfdock "penthertz/rfswift/dock"
+	"penthertz/rfswift/tui"
 )
 
 var LogCmd = &cobra.Command{
@@ -46,12 +48,51 @@ var LogStopCmd = &cobra.Command{
 }
 
 var LogReplayCmd = &cobra.Command{
-	Use:   "replay",
+	Use:   "replay [file]",
 	Short: "Replay a recorded session",
-	Long:  `Replay a previously recorded session`,
+	Long:  `Replay a previously recorded session. If no file is specified, pick from available recordings.`,
 	Run: func(cmd *cobra.Command, args []string) {
-		inputFile, _ := cmd.Flags().GetString("input")
 		speed, _ := cmd.Flags().GetFloat64("speed")
+		inputFile, _ := cmd.Flags().GetString("input")
+
+		// Accept positional argument as well
+		if inputFile == "" && len(args) > 0 {
+			inputFile = args[0]
+		}
+
+		// Interactive picker when no file specified
+		if inputFile == "" {
+			logDir, _ := cmd.Flags().GetString("dir")
+			entries, err := rfdock.FindLogs(logDir)
+			if err != nil {
+				common.PrintErrorMessage(err)
+				os.Exit(1)
+			}
+			if len(entries) == 0 {
+				common.PrintInfoMessage("No session recordings found")
+				return
+			}
+
+			options := make([]string, len(entries))
+			for i, e := range entries {
+				options[i] = fmt.Sprintf("%s  (%s, %.1f KB, %s)", e.Path, e.Tool, e.Size, e.ModTime)
+			}
+
+			selected, err := tui.SelectOne("Select a recording to replay", options)
+			if err != nil {
+				common.PrintErrorMessage(err)
+				os.Exit(1)
+			}
+
+			// Extract file path (everything before the first "  (")
+			for _, e := range entries {
+				label := fmt.Sprintf("%s  (%s, %.1f KB, %s)", e.Path, e.Tool, e.Size, e.ModTime)
+				if label == selected {
+					inputFile = e.Path
+					break
+				}
+			}
+		}
 
 		if err := rfdock.ReplayLog(inputFile, speed); err != nil {
 			common.PrintErrorMessage(err)
@@ -84,9 +125,9 @@ func registerLoggingCommands() {
 	LogStartCmd.Flags().StringP("output", "o", "", "output file (default: rfswift-session-YYYYMMDD-HHMMSS.cast)")
 	LogStartCmd.Flags().Bool("use-script", false, "force use of 'script' command instead of asciinema")
 
-	LogReplayCmd.Flags().StringP("input", "i", "", "input file to replay")
+	LogReplayCmd.Flags().StringP("input", "i", "", "recording file to replay (interactive picker if omitted)")
 	LogReplayCmd.Flags().Float64P("speed", "s", 1.0, "playback speed (e.g., 2.0 for 2x)")
-	LogReplayCmd.MarkFlagRequired("input")
+	LogReplayCmd.Flags().String("dir", "", "directory to search for recordings (default: current directory)")
 
 	LogListCmd.Flags().String("dir", "", "directory to search (default: current directory)")
 }

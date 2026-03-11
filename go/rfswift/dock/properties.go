@@ -16,10 +16,9 @@ import (
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/client"
-	"golang.org/x/crypto/ssh/terminal"
-
 	common "penthertz/rfswift/common"
 	rfutils "penthertz/rfswift/rfutils"
+	"penthertz/rfswift/tui"
 )
 
 // printContainerProperties displays a formatted summary table of container properties
@@ -31,14 +30,6 @@ import (
 //	in(4): map[string]string props    property map returned by getContainerProperties
 //	in(5): string size                pre-formatted disk size string (e.g. "1.23 MB")
 func printContainerProperties(ctx context.Context, cli *client.Client, containerName string, props map[string]string, size string) {
-	white := "\033[37m"
-	blue := "\033[34m"
-	green := "\033[32m"
-	red := "\033[31m"
-	yellow := "\033[33m"
-	cyan := "\033[36m"
-	reset := "\033[0m"
-
 	// Determine if the image is up-to-date, obsolete, or custom
 	repo, tag := parseImageName(props["ImageName"])
 	isUpToDate, isCustom, err := checkImageStatus(ctx, cli, repo, tag)
@@ -52,12 +43,10 @@ func printContainerProperties(ctx context.Context, cli *client.Client, container
 	versionDisplay := ""
 	architecture := getArchitecture()
 
-	// First check if the tag already contains a version
 	baseName, existingVersion := parseTagVersion(tag)
 	if existingVersion != "" {
 		versionDisplay = existingVersion
 	} else if !common.Disconnected {
-		// Try to find version by matching digest with remote versions
 		fullImageName := fmt.Sprintf("%s:%s", repo, tag)
 		localDigest := getLocalImageDigests(ctx, cli, fullImageName)
 		if len(localDigest) > 0 {
@@ -73,24 +62,24 @@ func printContainerProperties(ctx context.Context, cli *client.Client, container
 		}
 	}
 
-	// Build image status string with version if available
+	// Build image status string
 	imageNameWithVersion := props["ImageName"]
 	if versionDisplay != "" {
-		imageNameWithVersion = fmt.Sprintf("%s %sv%s%s", props["ImageName"], cyan, versionDisplay, reset)
+		imageNameWithVersion = fmt.Sprintf("%s (v%s)", props["ImageName"], versionDisplay)
 	}
 
 	imageStatus := fmt.Sprintf("%s (Custom)", imageNameWithVersion)
 	if common.Disconnected {
 		imageStatus = fmt.Sprintf("%s (No network)", imageNameWithVersion)
 	}
-	imageStatusColor := yellow
+	imageStatusColor := tui.ColorWarning
 	if !isCustom {
 		if isUpToDate {
 			imageStatus = fmt.Sprintf("%s (Up to date)", imageNameWithVersion)
-			imageStatusColor = green
+			imageStatusColor = tui.ColorSuccess
 		} else {
 			imageStatus = fmt.Sprintf("%s (Obsolete)", imageNameWithVersion)
-			imageStatusColor = red
+			imageStatusColor = tui.ColorDanger
 		}
 	}
 
@@ -99,91 +88,26 @@ func printContainerProperties(ctx context.Context, cli *client.Client, container
 		seccompValue = "(Default)"
 	}
 
-	properties := [][]string{
-		{"Container Name", containerName},
-		{"X Display", props["XDisplay"]},
-		{"Shell", props["Shell"]},
-		{"Privileged Mode", props["Privileged"]},
-		{"Network Mode", props["NetworkMode"]},
-		{"Exposed Ports", props["ExposedPorts"]},
-		{"Port Bindings", props["PortBindings"]},
-		{"Image Name", imageStatus},
-		{"Size on Disk", size},
-		{"Bindings", props["Bindings"]},
-		{"Extra Hosts", props["ExtraHosts"]},
-		{"Devices", props["Devices"]},
-		{"Capabilities", props["Caps"]},
-		{"Seccomp profile", seccompValue},
-		{"Cgroup rules", props["Cgroups"]},
-		{"Ulimits", props["Ulimits"]},
+	items := []tui.PropertyItem{
+		{Key: "Container Name", Value: containerName},
+		{Key: "X Display", Value: props["XDisplay"]},
+		{Key: "Shell", Value: props["Shell"]},
+		{Key: "Privileged Mode", Value: props["Privileged"]},
+		{Key: "Network Mode", Value: props["NetworkMode"]},
+		{Key: "Exposed Ports", Value: props["ExposedPorts"]},
+		{Key: "Port Bindings", Value: props["PortBindings"]},
+		{Key: "Image Name", Value: imageStatus, ValueColor: imageStatusColor},
+		{Key: "Size on Disk", Value: size},
+		{Key: "Bindings", Value: props["Bindings"]},
+		{Key: "Extra Hosts", Value: props["ExtraHosts"]},
+		{Key: "Devices", Value: props["Devices"]},
+		{Key: "Capabilities", Value: props["Caps"]},
+		{Key: "Seccomp profile", Value: seccompValue},
+		{Key: "Cgroup rules", Value: props["Cgroups"]},
+		{Key: "Ulimits", Value: props["Ulimits"]},
 	}
 
-	width, _, err := terminal.GetSize(int(os.Stdout.Fd()))
-	if err != nil {
-		width = 80 // default width if terminal size cannot be determined
-	}
-
-	// Adjust width for table borders and padding
-	maxContentWidth := width - 4
-	if maxContentWidth < 20 {
-		maxContentWidth = 20 // Minimum content width
-	}
-
-	maxKeyLen := 0
-	for _, property := range properties {
-		if len(property[0]) > maxKeyLen {
-			maxKeyLen = len(property[0])
-		}
-	}
-
-	maxValueLen := maxContentWidth - maxKeyLen - 7 // 7 for borders and spaces
-	if maxValueLen < 10 {
-		maxValueLen = 10 // Minimum value length
-	}
-
-	totalWidth := maxKeyLen + maxValueLen + 7
-
-	// Print the title in blue, aligned to the left with some padding
-	title := "🧊 Container Summary"
-	leftPadding := 2 // You can adjust this value for more or less left padding
-	fmt.Printf("%s%s%s%s%s\n", blue, strings.Repeat(" ", leftPadding), title, strings.Repeat(" ", totalWidth-leftPadding-len(title)), reset)
-
-	fmt.Printf("%s", white) // Switch to white color for the box
-	fmt.Printf("╭%s╮\n", strings.Repeat("─", totalWidth-2))
-
-	for i, property := range properties {
-		key := property[0]
-		value := property[1]
-		valueColor := white
-
-		if key == "Image Name" {
-			valueColor = imageStatusColor
-		}
-
-		// Wrap long values
-		wrappedValue := wrapText(value, maxValueLen)
-		valueLines := strings.Split(wrappedValue, "\n")
-
-		for j, line := range valueLines {
-			if j == 0 {
-				fmt.Printf("│ %-*s │ %s%-*s%s │\n", maxKeyLen, key, valueColor, maxValueLen, line, reset)
-			} else {
-				fmt.Printf("│ %-*s │ %s%-*s%s │\n", maxKeyLen, "", valueColor, maxValueLen, line, reset)
-			}
-
-			if j < len(valueLines)-1 {
-				fmt.Printf("│%s│%s│\n", strings.Repeat(" ", maxKeyLen+2), strings.Repeat(" ", maxValueLen+2))
-			}
-		}
-
-		if i < len(properties)-1 {
-			fmt.Printf("├%s┼%s┤\n", strings.Repeat("─", maxKeyLen+2), strings.Repeat("─", maxValueLen+2))
-		}
-	}
-
-	fmt.Printf("╰%s╯\n", strings.Repeat("─", totalWidth-2))
-	fmt.Printf("%s", reset)
-	fmt.Println() // Ensure we end with a newline for clarity
+	tui.RenderPropertySheet("🧊 Container Summary", tui.ColorPrimary, items)
 }
 
 // getDisplayImageName returns the display image name for a container,
