@@ -423,6 +423,22 @@ func RunWizard(images []string, defaults *RunWizardDefaults, existingNets []stri
 		return nil, err
 	}
 
+	// If creating a new NAT network (not joining an existing one), offer custom subnet
+	if result.Network == "nat" {
+		var customSubnet string
+		err = huh.NewInput().
+			Title("Custom subnet (leave empty for auto-allocation)").
+			Description("e.g., 10.10.0.0/24 or 192.168.100.0/28 — empty uses 172.30.x.x/28").
+			Value(&customSubnet).
+			Run()
+		if err != nil {
+			return nil, err
+		}
+		if customSubnet != "" {
+			result.Network = "nat::" + customSubnet
+		}
+	}
+
 	// Step 6: Feature toggles (pre-select features already enabled via CLI)
 	var features []string
 	// Pre-populate from defaults
@@ -994,6 +1010,22 @@ func ProfileCreateWizard(images []string, existingNets []string) (*ProfileCreate
 		Run()
 	if err != nil {
 		return nil, err
+	}
+
+	// If creating a new NAT network (not joining an existing one), offer custom subnet
+	if result.Network == "nat" {
+		var customSubnet string
+		err = huh.NewInput().
+			Title("Custom subnet (leave empty for auto-allocation)").
+			Description("e.g., 10.10.0.0/24 or 192.168.100.0/28 — empty uses 172.30.x.x/28").
+			Value(&customSubnet).
+			Run()
+		if err != nil {
+			return nil, err
+		}
+		if customSubnet != "" {
+			result.Network = "nat::" + customSubnet
+		}
 	}
 
 	// Step 5: Feature toggles

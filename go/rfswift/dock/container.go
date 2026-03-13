@@ -808,8 +808,8 @@ func ContainerRun(containerName string) {
 
 	// ── NAT mode: create or join a per-container/shared network ──
 	networkingConfig := &network.NetworkingConfig{}
-	if isNAT, natTarget := parseNATMode(); isNAT {
-		natNetName, natSubnet, natErr := createOrJoinNATNetwork(ctx, cli, containerName, natTarget)
+	if isNAT, natTarget, natUserSubnet := parseNATMode(); isNAT {
+		natNetName, natSubnet, natErr := createOrJoinNATNetwork(ctx, cli, containerName, natTarget, natUserSubnet)
 		if natErr != nil {
 			common.PrintErrorMessage(natErr)
 			return

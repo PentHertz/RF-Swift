@@ -58,6 +58,14 @@ Examples:
 			return
 		}
 
+		if subnet == "" && tui.IsInteractive() {
+			var err error
+			subnet, err = tui.PromptInput("Custom subnet (leave empty for auto-allocation, e.g., 10.10.0.0/24)", "")
+			if err != nil {
+				return
+			}
+		}
+
 		rfdock.CreateNATNetworkCLI(name, subnet)
 	},
 }

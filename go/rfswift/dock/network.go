@@ -41,15 +41,11 @@ func networkName(containerName string) string {
 	return NATNetworkPrefix + containerName
 }
 
-// createNATNetwork creates a dedicated Docker bridge network for a container
-// with an automatically allocated subnet from the RF Swift NAT range.
+// createNATNetwork creates a dedicated Docker bridge network for a container.
+// If userSubnet is non-empty, it is used directly; otherwise a subnet is
+// auto-allocated from the RF Swift NAT range.
 // Returns the network name and the allocated subnet CIDR.
-//
-//	in(1): context.Context ctx
-//	in(2): *client.Client cli
-//	in(3): string containerName
-//	out: (networkName string, subnet string, err error)
-func createNATNetwork(ctx context.Context, cli *client.Client, containerName string) (string, string, error) {
+func createNATNetwork(ctx context.Context, cli *client.Client, containerName string, userSubnet string) (string, string, error) {
 	name := networkName(containerName)
 
 	// Check if network already exists
@@ -63,10 +59,21 @@ func createNATNetwork(ctx context.Context, cli *client.Client, containerName str
 		return name, "", nil
 	}
 
-	// Allocate a free subnet
-	subnet, gateway, err := allocateSubnet(ctx, cli)
-	if err != nil {
-		return "", "", fmt.Errorf("failed to allocate NAT subnet: %v", err)
+	// Resolve subnet: user-specified or auto-allocated
+	var subnet, gateway string
+	if userSubnet != "" {
+		subnet = userSubnet
+		gw, gwErr := gatewayFromSubnet(subnet)
+		if gwErr != nil {
+			return "", "", fmt.Errorf("invalid subnet '%s': %v", userSubnet, gwErr)
+		}
+		gateway = gw
+	} else {
+		var allocErr error
+		subnet, gateway, allocErr = allocateSubnet(ctx, cli)
+		if allocErr != nil {
+			return "", "", fmt.Errorf("failed to allocate NAT subnet: %v", allocErr)
+		}
 	}
 
 	// Create the network
@@ -310,13 +317,16 @@ func ListNATNetworks() ([]NetworkInfo, error) {
 			continue
 		}
 
+		// NetworkList doesn't populate Containers; inspect to get the count
+		connected := countContainersOnNetwork(ctx, cli, n.ID)
+
 		info := NetworkInfo{
 			Name:       n.Name,
 			ID:         n.ID[:12],
 			Container:  n.Labels["org.rfswift.container"],
 			Driver:     n.Driver,
 			Shared:     n.Labels["org.rfswift.shared"] == "true",
-			Containers: len(n.Containers),
+			Containers: connected,
 		}
 		if len(n.IPAM.Config) > 0 {
 			info.Subnet = n.IPAM.Config[0].Subnet
@@ -457,28 +467,30 @@ func findContainerByName(ctx context.Context, cli *client.Client, name string) (
 }
 
 // parseNATMode checks if the network mode is a NAT request.
-// Returns (isNAT, networkName) where networkName is empty for auto-create
+// Returns (isNAT, networkName, subnet) where networkName is empty for auto-create
 // or a specific name when the user wants to join an existing network.
-// Format: "nat" (auto) or "nat:network_name" (join/create named).
-func parseNATMode() (bool, string) {
+// Format: "nat" | "nat:name" | "nat::subnet" | "nat:name:subnet"
+func parseNATMode() (bool, string, string) {
 	mode := strings.ToLower(containerCfg.networkMode)
 	if mode == "nat" {
-		return true, ""
+		return true, "", ""
 	}
 	if strings.HasPrefix(mode, "nat:") {
-		name := strings.TrimPrefix(containerCfg.networkMode, containerCfg.networkMode[:4]) // preserve original case after "nat:"
-		name = containerCfg.networkMode[4:]
-		if name != "" {
-			return true, name
+		rest := containerCfg.networkMode[4:] // preserve original case
+		parts := strings.SplitN(rest, ":", 2)
+		name := parts[0]
+		subnet := ""
+		if len(parts) == 2 {
+			subnet = parts[1]
 		}
-		return true, ""
+		return true, name, subnet
 	}
-	return false, ""
+	return false, "", ""
 }
 
 // isNATMode returns true when the current container config requests NAT networking.
 func isNATMode() bool {
-	isNAT, _ := parseNATMode()
+	isNAT, _, _ := parseNATMode()
 	return isNAT
 }
 
@@ -525,13 +537,15 @@ func removeNATNetworkPodman(name string) error {
 // createOrJoinNATNetwork creates a new NAT network or joins an existing one.
 // When targetName is empty, a per-container network is auto-created.
 // When targetName is set, the named network is reused if it exists or created if not.
+// userSubnet, if non-empty, overrides auto-allocation with the given CIDR.
 //
 //	in(1): context.Context ctx
 //	in(2): *client.Client cli
 //	in(3): string containerName  the container being created
 //	in(4): string targetName     the named NAT network to join (empty = auto-create)
+//	in(5): string userSubnet     user-specified subnet CIDR (empty = auto-allocate)
 //	out: (networkName string, subnet string, err error)
-func createOrJoinNATNetwork(ctx context.Context, cli *client.Client, containerName string, targetName string) (string, string, error) {
+func createOrJoinNATNetwork(ctx context.Context, cli *client.Client, containerName string, targetName string, userSubnet string) (string, string, error) {
 	// Warn rootless Podman users about potential limitations
 	if IsRootlessPodman() {
 		common.PrintWarningMessage("Rootless Podman: NAT bridge networks may have limited functionality.")
@@ -540,7 +554,7 @@ func createOrJoinNATNetwork(ctx context.Context, cli *client.Client, containerNa
 
 	if targetName == "" {
 		// Auto mode: create a per-container network
-		return createNATNetwork(ctx, cli, containerName)
+		return createNATNetwork(ctx, cli, containerName, userSubnet)
 	}
 
 	// Named mode: prefix with rfswift_nat_ if not already
@@ -563,14 +577,26 @@ func createOrJoinNATNetwork(ctx context.Context, cli *client.Client, containerNa
 	}
 
 	// Create the named network
-	return createNamedNATNetwork(ctx, cli, fullName, targetName)
+	return createNamedNATNetwork(ctx, cli, fullName, targetName, userSubnet)
 }
 
 // createNamedNATNetwork creates a named NAT network (shared, not tied to a single container).
-func createNamedNATNetwork(ctx context.Context, cli *client.Client, fullName string, displayName string) (string, string, error) {
-	subnet, gateway, err := allocateSubnet(ctx, cli)
-	if err != nil {
-		return "", "", fmt.Errorf("failed to allocate NAT subnet: %v", err)
+// If userSubnet is non-empty, it is used directly; otherwise a subnet is auto-allocated.
+func createNamedNATNetwork(ctx context.Context, cli *client.Client, fullName string, displayName string, userSubnet string) (string, string, error) {
+	var subnet, gateway string
+	if userSubnet != "" {
+		subnet = userSubnet
+		gw, gwErr := gatewayFromSubnet(subnet)
+		if gwErr != nil {
+			return "", "", fmt.Errorf("invalid subnet '%s': %v", userSubnet, gwErr)
+		}
+		gateway = gw
+	} else {
+		var allocErr error
+		subnet, gateway, allocErr = allocateSubnet(ctx, cli)
+		if allocErr != nil {
+			return "", "", fmt.Errorf("failed to allocate NAT subnet: %v", allocErr)
+		}
 	}
 
 	labels := map[string]string{
@@ -665,7 +691,7 @@ func CreateNATNetworkCLI(name string, subnet string) {
 		common.PrintSuccessMessage(fmt.Sprintf("Created NAT network '%s' (subnet: %s, id: %s)", name, subnet, resp.ID[:12]))
 	} else {
 		// Auto-allocate subnet
-		_, _, createErr := createNamedNATNetwork(ctx, cli, fullName, name)
+		_, _, createErr := createNamedNATNetwork(ctx, cli, fullName, name, "")
 		if createErr != nil {
 			common.PrintErrorMessage(createErr)
 		}
