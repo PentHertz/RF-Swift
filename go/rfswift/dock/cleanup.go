@@ -210,6 +210,12 @@ func CleanupContainers(olderThan string, force bool, dryRun bool, onlyStopped bo
 			containerName = cont.ID[:12]
 		}
 
+		// Check for NAT network before removing container
+		hasNAT := false
+		if natLabel, ok := cont.Labels["org.rfswift.nat_network"]; ok && natLabel != "" {
+			hasNAT = true
+		}
+
 		err := cli.ContainerRemove(ctx, cont.ID, container.RemoveOptions{Force: true})
 		if err != nil {
 			if strings.Contains(err.Error(), "No such container") {
@@ -220,6 +226,18 @@ func CleanupContainers(olderThan string, force bool, dryRun bool, onlyStopped bo
 		} else {
 			common.PrintSuccessMessage(fmt.Sprintf("Removed container: %s", containerName))
 			removed++
+
+			// Clean up associated NAT network (skip shared networks that still have containers)
+			if hasNAT {
+				natNet := cont.Labels["org.rfswift.nat_network"]
+				if natNet != "" && isSharedNATNetwork(ctx, cli, natNet) {
+					if countContainersOnNetwork(ctx, cli, natNet) == 0 {
+						removeNATNetworkByFullName(ctx, cli, natNet)
+					}
+				} else {
+					removeNATNetwork(ctx, cli, containerName)
+				}
+			}
 		}
 	}
 

@@ -86,7 +86,7 @@ func ContainerUpgrade(containerIdentifier string, repositoriesToPreserve string,
 
 	// STEP 1: Check if new image exists locally, if not pull it FIRST
 	// This prevents removing the old container if the pull fails
-	_, _, err = cli.ImageInspectWithRaw(ctx, newImage)
+	_, err = ImageInspectCompat(ctx, cli, newImage)
 	if err != nil {
 		common.PrintInfoMessage(fmt.Sprintf("Pulling image '%s'...", newImage))
 

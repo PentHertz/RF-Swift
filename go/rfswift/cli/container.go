@@ -48,22 +48,108 @@ var runCmd = &cobra.Command{
 		desktopPass, _ := cmd.Flags().GetString("desktop-pass")
 		desktopSSL, _ := cmd.Flags().GetBool("desktop-ssl")
 		vpnConfig, _ := cmd.Flags().GetString("vpn")
+		profileName, _ := cmd.Flags().GetString("profile")
+
+		// Apply profile if specified (profile values are used as defaults, CLI flags override)
+		if profileName != "" {
+			prof, err := rfdock.GetProfileByName(profileName)
+			if err != nil {
+				common.PrintErrorMessage(err)
+				return
+			}
+			if image == "" {
+				image = prof.Image
+			}
+			if netMode == "" {
+				netMode = prof.Network
+			}
+			if !desktop && prof.Desktop {
+				desktop = true
+			}
+			if !desktopSSL && prof.DesktopSSL {
+				desktopSSL = true
+			}
+			if !noX11 && prof.NoX11 {
+				noX11 = true
+			}
+			if privileged == 0 && prof.Privileged {
+				privileged = 1
+			}
+			if !realtime && prof.Realtime {
+				realtime = true
+			}
+			if devices == "" && prof.Devices != "" {
+				devices = prof.Devices
+			}
+			if extraBind == "" && prof.Bindings != "" {
+				extraBind = prof.Bindings
+			}
+			if exposedPorts == "" && prof.ExposedPorts != "" {
+				exposedPorts = prof.ExposedPorts
+			}
+			if bindedPorts == "" && prof.PortBindings != "" {
+				bindedPorts = prof.PortBindings
+			}
+			if caps == "" && prof.Caps != "" {
+				caps = prof.Caps
+			}
+			if cgroups == "" && prof.Cgroups != "" {
+				cgroups = prof.Cgroups
+			}
+			if vpnConfig == "" && prof.VPN != "" {
+				vpnConfig = prof.VPN
+			}
+			common.PrintInfoMessage(fmt.Sprintf("Using profile: %s (%s)", prof.Name, prof.Description))
+		}
 
 		// Launch interactive wizard if name or image not provided and terminal is interactive
 		if (dockerName == "" || image == "") && tui.IsInteractive() {
 			availableImages := rfdock.ListImageTags("org.container.project", "rfswift")
+			existingNets := rfdock.ListNATNetworkNames()
+
+			// Build profile options for the wizard
+			var profileOpts []tui.ProfileOption
+			if profileName == "" { // only offer profiles if not already set via --profile
+				for _, p := range rfdock.GetAllProfiles() {
+					profileOpts = append(profileOpts, tui.ProfileOption{
+						Name:         p.Name,
+						Description:  p.Description,
+						Image:        p.Image,
+						Network:      p.Network,
+						ExposedPorts: p.ExposedPorts,
+						PortBindings: p.PortBindings,
+						Desktop:      p.Desktop,
+						DesktopSSL:   p.DesktopSSL,
+						NoX11:        p.NoX11,
+						Privileged:   p.Privileged,
+						Realtime:     p.Realtime,
+						Devices:      p.Devices,
+						Bindings:     p.Bindings,
+						Caps:         p.Caps,
+						Cgroups:      p.Cgroups,
+						VPN:          p.VPN,
+					})
+				}
+			}
+
 			wizResult, err := tui.RunWizard(availableImages, &tui.RunWizardDefaults{
-				Image:      image,
-				Name:       dockerName,
-				Bindings:   extraBind,
-				Devices:    devices,
-				Desktop:    desktop,
-				DesktopSSL: desktopSSL,
-				NoX11:      noX11,
-				Privileged: privileged,
-				Realtime:   realtime,
-				VPN:        vpnConfig,
-			})
+				Image:        image,
+				Name:         dockerName,
+				Bindings:     extraBind,
+				Devices:      devices,
+				ExposedPorts: exposedPorts,
+				PortBindings: bindedPorts,
+				Caps:         caps,
+				Cgroups:      cgroups,
+				Network:      netMode,
+				Desktop:      desktop,
+				DesktopSSL:   desktopSSL,
+				NoX11:        noX11,
+				Privileged:   privileged,
+				Realtime:     realtime,
+				VPN:          vpnConfig,
+				Profiles:     profileOpts,
+			}, existingNets)
 			if err != nil {
 				common.PrintErrorMessage(fmt.Errorf("wizard cancelled: %v", err))
 				return
@@ -80,8 +166,35 @@ var runCmd = &cobra.Command{
 			if wizResult.Devices != "" {
 				devices = wizResult.Devices
 			}
+			if wizResult.ExposedPorts != "" {
+				exposedPorts = wizResult.ExposedPorts
+			}
+			if wizResult.PortBindings != "" {
+				bindedPorts = wizResult.PortBindings
+			}
+			if wizResult.Caps != "" {
+				caps = wizResult.Caps
+			}
+			if wizResult.Cgroups != "" {
+				cgroups = wizResult.Cgroups
+			}
+			if wizResult.Network != "" {
+				netMode = wizResult.Network
+			}
 			desktop = wizResult.Desktop
 			desktopSSL = wizResult.DesktopSSL
+			// Apply desktop port config from wizard if user configured it
+			if wizResult.DesktopHost != "" || wizResult.DesktopPort != "" {
+				host := wizResult.DesktopHost
+				if host == "" {
+					host = "127.0.0.1"
+				}
+				port := wizResult.DesktopPort
+				if port == "" {
+					port = "6080"
+				}
+				desktopConfig = "http:" + host + ":" + port
+			}
 			noX11 = wizResult.NoX11
 			privileged = wizResult.Privileged
 			realtime = wizResult.Realtime
@@ -548,6 +661,7 @@ func registerContainerCommands() {
 	runCmd.Flags().String("desktop-pass", "", "Set VNC password for desktop access (recommended when exposing on 0.0.0.0)")
 	runCmd.Flags().Bool("desktop-ssl", false, "Enable SSL/TLS for desktop connections (auto-generates self-signed certificate)")
 	runCmd.Flags().String("vpn", "", "Enable VPN inside container (wireguard:./wg0.conf, openvpn:./client.ovpn, tailscale:--auth-key=tskey-xxx, netbird:--setup-key=xxx)")
+	runCmd.Flags().String("profile", "", "Use a preset profile (e.g., sdr-full, wifi, pentest-full). See 'rfswift profile list'")
 
 	execCmd.Flags().StringP("workdir", "w", "/root", "Working directory inside container")
 	execCmd.Flags().StringP("container", "c", "", "container to run")

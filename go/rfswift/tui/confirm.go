@@ -54,6 +54,27 @@ func SelectOne(title string, options []string) (string, error) {
 	return result, err
 }
 
+// PromptInput prompts the user for a text value with a placeholder default.
+func PromptInput(title string, placeholder string) (string, error) {
+	if !IsInteractive() {
+		return "", fmt.Errorf("no interactive terminal")
+	}
+
+	var result string
+	err := huh.NewInput().
+		Title(title).
+		Placeholder(placeholder).
+		Value(&result).
+		Run()
+	if err != nil {
+		return "", err
+	}
+	if result == "" {
+		result = placeholder
+	}
+	return result, nil
+}
+
 // PrintSuccess prints a green success message.
 func PrintSuccess(msg string) {
 	icon := lipgloss.NewStyle().Foreground(ColorSuccess).Render("✓")

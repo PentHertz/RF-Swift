@@ -9,8 +9,10 @@ import (
 	"fmt"
 	"io/ioutil"
 	"os"
+	"os/exec"
 	"strings"
 
+	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/client"
 	"github.com/docker/go-connections/nat"
@@ -485,4 +487,50 @@ func showLoadingIndicator(ctx context.Context, commandFunc func() error, stepNam
 	}
 	spinner.StopWithMessage(fmt.Sprintf("%s completed", stepName))
 	return nil
+}
+
+// imageExistsPodman checks if an image exists using the podman CLI directly.
+// This is a fallback for when the Docker compat API fails to resolve image names.
+func imageExistsPodman(imageName string) bool {
+	err := exec.Command("podman", "image", "exists", imageName).Run()
+	return err == nil
+}
+
+// ImageInspectCompat wraps ImageInspectWithRaw with Podman compatibility.
+// Podman's Docker compat API sometimes fails to resolve short image names
+// (e.g., "penthertz/rfswift_noble:sdr_full") because Podman internally stores
+// them with the full registry prefix ("docker.io/penthertz/rfswift_noble:sdr_full").
+// This function tries the original name first, then with "docker.io/" prefix,
+// then falls back to the podman CLI as a last resort.
+func ImageInspectCompat(ctx context.Context, cli *client.Client, imageName string) (types.ImageInspect, error) {
+	// Try the name as-is
+	inspect, _, err := cli.ImageInspectWithRaw(ctx, imageName)
+	if err == nil {
+		return inspect, nil
+	}
+
+	// Only apply fallbacks for Podman
+	if GetEngine().Type() != EnginePodman {
+		return types.ImageInspect{}, err
+	}
+
+	// Try with docker.io/ prefix
+	if !strings.HasPrefix(imageName, "docker.io/") && !strings.HasPrefix(imageName, "localhost/") {
+		fullRef := "docker.io/" + imageName
+		inspect, _, err = cli.ImageInspectWithRaw(ctx, fullRef)
+		if err == nil {
+			return inspect, nil
+		}
+	}
+
+	// Final fallback: podman CLI inspect
+	out, cliErr := exec.Command("podman", "image", "inspect", "--format", "{{.Id}}", imageName).Output()
+	if cliErr == nil && strings.TrimSpace(string(out)) != "" {
+		// Image exists in Podman store; return a minimal ImageInspect
+		return types.ImageInspect{
+			ID: strings.TrimSpace(string(out)),
+		}, nil
+	}
+
+	return types.ImageInspect{}, fmt.Errorf("image '%s' not found", imageName)
 }

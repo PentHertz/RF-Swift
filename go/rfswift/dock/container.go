@@ -35,6 +35,17 @@ import (
 // startDesktopInContainer launches the desktop-start script inside an already-running
 // container by injecting the RFSWIFT_DESKTOP_* environment variables via a detached exec.
 func startDesktopInContainer(ctx context.Context, cli *client.Client, containerID string) error {
+	// Determine the listen host inside the container: for non-host network modes,
+	// websockify must listen on 0.0.0.0 so Docker port forwarding can reach it.
+	desktopListenHost := containerCfg.desktopHost
+	containerJSON, inspectErr := cli.ContainerInspect(ctx, containerID)
+	if inspectErr == nil {
+		netMode := string(containerJSON.HostConfig.NetworkMode)
+		if netMode != "" && netMode != "host" {
+			desktopListenHost = "0.0.0.0"
+		}
+	}
+
 	execConfig := container.ExecOptions{
 		Detach: true,
 		Cmd:    []string{"/usr/sbin/desktop-start"},
@@ -45,7 +56,7 @@ func startDesktopInContainer(ctx context.Context, cli *client.Client, containerI
 			}
 			return []string{
 				"RFSWIFT_DESKTOP_PROTO=" + containerCfg.desktopProto,
-				"RFSWIFT_DESKTOP_HOST=" + containerCfg.desktopHost,
+				"RFSWIFT_DESKTOP_HOST=" + desktopListenHost,
 				"RFSWIFT_DESKTOP_PORT=" + containerCfg.desktopPort,
 				"RFSWIFT_DESKTOP_PASS=" + containerCfg.desktopPass,
 				"RFSWIFT_DESKTOP_SSL=" + sslFlag,
@@ -536,16 +547,25 @@ func ContainerRun(containerName string) {
 		if containerCfg.desktopSSL {
 			sslFlag = "1"
 		}
+
+		// For non-host network modes, websockify must listen on 0.0.0.0 inside the
+		// container so Docker/Podman port forwarding can reach it (the forwarded
+		// traffic arrives on the container's eth0 address, not 127.0.0.1).
+		desktopListenHost := containerCfg.desktopHost
+		if containerCfg.networkMode != "" && containerCfg.networkMode != "host" {
+			desktopListenHost = "0.0.0.0"
+		}
+
 		dockerenv = append(dockerenv,
 			"RFSWIFT_DESKTOP_PROTO="+containerCfg.desktopProto,
-			"RFSWIFT_DESKTOP_HOST="+containerCfg.desktopHost,
+			"RFSWIFT_DESKTOP_HOST="+desktopListenHost,
 			"RFSWIFT_DESKTOP_PORT="+containerCfg.desktopPort,
 			"RFSWIFT_DESKTOP_PASS="+containerCfg.desktopPass,
 			"RFSWIFT_DESKTOP_SSL="+sslFlag,
 		)
 
 		// For non-host network modes, set up port bindings so the desktop is reachable
-		if containerCfg.networkMode != "host" {
+		if containerCfg.networkMode != "" && containerCfg.networkMode != "host" {
 			defaultPort := containerCfg.desktopPort
 			portProto := defaultPort + "/tcp"
 			if containerCfg.exposedPorts != "" {
@@ -554,7 +574,7 @@ func ContainerRun(containerName string) {
 				containerCfg.exposedPorts = portProto
 			}
 			if containerCfg.bindedPorts != "" {
-				containerCfg.bindedPorts += ",," + containerCfg.desktopHost + ":" + containerCfg.desktopPort + ":" + portProto
+				containerCfg.bindedPorts += "," + containerCfg.desktopHost + ":" + containerCfg.desktopPort + ":" + portProto
 			} else {
 				containerCfg.bindedPorts = containerCfg.desktopHost + ":" + containerCfg.desktopPort + ":" + portProto
 			}
@@ -760,7 +780,7 @@ func ContainerRun(containerName string) {
 	}
 
 	// Verify the image exists locally before attempting to create container
-	_, _, err = cli.ImageInspectWithRaw(ctx, containerCfg.imagename)
+	_, err = ImageInspectCompat(ctx, cli, containerCfg.imagename)
 	if err != nil {
 		common.PrintErrorMessage(fmt.Errorf("image '%s' not found locally. Pull it first with: rfswift pull -i %s", containerCfg.imagename, containerCfg.imagename))
 		return
@@ -786,7 +806,23 @@ func ContainerRun(containerName string) {
 		containerConfig.Entrypoint = []string{"/usr/sbin/rfswift-entrypoint"}
 	}
 
-	resp, err := cli.ContainerCreate(ctx, containerConfig, hostConfig, &network.NetworkingConfig{}, nil, containerName)
+	// ── NAT mode: create or join a per-container/shared network ──
+	networkingConfig := &network.NetworkingConfig{}
+	if isNAT, natTarget := parseNATMode(); isNAT {
+		natNetName, natSubnet, natErr := createOrJoinNATNetwork(ctx, cli, containerName, natTarget)
+		if natErr != nil {
+			common.PrintErrorMessage(natErr)
+			return
+		}
+		hostConfig.NetworkMode = container.NetworkMode(natNetName)
+		containerLabels["org.rfswift.nat_network"] = natNetName
+		containerLabels["org.rfswift.nat_subnet"] = natSubnet
+		networkingConfig.EndpointsConfig = map[string]*network.EndpointSettings{
+			natNetName: {},
+		}
+	}
+
+	resp, err := cli.ContainerCreate(ctx, containerConfig, hostConfig, networkingConfig, nil, containerName)
 	if err != nil {
 		if strings.Contains(err.Error(), "already in use") || strings.Contains(err.Error(), "already exists") {
 			common.PrintErrorMessage(fmt.Errorf("container name '%s' is already in use. Use a different name with -n, or exec into the existing container with: rfswift exec -c %s", containerName, containerName))
@@ -1208,6 +1244,23 @@ func ContainerRemove(containerIdentifier string) {
 
 	containerImage := found.Image
 
+	// Check for associated NAT network before removing the container
+	containerJSON, inspectErr := cli.ContainerInspect(ctx, found.ID)
+	hasNATNetwork := false
+	natContainerName := ""
+	if inspectErr == nil {
+		if containerJSON.Config != nil && containerJSON.Config.Labels["org.rfswift.nat_network"] != "" {
+			hasNATNetwork = true
+			// Extract container name for network cleanup
+			if len(found.Names) > 0 {
+				natContainerName = found.Names[0]
+				if len(natContainerName) > 0 && natContainerName[0] == '/' {
+					natContainerName = natContainerName[1:]
+				}
+			}
+		}
+	}
+
 	// Remove the container
 	err = cli.ContainerRemove(ctx, found.ID, container.RemoveOptions{Force: true})
 	if err != nil {
@@ -1215,6 +1268,26 @@ func ContainerRemove(containerIdentifier string) {
 		return
 	}
 	common.PrintSuccessMessage(fmt.Sprintf("Container '%s' removed successfully", containerIdentifier))
+
+	// Clean up associated NAT network (only if not shared or empty)
+	if hasNATNetwork {
+		natNetName := ""
+		if containerJSON.Config != nil {
+			natNetName = containerJSON.Config.Labels["org.rfswift.nat_network"]
+		}
+		if natNetName != "" {
+			if isSharedNATNetwork(ctx, cli, natNetName) {
+				remaining := countContainersOnNetwork(ctx, cli, natNetName)
+				if remaining == 0 {
+					removeNATNetworkByFullName(ctx, cli, natNetName)
+				} else {
+					common.PrintInfoMessage(fmt.Sprintf("NAT network '%s' still has %d container(s), keeping it", natNetName, remaining))
+				}
+			} else if natContainerName != "" {
+				removeNATNetwork(ctx, cli, natContainerName)
+			}
+		}
+	}
 
 	// Clean up associated temp image if any
 	tempPattern := regexp.MustCompile(`_temp_\d{14}`)

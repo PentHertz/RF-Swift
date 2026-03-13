@@ -142,6 +142,8 @@ func init() {
 		registerWinUSBCommands()
 	}
 	rootCmd.AddCommand(engineCmd)
+	registerNetworkCommands()
+	registerProfileCommands()
 	registerDoctorCommands()
 }
 

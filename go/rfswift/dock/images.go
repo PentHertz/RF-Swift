@@ -410,8 +410,8 @@ func ContainerPull(imageref string, imagetag string) {
 	}
 
 	// Check if the image exists locally
-	localInspect, _, err := cli.ImageInspectWithRaw(ctx, imagetag)
-	localExists := err == nil
+	localInspect, localInspectErr := ImageInspectCompat(ctx, cli, imagetag)
+	localExists := localInspectErr == nil
 	localDigest := ""
 	if localExists {
 		localDigest = localInspect.ID
@@ -923,8 +923,8 @@ func SaveImageToFile(imageName string, outputFile string, pullFirst bool) error 
 	imageName = normalizeImageName(imageName)
 
 	// Check if image exists locally
-	_, _, err = cli.ImageInspectWithRaw(ctx, imageName)
-	imageExists := err == nil
+	_, inspectErr := ImageInspectCompat(ctx, cli, imageName)
+	imageExists := inspectErr == nil
 
 	if !imageExists || pullFirst {
 		// Need to pull the image

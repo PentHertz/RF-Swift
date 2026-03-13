@@ -94,6 +94,7 @@ func printContainerProperties(ctx context.Context, cli *client.Client, container
 		{Key: "Shell", Value: props["Shell"]},
 		{Key: "Privileged Mode", Value: props["Privileged"]},
 		{Key: "Network Mode", Value: props["NetworkMode"]},
+		{Key: "NAT Subnet", Value: props["NATSubnet"]},
 		{Key: "Exposed Ports", Value: props["ExposedPorts"]},
 		{Key: "Port Bindings", Value: props["PortBindings"]},
 		{Key: "Image Name", Value: imageStatus, ValueColor: imageStatusColor},
@@ -194,6 +195,13 @@ func getContainerProperties(ctx context.Context, cli *client.Client, containerID
 		"Caps":         convertCapsToString(containerJSON.HostConfig.CapAdd),
 		"Seccomp":      convertSecurityOptToString(containerJSON.HostConfig.SecurityOpt),
 		"Cgroups":      cgroupRules,
+	}
+
+	// NAT subnet from label
+	if natSubnet, ok := containerJSON.Config.Labels["org.rfswift.nat_subnet"]; ok && natSubnet != "" {
+		props["NATSubnet"] = natSubnet
+		// Show friendly network mode for NAT containers
+		props["NetworkMode"] = "nat"
 	}
 
 	// Get ulimits
