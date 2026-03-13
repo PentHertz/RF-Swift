@@ -183,12 +183,14 @@ func (e *DockerEngine) GetConfigV2Path(containerID string) (string, error) {
 	return strings.Replace(hostPath, "hostconfig.json", "config.v2.json", 1), nil
 }
 
-// SupportsDirectConfigEdit returns true — Docker allows editing hostconfig.json
-// and config.v2.json on disk (requires service restart to take effect).
+// SupportsDirectConfigEdit returns true on Linux where Docker stores container
+// configs directly on the host filesystem. On Windows and macOS, Docker Desktop
+// runs inside a Linux VM so the config files are not directly accessible —
+// container recreation is used instead.
 //
 //	out: bool
 func (e *DockerEngine) SupportsDirectConfigEdit() bool {
-	return true
+	return runtime.GOOS == "linux"
 }
 
 // GetStorageRoot returns the Docker storage root directory.

@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"runtime"
 	"strings"
 	"time"
 
@@ -17,7 +16,6 @@ import (
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/client"
 	common "penthertz/rfswift/common"
-	rfutils "penthertz/rfswift/rfutils"
 	"penthertz/rfswift/tui"
 )
 
@@ -241,19 +239,6 @@ func getContainerProperties(ctx context.Context, cli *client.Client, containerID
 //	in(4): bool add               true to add the binding, false to remove it
 func UpdateMountBinding(containerName string, source string, target string, add bool) {
 	var timeout = 10
-
-	// Check if the system is Windows
-	if runtime.GOOS == "windows" {
-		title := "Unsupported on Windows"
-		message := `This function is not supported on Windows.
-However, you can achieve similar functionality by using the following commands:
-- "rfswift commit" to create a new image with a new tag.
-- "rfswift remove" to remove the existing container.
-- "rfswift run" to run a container with new bindings.`
-
-		rfutils.DisplayNotification(title, message, "warning")
-		os.Exit(1)
-	}
 
 	if source == "" {
 		source = target
@@ -484,19 +469,6 @@ func removeMountPoint(config map[string]interface{}, target string) {
 func UpdateDeviceBinding(containerName string, deviceHost string, deviceContainer string, add bool) {
 	var timeout = 10 // Stop timeout
 
-	// Check if the system is Windows
-	if runtime.GOOS == "windows" {
-		title := "Unsupported on Windows"
-		message := `This function is not supported on Windows.
-However, you can achieve similar functionality by using the following commands:
-- "rfswift commit" to create a new image with a new tag.
-- "rfswift remove" to remove the existing container.
-- "rfswift run" to run a container with new device bindings.`
-
-		rfutils.DisplayNotification(title, message, "warning")
-		os.Exit(1) // Exit since this function is not supported on Windows
-	}
-
 	if deviceHost == "" {
 		deviceHost = deviceContainer
 		common.PrintWarningMessage(fmt.Sprintf("Host device path is empty. Defaulting to container device path: %s", deviceContainer))
@@ -705,9 +677,101 @@ func removeDeviceMappingFromSlice(devices []container.DeviceMapping, hostPath, c
 	return result
 }
 
-// UpdateCapability adds or removes a Linux capability from a container by
-// recreating the container with the updated CapAdd list via
-// recreateContainerWithProperties.
+// directEditContainer is a helper that stops a Docker container, loads its
+// hostconfig.json and config.v2.json, calls the mutate function to apply
+// changes, saves both files, and restarts the Docker service.
+// The mutate function receives pointers to both config structs and returns
+// (changed bool, err error). If changed is false, no files are saved and
+// the service is not restarted.
+func directEditContainer(ctx context.Context, cli *client.Client, containerID string, containerName string, mutate func(*HostConfigFull, map[string]interface{}) (bool, error)) error {
+	timeout := 10
+
+	// Stop the container
+	common.PrintInfoMessage("Stopping the container...")
+	if err := showLoadingIndicator(ctx, func() error {
+		return cli.ContainerStop(ctx, containerID, container.StopOptions{Timeout: &timeout})
+	}, "Stopping the container..."); err != nil {
+		common.PrintErrorMessage(fmt.Errorf("failed to stop container: %v", err))
+		return fmt.Errorf("failed to stop container: %v", err)
+	}
+
+	// Ensure container is stopped and get full ID
+	containerJSON, err := cli.ContainerInspect(ctx, containerID)
+	if err != nil {
+		common.PrintErrorMessage(fmt.Errorf("error inspecting container: %v", err))
+		return fmt.Errorf("error inspecting container: %v", err)
+	}
+	if containerJSON.State.Running {
+		common.PrintWarningMessage("Container is still running. Forcing stop...")
+		if err := cli.ContainerKill(ctx, containerID, "SIGKILL"); err != nil {
+			common.PrintErrorMessage(fmt.Errorf("failed to force stop container: %v", err))
+			return fmt.Errorf("failed to force stop container: %v", err)
+		}
+	}
+	common.PrintSuccessMessage(fmt.Sprintf("Container '%s' stopped", containerName))
+
+	// Use the full container ID for filesystem path lookup
+	fullID := containerJSON.ID
+
+	// Load hostconfig.json
+	hostConfigPath, err := EngineGetHostConfigPath(fullID)
+	if err != nil {
+		common.PrintErrorMessage(fmt.Errorf("failed to locate hostconfig.json: %v", err))
+		return err
+	}
+	common.PrintInfoMessage(fmt.Sprintf("Loading hostconfig.json from: %s", hostConfigPath))
+	var hostConfig HostConfigFull
+	if err := loadJSON(hostConfigPath, &hostConfig); err != nil {
+		common.PrintErrorMessage(fmt.Errorf("failed to load hostconfig.json: %v", err))
+		return err
+	}
+
+	// Load config.v2.json
+	configV2Path := strings.Replace(hostConfigPath, "hostconfig.json", "config.v2.json", 1)
+	var configV2 map[string]interface{}
+	if err := loadJSON(configV2Path, &configV2); err != nil {
+		common.PrintErrorMessage(fmt.Errorf("failed to load config.v2.json: %v", err))
+		return err
+	}
+
+	// Apply mutations
+	changed, err := mutate(&hostConfig, configV2)
+	if err != nil {
+		common.PrintErrorMessage(err)
+		return err
+	}
+	if !changed {
+		return nil
+	}
+
+	// Save both files
+	if err := saveJSON(hostConfigPath, hostConfig); err != nil {
+		common.PrintErrorMessage(fmt.Errorf("failed to save hostconfig.json: %v", err))
+		return err
+	}
+	common.PrintSuccessMessage("hostconfig.json updated successfully.")
+
+	if err := saveJSON(configV2Path, configV2); err != nil {
+		common.PrintErrorMessage(fmt.Errorf("failed to save config.v2.json: %v", err))
+		return err
+	}
+	common.PrintSuccessMessage("config.v2.json updated successfully.")
+
+	// Restart the engine service
+	engineName := GetEngine().Name()
+	if err := showLoadingIndicator(ctx, func() error {
+		return EngineRestartService()
+	}, fmt.Sprintf("Restarting %s service...", engineName)); err != nil {
+		common.PrintErrorMessage(fmt.Errorf("failed to restart %s service: %v", engineName, err))
+		return err
+	}
+	common.PrintSuccessMessage(fmt.Sprintf("%s service restarted successfully.", engineName))
+	return nil
+}
+
+// UpdateCapability adds or removes a Linux capability from a container.
+// On Docker, it directly edits hostconfig.json. On Podman, it falls back
+// to container recreation.
 //
 //	in(1): string containerID    container ID or name to modify
 //	in(2): string capability     Linux capability name (e.g. "NET_ADMIN")
@@ -722,7 +786,6 @@ func UpdateCapability(containerID string, capability string, add bool) error {
 	}
 	defer cli.Close()
 
-	// Get container info first
 	containerJSON, err := cli.ContainerInspect(ctx, containerID)
 	if err != nil {
 		common.PrintErrorMessage(fmt.Errorf("failed to inspect container: %v", err))
@@ -730,62 +793,75 @@ func UpdateCapability(containerID string, capability string, add bool) error {
 	}
 	containerName := strings.TrimPrefix(containerJSON.Name, "/")
 
-	// Get container properties
-	props, err := getContainerProperties(ctx, cli, containerID)
-	if err != nil {
-		common.PrintErrorMessage(fmt.Errorf("failed to get container properties: %v", err))
-		return err
-	}
-
-	// Parse existing capabilities
-	var capabilities []string
-	if props["Caps"] != "" {
-		capabilities = strings.Split(props["Caps"], ",")
-	}
-
-	// Add or remove the capability
-	if add {
-		// Check if already exists
-		found := false
-		for _, cap := range capabilities {
-			if strings.TrimSpace(cap) == capability {
-				found = true
-				break
+	if !EngineSupportsDirectConfigEdit() {
+		// Podman path: fall back to container recreation
+		common.PrintInfoMessage(fmt.Sprintf("%s does not support direct config editing — using container recreation", GetEngine().Name()))
+		props, err := getContainerProperties(ctx, cli, containerID)
+		if err != nil {
+			return err
+		}
+		var capabilities []string
+		if props["Caps"] != "" {
+			capabilities = strings.Split(props["Caps"], ",")
+		}
+		if add {
+			for _, cap := range capabilities {
+				if strings.TrimSpace(cap) == capability {
+					common.PrintInfoMessage(fmt.Sprintf("Capability '%s' already exists in container '%s'", capability, containerName))
+					return nil
+				}
 			}
-		}
-
-		if found {
-			common.PrintInfoMessage(fmt.Sprintf("Capability '%s' already exists in container '%s'", capability, containerName))
-			return nil
-		}
-
-		capabilities = append(capabilities, capability)
-		common.PrintInfoMessage(fmt.Sprintf("Adding capability '%s' to container '%s'", capability, containerName))
-	} else {
-		// Remove capability
-		newCapabilities := []string{}
-		found := false
-		for _, cap := range capabilities {
-			if strings.TrimSpace(cap) != capability {
-				newCapabilities = append(newCapabilities, cap)
-			} else {
-				found = true
+			capabilities = append(capabilities, capability)
+		} else {
+			newCaps := []string{}
+			found := false
+			for _, cap := range capabilities {
+				if strings.TrimSpace(cap) != capability {
+					newCaps = append(newCaps, cap)
+				} else {
+					found = true
+				}
 			}
+			if !found {
+				common.PrintWarningMessage(fmt.Sprintf("Capability '%s' not found in container '%s'", capability, containerName))
+				return nil
+			}
+			capabilities = newCaps
 		}
-
-		if !found {
-			common.PrintWarningMessage(fmt.Sprintf("Capability '%s' not found in container '%s'", capability, containerName))
-			return nil
-		}
-
-		capabilities = newCapabilities
-		common.PrintInfoMessage(fmt.Sprintf("Removing capability '%s' from container '%s'", capability, containerName))
+		props["Caps"] = strings.Join(capabilities, ",")
+		return recreateContainerWithProperties(ctx, cli, containerID, props)
 	}
 
-	// Update the container
-	props["Caps"] = strings.Join(capabilities, ",")
-
-	return recreateContainerWithProperties(ctx, cli, containerID, props)
+	// Docker path: direct hostconfig.json edit
+	return directEditContainer(ctx, cli, containerID, containerName, func(hostConfig *HostConfigFull, _ map[string]interface{}) (bool, error) {
+		if add {
+			for _, cap := range hostConfig.CapAdd {
+				if strings.TrimSpace(cap) == capability {
+					common.PrintInfoMessage(fmt.Sprintf("Capability '%s' already exists in container '%s'", capability, containerName))
+					return false, nil
+				}
+			}
+			hostConfig.CapAdd = append(hostConfig.CapAdd, capability)
+			common.PrintSuccessMessage(fmt.Sprintf("Added capability: %s", capability))
+		} else {
+			newCaps := []string{}
+			found := false
+			for _, cap := range hostConfig.CapAdd {
+				if strings.TrimSpace(cap) != capability {
+					newCaps = append(newCaps, cap)
+				} else {
+					found = true
+				}
+			}
+			if !found {
+				common.PrintWarningMessage(fmt.Sprintf("Capability '%s' not found in container '%s'", capability, containerName))
+				return false, nil
+			}
+			hostConfig.CapAdd = newCaps
+			common.PrintSuccessMessage(fmt.Sprintf("Removed capability: %s", capability))
+		}
+		return true, nil
+	})
 }
 
 // UpdateCgroupRule adds or removes a device cgroup rule from a container by
@@ -805,7 +881,6 @@ func UpdateCgroupRule(containerID string, rule string, add bool) error {
 	}
 	defer cli.Close()
 
-	// Get container info first
 	containerJSON, err := cli.ContainerInspect(ctx, containerID)
 	if err != nil {
 		common.PrintErrorMessage(fmt.Errorf("failed to inspect container: %v", err))
@@ -813,62 +888,74 @@ func UpdateCgroupRule(containerID string, rule string, add bool) error {
 	}
 	containerName := strings.TrimPrefix(containerJSON.Name, "/")
 
-	// Get container properties
-	props, err := getContainerProperties(ctx, cli, containerID)
-	if err != nil {
-		common.PrintErrorMessage(fmt.Errorf("failed to get container properties: %v", err))
-		return err
-	}
-
-	// Parse existing cgroup rules
-	var cgroupRules []string
-	if props["Cgroups"] != "" {
-		cgroupRules = strings.Split(props["Cgroups"], ",")
-	}
-
-	// Add or remove the rule
-	if add {
-		// Check if already exists
-		found := false
-		for _, r := range cgroupRules {
-			if strings.TrimSpace(r) == rule {
-				found = true
-				break
+	if !EngineSupportsDirectConfigEdit() {
+		common.PrintInfoMessage(fmt.Sprintf("%s does not support direct config editing — using container recreation", GetEngine().Name()))
+		props, err := getContainerProperties(ctx, cli, containerID)
+		if err != nil {
+			return err
+		}
+		var cgroupRules []string
+		if props["Cgroups"] != "" {
+			cgroupRules = strings.Split(props["Cgroups"], ",")
+		}
+		if add {
+			for _, r := range cgroupRules {
+				if strings.TrimSpace(r) == rule {
+					common.PrintInfoMessage(fmt.Sprintf("Cgroup rule '%s' already exists in container '%s'", rule, containerName))
+					return nil
+				}
 			}
-		}
-
-		if found {
-			common.PrintInfoMessage(fmt.Sprintf("Cgroup rule '%s' already exists in container '%s'", rule, containerName))
-			return nil
-		}
-
-		cgroupRules = append(cgroupRules, rule)
-		common.PrintInfoMessage(fmt.Sprintf("Adding cgroup rule '%s' to container '%s'", rule, containerName))
-	} else {
-		// Remove rule
-		newRules := []string{}
-		found := false
-		for _, r := range cgroupRules {
-			if strings.TrimSpace(r) != rule {
-				newRules = append(newRules, r)
-			} else {
-				found = true
+			cgroupRules = append(cgroupRules, rule)
+		} else {
+			newRules := []string{}
+			found := false
+			for _, r := range cgroupRules {
+				if strings.TrimSpace(r) != rule {
+					newRules = append(newRules, r)
+				} else {
+					found = true
+				}
 			}
+			if !found {
+				common.PrintWarningMessage(fmt.Sprintf("Cgroup rule '%s' not found in container '%s'", rule, containerName))
+				return nil
+			}
+			cgroupRules = newRules
 		}
-
-		if !found {
-			common.PrintWarningMessage(fmt.Sprintf("Cgroup rule '%s' not found in container '%s'", rule, containerName))
-			return nil
-		}
-
-		cgroupRules = newRules
-		common.PrintInfoMessage(fmt.Sprintf("Removing cgroup rule '%s' from container '%s'", rule, containerName))
+		props["Cgroups"] = strings.Join(cgroupRules, ",")
+		return recreateContainerWithProperties(ctx, cli, containerID, props)
 	}
 
-	// Update the container
-	props["Cgroups"] = strings.Join(cgroupRules, ",")
-
-	return recreateContainerWithProperties(ctx, cli, containerID, props)
+	// Docker path: direct hostconfig.json edit
+	return directEditContainer(ctx, cli, containerID, containerName, func(hostConfig *HostConfigFull, _ map[string]interface{}) (bool, error) {
+		if add {
+			for _, r := range hostConfig.DeviceCgroupRules {
+				if strings.TrimSpace(r) == rule {
+					common.PrintInfoMessage(fmt.Sprintf("Cgroup rule '%s' already exists in container '%s'", rule, containerName))
+					return false, nil
+				}
+			}
+			hostConfig.DeviceCgroupRules = append(hostConfig.DeviceCgroupRules, rule)
+			common.PrintSuccessMessage(fmt.Sprintf("Added cgroup rule: %s", rule))
+		} else {
+			newRules := []string{}
+			found := false
+			for _, r := range hostConfig.DeviceCgroupRules {
+				if strings.TrimSpace(r) != rule {
+					newRules = append(newRules, r)
+				} else {
+					found = true
+				}
+			}
+			if !found {
+				common.PrintWarningMessage(fmt.Sprintf("Cgroup rule '%s' not found in container '%s'", rule, containerName))
+				return false, nil
+			}
+			hostConfig.DeviceCgroupRules = newRules
+			common.PrintSuccessMessage(fmt.Sprintf("Removed cgroup rule: %s", rule))
+		}
+		return true, nil
+	})
 }
 
 // UpdateExposedPort adds or removes an exposed port declaration from a container
@@ -888,7 +975,6 @@ func UpdateExposedPort(containerID string, port string, add bool) error {
 	}
 	defer cli.Close()
 
-	// Get container info first
 	containerJSON, err := cli.ContainerInspect(ctx, containerID)
 	if err != nil {
 		common.PrintErrorMessage(fmt.Errorf("failed to inspect container: %v", err))
@@ -896,67 +982,83 @@ func UpdateExposedPort(containerID string, port string, add bool) error {
 	}
 	containerName := strings.TrimPrefix(containerJSON.Name, "/")
 
-	// Get container properties
-	props, err := getContainerProperties(ctx, cli, containerID)
-	if err != nil {
-		common.PrintErrorMessage(fmt.Errorf("failed to get container properties: %v", err))
-		return err
-	}
-
-	// Parse existing exposed ports
-	exposedPortsStr := props["ExposedPorts"]
-	var exposedPorts []string
-	if exposedPortsStr != "" {
-		exposedPorts = strings.Split(exposedPortsStr, ",")
-		// Trim spaces
-		for i := range exposedPorts {
-			exposedPorts[i] = strings.TrimSpace(exposedPorts[i])
+	if !EngineSupportsDirectConfigEdit() {
+		common.PrintInfoMessage(fmt.Sprintf("%s does not support direct config editing — using container recreation", GetEngine().Name()))
+		props, err := getContainerProperties(ctx, cli, containerID)
+		if err != nil {
+			return err
 		}
-	}
-
-	// Add or remove the port
-	if add {
-		// Check if already exists
-		found := false
-		for _, p := range exposedPorts {
-			if p == port {
-				found = true
-				break
+		var exposedPorts []string
+		if props["ExposedPorts"] != "" {
+			exposedPorts = strings.Split(props["ExposedPorts"], ",")
+			for i := range exposedPorts {
+				exposedPorts[i] = strings.TrimSpace(exposedPorts[i])
 			}
 		}
-
-		if found {
-			common.PrintInfoMessage(fmt.Sprintf("Port '%s' already exposed in container '%s'", port, containerName))
-			return nil
-		}
-
-		exposedPorts = append(exposedPorts, port)
-		common.PrintInfoMessage(fmt.Sprintf("Exposing port '%s' on container '%s'", port, containerName))
-	} else {
-		// Remove port
-		newPorts := []string{}
-		found := false
-		for _, p := range exposedPorts {
-			if p != port {
-				newPorts = append(newPorts, p)
-			} else {
-				found = true
+		if add {
+			for _, p := range exposedPorts {
+				if p == port {
+					common.PrintInfoMessage(fmt.Sprintf("Port '%s' already exposed in container '%s'", port, containerName))
+					return nil
+				}
 			}
+			exposedPorts = append(exposedPorts, port)
+		} else {
+			newPorts := []string{}
+			found := false
+			for _, p := range exposedPorts {
+				if p != port {
+					newPorts = append(newPorts, p)
+				} else {
+					found = true
+				}
+			}
+			if !found {
+				common.PrintWarningMessage(fmt.Sprintf("Port '%s' not found in container '%s'", port, containerName))
+				return nil
+			}
+			exposedPorts = newPorts
 		}
-
-		if !found {
-			common.PrintWarningMessage(fmt.Sprintf("Port '%s' not found in container '%s'", port, containerName))
-			return nil
-		}
-
-		exposedPorts = newPorts
-		common.PrintInfoMessage(fmt.Sprintf("Removing exposed port '%s' from container '%s'", port, containerName))
+		props["ExposedPorts"] = strings.Join(exposedPorts, ",")
+		return recreateContainerWithProperties(ctx, cli, containerID, props)
 	}
 
-	// Update the container
-	props["ExposedPorts"] = strings.Join(exposedPorts, ",")
+	// Docker path: edit config.v2.json (ExposedPorts lives in the container config, not hostconfig)
+	// Normalize port format: ensure it has a protocol suffix
+	if !strings.Contains(port, "/") {
+		port = port + "/tcp"
+	}
 
-	return recreateContainerWithProperties(ctx, cli, containerID, props)
+	return directEditContainer(ctx, cli, containerID, containerName, func(_ *HostConfigFull, configV2 map[string]interface{}) (bool, error) {
+		// ExposedPorts is in config.v2.json under Config.ExposedPorts
+		configSection, _ := configV2["Config"].(map[string]interface{})
+		if configSection == nil {
+			configSection = map[string]interface{}{}
+			configV2["Config"] = configSection
+		}
+		exposedPorts, _ := configSection["ExposedPorts"].(map[string]interface{})
+		if exposedPorts == nil {
+			exposedPorts = map[string]interface{}{}
+		}
+
+		if add {
+			if _, exists := exposedPorts[port]; exists {
+				common.PrintInfoMessage(fmt.Sprintf("Port '%s' already exposed in container '%s'", port, containerName))
+				return false, nil
+			}
+			exposedPorts[port] = map[string]interface{}{}
+			common.PrintSuccessMessage(fmt.Sprintf("Exposed port: %s", port))
+		} else {
+			if _, exists := exposedPorts[port]; !exists {
+				common.PrintWarningMessage(fmt.Sprintf("Port '%s' not found in container '%s'", port, containerName))
+				return false, nil
+			}
+			delete(exposedPorts, port)
+			common.PrintSuccessMessage(fmt.Sprintf("Removed exposed port: %s", port))
+		}
+		configSection["ExposedPorts"] = exposedPorts
+		return true, nil
+	})
 }
 
 // UpdatePortBinding adds or removes a host-to-container port binding from a
@@ -979,7 +1081,6 @@ func UpdatePortBinding(containerID string, binding string, add bool) error {
 	}
 	defer cli.Close()
 
-	// Get container info first
 	containerJSON, err := cli.ContainerInspect(ctx, containerID)
 	if err != nil {
 		common.PrintErrorMessage(fmt.Errorf("failed to inspect container: %v", err))
@@ -987,67 +1088,132 @@ func UpdatePortBinding(containerID string, binding string, add bool) error {
 	}
 	containerName := strings.TrimPrefix(containerJSON.Name, "/")
 
-	// Get container properties
-	props, err := getContainerProperties(ctx, cli, containerID)
-	if err != nil {
-		common.PrintErrorMessage(fmt.Errorf("failed to get container properties: %v", err))
-		return err
-	}
-
-	// Parse existing port bindings
-	portBindingsStr := props["PortBindings"]
-	var portBindings []string
-	if portBindingsStr != "" {
-		portBindings = strings.Split(portBindingsStr, ";;")
-		// Trim spaces
-		for i := range portBindings {
-			portBindings[i] = strings.TrimSpace(portBindings[i])
+	if !EngineSupportsDirectConfigEdit() {
+		common.PrintInfoMessage(fmt.Sprintf("%s does not support direct config editing — using container recreation", GetEngine().Name()))
+		props, err := getContainerProperties(ctx, cli, containerID)
+		if err != nil {
+			return err
 		}
-	}
-
-	// Add or remove the binding
-	if add {
-		// Check if already exists
-		found := false
-		for _, b := range portBindings {
-			if b == binding {
-				found = true
-				break
+		var portBindings []string
+		if props["PortBindings"] != "" {
+			portBindings = strings.Split(props["PortBindings"], ";;")
+			for i := range portBindings {
+				portBindings[i] = strings.TrimSpace(portBindings[i])
 			}
 		}
+		if add {
+			for _, b := range portBindings {
+				if b == binding {
+					common.PrintInfoMessage(fmt.Sprintf("Port binding '%s' already exists in container '%s'", binding, containerName))
+					return nil
+				}
+			}
+			portBindings = append(portBindings, binding)
+		} else {
+			newBindings := []string{}
+			found := false
+			for _, b := range portBindings {
+				if b != binding {
+					newBindings = append(newBindings, b)
+				} else {
+					found = true
+				}
+			}
+			if !found {
+				common.PrintWarningMessage(fmt.Sprintf("Port binding '%s' not found in container '%s'", binding, containerName))
+				return nil
+			}
+			portBindings = newBindings
+		}
+		props["PortBindings"] = strings.Join(portBindings, ";;")
+		return recreateContainerWithProperties(ctx, cli, containerID, props)
+	}
 
-		if found {
-			common.PrintInfoMessage(fmt.Sprintf("Port binding '%s' already exists in container '%s'", binding, containerName))
-			return nil
+	// Docker path: direct hostconfig.json + config.v2.json edit
+	// Parse the binding: format is "containerPort/proto:hostIP:hostPort" or "containerPort/proto:hostPort"
+	parts := strings.SplitN(binding, ":", 2)
+	if len(parts) != 2 {
+		return fmt.Errorf("invalid port binding format: %s", binding)
+	}
+	containerPort := parts[0] // e.g., "8080/tcp"
+	hostPart := parts[1]     // e.g., "127.0.0.1:8080" or "8080"
+
+	// Parse host IP and port
+	hostIP := ""
+	hostPort := hostPart
+	if colonIdx := strings.LastIndex(hostPart, ":"); colonIdx != -1 {
+		hostIP = hostPart[:colonIdx]
+		hostPort = hostPart[colonIdx+1:]
+	}
+
+	if !strings.Contains(containerPort, "/") {
+		containerPort = containerPort + "/tcp"
+	}
+
+	return directEditContainer(ctx, cli, containerID, containerName, func(hostConfig *HostConfigFull, configV2 map[string]interface{}) (bool, error) {
+		if hostConfig.PortBindings == nil {
+			hostConfig.PortBindings = map[string][]PortBinding{}
 		}
 
-		portBindings = append(portBindings, binding)
-		common.PrintInfoMessage(fmt.Sprintf("Adding port binding '%s' to container '%s'", binding, containerName))
-	} else {
-		// Remove binding
-		newBindings := []string{}
-		found := false
-		for _, b := range portBindings {
-			if b != binding {
-				newBindings = append(newBindings, b)
+		if add {
+			newBinding := PortBinding{HostIP: hostIP, HostPort: hostPort}
+			existing := hostConfig.PortBindings[containerPort]
+			for _, b := range existing {
+				if b.HostIP == hostIP && b.HostPort == hostPort {
+					common.PrintInfoMessage(fmt.Sprintf("Port binding '%s' already exists in container '%s'", binding, containerName))
+					return false, nil
+				}
+			}
+			hostConfig.PortBindings[containerPort] = append(existing, newBinding)
+
+			// Also add to ExposedPorts in config.v2.json
+			if configV2 != nil {
+				configSection, _ := configV2["Config"].(map[string]interface{})
+				if configSection != nil {
+					exposedPorts, _ := configSection["ExposedPorts"].(map[string]interface{})
+					if exposedPorts == nil {
+						exposedPorts = map[string]interface{}{}
+					}
+					exposedPorts[containerPort] = map[string]interface{}{}
+					configSection["ExposedPorts"] = exposedPorts
+				}
+			}
+
+			common.PrintSuccessMessage(fmt.Sprintf("Added port binding: %s", binding))
+		} else {
+			existing := hostConfig.PortBindings[containerPort]
+			newBindings := []PortBinding{}
+			found := false
+			for _, b := range existing {
+				if b.HostIP == hostIP && b.HostPort == hostPort {
+					found = true
+				} else {
+					newBindings = append(newBindings, b)
+				}
+			}
+			if !found {
+				common.PrintWarningMessage(fmt.Sprintf("Port binding '%s' not found in container '%s'", binding, containerName))
+				return false, nil
+			}
+			if len(newBindings) == 0 {
+				delete(hostConfig.PortBindings, containerPort)
+				// Also remove from ExposedPorts in config.v2.json
+				if configV2 != nil {
+					configSection, _ := configV2["Config"].(map[string]interface{})
+					if configSection != nil {
+						exposedPorts, _ := configSection["ExposedPorts"].(map[string]interface{})
+						if exposedPorts != nil {
+							delete(exposedPorts, containerPort)
+						}
+					}
+				}
 			} else {
-				found = true
+				hostConfig.PortBindings[containerPort] = newBindings
 			}
+			common.PrintSuccessMessage(fmt.Sprintf("Removed port binding: %s", binding))
 		}
-
-		if !found {
-			common.PrintWarningMessage(fmt.Sprintf("Port binding '%s' not found in container '%s'", binding, containerName))
-			return nil
-		}
-
-		portBindings = newBindings
-		common.PrintInfoMessage(fmt.Sprintf("Removing port binding '%s' from container '%s'", binding, containerName))
-	}
-
-	// Update the container
-	props["PortBindings"] = strings.Join(portBindings, ";;")
-
-	return recreateContainerWithProperties(ctx, cli, containerID, props)
+		return true, nil
+	})
 }
 
 // recreateContainerWithProperties stops a container, commits its filesystem state

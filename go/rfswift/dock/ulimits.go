@@ -222,58 +222,106 @@ func UpdateUlimit(containerID string, ulimitName string, ulimitValue string, add
 	}
 	containerName := strings.TrimPrefix(containerJSON.Name, "/")
 
-	props, err := getContainerProperties(ctx, cli, containerID)
-	if err != nil {
-		common.PrintErrorMessage(fmt.Errorf("failed to get container properties: %v", err))
-		return err
-	}
-
-	existingUlimits := parseUlimitsFromString(props["Ulimits"])
-
-	if add {
-		ulimitEntry := fmt.Sprintf("%s=%s", ulimitName, ulimitValue)
-
-		found := false
-		for i, ul := range existingUlimits {
-			if ul.Name == ulimitName {
-				newUlimits := parseUlimitsFromString(ulimitEntry)
-				if len(newUlimits) > 0 {
-					existingUlimits[i] = newUlimits[0]
+	if !EngineSupportsDirectConfigEdit() {
+		common.PrintInfoMessage(fmt.Sprintf("%s does not support direct config editing — using container recreation", GetEngine().Name()))
+		props, err := getContainerProperties(ctx, cli, containerID)
+		if err != nil {
+			return err
+		}
+		existingUlimits := parseUlimitsFromString(props["Ulimits"])
+		if add {
+			ulimitEntry := fmt.Sprintf("%s=%s", ulimitName, ulimitValue)
+			found := false
+			for i, ul := range existingUlimits {
+				if ul.Name == ulimitName {
+					newUlimits := parseUlimitsFromString(ulimitEntry)
+					if len(newUlimits) > 0 {
+						existingUlimits[i] = newUlimits[0]
+					}
+					found = true
+					break
 				}
-				found = true
-				common.PrintInfoMessage(fmt.Sprintf("Updating ulimit '%s' to '%s' on container '%s'", ulimitName, ulimitValue, containerName))
-				break
 			}
-		}
-
-		if !found {
-			newUlimits := parseUlimitsFromString(ulimitEntry)
-			existingUlimits = append(existingUlimits, newUlimits...)
-			common.PrintInfoMessage(fmt.Sprintf("Adding ulimit '%s=%s' to container '%s'", ulimitName, ulimitValue, containerName))
-		}
-	} else {
-		newUlimits := []*container.Ulimit{}
-		found := false
-		for _, ul := range existingUlimits {
-			if ul.Name != ulimitName {
-				newUlimits = append(newUlimits, ul)
-			} else {
-				found = true
+			if !found {
+				newUlimits := parseUlimitsFromString(ulimitEntry)
+				existingUlimits = append(existingUlimits, newUlimits...)
 			}
+		} else {
+			newUlimits := []*container.Ulimit{}
+			found := false
+			for _, ul := range existingUlimits {
+				if ul.Name != ulimitName {
+					newUlimits = append(newUlimits, ul)
+				} else {
+					found = true
+				}
+			}
+			if !found {
+				common.PrintWarningMessage(fmt.Sprintf("Ulimit '%s' not found in container '%s'", ulimitName, containerName))
+				return nil
+			}
+			existingUlimits = newUlimits
 		}
-
-		if !found {
-			common.PrintWarningMessage(fmt.Sprintf("Ulimit '%s' not found in container '%s'", ulimitName, containerName))
-			return nil
-		}
-
-		existingUlimits = newUlimits
-		common.PrintInfoMessage(fmt.Sprintf("Removing ulimit '%s' from container '%s'", ulimitName, containerName))
+		props["Ulimits"] = convertUlimitsToString(existingUlimits)
+		return recreateContainerWithProperties(ctx, cli, containerID, props)
 	}
 
-	props["Ulimits"] = convertUlimitsToString(existingUlimits)
+	// Docker path: direct hostconfig.json edit
+	return directEditContainer(ctx, cli, containerID, containerName, func(hostConfig *HostConfigFull, _ map[string]interface{}) (bool, error) {
+		if add {
+			// Parse the new ulimit value
+			soft, hard := int64(0), int64(0)
+			if strings.Contains(ulimitValue, ":") {
+				parts := strings.SplitN(ulimitValue, ":", 2)
+				soft, _ = strconv.ParseInt(parts[0], 10, 64)
+				hard, _ = strconv.ParseInt(parts[1], 10, 64)
+			} else {
+				if ulimitValue == "-1" || ulimitValue == "unlimited" {
+					soft, hard = -1, -1
+				} else {
+					soft, _ = strconv.ParseInt(ulimitValue, 10, 64)
+					hard = soft
+				}
+			}
 
-	return recreateContainerWithProperties(ctx, cli, containerID, props)
+			// Update or add
+			found := false
+			for i, ul := range hostConfig.Ulimits {
+				if ul.Name == ulimitName {
+					hostConfig.Ulimits[i].Soft = soft
+					hostConfig.Ulimits[i].Hard = hard
+					found = true
+					common.PrintSuccessMessage(fmt.Sprintf("Updated ulimit: %s=%s", ulimitName, ulimitValue))
+					break
+				}
+			}
+			if !found {
+				hostConfig.Ulimits = append(hostConfig.Ulimits, Ulimit{
+					Name: ulimitName,
+					Soft: soft,
+					Hard: hard,
+				})
+				common.PrintSuccessMessage(fmt.Sprintf("Added ulimit: %s=%s", ulimitName, ulimitValue))
+			}
+		} else {
+			newUlimits := []Ulimit{}
+			found := false
+			for _, ul := range hostConfig.Ulimits {
+				if ul.Name != ulimitName {
+					newUlimits = append(newUlimits, ul)
+				} else {
+					found = true
+				}
+			}
+			if !found {
+				common.PrintWarningMessage(fmt.Sprintf("Ulimit '%s' not found in container '%s'", ulimitName, containerName))
+				return false, nil
+			}
+			hostConfig.Ulimits = newUlimits
+			common.PrintSuccessMessage(fmt.Sprintf("Removed ulimit: %s", ulimitName))
+		}
+		return true, nil
+	})
 }
 
 // EnableRealtimeMode enables realtime scheduling on an existing container by adding the
