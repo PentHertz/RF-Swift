@@ -5,9 +5,9 @@ name: Go
 
 on:
   push:
-    branches: [ "cleaning" ]
+    branches: [ "main" ]
   pull_request:
-    branches: [ "cleaning" ]
+    branches: [ "main" ]
 
 jobs:
 
