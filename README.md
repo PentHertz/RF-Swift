@@ -68,7 +68,9 @@ RF Swift is a revolutionary toolbox that transforms any computer into a powerful
 - **🧩 Modular Tool Selection**: Deploy only the tools you need, when you need them
 - **🛡️ Containerized Isolation**: Prevent RF tools from affecting system stability or security
 - **🌍 Cross-platform Compatibility**: Works seamlessly on Linux, Windows, and macOS
-- **🔌 Dynamic Hardware Integration**: Connect and disconnect USB devices without restarting
+- **🔌 Dynamic Hardware Integration**: Connect and disconnect USB devices, ports, capabilities, and resources without recreating containers
+- **🌐 NAT Networking**: Isolated container networks with configurable subnets for multi-container RF lab setups
+- **📋 Container Profiles**: YAML presets for quick deployment of preconfigured container environments
 - **⚡ GPU Acceleration**: Dedicated images with OpenCL support for Intel and NVIDIA GPUs
 - **💾 Space Efficiency**: Use a fraction of the disk space required by dedicated OS solutions
 
