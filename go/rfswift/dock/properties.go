@@ -14,6 +14,7 @@ import (
 
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/client"
 	common "penthertz/rfswift/common"
 	"penthertz/rfswift/tui"
@@ -91,7 +92,12 @@ func printContainerProperties(ctx context.Context, cli *client.Client, container
 		{Key: "X Display", Value: props["XDisplay"]},
 		{Key: "Shell", Value: props["Shell"]},
 		{Key: "Privileged Mode", Value: props["Privileged"]},
-		{Key: "Network Mode", Value: props["NetworkMode"]},
+		{Key: "Network Mode", Value: func() string {
+			if d := props["NetworkModeDisplay"]; d != "" {
+				return d
+			}
+			return props["NetworkMode"]
+		}()},
 		{Key: "NAT Subnet", Value: props["NATSubnet"]},
 		{Key: "Exposed Ports", Value: props["ExposedPorts"]},
 		{Key: "Port Bindings", Value: props["PortBindings"]},
@@ -198,8 +204,8 @@ func getContainerProperties(ctx context.Context, cli *client.Client, containerID
 	// NAT subnet from label
 	if natSubnet, ok := containerJSON.Config.Labels["org.rfswift.nat_subnet"]; ok && natSubnet != "" {
 		props["NATSubnet"] = natSubnet
-		// Show friendly network mode for NAT containers
-		props["NetworkMode"] = "nat"
+		// Keep the real network name for recreation, add friendly display name
+		props["NetworkModeDisplay"] = "nat"
 	}
 
 	// Get ulimits
@@ -1254,6 +1260,12 @@ func recreateContainerWithProperties(ctx context.Context, cli *client.Client, co
 		originalImageName = label
 	}
 	repo, tag := parseImageName(originalImageName)
+	// Strip localhost/ prefix to avoid double-prefixing (localhost/localhost/...)
+	repo = strings.TrimPrefix(repo, "localhost/")
+	// Strip any existing _temp_YYYYMMDDHHMMSS suffix to avoid stacking
+	if idx := strings.Index(tag, "_temp_"); idx != -1 {
+		tag = tag[:idx]
+	}
 
 	// ── 1. Commit the container state to a temporary image ──
 	tempImageTag := fmt.Sprintf("localhost/%s:%s_temp_%s", repo, tag, time.Now().Format("20060102150405"))
@@ -1478,6 +1490,17 @@ func recreateContainerWithProperties(ctx context.Context, cli *client.Client, co
 		return err
 	}
 
+	// ── 7. Clean up the temporary image ──
+	// Docker allows removing an image tag while a container uses it (layers stay).
+	// Podman does not — skip the attempt; cleanupStaleTempImages handles it next time.
+	if EngineSupportsDirectConfigEdit() {
+		if _, err := cli.ImageRemove(ctx, tempImageTag, image.RemoveOptions{Force: false}); err != nil {
+			common.PrintWarningMessage(fmt.Sprintf("Could not remove temp image '%s': %v (you can remove it manually)", tempImageTag, err))
+		} else {
+			common.PrintSuccessMessage(fmt.Sprintf("Cleaned up temporary image: %s", tempImageTag))
+		}
+	}
+
 	common.PrintSuccessMessage(fmt.Sprintf("Container '%s' updated successfully!", containerName))
 	return nil
 }
@@ -1679,6 +1702,10 @@ func recreateContainerWithUpdatedBinds(ctx context.Context, cli *client.Client, 
 
 	// 1. Commit the current container state to a temporary image
 	repo, tag := parseImageName(originalImageName)
+	repo = strings.TrimPrefix(repo, "localhost/")
+	if idx := strings.Index(tag, "_temp_"); idx != -1 {
+		tag = tag[:idx]
+	}
 	tempImageTag := fmt.Sprintf("localhost/%s:%s_temp_%s", repo, tag, time.Now().Format("20060102150405"))
 	common.PrintInfoMessage(fmt.Sprintf("Committing container state to temporary image: %s", tempImageTag))
 
@@ -1817,9 +1844,15 @@ func recreateContainerWithUpdatedBinds(ctx context.Context, cli *client.Client, 
 	}
 	common.PrintSuccessMessage("Container started with updated mount bindings.")
 
-	// NOTE: We intentionally do NOT delete the temp image here.
-	// The new container references it, so Podman would refuse anyway.
-	// It will be cleaned up at the START of the next recreation
+	// Clean up the temporary image.
+	// Docker allows removing a tag while the container uses it; Podman does not.
+	if EngineSupportsDirectConfigEdit() {
+		if _, err := cli.ImageRemove(ctx, tempImageTag, image.RemoveOptions{Force: false}); err != nil {
+			common.PrintWarningMessage(fmt.Sprintf("Could not remove temp image '%s': %v (will be cleaned up next time)", tempImageTag, err))
+		} else {
+			common.PrintSuccessMessage(fmt.Sprintf("Cleaned up temporary image: %s", tempImageTag))
+		}
+	}
 
 	return nil
 }
