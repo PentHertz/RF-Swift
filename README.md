@@ -78,12 +78,12 @@ RF Swift is a revolutionary toolbox that transforms any computer into a powerful
 
 RF Swift supports **both Docker and Podman** as container engines, giving you the freedom to choose the runtime that best fits your environment:
 
-| | Docker | Podman |
-|---|---|---|
-| **Architecture** | Client-server daemon | Daemonless, fork-exec |
-| **Root required** | Yes (daemon runs as root) | No (rootless by default) |
-| **Compatibility** | Industry standard | OCI-compatible, drop-in replacement |
-| **Best for** | Broad ecosystem, Windows/macOS | Security-focused, air-gapped, embedded |
+| | Docker | Podman | Lima |
+|---|---|---|---|
+| **Architecture** | Client-server daemon | Daemonless, fork-exec | Docker inside QEMU VM |
+| **Root required** | Yes (daemon runs as root) | No (rootless by default) | No (VM managed by Lima) |
+| **USB passthrough** | Linux only | Linux only | macOS via QMP hot-plug |
+| **Best for** | Broad ecosystem, Windows/macOS | Security-focused, air-gapped | macOS + USB RF hardware |
 
 #### Auto-detection
 
@@ -92,6 +92,7 @@ RF Swift **automatically detects** the available container engine at startup. If
 ```bash
 rfswift --engine podman run -n mycontainer -i penthertz/rfswift_noble:sdr_light
 rfswift --engine docker run -n mycontainer -i penthertz/rfswift_noble:sdr_light
+rfswift --engine lima run -n mycontainer -i penthertz/rfswift_noble:sdr_light  # macOS USB
 ```
 
 #### Podman support example
@@ -107,6 +108,27 @@ https://github.com/user-attachments/assets/14b6d50f-5250-420e-94e4-474991113372
 
 
 - **Automatic cgroup handling**: RF Swift detects cgroup v1/v2 and configures device access rules accordingly
+
+### 🦙 macOS USB Passthrough (Lima)
+
+Docker Desktop and Podman on macOS **cannot forward USB devices** (SDR dongles, HackRF, RTL-SDR, etc.) into containers. RF Swift solves this with **Lima**, which runs a QEMU VM with USB hot-plug support:
+
+```bash
+# Install Lima
+brew install lima
+
+# Attach your SDR dongle to the Lima VM
+rfswift macusb list                              # see host USB devices
+rfswift macusb attach --vid 0x1d50 --pid 0x604b  # forward HackRF to VM
+
+# Run container via Lima's Docker (where USB device lives)
+rfswift --engine lima run -i penthertz/rfswift_noble:sdr_light -n sdr_work
+
+# When done, detach
+rfswift macusb detach --vid 0x1d50 --pid 0x604b
+```
+
+Lima auto-creates the VM on first use with Docker, USB libraries, kernel modules, and udev rules for all supported RF hardware pre-configured. Use `--engine lima` when you need USB devices; use Docker Desktop normally for everything else.
 
 #### Quick Setup
 
