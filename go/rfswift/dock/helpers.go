@@ -1,4 +1,4 @@
-/* This code is part of RF Switch by @Penthertz
+/* This code is part of RF Swift by @Penthertz
  * Author(s): Sebastien Dudek (@FlUxIuS)
  */
 package dock
@@ -10,6 +10,8 @@ import (
 	"io/ioutil"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"runtime"
 	"strings"
 
 	"github.com/docker/docker/api/types"
@@ -533,4 +535,74 @@ func ImageInspectCompat(ctx context.Context, cli *client.Client, imageName strin
 	}
 
 	return types.ImageInspect{}, fmt.Errorf("image '%s' not found", imageName)
+}
+
+// ---------------------------------------------------------------------------
+// Workspace helpers
+// ---------------------------------------------------------------------------
+
+const (
+	workspaceContainerPath = "/workspace"
+	workspaceDirName       = "rfswift-workspace"
+)
+
+// DefaultWorkspaceRoot returns the default workspace root directory.
+// ~/rfswift-workspace/ on all platforms.
+func DefaultWorkspaceRoot() string {
+	home := os.Getenv("HOME")
+	if runtime.GOOS == "windows" {
+		home = os.Getenv("USERPROFILE")
+	}
+	return filepath.Join(home, workspaceDirName)
+}
+
+// resolveWorkspacePath returns the host-side workspace path for a container.
+// Returns empty string if workspace is disabled.
+//
+//	in(1): string containerName - the container name
+//	in(2): string workspaceCfg - workspace config value from containerCfg:
+//	       ""       = automatic (default: ~/rfswift-workspace/<name>/)
+//	       "none"   = disabled
+//	       any path = use that exact path
+//	out: string - host path to mount, or "" if disabled
+func resolveWorkspacePath(containerName, workspaceCfg string) string {
+	if workspaceCfg == "none" {
+		return ""
+	}
+	if workspaceCfg != "" {
+		// User provided a custom path
+		return workspaceCfg
+	}
+	// Default: ~/rfswift-workspace/<container-name>/
+	return filepath.Join(DefaultWorkspaceRoot(), containerName)
+}
+
+// ensureWorkspaceDir creates the workspace directory if it doesn't exist.
+//
+//	in(1): string path - directory to create
+//	out: error
+func ensureWorkspaceDir(path string) error {
+	return os.MkdirAll(path, 0755)
+}
+
+// injectWorkspaceBinding resolves and creates the workspace directory,
+// then returns the binding string (host:container) to add.
+// Returns empty string if workspace is disabled or containerName is empty.
+func injectWorkspaceBinding(containerName, workspaceCfg string) string {
+	if containerName == "" {
+		return ""
+	}
+
+	hostPath := resolveWorkspacePath(containerName, workspaceCfg)
+	if hostPath == "" {
+		return ""
+	}
+
+	if err := ensureWorkspaceDir(hostPath); err != nil {
+		common.PrintWarningMessage(fmt.Sprintf("Could not create workspace directory %s: %v", hostPath, err))
+		return ""
+	}
+
+	common.PrintInfoMessage(fmt.Sprintf("Workspace: %s -> %s", hostPath, workspaceContainerPath))
+	return hostPath + ":" + workspaceContainerPath
 }

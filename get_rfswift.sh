@@ -871,7 +871,7 @@ offer_lima_for_usb_get_rfswift() {
   else
     if prompt_yes_no "   Would you like to install Lima for USB passthrough?" "n"; then
       if command_exists brew; then
-        brew install lima
+        brew install lima qemu
         color_echo "green" "   Lima installed. Use 'rfswift --engine lima' when you need USB devices."
       else
         color_echo "red" "   Homebrew is required. Install it first: https://brew.sh/"
@@ -978,7 +978,7 @@ check_container_engine() {
         # Lima option on macOS
         color_echo "blue" "🦙 Installing Lima..."
         if command_exists brew; then
-          brew install lima
+          brew install lima qemu
           color_echo "green" "✅ Lima installed."
           color_echo "cyan" "   RF Swift will auto-create a QEMU VM on first 'rfswift run'."
           color_echo "cyan" "   Or create one manually: limactl create --name rfswift lima/rfswift.yaml"
@@ -2219,7 +2219,7 @@ main() {
           color_echo "cyan" "   Or let RF Swift auto-create it on first 'rfswift run' when no Docker/Podman is found."
         fi
       else
-        color_echo "yellow" "   Lima is not installed. Install with: brew install lima"
+        color_echo "yellow" "   Lima is not installed. Install with: brew install lima qemu"
         color_echo "cyan" "   After installing, RF Swift can auto-manage a QEMU VM with USB passthrough."
         color_echo "cyan" "   USB commands: rfswift macusb list | attach | detach | status"
       fi

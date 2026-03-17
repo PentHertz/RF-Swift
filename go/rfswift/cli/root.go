@@ -1,4 +1,4 @@
-/* This code is part of RF Switch by @Penthertz
+/* This code is part of RF Swift by @Penthertz
 *  Author(s): Sébastien Dudek (@FlUxIuS)
  */
 
@@ -147,6 +147,7 @@ func init() {
 	rootCmd.AddCommand(engineCmd)
 	registerNetworkCommands()
 	registerProfileCommands()
+	registerReportCommands()
 	registerDoctorCommands()
 }
 

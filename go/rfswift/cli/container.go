@@ -1,4 +1,4 @@
-/* This code is part of RF Switch by @Penthertz
+/* This code is part of RF Swift by @Penthertz
 *  Author(s): Sébastien Dudek (@FlUxIuS)
  */
 
@@ -49,6 +49,19 @@ var runCmd = &cobra.Command{
 		desktopSSL, _ := cmd.Flags().GetBool("desktop-ssl")
 		vpnConfig, _ := cmd.Flags().GetString("vpn")
 		profileName, _ := cmd.Flags().GetString("profile")
+		workspacePath, _ := cmd.Flags().GetString("workspace")
+		noWorkspace, _ := cmd.Flags().GetBool("no-workspace")
+		cwdWorkspace, _ := cmd.Flags().GetBool("cwd")
+
+		// Resolve workspace config
+		if noWorkspace {
+			rfdock.ContainerSetWorkspace("none")
+		} else if cwdWorkspace {
+			cwd, _ := os.Getwd()
+			rfdock.ContainerSetWorkspace(cwd)
+		} else if workspacePath != "" {
+			rfdock.ContainerSetWorkspace(workspacePath)
+		}
 
 		// Apply profile if specified (profile values are used as defaults, CLI flags override)
 		if profileName != "" {
@@ -133,22 +146,24 @@ var runCmd = &cobra.Command{
 			}
 
 			wizResult, err := tui.RunWizard(availableImages, &tui.RunWizardDefaults{
-				Image:        image,
-				Name:         dockerName,
-				Bindings:     extraBind,
-				Devices:      devices,
-				ExposedPorts: exposedPorts,
-				PortBindings: bindedPorts,
-				Caps:         caps,
-				Cgroups:      cgroups,
-				Network:      netMode,
-				Desktop:      desktop,
-				DesktopSSL:   desktopSSL,
-				NoX11:        noX11,
-				Privileged:   privileged,
-				Realtime:     realtime,
-				VPN:          vpnConfig,
-				Profiles:     profileOpts,
+				Image:         image,
+				Name:          dockerName,
+				Bindings:      extraBind,
+				Devices:       devices,
+				ExposedPorts:  exposedPorts,
+				PortBindings:  bindedPorts,
+				Caps:          caps,
+				Cgroups:       cgroups,
+				Network:       netMode,
+				Desktop:       desktop,
+				DesktopSSL:    desktopSSL,
+				NoX11:         noX11,
+				Privileged:    privileged,
+				Realtime:      realtime,
+				VPN:           vpnConfig,
+				Workspace:     workspacePath,
+				WorkspaceRoot: rfdock.DefaultWorkspaceRoot(),
+				Profiles:      profileOpts,
 			}, existingNets)
 			if err != nil {
 				common.PrintErrorMessage(fmt.Errorf("wizard cancelled: %v", err))
@@ -201,9 +216,26 @@ var runCmd = &cobra.Command{
 			if wizResult.VPN != "" {
 				vpnConfig = wizResult.VPN
 			}
+			// Process workspace from wizard
+			switch wizResult.Workspace {
+			case "none":
+				rfdock.ContainerSetWorkspace("none")
+			case "cwd":
+				cwd, _ := os.Getwd()
+				rfdock.ContainerSetWorkspace(cwd)
+			case "":
+				// auto - default behavior
+			default:
+				rfdock.ContainerSetWorkspace(wizResult.Workspace)
+			}
 		} else if dockerName == "" {
 			common.PrintErrorMessage(fmt.Errorf("container name is required (use -n flag)"))
 			return
+		}
+
+		// On macOS with Lima engine, offer to attach USB devices before container creation
+		if runtime.GOOS == "darwin" && rfdock.GetEngine().Type() == rfdock.EngineLima && tui.IsInteractive() {
+			MacUSBWizardStep(limaInstance)
 		}
 
 		if recordSession {
@@ -662,6 +694,9 @@ func registerContainerCommands() {
 	runCmd.Flags().Bool("desktop-ssl", false, "Enable SSL/TLS for desktop connections (auto-generates self-signed certificate)")
 	runCmd.Flags().String("vpn", "", "Enable VPN inside container (wireguard:./wg0.conf, openvpn:./client.ovpn, tailscale:--auth-key=tskey-xxx, netbird:--setup-key=xxx)")
 	runCmd.Flags().String("profile", "", "Use a preset profile (e.g., sdr-full, wifi, pentest-full). See 'rfswift profile list'")
+	runCmd.Flags().String("workspace", "", "Workspace path on host (default: ~/rfswift-workspace/<name>/)")
+	runCmd.Flags().Bool("no-workspace", false, "Disable automatic workspace mounting")
+	runCmd.Flags().Bool("cwd", false, "Mount current working directory as workspace")
 
 	execCmd.Flags().StringP("workdir", "w", "/root", "Working directory inside container")
 	execCmd.Flags().StringP("container", "c", "", "container to run")

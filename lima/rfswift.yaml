@@ -12,6 +12,7 @@
 #   rfswift macusb status            # Check setup status
 #
 # IMPORTANT: vmType must be "qemu" for USB passthrough (not "vz")
+# Prerequisites: brew install lima qemu
 
 # Use QEMU backend - required for USB passthrough via QMP
 vmType: qemu
@@ -208,7 +209,7 @@ provision:
 # Port forwarding for RF Swift services
 portForwards:
   # Forward Docker socket to host for transparent engine access
-  - guestSocket: "/var/run/docker.sock"
+  - guestSocket: "/run/docker.sock"
     hostSocket: "{{.Dir}}/sock/docker.sock"
   # noVNC desktop
   - guestPort: 6080

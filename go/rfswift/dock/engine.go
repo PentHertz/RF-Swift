@@ -1,4 +1,4 @@
-/* This code is part of RF Switch by @Penthertz
+/* This code is part of RF Swift by @Penthertz
 *  Author(s): Sébastien Dudek (@FlUxIuS)
  */
 
@@ -235,7 +235,7 @@ func detectEngine() ContainerEngine {
 			common.PrintInfoMessage("Container engine: Docker via Lima VM (explicit — USB passthrough enabled)")
 			return lima
 		}
-		common.PrintWarningMessage("Lima requested but not available (install with: brew install lima)")
+		common.PrintWarningMessage("Lima requested but not available (install with: brew install lima qemu)")
 		// Fall back to Docker/Podman (but USB won't work)
 		if docker.IsAvailable() {
 			common.PrintInfoMessage("Container engine: Docker (fallback — no USB passthrough)")

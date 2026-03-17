@@ -1,4 +1,4 @@
-/* This code is part of RF Switch by @Penthertz
+/* This code is part of RF Swift by @Penthertz
  * Author(s): Sebastien Dudek (@FlUxIuS)
  */
 package tui
@@ -30,6 +30,7 @@ type RunWizardResult struct {
 	Privileged   int
 	Realtime     bool
 	VPN          string // format: "type:argument"
+	Workspace    string // "none" = disabled, "" = auto, path = custom
 	Confirmed    bool
 }
 
@@ -55,22 +56,24 @@ type ProfileOption struct {
 
 // RunWizardDefaults holds pre-existing CLI flag values to pre-populate the wizard.
 type RunWizardDefaults struct {
-	Image        string
-	Name         string
-	Bindings     string
-	Devices      string
-	Network      string
-	ExposedPorts string
-	PortBindings string
-	Caps         string
-	Cgroups      string
-	Desktop      bool
-	DesktopSSL   bool
-	NoX11        bool
-	Privileged   int
-	Realtime     bool
-	VPN          string
-	Profiles     []ProfileOption // available profiles for wizard selection
+	Image          string
+	Name           string
+	Bindings       string
+	Devices        string
+	Network        string
+	ExposedPorts   string
+	PortBindings   string
+	Caps           string
+	Cgroups        string
+	Desktop        bool
+	DesktopSSL     bool
+	NoX11          bool
+	Privileged     int
+	Realtime       bool
+	VPN            string
+	Workspace      string          // "" = auto, "none" = disabled, path = custom
+	WorkspaceRoot  string          // default workspace root (for display in wizard)
+	Profiles       []ProfileOption // available profiles for wizard selection
 }
 
 // RunWizard launches an interactive form to configure a new container.
@@ -102,6 +105,7 @@ func RunWizard(images []string, defaults *RunWizardDefaults, existingNets []stri
 		result.Realtime = defaults.Realtime
 		result.Network = defaults.Network
 		result.VPN = defaults.VPN
+		result.Workspace = defaults.Workspace
 	}
 
 	// Step 0: Profile selection (skip if image already provided via CLI or --profile)
@@ -302,6 +306,60 @@ func RunWizard(images []string, defaults *RunWizardDefaults, existingNets []stri
 			Run()
 		if err != nil {
 			return nil, err
+		}
+	}
+
+	// Step 2b: Workspace directory
+	// Show workspace config unless explicitly disabled via CLI
+	if result.Workspace != "none" {
+		defaultWsPath := ""
+		if defaults != nil && defaults.WorkspaceRoot != "" {
+			defaultWsPath = defaults.WorkspaceRoot + "/" + result.Name
+		}
+
+		wsChoice := "auto"
+		if result.Workspace != "" && result.Workspace != "none" {
+			wsChoice = "custom"
+		}
+
+		wsOptions := []huh.Option[string]{
+			huh.NewOption(fmt.Sprintf("Auto (~/rfswift-workspace/%s/)", result.Name), "auto"),
+			huh.NewOption("Custom path", "custom"),
+			huh.NewOption("Current directory", "cwd"),
+			huh.NewOption("Disable workspace", "none"),
+		}
+		_ = defaultWsPath // used for display
+
+		err := huh.NewSelect[string]().
+			Title("Workspace directory").
+			Description("Shared folder between host and container — files are always accessible at /workspace").
+			Options(wsOptions...).
+			Value(&wsChoice).
+			Run()
+		if err != nil {
+			return nil, err
+		}
+
+		switch wsChoice {
+		case "auto":
+			result.Workspace = "" // auto = default
+		case "none":
+			result.Workspace = "none"
+		case "cwd":
+			// Will be resolved by the caller
+			result.Workspace = "cwd"
+		case "custom":
+			customPath := result.Workspace
+			err := huh.NewInput().
+				Title("Workspace path on host").
+				Description("This directory will be mounted at /workspace inside the container").
+				Placeholder("/home/user/my-project").
+				Value(&customPath).
+				Run()
+			if err != nil {
+				return nil, err
+			}
+			result.Workspace = customPath
 		}
 	}
 
@@ -727,9 +785,23 @@ func RunWizard(images []string, defaults *RunWizardDefaults, existingNets []stri
 	if result.Desktop && result.DesktopHost != "" {
 		desktopLabel = fmt.Sprintf("enabled (%s:%s)", result.DesktopHost, result.DesktopPort)
 	}
+	// Workspace display
+	workspaceLabel := fmt.Sprintf("~/rfswift-workspace/%s/", result.Name)
+	switch result.Workspace {
+	case "none":
+		workspaceLabel = lipgloss.NewStyle().Foreground(ColorMuted).Render("disabled")
+	case "cwd":
+		workspaceLabel = "current directory"
+	case "":
+		// default - show auto path
+	default:
+		workspaceLabel = result.Workspace
+	}
+
 	items := map[string]string{
 		"Image":        result.Image,
 		"Name":         result.Name,
+		"Workspace":    workspaceLabel,
 		"Bindings":     valueOrNone(result.Bindings),
 		"Devices":      valueOrNone(result.Devices),
 		"Ports":        valueOrNone(result.PortBindings),
@@ -743,7 +815,7 @@ func RunWizard(images []string, defaults *RunWizardDefaults, existingNets []stri
 		"Realtime":     boolStr(result.Realtime),
 		"VPN":          valueOrNone(result.VPN),
 	}
-	keys := []string{"Image", "Name", "Bindings", "Devices", "Ports", "Capabilities", "Cgroups", "Network", "Desktop", "SSL/TLS", "X11", "Privileged", "Realtime", "VPN"}
+	keys := []string{"Image", "Name", "Workspace", "Bindings", "Devices", "Ports", "Capabilities", "Cgroups", "Network", "Desktop", "SSL/TLS", "X11", "Privileged", "Realtime", "VPN"}
 	PrintRecap("Container Configuration", items, keys)
 
 	// Build equivalent CLI command

@@ -1,4 +1,4 @@
-/* This code is part of RF Switch by @Penthertz
+/* This code is part of RF Swift by @Penthertz
  * Author(s): Sebastien Dudek (@FlUxIuS)
  *
  * ContainerObj setter functions
@@ -71,6 +71,14 @@ func ContainerAddDevices(adddevices string) {
 //	in(1): string addcaps comma-separated capabilities
 func ContainerAddCaps(addcaps string) {
 	appendCommaSeparated(&containerCfg.caps, addcaps)
+}
+
+// ContainerSetWorkspace sets the workspace path for the container.
+// Use "" for automatic (default), "none" to disable, or a custom path.
+//
+//	in(1): string workspace path or control value
+func ContainerSetWorkspace(workspace string) {
+	containerCfg.workspace = workspace
 }
 
 // ContainerSetImage sets the image name to use for container creation.

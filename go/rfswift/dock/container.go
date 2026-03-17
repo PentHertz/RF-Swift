@@ -1,4 +1,4 @@
-/* This code is part of RF Switch by @Penthertz
+/* This code is part of RF Swift by @Penthertz
  * Author(s): Sebastien Dudek (@FlUxIuS)
  *
  * Container lifecycle management
@@ -535,6 +535,12 @@ func ContainerRun(containerName string) {
 			common.PrintErrorMessage(err)
 			return
 		}
+	}
+
+	// Auto-mount workspace directory: ~/rfswift-workspace/<container-name>/ -> /workspace
+	workspaceBinding := injectWorkspaceBinding(containerName, containerCfg.workspace)
+	if workspaceBinding != "" {
+		appendCommaSeparated(&containerCfg.extrabinding, workspaceBinding)
 	}
 
 	bindings := combineBindings(containerCfg.x11forward, containerCfg.extrabinding)

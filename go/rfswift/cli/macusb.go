@@ -1,4 +1,4 @@
-/* This code is part of RF Switch by @Penthertz
+/* This code is part of RF Swift by @Penthertz
 *  Author(s): Sébastien Dudek (@FlUxIuS)
 *  macOS USB passthrough commands for Lima-based VMs
  */
@@ -7,9 +7,13 @@ package cli
 
 import (
 	"fmt"
+	"runtime"
+	"strings"
 
+	"github.com/charmbracelet/huh"
 	"github.com/spf13/cobra"
 	rfutils "penthertz/rfswift/rfutils"
+	"penthertz/rfswift/tui"
 )
 
 var limaInstance string
@@ -22,10 +26,13 @@ var macusbCmd = &cobra.Command{
 On macOS, Docker Desktop and Podman cannot forward USB devices into containers.
 Lima runs a QEMU VM with USB hot-plug support. The workflow is:
 
-  1. rfswift macusb list                              # see host USB devices
-  2. rfswift macusb attach --vid 0x1d50 --pid 0x604b  # forward device to Lima VM
-  3. rfswift --engine lima run -i <image>              # run container via Lima
-  4. rfswift macusb detach --vid 0x1d50 --pid 0x604b  # unplug when done
+  1. rfswift macusb attach                             # interactive device picker
+  2. rfswift --engine lima run -i <image>               # run container via Lima
+  3. rfswift macusb detach                              # interactive detach
+
+Or with explicit IDs:
+  rfswift macusb attach --vid 0x1d50 --pid 0x604b
+  rfswift macusb detach --vid 0x1d50 --pid 0x604b
 
 Use --engine lima to route container commands through the Lima VM where USB
 devices are visible. Without --engine lima, containers run in Docker Desktop
@@ -59,25 +66,50 @@ var macusbListCmd = &cobra.Command{
 				device.Serial)
 		}
 
-		fmt.Printf("\nTo attach a device: rfswift macusb attach --vid <vendor_id> --pid <product_id>\n")
+		fmt.Printf("\nTo attach: rfswift macusb attach  (interactive picker)\n")
+		fmt.Printf("       or: rfswift macusb attach --vid <vendor_id> --pid <product_id>\n")
 	},
 }
 
 var macusbAttachCmd = &cobra.Command{
 	Use:   "attach",
-	Short: "Attach a USB device to the Lima VM",
-	Long:  `Hot-plugs a USB device into the Lima VM via QEMU QMP protocol`,
+	Short: "Attach USB device(s) to the Lima VM",
+	Long: `Hot-plugs USB device(s) into the Lima VM via QEMU QMP protocol.
+When run without --vid/--pid flags in an interactive terminal, shows a
+device picker to select one or more devices to attach.`,
 	Run: func(cmd *cobra.Command, args []string) {
 		vendorID, _ := cmd.Flags().GetString("vid")
 		productID, _ := cmd.Flags().GetString("pid")
 
-		if vendorID == "" || productID == "" {
-			fmt.Println("Error: both --vid and --pid are required")
-			fmt.Println("Use 'rfswift macusb list' to find device IDs")
+		// If no flags provided, launch interactive picker
+		if vendorID == "" && productID == "" {
+			if !tui.IsInteractive() {
+				fmt.Println("Error: both --vid and --pid are required in non-interactive mode")
+				fmt.Println("Use 'rfswift macusb list' to find device IDs")
+				return
+			}
+			pickedDevices := pickMacUSBDevices("Select USB device(s) to attach to Lima VM")
+			if len(pickedDevices) == 0 {
+				fmt.Println("No devices selected.")
+				return
+			}
+			for _, dev := range pickedDevices {
+				if err := rfutils.AttachUSBToLima(dev.VendorID, dev.ProductID, limaInstance); err != nil {
+					fmt.Printf("Error attaching %s (%s:%s): %v\n", dev.Name, dev.VendorID, dev.ProductID, err)
+				}
+			}
+			fmt.Println("")
+			fmt.Println("To use these devices in a container, run with the Lima engine:")
+			fmt.Println("  rfswift --engine lima run -i <image>")
 			return
 		}
 
-		// Ensure hex prefix
+		if vendorID == "" || productID == "" {
+			fmt.Println("Error: both --vid and --pid are required")
+			fmt.Println("Use 'rfswift macusb attach' without flags for interactive picker")
+			return
+		}
+
 		vendorID = ensureHexPrefix(vendorID)
 		productID = ensureHexPrefix(productID)
 
@@ -94,12 +126,32 @@ var macusbAttachCmd = &cobra.Command{
 
 var macusbDetachCmd = &cobra.Command{
 	Use:   "detach",
-	Short: "Detach a USB device from the Lima VM",
-	Long:  `Hot-unplugs a USB device from the Lima VM via QEMU QMP protocol`,
+	Short: "Detach USB device(s) from the Lima VM",
+	Long: `Hot-unplugs USB device(s) from the Lima VM via QEMU QMP protocol.
+When run without flags in an interactive terminal, shows a device picker.`,
 	Run: func(cmd *cobra.Command, args []string) {
 		vendorID, _ := cmd.Flags().GetString("vid")
 		productID, _ := cmd.Flags().GetString("pid")
 		devID, _ := cmd.Flags().GetString("devid")
+
+		// If no flags at all, launch interactive picker
+		if vendorID == "" && productID == "" && devID == "" {
+			if !tui.IsInteractive() {
+				fmt.Println("Error: provide --devid or both --vid and --pid in non-interactive mode")
+				return
+			}
+			pickedDevices := pickMacUSBDevices("Select USB device(s) to detach from Lima VM")
+			if len(pickedDevices) == 0 {
+				fmt.Println("No devices selected.")
+				return
+			}
+			for _, dev := range pickedDevices {
+				if err := rfutils.DetachUSBFromLima(dev.VendorID, dev.ProductID, limaInstance); err != nil {
+					fmt.Printf("Error detaching %s (%s:%s): %v\n", dev.Name, dev.VendorID, dev.ProductID, err)
+				}
+			}
+			return
+		}
 
 		if devID != "" {
 			if err := rfutils.DetachUSBByIDFromLima(devID, limaInstance); err != nil {
@@ -110,7 +162,7 @@ var macusbDetachCmd = &cobra.Command{
 
 		if vendorID == "" || productID == "" {
 			fmt.Println("Error: provide either --devid or both --vid and --pid")
-			fmt.Println("Use 'rfswift macusb vm-devices' to list attached devices")
+			fmt.Println("Use 'rfswift macusb detach' without flags for interactive picker")
 			return
 		}
 
@@ -148,15 +200,20 @@ var macusbStatusCmd = &cobra.Command{
 	Short: "Check Lima VM status for USB passthrough",
 	Long:  `Verifies that Lima is installed, the instance is running, and QMP is available`,
 	Run: func(cmd *cobra.Command, args []string) {
-		// Check Lima installation
 		if !rfutils.IsLimaInstalled() {
 			fmt.Println("[!] Lima is NOT installed.")
-			fmt.Println("    Install with: brew install lima")
+			fmt.Println("    Install with: brew install lima qemu")
 			return
 		}
 		fmt.Println("[+] Lima is installed")
 
-		// Check instance status
+		if !rfutils.IsQEMUInstalled() {
+			fmt.Println("[!] QEMU is NOT installed (required by Lima for USB passthrough).")
+			fmt.Println("    Install with: brew install qemu")
+			return
+		}
+		fmt.Println("[+] QEMU is installed")
+
 		if rfutils.IsLimaInstanceRunning(limaInstance) {
 			fmt.Printf("[+] Lima instance '%s' is running\n", limaInstance)
 		} else {
@@ -166,7 +223,6 @@ var macusbStatusCmd = &cobra.Command{
 			return
 		}
 
-		// Check QMP socket
 		sockPath, err := rfutils.FindLimaQMPSocket(limaInstance)
 		if err != nil {
 			fmt.Println("[!] QMP socket not found - USB passthrough requires vmType: qemu")
@@ -175,7 +231,6 @@ var macusbStatusCmd = &cobra.Command{
 			fmt.Printf("[+] QMP socket found: %s\n", sockPath)
 		}
 
-		// Show USB devices currently in VM
 		result, err := rfutils.ListUSBInLimaVM(limaInstance)
 		if err == nil && result != "" {
 			fmt.Println("[+] USB devices currently attached to VM:")
@@ -203,6 +258,97 @@ func registerMacUSBCommands() {
 	macusbDetachCmd.Flags().String("vid", "", "USB Vendor ID (hex, e.g., 0x1234)")
 	macusbDetachCmd.Flags().String("pid", "", "USB Product ID (hex, e.g., 0x5678)")
 	macusbDetachCmd.Flags().String("devid", "", "QMP device ID (e.g., usb-1234-5678)")
+}
+
+// pickMacUSBDevices shows an interactive multi-select of discovered USB devices.
+// Returns the selected devices, or empty slice if cancelled/none selected.
+func pickMacUSBDevices(title string) []rfutils.MacUSBDevice {
+	devices, err := rfutils.ListMacUSBDevices()
+	if err != nil {
+		fmt.Println("Error listing USB devices:", err)
+		return nil
+	}
+
+	if len(devices) == 0 {
+		fmt.Println("No USB devices found on host.")
+		return nil
+	}
+
+	// Build huh options from discovered devices
+	options := make([]huh.Option[string], 0, len(devices))
+	for _, dev := range devices {
+		label := fmt.Sprintf("%s  [%s:%s]", dev.Name, dev.VendorID, dev.ProductID)
+		if dev.Serial != "" {
+			label += fmt.Sprintf("  S/N: %s", dev.Serial)
+		}
+		value := dev.VendorID + ":" + dev.ProductID
+		options = append(options, huh.NewOption(label, value))
+	}
+
+	var selected []string
+	err = huh.NewMultiSelect[string]().
+		Title(title).
+		Description("Use space to select, enter to confirm").
+		Options(options...).
+		Value(&selected).
+		Run()
+	if err != nil || len(selected) == 0 {
+		return nil
+	}
+
+	// Map selections back to device structs
+	var result []rfutils.MacUSBDevice
+	for _, sel := range selected {
+		parts := strings.SplitN(sel, ":", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		for _, dev := range devices {
+			if dev.VendorID == parts[0] && dev.ProductID == parts[1] {
+				result = append(result, dev)
+				break
+			}
+		}
+	}
+	return result
+}
+
+// MacUSBWizardStep runs an interactive USB device picker for the run wizard
+// on macOS when using the Lima engine. Returns comma-separated vid:pid pairs
+// that were attached, or empty string if skipped.
+func MacUSBWizardStep(instance string) string {
+	if runtime.GOOS != "darwin" || !rfutils.IsLimaInstalled() {
+		return ""
+	}
+
+	attachUSB := false
+	err := huh.NewConfirm().
+		Title("Attach USB devices to Lima VM?").
+		Description("Forward USB hardware (SDR dongles, etc.) into the VM for container access").
+		Affirmative("Yes").
+		Negative("No").
+		Value(&attachUSB).
+		Run()
+	if err != nil || !attachUSB {
+		return ""
+	}
+
+	pickedDevices := pickMacUSBDevices("Select USB device(s) to attach")
+	if len(pickedDevices) == 0 {
+		return ""
+	}
+
+	// Attach each selected device
+	var attached []string
+	for _, dev := range pickedDevices {
+		if err := rfutils.AttachUSBToLima(dev.VendorID, dev.ProductID, instance); err != nil {
+			fmt.Printf("  Warning: failed to attach %s (%s:%s): %v\n", dev.Name, dev.VendorID, dev.ProductID, err)
+		} else {
+			attached = append(attached, fmt.Sprintf("%s:%s", dev.VendorID, dev.ProductID))
+		}
+	}
+
+	return strings.Join(attached, ",")
 }
 
 // ensureHexPrefix adds "0x" prefix if not present

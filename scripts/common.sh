@@ -1200,19 +1200,12 @@ is_lima_instance_running() {
     limactl list --json 2>/dev/null | grep "\"name\":\"${instance}\"" | grep -q "\"status\":\"Running\""
 }
 
-# Install Lima on macOS via Homebrew
+# Install Lima and QEMU on macOS via Homebrew
 install_lima() {
     if [[ "$(uname -s)" != "Darwin" ]]; then
         echo -e "${YELLOW}Lima is only needed on macOS for USB passthrough.${NC}"
         return 0
     fi
-
-    if is_lima_installed; then
-        echo -e "${GREEN}Lima is already installed.${NC}"
-        return 0
-    fi
-
-    echo -e "${BLUE}Installing Lima for USB passthrough support...${NC}"
 
     if ! command_exists brew; then
         echo -e "${RED}Homebrew is required to install Lima.${NC}"
@@ -1220,8 +1213,14 @@ install_lima() {
         return 1
     fi
 
-    brew install lima
-    echo -e "${GREEN}Lima installed successfully.${NC}"
+    if is_lima_installed && command_exists qemu-img; then
+        echo -e "${GREEN}Lima and QEMU are already installed.${NC}"
+        return 0
+    fi
+
+    echo -e "${BLUE}Installing Lima and QEMU for USB passthrough support...${NC}"
+    brew install lima qemu
+    echo -e "${GREEN}Lima and QEMU installed successfully.${NC}"
 }
 
 # Setup the rfswift Lima instance with QEMU backend for USB passthrough

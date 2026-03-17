@@ -1,4 +1,4 @@
-/* This code is part of RF Switch by @Penthertz
+/* This code is part of RF Swift by @Penthertz
  * Author(s): Sebastien Dudek (@FlUxIuS)
  */
 package dock
@@ -328,10 +328,17 @@ func checkLimaVM(report *DoctorReport) {
 
 	if !rfutils.IsLimaInstalled() {
 		report.add(CheckResult{"Lima VM", "warn",
-			"Lima not installed (optional — enables USB passthrough: brew install lima)"})
+			"Lima not installed (optional — enables USB passthrough: brew install lima qemu)"})
 		return
 	}
 	report.add(CheckResult{"Lima VM", "ok", "Lima installed"})
+
+	if !rfutils.IsQEMUInstalled() {
+		report.add(CheckResult{"QEMU", "fail",
+			"QEMU not installed — required by Lima for USB passthrough (brew install qemu)"})
+		return
+	}
+	report.add(CheckResult{"QEMU", "ok", "QEMU installed"})
 
 	instance := os.Getenv("RFSWIFT_LIMA_INSTANCE")
 	if instance == "" {

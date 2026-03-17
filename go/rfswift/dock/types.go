@@ -1,4 +1,4 @@
-/* This code is part of RF Switch by @Penthertz
+/* This code is part of RF Swift by @Penthertz
  * Author(s): Sebastien Dudek (@FlUxIuS)
  */
 package dock
@@ -149,6 +149,7 @@ type ContainerConfig struct {
 	desktopPass  string
 	desktopSSL   bool
 	vpn          string // format: "type:argument" (e.g., "wireguard:./wg0.conf")
+	workspace    string // host path for workspace mount (empty = auto, "none" = disabled)
 }
 
 var containerCfg = ContainerConfig{

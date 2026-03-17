@@ -1,4 +1,4 @@
-/* This code is part of RF Switch by @Penthertz
+/* This code is part of RF Swift by @Penthertz
 *  Author(s): Sébastien Dudek (@FlUxIuS)
 *  Lima VM engine - transparent Docker-in-Lima management for macOS
  */
@@ -53,13 +53,19 @@ func (e *LimaEngine) getInstance() string {
 	return e.instance
 }
 
-// IsAvailable checks if Lima is installed and the rfswift instance exists or
-// can be created.
+// IsAvailable checks if Lima and QEMU are installed.
 func (e *LimaEngine) IsAvailable() bool {
 	if runtime.GOOS != "darwin" {
 		return false
 	}
-	return rfutils.IsLimaInstalled()
+	if !rfutils.IsLimaInstalled() {
+		return false
+	}
+	if !rfutils.IsQEMUInstalled() {
+		common.PrintWarningMessage("Lima is installed but QEMU is missing (install with: brew install qemu)")
+		return false
+	}
+	return true
 }
 
 // IsServiceRunning checks if the Lima VM is running and Docker inside it is reachable.

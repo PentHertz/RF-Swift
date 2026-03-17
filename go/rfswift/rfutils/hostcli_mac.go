@@ -1,4 +1,4 @@
-/* This code is part of RF Switch by @Penthertz
+/* This code is part of RF Swift by @Penthertz
 *  Author(s): Sébastien Dudek (@FlUxIuS)
 *  macOS USB passthrough via Lima QEMU QMP
  */
@@ -325,6 +325,19 @@ func ListUSBInLimaVM(instance string) (string, error) {
 func IsLimaInstalled() bool {
 	_, err := exec.LookPath("limactl")
 	return err == nil
+}
+
+// IsQEMUInstalled checks if QEMU is installed (required by Lima with vmType: qemu).
+//
+//	out: bool true if qemu-system-* is found in PATH
+func IsQEMUInstalled() bool {
+	// Check for the architecture-specific binary
+	for _, bin := range []string{"qemu-system-aarch64", "qemu-system-x86_64", "qemu-img"} {
+		if _, err := exec.LookPath(bin); err == nil {
+			return true
+		}
+	}
+	return false
 }
 
 // IsLimaInstanceRunning checks if a specific Lima instance is running.
