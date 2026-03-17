@@ -13,7 +13,7 @@ STATIC_BUILD_TAG := netgo
 
 # Default target (Build all targets)
 .PHONY: all
-all: linux windows
+all: linux windows darwin
 
 # Targets for Linux
 .PHONY: linux
@@ -42,6 +42,18 @@ windows_amd64:
 .PHONY: windows_arm64
 windows_arm64:
 	GOOS=windows GOARCH=arm64 CGO_ENABLED=0 $(GO_BUILD) -tags '$(STATIC_BUILD_TAG)' -o $(OUT_DIR)/$(BIN)_windows_arm64.exe $(SRC)
+
+# Targets for macOS (Darwin)
+.PHONY: darwin
+darwin: darwin_amd64 darwin_arm64
+
+.PHONY: darwin_amd64
+darwin_amd64:
+	GOOS=darwin GOARCH=amd64 CGO_ENABLED=0 $(GO_BUILD) -tags '$(STATIC_BUILD_TAG)' -o $(OUT_DIR)/$(BIN)_darwin_amd64 $(SRC)
+
+.PHONY: darwin_arm64
+darwin_arm64:
+	GOOS=darwin GOARCH=arm64 CGO_ENABLED=0 $(GO_BUILD) -tags '$(STATIC_BUILD_TAG)' -o $(OUT_DIR)/$(BIN)_darwin_arm64 $(SRC)
 
 # Clean target
 .PHONY: clean

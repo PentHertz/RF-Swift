@@ -58,6 +58,7 @@ func RunDoctor() {
 	checkContainerService(report)
 	checkDockerPermissions(report)
 	checkContainerImages(report)
+	checkLimaVM(report)
 	checkX11Display(report)
 	checkXhost(report)
 	checkAudioSystem(report)
@@ -320,6 +321,47 @@ func checkAudioServer(report *DoctorReport) {
 		fmt.Sprintf("Listening on %s", endpoint)})
 }
 
+func checkLimaVM(report *DoctorReport) {
+	if runtime.GOOS != "darwin" {
+		return // Lima checks only relevant on macOS
+	}
+
+	if !rfutils.IsLimaInstalled() {
+		report.add(CheckResult{"Lima VM", "warn",
+			"Lima not installed (optional — enables USB passthrough: brew install lima)"})
+		return
+	}
+	report.add(CheckResult{"Lima VM", "ok", "Lima installed"})
+
+	instance := os.Getenv("RFSWIFT_LIMA_INSTANCE")
+	if instance == "" {
+		instance = "rfswift"
+	}
+
+	if !rfutils.IsLimaInstanceRunning(instance) {
+		if limaInstanceExists(instance) {
+			report.add(CheckResult{"Lima instance", "warn",
+				fmt.Sprintf("Instance '%s' exists but is not running (rfswift will auto-start it)", instance)})
+		} else {
+			report.add(CheckResult{"Lima instance", "warn",
+				fmt.Sprintf("Instance '%s' not found (rfswift will auto-create it on first run)", instance)})
+		}
+		return
+	}
+	report.add(CheckResult{"Lima instance", "ok",
+		fmt.Sprintf("Instance '%s' is running", instance)})
+
+	// Check QMP socket for USB passthrough
+	sockPath, err := rfutils.FindLimaQMPSocket(instance)
+	if err != nil {
+		report.add(CheckResult{"Lima USB passthrough", "warn",
+			"QMP socket not found — USB passthrough requires vmType: qemu"})
+	} else {
+		report.add(CheckResult{"Lima USB passthrough", "ok",
+			fmt.Sprintf("QMP socket: %s", sockPath)})
+	}
+}
+
 func checkUSBDevices(report *DoctorReport) {
 	if runtime.GOOS == "windows" {
 		// Check usbipd availability
@@ -328,6 +370,19 @@ func checkUSBDevices(report *DoctorReport) {
 		} else {
 			report.add(CheckResult{"USB devices", "ok", "usbipd available"})
 		}
+		return
+	}
+
+	if runtime.GOOS == "darwin" {
+		// On macOS, USB devices are managed via macusb commands through Lima QMP
+		devices, err := rfutils.ListMacUSBDevices()
+		if err != nil {
+			report.add(CheckResult{"USB devices", "warn",
+				fmt.Sprintf("Could not list USB devices: %v", err)})
+			return
+		}
+		report.add(CheckResult{"USB devices", "ok",
+			fmt.Sprintf("%d USB device(s) on host (use 'rfswift macusb attach' to forward to VM)", len(devices))})
 		return
 	}
 

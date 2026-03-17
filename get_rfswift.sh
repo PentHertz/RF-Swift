@@ -845,6 +845,41 @@ detect_container_engines() {
   fi
 }
 
+# Offer Lima for USB passthrough on macOS (called even when Docker/Podman is present)
+offer_lima_for_usb_get_rfswift() {
+  echo ""
+  color_echo "cyan" "🦙 USB passthrough on macOS"
+  color_echo "cyan" "   Docker Desktop and Podman on macOS cannot forward USB devices (SDR dongles,"
+  color_echo "cyan" "   HackRF, RTL-SDR, etc.) into containers. Lima runs a QEMU VM with its own"
+  color_echo "cyan" "   Docker that supports USB hot-plug for your RF hardware."
+  echo ""
+  color_echo "cyan" "   Workflow when you need USB:"
+  color_echo "cyan" "     rfswift macusb attach --vid 0x1d50 --pid 0x604b  # forward device to VM"
+  color_echo "cyan" "     rfswift --engine lima run -i <image>              # run via Lima's Docker"
+  color_echo "cyan" "     rfswift macusb detach --vid 0x1d50 --pid 0x604b  # unplug when done"
+  echo ""
+
+  if command_exists limactl; then
+    color_echo "green" "   Lima is already installed."
+    if ! limactl list --json 2>/dev/null | grep -q '"name":"rfswift"'; then
+      color_echo "yellow" "   No rfswift Lima instance yet."
+      color_echo "cyan" "   Create with: limactl create --name rfswift lima/rfswift.yaml"
+      color_echo "cyan" "   Or let RF Swift auto-create it on first 'rfswift --engine lima run'."
+    else
+      color_echo "green" "   Lima instance 'rfswift' exists. USB passthrough available."
+    fi
+  else
+    if prompt_yes_no "   Would you like to install Lima for USB passthrough?" "n"; then
+      if command_exists brew; then
+        brew install lima
+        color_echo "green" "   Lima installed. Use 'rfswift --engine lima' when you need USB devices."
+      else
+        color_echo "red" "   Homebrew is required. Install it first: https://brew.sh/"
+      fi
+    fi
+  fi
+}
+
 # Main container engine check — replaces the old check_docker()
 check_container_engine() {
   color_echo "blue" "🔍 Checking for container engines..."
@@ -856,6 +891,10 @@ check_container_engine() {
     color_echo "green" "✅ Both Docker and Podman are installed."
     color_echo "cyan" "ℹ️  RF-Swift auto-detects the engine at runtime."
     color_echo "cyan" "   Use 'rfswift --engine docker' or 'rfswift --engine podman' to override."
+    # On macOS, offer Lima for USB passthrough even with Docker/Podman present
+    if [ "$(uname -s)" = "Darwin" ]; then
+      offer_lima_for_usb_get_rfswift
+    fi
     return 0
   fi
 
@@ -865,6 +904,10 @@ check_container_engine() {
     if prompt_yes_no "Would you also like to install Podman (rootless containers)?" "n"; then
       install_podman
     fi
+    # On macOS, offer Lima for USB passthrough
+    if [ "$(uname -s)" = "Darwin" ]; then
+      offer_lima_for_usb_get_rfswift
+    fi
     return 0
   fi
 
@@ -873,6 +916,10 @@ check_container_engine() {
     color_echo "green" "✅ Podman is already installed."
     if prompt_yes_no "Would you also like to install Docker?" "n"; then
       install_docker
+    fi
+    # On macOS, offer Lima for USB passthrough
+    if [ "$(uname -s)" = "Darwin" ]; then
+      offer_lima_for_usb_get_rfswift
     fi
     return 0
   fi
@@ -890,6 +937,13 @@ check_container_engine() {
   color_echo "cyan" "              Drop-in Docker replacement, no root needed"
   echo ""
 
+  # macOS: also offer Lima
+  if [ "$(uname -s)" = "Darwin" ]; then
+    color_echo "cyan" "   🦙 Lima    — Lightweight VM with Docker inside (QEMU)"
+    color_echo "cyan" "              Enables USB device passthrough for SDR hardware"
+    echo ""
+  fi
+
   # Check if this is a Steam Deck — special case
   if [ "$(uname -s)" = "Linux" ] && is_steam_deck; then
     color_echo "magenta" "🎮 Steam Deck detected! Docker with Steam Deck optimizations is recommended."
@@ -899,7 +953,14 @@ check_container_engine() {
     fi
   fi
 
-  CHOICE=$(prompt_choice "Select a container engine to install:" "Docker" "Podman" "Both" "Skip")
+  local choices="Docker Podman Both"
+  if [ "$(uname -s)" = "Darwin" ]; then
+    choices="Docker Podman Both Lima Skip"
+  else
+    choices="Docker Podman Both Skip"
+  fi
+
+  CHOICE=$(prompt_choice "Select a container engine to install:" $choices)
 
   case "$CHOICE" in
     1)
@@ -913,6 +974,25 @@ check_container_engine() {
       install_podman
       ;;
     4)
+      if [ "$(uname -s)" = "Darwin" ]; then
+        # Lima option on macOS
+        color_echo "blue" "🦙 Installing Lima..."
+        if command_exists brew; then
+          brew install lima
+          color_echo "green" "✅ Lima installed."
+          color_echo "cyan" "   RF Swift will auto-create a QEMU VM on first 'rfswift run'."
+          color_echo "cyan" "   Or create one manually: limactl create --name rfswift lima/rfswift.yaml"
+        else
+          color_echo "red" "❌ Homebrew is required. Install it first: https://brew.sh/"
+          return 1
+        fi
+      else
+        color_echo "yellow" "⚠️  Container engine installation skipped."
+        color_echo "yellow" "   You will need Docker or Podman before using RF-Swift."
+        return 1
+      fi
+      ;;
+    5)
       color_echo "yellow" "⚠️  Container engine installation skipped."
       color_echo "yellow" "   You will need Docker or Podman before using RF-Swift."
       return 1
@@ -2126,6 +2206,23 @@ main() {
   case "$(uname -s)" in
     Darwin*)
       color_echo "cyan" "🎵 For container audio on macOS, see: brew install pulseaudio"
+      # Offer Lima installation for USB passthrough on macOS
+      echo ""
+      color_echo "cyan" "🦙 Lima VM enables USB device passthrough for SDR hardware on macOS."
+      if command_exists limactl; then
+        color_echo "green" "   Lima is already installed."
+        if limactl list --json 2>/dev/null | grep -q '"name":"rfswift"'; then
+          color_echo "green" "   rfswift Lima instance exists."
+        else
+          color_echo "yellow" "   No rfswift Lima instance yet. Create one with:"
+          color_echo "cyan" "   limactl create --name rfswift lima/rfswift.yaml && limactl start rfswift"
+          color_echo "cyan" "   Or let RF Swift auto-create it on first 'rfswift run' when no Docker/Podman is found."
+        fi
+      else
+        color_echo "yellow" "   Lima is not installed. Install with: brew install lima"
+        color_echo "cyan" "   After installing, RF Swift can auto-manage a QEMU VM with USB passthrough."
+        color_echo "cyan" "   USB commands: rfswift macusb list | attach | detach | status"
+      fi
       ;;
     *)
       color_echo "magenta" "🎵 Audio system is configured and ready for RF-Swift containers!"

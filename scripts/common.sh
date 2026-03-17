@@ -684,6 +684,45 @@ detect_container_engines() {
     fi
 }
 
+# Offer Lima for USB passthrough on macOS (called even when Docker/Podman is present)
+offer_lima_for_usb() {
+    echo ""
+    echo -e "${CYAN}🦙 USB passthrough on macOS${NC}"
+    echo -e "${CYAN}   Docker Desktop and Podman on macOS cannot forward USB devices (SDR dongles,${NC}"
+    echo -e "${CYAN}   HackRF, RTL-SDR, etc.) into containers. Lima runs a QEMU VM with its own${NC}"
+    echo -e "${CYAN}   Docker that supports USB hot-plug for your RF hardware.${NC}"
+    echo ""
+    echo -e "${CYAN}   Workflow when you need USB:${NC}"
+    echo -e "${CYAN}     rfswift macusb attach --vid 0x1d50 --pid 0x604b  # forward device to VM${NC}"
+    echo -e "${CYAN}     rfswift --engine lima run -i <image>              # run via Lima's Docker${NC}"
+    echo -e "${CYAN}     rfswift macusb detach --vid 0x1d50 --pid 0x604b  # unplug when done${NC}"
+    echo ""
+
+    if is_lima_installed; then
+        echo -e "${GREEN}   Lima is already installed.${NC}"
+        if ! is_lima_instance_exists "rfswift" 2>/dev/null; then
+            if prompt_yes_no "   Would you like to create the rfswift Lima VM for USB passthrough?" "n"; then
+                setup_lima_instance
+            fi
+        elif ! is_lima_instance_running "rfswift" 2>/dev/null; then
+            echo -e "${YELLOW}   Lima instance 'rfswift' exists but is not running.${NC}"
+            if prompt_yes_no "   Would you like to start it?" "y"; then
+                limactl start rfswift
+                echo -e "${GREEN}   Lima instance 'rfswift' started.${NC}"
+            fi
+        else
+            echo -e "${GREEN}   Lima instance 'rfswift' is running. USB passthrough ready.${NC}"
+        fi
+    else
+        if prompt_yes_no "   Would you like to install Lima for USB passthrough?" "n"; then
+            install_lima
+            if prompt_yes_no "   Would you like to create the rfswift Lima VM now?" "y"; then
+                setup_lima_instance
+            fi
+        fi
+    fi
+}
+
 # Main container engine check — replaces the old check_docker()
 check_container_engine() {
     echo -e "${BLUE}🔍 Checking for container engines... 🔍${NC}"
@@ -698,6 +737,10 @@ check_container_engine() {
         fi
         echo -e "${CYAN}ℹ️  RF-Swift auto-detects the engine at runtime.${NC}"
         echo -e "${CYAN}   Use 'rfswift --engine docker' or 'rfswift --engine podman' to override.${NC}"
+        # On macOS, always offer Lima for USB passthrough (Docker Desktop has no USB support)
+        if [[ "$(uname -s)" == "Darwin" ]]; then
+            offer_lima_for_usb
+        fi
         return 0
     fi
 
@@ -710,6 +753,10 @@ check_container_engine() {
         if prompt_yes_no "Would you also like to install Podman (rootless containers)?" "n"; then
             install_podman
         fi
+        # On macOS, always offer Lima for USB passthrough
+        if [[ "$(uname -s)" == "Darwin" ]]; then
+            offer_lima_for_usb
+        fi
         return 0
     fi
 
@@ -718,6 +765,10 @@ check_container_engine() {
         echo -e "${GREEN}✅ Podman is already installed. ✅${NC}"
         if prompt_yes_no "Would you also like to install Docker?" "n"; then
             install_docker_standard
+        fi
+        # On macOS, always offer Lima for USB passthrough
+        if [[ "$(uname -s)" == "Darwin" ]]; then
+            offer_lima_for_usb
         fi
         return 0
     fi
@@ -735,6 +786,13 @@ check_container_engine() {
     echo -e "${CYAN}              Drop-in Docker replacement, no root needed${NC}"
     echo ""
 
+    # macOS: also offer Lima
+    if [[ "$(uname -s)" == "Darwin" ]]; then
+        echo -e "${CYAN}   🦙 Lima    — Lightweight VM with Docker inside (QEMU)${NC}"
+        echo -e "${CYAN}              Enables USB device passthrough for SDR hardware${NC}"
+        echo ""
+    fi
+
     # Steam Deck special case
     if [ "$(uname -s)" == "Linux" ] && is_steam_deck; then
         echo -e "${MAGENTA}🎮 Steam Deck detected! Docker with Steam Deck optimizations is recommended. 🎮${NC}"
@@ -744,8 +802,15 @@ check_container_engine() {
         fi
     fi
 
+    local choices="Docker Podman Both"
+    if [[ "$(uname -s)" == "Darwin" ]]; then
+        choices="Docker Podman Both Lima Skip"
+    else
+        choices="Docker Podman Both Skip"
+    fi
+
     local CHOICE
-    CHOICE=$(prompt_choice "Select a container engine to install:" "Docker" "Podman" "Both" "Skip")
+    CHOICE=$(prompt_choice "Select a container engine to install:" $choices)
 
     case "$CHOICE" in
         1)
@@ -763,6 +828,16 @@ check_container_engine() {
             install_podman
             ;;
         4)
+            if [[ "$(uname -s)" == "Darwin" ]]; then
+                install_lima
+                setup_lima_instance
+            else
+                echo -e "${YELLOW}⚠️  Container engine installation skipped. ⚠️${NC}"
+                echo -e "${YELLOW}   You will need Docker or Podman before using RF-Swift.${NC}"
+                return 1
+            fi
+            ;;
+        5)
             echo -e "${YELLOW}⚠️  Container engine installation skipped. ⚠️${NC}"
             echo -e "${YELLOW}   You will need Docker or Podman before using RF-Swift.${NC}"
             return 1
@@ -1101,6 +1176,213 @@ install_docker_compose() {
         echo -e "${GREEN}✅ Docker Compose v2 installed successfully. ✅${NC}"
     else
         echo -e "${GREEN}✅ Docker Compose v2 is already installed. Moving on. ✅${NC}"
+    fi
+}
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Lima VM (macOS USB passthrough)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# Check if Lima is installed
+is_lima_installed() {
+    command_exists limactl
+}
+
+# Check if the rfswift Lima instance exists
+is_lima_instance_exists() {
+    local instance="${1:-rfswift}"
+    limactl list --json 2>/dev/null | grep -q "\"name\":\"${instance}\""
+}
+
+# Check if the rfswift Lima instance is running
+is_lima_instance_running() {
+    local instance="${1:-rfswift}"
+    limactl list --json 2>/dev/null | grep "\"name\":\"${instance}\"" | grep -q "\"status\":\"Running\""
+}
+
+# Install Lima on macOS via Homebrew
+install_lima() {
+    if [[ "$(uname -s)" != "Darwin" ]]; then
+        echo -e "${YELLOW}Lima is only needed on macOS for USB passthrough.${NC}"
+        return 0
+    fi
+
+    if is_lima_installed; then
+        echo -e "${GREEN}Lima is already installed.${NC}"
+        return 0
+    fi
+
+    echo -e "${BLUE}Installing Lima for USB passthrough support...${NC}"
+
+    if ! command_exists brew; then
+        echo -e "${RED}Homebrew is required to install Lima.${NC}"
+        echo -e "${YELLOW}Install Homebrew: /bin/bash -c \"\$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)\"${NC}"
+        return 1
+    fi
+
+    brew install lima
+    echo -e "${GREEN}Lima installed successfully.${NC}"
+}
+
+# Setup the rfswift Lima instance with QEMU backend for USB passthrough
+setup_lima_instance() {
+    local instance="${1:-rfswift}"
+
+    if ! is_lima_installed; then
+        echo -e "${RED}Lima is not installed. Run install_lima first.${NC}"
+        return 1
+    fi
+
+    if is_lima_instance_exists "$instance"; then
+        echo -e "${GREEN}Lima instance '$instance' already exists.${NC}"
+        if ! is_lima_instance_running "$instance"; then
+            echo -e "${YELLOW}Starting Lima instance '$instance'...${NC}"
+            limactl start "$instance"
+        fi
+        echo -e "${GREEN}Lima instance '$instance' is running.${NC}"
+        return 0
+    fi
+
+    echo -e "${BLUE}Creating Lima instance '$instance' with QEMU backend...${NC}"
+
+    # Look for the template in common locations
+    local template_path=""
+    local script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    for candidate in \
+        "${script_dir}/../lima/rfswift.yaml" \
+        "$(pwd)/lima/rfswift.yaml" \
+        "$HOME/.config/rfswift/lima.yaml"; do
+        if [ -f "$candidate" ]; then
+            template_path="$candidate"
+            break
+        fi
+    done
+
+    if [ -z "$template_path" ]; then
+        echo -e "${YELLOW}Lima template not found, creating minimal VM...${NC}"
+        # Create a temporary template
+        local tmp_template=$(mktemp /tmp/rfswift-lima-XXXXXX.yaml)
+        cat > "$tmp_template" << 'LIMAEOF'
+vmType: qemu
+cpus: 4
+memory: "8GiB"
+disk: "100GiB"
+images:
+  - location: "https://cloud-images.ubuntu.com/releases/24.04/release/ubuntu-24.04-server-cloudimg-amd64.img"
+    arch: "x86_64"
+  - location: "https://cloud-images.ubuntu.com/releases/24.04/release/ubuntu-24.04-server-cloudimg-arm64.img"
+    arch: "aarch64"
+mounts:
+  - location: "~"
+    writable: true
+  - location: "/tmp/lima"
+    writable: true
+ssh:
+  forwardAgent: true
+provision:
+  - mode: system
+    script: |
+      #!/bin/bash
+      set -eux -o pipefail
+      if ! command -v docker &> /dev/null; then
+        curl -fsSL https://get.docker.com | sh
+        usermod -aG docker "${LIMA_CIDATA_USER}"
+      fi
+      apt-get update -qq
+      apt-get install -y -qq usbutils libusb-1.0-0-dev libhidapi-libusb0 libhidapi-hidraw0 libftdi1-dev udev
+      for mod in cdc_acm cp210x ftdi_sio ch341 pl2303; do modprobe "$mod" 2>/dev/null || true; done
+      # Udev rules for common SDR/RF devices
+      cat > /etc/udev/rules.d/99-rf.rules << 'RULES'
+      SUBSYSTEMS=="usb", ATTRS{idVendor}=="1d50", MODE="0666"
+      SUBSYSTEMS=="usb", ATTRS{idVendor}=="0bda", MODE="0666"
+      SUBSYSTEMS=="usb", ATTRS{idVendor}=="2500", MODE="0666"
+      SUBSYSTEMS=="usb", ATTRS{idVendor}=="2cf0", MODE="0666"
+      SUBSYSTEMS=="usb", ATTRS{idVendor}=="03eb", MODE="0666"
+      SUBSYSTEMS=="usb", ATTRS{idVendor}=="0456", MODE="0666"
+      SUBSYSTEMS=="usb", ATTRS{idVendor}=="0403", MODE="0666"
+      SUBSYSTEMS=="usb", ATTRS{idVendor}=="fffe", MODE="0666"
+      SUBSYSTEMS=="usb", ATTRS{idVendor}=="3923", MODE="0666"
+      SUBSYSTEMS=="usb", ATTRS{idVendor}=="0483", MODE="0666"
+      SUBSYSTEMS=="usb", ATTRS{idVendor}=="1209", MODE="0666"
+      SUBSYSTEMS=="usb", ATTRS{idVendor}=="04b4", MODE="0666"
+      SUBSYSTEMS=="usb", ATTRS{idVendor}=="04d8", MODE="0666"
+      SUBSYSTEMS=="usb", ATTRS{idVendor}=="2fa2", MODE="0666"
+      RULES
+      udevadm control --reload-rules && udevadm trigger
+      [ -d /dev/bus/usb ] && chmod -R a+rw /dev/bus/usb || true
+portForwards:
+  - guestSocket: "/var/run/docker.sock"
+    hostSocket: "{{.Dir}}/sock/docker.sock"
+  - guestPort: 6080
+    hostPort: 6080
+  - guestPort: 34567
+    hostPort: 34567
+LIMAEOF
+        template_path="$tmp_template"
+    fi
+
+    limactl create --name "$instance" "$template_path"
+    limactl start "$instance"
+
+    # Cleanup temp file if we created one
+    [ -n "${tmp_template:-}" ] && rm -f "$tmp_template"
+
+    # Wait for Docker to be ready inside the VM
+    echo -e "${YELLOW}Waiting for Docker inside Lima VM...${NC}"
+    local retries=30
+    while [ $retries -gt 0 ]; do
+        if limactl shell "$instance" -- docker info >/dev/null 2>&1; then
+            echo -e "${GREEN}Docker is ready inside Lima VM.${NC}"
+            return 0
+        fi
+        sleep 2
+        retries=$((retries - 1))
+    done
+
+    echo -e "${YELLOW}Docker may still be starting inside the VM. Check with: limactl shell $instance -- docker info${NC}"
+    return 0
+}
+
+# Check Lima status and offer setup on macOS
+check_lima() {
+    if [[ "$(uname -s)" != "Darwin" ]]; then
+        return 0
+    fi
+
+    echo -e "${BLUE}Checking Lima VM for macOS USB passthrough...${NC}"
+
+    if ! is_lima_installed; then
+        echo -e "${YELLOW}Lima is not installed.${NC}"
+        echo -e "${CYAN}Lima enables USB device passthrough on macOS (SDR dongles, etc.)${NC}"
+        echo -e "${CYAN}RF Swift will auto-install Lima when no Docker/Podman is available,${NC}"
+        echo -e "${CYAN}or you can install it now for USB passthrough alongside Docker Desktop.${NC}"
+        echo ""
+        if prompt_yes_no "Would you like to install Lima for USB passthrough support?" "n"; then
+            install_lima
+            if prompt_yes_no "Would you like to create the rfswift Lima VM now?" "y"; then
+                setup_lima_instance
+            fi
+        fi
+        return 0
+    fi
+
+    echo -e "${GREEN}Lima is installed.${NC}"
+
+    if is_lima_instance_exists "rfswift"; then
+        if is_lima_instance_running "rfswift"; then
+            echo -e "${GREEN}Lima instance 'rfswift' is running.${NC}"
+        else
+            echo -e "${YELLOW}Lima instance 'rfswift' exists but is not running.${NC}"
+            if prompt_yes_no "Would you like to start it?" "y"; then
+                limactl start rfswift
+                echo -e "${GREEN}Lima instance 'rfswift' started.${NC}"
+            fi
+        fi
+    else
+        echo -e "${YELLOW}No 'rfswift' Lima instance found.${NC}"
+        if prompt_yes_no "Would you like to create the rfswift Lima VM for USB passthrough?" "y"; then
+            setup_lima_instance
+        fi
     fi
 }
 
@@ -1572,6 +1854,17 @@ show_system_info() {
         echo -e "${BLUE}   Container engine: 🦭 Podman${NC}"
     else
         echo -e "${YELLOW}   Container engine: ⚠️ None detected${NC}"
+    fi
+
+    # Show Lima status on macOS
+    if [[ "$(uname -s)" == "Darwin" ]] && is_lima_installed; then
+        if is_lima_instance_running "rfswift" 2>/dev/null; then
+            echo -e "${BLUE}   Lima VM: 🦙 rfswift (running)${NC}"
+        elif is_lima_instance_exists "rfswift" 2>/dev/null; then
+            echo -e "${BLUE}   Lima VM: 🦙 rfswift (stopped)${NC}"
+        else
+            echo -e "${BLUE}   Lima VM: 🦙 installed (no rfswift instance)${NC}"
+        fi
     fi
     
     echo ""

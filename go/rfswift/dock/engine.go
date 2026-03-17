@@ -25,6 +25,7 @@ type EngineType string
 const (
 	EngineDocker EngineType = "docker"
 	EnginePodman EngineType = "podman"
+	EngineLima   EngineType = "lima"
 	EngineAuto   EngineType = "auto"
 )
 
@@ -81,6 +82,8 @@ func SetPreferredEngine(engine string) {
 		preferredEngine = EngineDocker
 	case "podman":
 		preferredEngine = EnginePodman
+	case "lima":
+		preferredEngine = EngineLima
 	default:
 		preferredEngine = EngineAuto
 	}
@@ -114,10 +117,10 @@ func GetEngine() ContainerEngine {
 
 	activeEngine = detectEngine()
 
-	// Transparent Podman compatibility: set DOCKER_HOST so every existing
+	// Transparent socket routing: set DOCKER_HOST so every existing
 	// client.NewClientWithOpts(client.FromEnv, ...) call picks up the socket
 	// without requiring changes in rfdock.go.
-	if activeEngine.Type() == EnginePodman {
+	if activeEngine.Type() == EnginePodman || activeEngine.Type() == EngineLima {
 		socketPath := activeEngine.GetSocketPath()
 		if socketPath != "" && os.Getenv("DOCKER_HOST") == "" {
 			os.Setenv("DOCKER_HOST", socketPath)
@@ -187,6 +190,8 @@ func detectEngine() ContainerEngine {
 			preferredEngine = EngineDocker
 		case "podman":
 			preferredEngine = EnginePodman
+		case "lima":
+			preferredEngine = EngineLima
 		default:
 			common.PrintWarningMessage(fmt.Sprintf("Unknown RFSWIFT_ENGINE value '%s', falling back to auto", envEngine))
 		}
@@ -222,6 +227,26 @@ func detectEngine() ContainerEngine {
 		common.PrintWarningMessage("No container engine available")
 		return podman
 
+	case EngineLima:
+		// Lima engine: Docker inside a Lima QEMU VM — required for USB passthrough on macOS.
+		// Use --engine lima when you need USB devices in your containers.
+		lima := &LimaEngine{}
+		if lima.IsAvailable() {
+			common.PrintInfoMessage("Container engine: Docker via Lima VM (explicit — USB passthrough enabled)")
+			return lima
+		}
+		common.PrintWarningMessage("Lima requested but not available (install with: brew install lima)")
+		// Fall back to Docker/Podman (but USB won't work)
+		if docker.IsAvailable() {
+			common.PrintInfoMessage("Container engine: Docker (fallback — no USB passthrough)")
+			return docker
+		}
+		if podman.IsAvailable() {
+			common.PrintInfoMessage("Container engine: Podman (fallback — no USB passthrough)")
+			return podman
+		}
+		return lima // will fail with descriptive errors
+
 	default: // EngineAuto
 		if docker.IsAvailable() {
 			common.PrintInfoMessage("Container engine: Docker (auto-detected)")
@@ -230,6 +255,13 @@ func detectEngine() ContainerEngine {
 		if podman.IsAvailable() {
 			common.PrintInfoMessage("Container engine: Podman (auto-detected)")
 			return podman
+		}
+		// On macOS, try Lima as a fallback — it can transparently provide
+		// a Docker engine inside a QEMU VM with USB passthrough support.
+		if IsLimaEngineCandidate() {
+			lima := &LimaEngine{}
+			common.PrintInfoMessage("Container engine: Docker via Lima VM (auto-detected)")
+			return lima
 		}
 		common.PrintWarningMessage("No container engine detected — defaulting to Docker")
 		return docker
@@ -297,19 +329,26 @@ func PrintEngineInfo() {
 		{Key: "Storage root", Value: engine.GetStorageRoot()},
 	}
 
-	// Show alternative engine
-	var other ContainerEngine
-	if engine.Type() == EngineDocker {
-		other = &PodmanEngine{}
-	} else {
-		other = &DockerEngine{}
+	// Show alternative engines
+	alternatives := []ContainerEngine{}
+	if engine.Type() != EngineDocker {
+		alternatives = append(alternatives, &DockerEngine{})
 	}
-	if other.IsAvailable() {
-		items = append(items, tui.PropertyItem{
-			Key:        "Alternative",
-			Value:      fmt.Sprintf("%s (use --engine %s)", other.Name(), other.Type()),
-			ValueColor: tui.ColorCyan,
-		})
+	if engine.Type() != EnginePodman {
+		alternatives = append(alternatives, &PodmanEngine{})
+	}
+	if engine.Type() != EngineLima && IsLimaEngineCandidate() {
+		alternatives = append(alternatives, &LimaEngine{})
+	}
+	for _, other := range alternatives {
+		if other.IsAvailable() {
+			label := fmt.Sprintf("%s (use --engine %s)", other.Name(), other.Type())
+			items = append(items, tui.PropertyItem{
+				Key:        "Alternative",
+				Value:      label,
+				ValueColor: tui.ColorCyan,
+			})
+		}
 	}
 
 	tui.RenderPropertySheet("🔧 Container Engine", tui.ColorPrimary, items)

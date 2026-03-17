@@ -16,6 +16,11 @@ echo -e "${YELLOW}[+] Installing Go${NC}"
 install_go
 # Ensure Go binary is in the PATH for the current script session
 export PATH=$PATH:/usr/local/go/bin
+# On macOS, check Lima for USB passthrough
+if [[ "$(uname -s)" == "Darwin" ]]; then
+    echo -e "${YELLOW}[+] Checking Lima VM for USB passthrough${NC}"
+    check_lima
+fi
 # Check config file
 check_config_file
 # Ask the user if they want to create an alias after the installation

@@ -1,0 +1,223 @@
+# Lima template for RF Swift - macOS USB passthrough
+#
+# RF Swift auto-manages this VM transparently. You can also use it manually:
+#   limactl create --name rfswift lima/rfswift.yaml
+#   limactl start rfswift
+#
+# USB device management (transparent from rfswift CLI):
+#   rfswift macusb list              # List USB devices on macOS host
+#   rfswift macusb attach --vid 0x1234 --pid 0x5678  # Attach USB to VM
+#   rfswift macusb detach --vid 0x1234 --pid 0x5678  # Detach USB from VM
+#   rfswift macusb vm-devices        # List attached USB devices
+#   rfswift macusb status            # Check setup status
+#
+# IMPORTANT: vmType must be "qemu" for USB passthrough (not "vz")
+
+# Use QEMU backend - required for USB passthrough via QMP
+vmType: qemu
+
+# VM resources - adjust as needed for your SDR workloads
+cpus: 4
+memory: "8GiB"
+disk: "100GiB"
+
+# Use Ubuntu as the guest OS (matches RF Swift container base)
+images:
+  - location: "https://cloud-images.ubuntu.com/releases/24.04/release/ubuntu-24.04-server-cloudimg-amd64.img"
+    arch: "x86_64"
+  - location: "https://cloud-images.ubuntu.com/releases/24.04/release/ubuntu-24.04-server-cloudimg-arm64.img"
+    arch: "aarch64"
+
+# Mount the host home directory for easy file sharing
+mounts:
+  - location: "~"
+    writable: true
+  - location: "/tmp/lima"
+    writable: true
+
+# Enable SSH agent forwarding
+ssh:
+  forwardAgent: true
+
+# Provision scripts - install Docker, USB tools, kernel modules, and udev rules
+provision:
+  - mode: system
+    script: |
+      #!/bin/bash
+      set -eux -o pipefail
+
+      # ── Docker ──────────────────────────────────────────────────
+      if ! command -v docker &> /dev/null; then
+        curl -fsSL https://get.docker.com | sh
+        usermod -aG docker "${LIMA_CIDATA_USER}"
+      fi
+
+      # ── USB & hardware libraries ───────────────────────────────
+      apt-get update -qq
+      apt-get install -y -qq \
+        usbutils \
+        libusb-1.0-0-dev \
+        libhidapi-libusb0 \
+        libhidapi-hidraw0 \
+        libftdi1-dev \
+        udev
+
+      # ── Kernel modules for RF devices ──────────────────────────
+      # Load common modules needed by SDR/RF hardware
+      for mod in usbcore usb_storage cdc_acm cp210x ftdi_sio ch341 pl2303; do
+        modprobe "$mod" 2>/dev/null || true
+      done
+
+      # Make module loading persistent
+      cat > /etc/modules-load.d/rfswift.conf << 'MODULES'
+      # RF Swift - USB serial and device modules
+      cdc_acm
+      cp210x
+      ftdi_sio
+      ch341
+      pl2303
+      MODULES
+
+      # ── Udev rules for known RF devices ────────────────────────
+      # These rules set appropriate permissions so containers can
+      # access SDR/RF hardware without running as root.
+
+      # -- Ettus Research USRP devices --
+      cat > /etc/udev/rules.d/uhd-usrp.rules << 'UDEV'
+      # USRP1
+      SUBSYSTEMS=="usb", ATTRS{idVendor}=="fffe", ATTRS{idProduct}=="0002", MODE:="0666"
+      # B100
+      SUBSYSTEMS=="usb", ATTRS{idVendor}=="2500", ATTRS{idProduct}=="0002", MODE:="0666"
+      # B200
+      SUBSYSTEMS=="usb", ATTRS{idVendor}=="2500", ATTRS{idProduct}=="0020", MODE:="0666"
+      SUBSYSTEMS=="usb", ATTRS{idVendor}=="2500", ATTRS{idProduct}=="0021", MODE:="0666"
+      SUBSYSTEMS=="usb", ATTRS{idVendor}=="2500", ATTRS{idProduct}=="0022", MODE:="0666"
+      # B210/B205mini
+      SUBSYSTEMS=="usb", ATTRS{idVendor}=="3923", ATTRS{idProduct}=="7813", MODE:="0666"
+      SUBSYSTEMS=="usb", ATTRS{idVendor}=="3923", ATTRS{idProduct}=="7814", MODE:="0666"
+      UDEV
+
+      # -- Nuand BladeRF devices --
+      cat > /etc/udev/rules.d/88-nuand-bladerf.rules << 'UDEV'
+      # BladeRF v1
+      SUBSYSTEMS=="usb", ATTRS{idVendor}=="2cf0", ATTRS{idProduct}=="5246", MODE="0666"
+      SUBSYSTEMS=="usb", ATTRS{idVendor}=="1d50", ATTRS{idProduct}=="6066", MODE="0666"
+      # BladeRF 2.0 Micro
+      SUBSYSTEMS=="usb", ATTRS{idVendor}=="2cf0", ATTRS{idProduct}=="5250", MODE="0666"
+      # Cypress FX3 bootloader (BladeRF recovery)
+      SUBSYSTEMS=="usb", ATTRS{idVendor}=="04b4", ATTRS{idProduct}=="00f3", MODE="0666"
+      UDEV
+
+      # -- HackRF --
+      cat > /etc/udev/rules.d/53-hackrf.rules << 'UDEV'
+      SUBSYSTEMS=="usb", ATTRS{idVendor}=="1d50", ATTRS{idProduct}=="604b", MODE="0666"
+      SUBSYSTEMS=="usb", ATTRS{idVendor}=="1d50", ATTRS{idProduct}=="6089", MODE="0666"
+      SUBSYSTEMS=="usb", ATTRS{idVendor}=="1fc9", ATTRS{idProduct}=="000c", MODE="0666"
+      UDEV
+
+      # -- RTL-SDR --
+      cat > /etc/udev/rules.d/rtl-sdr.rules << 'UDEV'
+      # RTL2832U
+      SUBSYSTEMS=="usb", ATTRS{idVendor}=="0bda", ATTRS{idProduct}=="2832", MODE="0666"
+      SUBSYSTEMS=="usb", ATTRS{idVendor}=="0bda", ATTRS{idProduct}=="2838", MODE="0666"
+      # RTL-SDR Blog V4
+      SUBSYSTEMS=="usb", ATTRS{idVendor}=="0bda", ATTRS{idProduct}=="2850", MODE="0666"
+      UDEV
+
+      # -- Airspy --
+      cat > /etc/udev/rules.d/52-airspy.rules << 'UDEV'
+      SUBSYSTEMS=="usb", ATTRS{idVendor}=="1d50", ATTRS{idProduct}=="60a1", MODE="0666"
+      # Airspy HF+
+      SUBSYSTEMS=="usb", ATTRS{idVendor}=="03eb", ATTRS{idProduct}=="800c", MODE="0666"
+      UDEV
+
+      # -- LimeSDR --
+      cat > /etc/udev/rules.d/64-limesuite.rules << 'UDEV'
+      SUBSYSTEMS=="usb", ATTRS{idVendor}=="0403", ATTRS{idProduct}=="601f", MODE="0666"
+      SUBSYSTEMS=="usb", ATTRS{idVendor}=="1d50", ATTRS{idProduct}=="6108", MODE="0666"
+      UDEV
+
+      # -- ADALM-Pluto (PlutoSDR) --
+      cat > /etc/udev/rules.d/53-plutosdr.rules << 'UDEV'
+      SUBSYSTEMS=="usb", ATTRS{idVendor}=="0456", ATTRS{idProduct}=="b673", MODE="0666"
+      SUBSYSTEMS=="usb", ATTRS{idVendor}=="2fa2", ATTRS{idProduct}=="5a02", MODE="0666"
+      UDEV
+
+      # -- FUNcube Dongle --
+      cat > /etc/udev/rules.d/53-funcube.rules << 'UDEV'
+      SUBSYSTEMS=="usb", ATTRS{idVendor}=="04d8", ATTRS{idProduct}=="fb31", MODE="0666"
+      SUBSYSTEMS=="usb", ATTRS{idVendor}=="04d8", ATTRS{idProduct}=="fb56", MODE="0666"
+      UDEV
+
+      # -- Vector Network Analyzers (NanoVNA, etc.) --
+      cat > /etc/udev/rules.d/51-vna.rules << 'UDEV'
+      SUBSYSTEMS=="usb", ATTRS{idVendor}=="0483", ATTRS{idProduct}=="564e", MODE="0666"
+      SUBSYSTEMS=="usb", ATTRS{idVendor}=="0483", ATTRS{idProduct}=="4121", MODE="0666"
+      SUBSYSTEMS=="usb", ATTRS{idVendor}=="1209", ATTRS{idProduct}=="4121", MODE="0666"
+      UDEV
+
+      # -- Leobodnar GPSDO / calibration --
+      cat > /etc/udev/rules.d/99-lbe.rules << 'UDEV'
+      KERNEL=="hidraw*", SUBSYSTEM=="hidraw", MODE="0660", GROUP="plugdev"
+      UDEV
+
+      # -- RFNM --
+      cat > /etc/udev/rules.d/rfnm.rules << 'UDEV'
+      SUBSYSTEMS=="usb", ATTRS{idVendor}=="15a2", ATTRS{idProduct}=="8c", MODE="0666"
+      UDEV
+
+      # -- JTAG/debug probes (OpenOCD, etc.) --
+      cat > /etc/udev/rules.d/99-jtag.rules << 'UDEV'
+      # FTDI-based probes
+      SUBSYSTEMS=="usb", ATTRS{idVendor}=="0403", MODE="0666"
+      # ST-Link
+      SUBSYSTEMS=="usb", ATTRS{idVendor}=="0483", ATTRS{idProduct}=="3748", MODE="0666"
+      SUBSYSTEMS=="usb", ATTRS{idVendor}=="0483", ATTRS{idProduct}=="374b", MODE="0666"
+      # Segger J-Link
+      SUBSYSTEMS=="usb", ATTRS{idVendor}=="1366", MODE="0666"
+      # Bus Pirate
+      SUBSYSTEMS=="usb", ATTRS{idVendor}=="0403", ATTRS{idProduct}=="6001", MODE="0666"
+      UDEV
+
+      # -- Logic Analyzers (Saleae, DSLogic, Sigrok) --
+      cat > /etc/udev/rules.d/99-logic.rules << 'UDEV'
+      # Saleae Logic
+      SUBSYSTEMS=="usb", ATTRS{idVendor}=="0925", MODE="0666"
+      SUBSYSTEMS=="usb", ATTRS{idVendor}=="21a9", MODE="0666"
+      # DSLogic / DreamSourceLab
+      SUBSYSTEMS=="usb", ATTRS{idVendor}=="2a0e", MODE="0666"
+      # fx2lafw (Sigrok)
+      SUBSYSTEMS=="usb", ATTRS{idVendor}=="1d50", ATTRS{idProduct}=="608c", MODE="0666"
+      UDEV
+
+      # Reload udev rules
+      udevadm control --reload-rules
+      udevadm trigger
+
+      # Ensure /dev/bus/usb has proper permissions for hot-plugged devices
+      if [ -d /dev/bus/usb ]; then
+        chmod -R a+rw /dev/bus/usb || true
+      fi
+
+  - mode: user
+    script: |
+      #!/bin/bash
+      # Pull RF Swift base image
+      docker pull penthertz/rfswift:latest 2>/dev/null || true
+
+# Port forwarding for RF Swift services
+portForwards:
+  # Forward Docker socket to host for transparent engine access
+  - guestSocket: "/var/run/docker.sock"
+    hostSocket: "{{.Dir}}/sock/docker.sock"
+  # noVNC desktop
+  - guestPort: 6080
+    hostPort: 6080
+  # PulseAudio TCP
+  - guestPort: 34567
+    hostPort: 34567
+
+# DNS settings
+dns:
+  - 8.8.8.8
+  - 8.8.4.4

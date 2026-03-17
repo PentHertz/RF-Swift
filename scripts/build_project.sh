@@ -18,6 +18,11 @@ install_go
 export PATH=$PATH:/usr/local/go/bin
 echo -e "${YELLOW}[+] Building RF Swift Go Project${NC}"
 building_rfswift
+# On macOS, check Lima for USB passthrough
+if [[ "$(uname -s)" == "Darwin" ]]; then
+    echo -e "${YELLOW}[+] Checking Lima VM for USB passthrough${NC}"
+    check_lima
+fi
 # Ask the user if they want to create an alias after the installation
 install_binary_alias
 # Prompt the user if they want to build a container image, pull an image, or exit

@@ -15,6 +15,11 @@ check_curl
 echo -e "${YELLOW}[+] Checking container engine (Docker / Podman)${NC}"
 check_container_engine
 check_agnoster_dependencies
+# On macOS, check Lima for USB passthrough
+if [[ "$(uname -s)" == "Darwin" ]]; then
+    echo -e "${YELLOW}[+] Checking Lima VM for USB passthrough${NC}"
+    check_lima
+fi
 # Ensure Go binary is in the PATH for the current script session
 export PATH=$PATH:/usr/local/go/bin
 # Check config file

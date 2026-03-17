@@ -109,7 +109,7 @@ func registerHostCommands() {
 func init() {
 	// Persistent flags
 	rootCmd.PersistentFlags().String("engine", "auto",
-		"Container engine to use: auto, docker, podman (env: RFSWIFT_ENGINE)")
+		"Container engine to use: auto, docker, podman, lima (env: RFSWIFT_ENGINE)")
 	rootCmd.PersistentFlags().BoolVarP(&common.Disconnected, "disconnect", "q", false, "Don't query updates (disconnected mode)")
 
 	rootCmd.PersistentPreRun = func(cmd *cobra.Command, args []string) {
@@ -140,6 +140,9 @@ func init() {
 	registerHostCommands()
 	if runtime.GOOS == "windows" {
 		registerWinUSBCommands()
+	}
+	if runtime.GOOS == "darwin" {
+		registerMacUSBCommands()
 	}
 	rootCmd.AddCommand(engineCmd)
 	registerNetworkCommands()
