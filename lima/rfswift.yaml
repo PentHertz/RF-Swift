@@ -208,7 +208,7 @@ provision:
 # Port forwarding for RF Swift services
 portForwards:
   # Forward Docker socket to host for transparent engine access
-  - guestSocket: "/var/run/docker.sock"
+  - guestSocket: "/run/docker.sock"
     hostSocket: "{{.Dir}}/sock/docker.sock"
   # noVNC desktop
   - guestPort: 6080
