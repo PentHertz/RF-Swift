@@ -653,15 +653,31 @@ func ensureMacOSAudioRunning() error {
 	// in ~/.config/pulse/<machine-id>-runtime.
 	cleanStalePulseRuntime()
 
-	// Start PulseAudio as a daemon.
-	// Use --daemonize instead of --start: on macOS Homebrew, --start uses the
-	// client autospawn mechanism which is unreliable (fails silently or with
-	// "Daemon startup failed"). --daemonize launches the daemon directly.
 	common.PrintInfoMessage("Starting PulseAudio on macOS...")
-	cmd := exec.Command("pulseaudio", "--daemonize", "--exit-idle-time=-1")
-	if output, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("failed to start PulseAudio on macOS: %w\n%s\nTry: rm -f ~/.config/pulse/*-runtime && pulseaudio --daemonize --exit-idle-time=-1", err, string(output))
+
+	// Method 1: brew services (launchd-managed, most reliable on macOS)
+	if brewPath, err := exec.LookPath("brew"); err == nil {
+		brewCmd := exec.Command(brewPath, "services", "start", "pulseaudio")
+		if output, err := brewCmd.CombinedOutput(); err == nil {
+			time.Sleep(2 * time.Second)
+			if isPulseAudioRunning() {
+				common.PrintSuccessMessage("PulseAudio started via brew services.")
+				return nil
+			}
+			common.PrintInfoMessage(fmt.Sprintf("brew services returned OK but PulseAudio not running: %s", string(output)))
+		}
 	}
+
+	// Method 2: foreground mode as a background process
+	// --daemonize is broken on macOS Homebrew PulseAudio, but foreground mode works.
+	bgCmd := exec.Command("pulseaudio", "--exit-idle-time=-1")
+	bgCmd.Stdout = nil
+	bgCmd.Stderr = nil
+	if err := bgCmd.Start(); err != nil {
+		return fmt.Errorf("failed to start PulseAudio on macOS: %w\nTry: pulseaudio --exit-idle-time=-1 &", err)
+	}
+	// Detach — don't wait for the process
+	go func() { bgCmd.Wait() }()
 
 	// Wait for it to be ready
 	time.Sleep(2 * time.Second)
@@ -756,6 +772,14 @@ func SetPulseCTL(address string) error {
 	// Ensure audio system is running
 	if err := ensureAudioSystemRunning(); err != nil {
 		return fmt.Errorf("failed to ensure audio system is running: %w", err)
+	}
+
+	// On macOS with Lima, containers run inside a VM with its own network.
+	// The auth-ip-acl must include the Lima VM and Docker bridge subnets,
+	// not just 127.0.0.1, otherwise containers can't reach PulseAudio.
+	if runtime.GOOS == "darwin" && IsLimaInstalled() && IsLimaInstanceRunning("rfswift") {
+		ip = "127.0.0.1;192.168.0.0/16;172.16.0.0/12;10.0.0.0/8"
+		common.PrintInfoMessage("Lima detected: allowing connections from VM and Docker subnets (192.168.0.0/16, 172.16.0.0/12, 10.0.0.0/8)")
 	}
 
 	// On macOS, use pactl (works with Homebrew PulseAudio)

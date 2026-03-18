@@ -139,11 +139,51 @@ func combineEnv(xdisplay, pulseServer, extraenv string) []string {
 	if xdisplay != "" {
 		dockerenv = append(dockerenv, strings.Split(xdisplay, ",")...)
 	}
+
+	// When using Lima, PulseAudio runs on the macOS host. The VM has its own
+	// network (e.g., 192.168.5.x), so 127.0.0.1 inside the VM/container does NOT
+	// reach the macOS host. We must use the VM's default gateway IP which routes
+	// back to the macOS host where PulseAudio is listening.
+	if runtime.GOOS == "darwin" {
+		engine := GetEngine()
+		if engine != nil && engine.Type() == EngineLima {
+			if strings.Contains(pulseServer, "127.0.0.1") || strings.Contains(pulseServer, "localhost") {
+				gateway := getLimaHostGatewayIP()
+				if gateway != "" {
+					old := pulseServer
+					pulseServer = strings.Replace(pulseServer, "127.0.0.1", gateway, 1)
+					pulseServer = strings.Replace(pulseServer, "localhost", gateway, 1)
+					common.PrintInfoMessage(fmt.Sprintf("Lima: adjusted PULSE_SERVER from %s to %s (VM gateway → macOS host)", old, pulseServer))
+				}
+			}
+		}
+	}
+
 	dockerenv = append(dockerenv, "PULSE_SERVER="+pulseServer)
 	if extraenv != "" {
 		dockerenv = append(dockerenv, strings.Split(extraenv, ",")...)
 	}
 	return dockerenv
+}
+
+// getLimaHostGatewayIP returns the default gateway inside the Lima VM,
+// which routes back to the macOS host where PulseAudio is listening.
+// Uses `limactl shell` to query the VM's routing table.
+func getLimaHostGatewayIP() string {
+	cmd := exec.Command("limactl", "shell", "rfswift", "--", "ip", "route", "show", "default")
+	output, err := cmd.Output()
+	if err != nil {
+		return "192.168.5.2" // common Lima default gateway
+	}
+
+	// Parse "default via 192.168.5.2 dev eth0 ..."
+	fields := strings.Fields(string(output))
+	for i, f := range fields {
+		if f == "via" && i+1 < len(fields) {
+			return fields[i+1]
+		}
+	}
+	return "192.168.5.2"
 }
 
 // normalizeImageName ensures an image reference has the proper repo:tag format.
