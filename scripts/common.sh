@@ -1467,9 +1467,15 @@ provision:
       set -eux -o pipefail
       if ! command -v docker &> /dev/null; then
         curl -fsSL https://get.docker.com | sh
-        LIMA_USER=$(awk -F: '$3 >= 1000 && $3 < 65534 { print $1; exit }' /etc/passwd)
-        [ -n "$LIMA_USER" ] && usermod -aG docker "$LIMA_USER"
       fi
+      LIMA_USER=$(awk -F: '$3 >= 500 && $3 < 65534 && $6 ~ /^\/home\// { print $1; exit }' /etc/passwd)
+      [ -n "$LIMA_USER" ] && usermod -aG docker "$LIMA_USER"
+      mkdir -p /etc/systemd/system/docker.service.d
+      cat > /etc/systemd/system/docker.service.d/socket-permissions.conf << 'DROPIN'
+      [Service]
+      ExecStartPost=/bin/chmod 666 /var/run/docker.sock
+      DROPIN
+      systemctl daemon-reload
       apt-get update -qq
       apt-get install -y -qq usbutils libusb-1.0-0-dev libhidapi-libusb0 libhidapi-hidraw0 libftdi1-dev udev
       for mod in cdc_acm cp210x ftdi_sio ch341 pl2303; do modprobe "$mod" 2>/dev/null || true; done
@@ -1493,7 +1499,7 @@ provision:
       udevadm control --reload-rules && udevadm trigger
       [ -d /dev/bus/usb ] && chmod -R a+rw /dev/bus/usb || true
 portForwards:
-  - guestSocket: "/var/run/docker.sock"
+  - guestSocket: "/run/docker.sock"
     hostSocket: "{{.Dir}}/sock/docker.sock"
   - guestPort: 6080
     hostPort: 6080

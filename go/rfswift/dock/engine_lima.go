@@ -277,9 +277,17 @@ provision:
       set -eux -o pipefail
       if ! command -v docker &> /dev/null; then
         curl -fsSL https://get.docker.com | sh
-        LIMA_USER=$(awk -F: '$3 >= 1000 && $3 < 65534 { print $1; exit }' /etc/passwd)
-        [ -n "$LIMA_USER" ] && usermod -aG docker "$LIMA_USER"
       fi
+      # Ensure Lima user is in docker group (UID >= 500 for macOS-mirrored users)
+      LIMA_USER=$(awk -F: '$3 >= 500 && $3 < 65534 && $6 ~ /^\/home\// { print $1; exit }' /etc/passwd)
+      [ -n "$LIMA_USER" ] && usermod -aG docker "$LIMA_USER"
+      # Make Docker socket accessible without VM restart for group reload
+      mkdir -p /etc/systemd/system/docker.service.d
+      cat > /etc/systemd/system/docker.service.d/socket-permissions.conf << 'DROPIN'
+      [Service]
+      ExecStartPost=/bin/chmod 666 /var/run/docker.sock
+      DROPIN
+      systemctl daemon-reload
       apt-get update -qq
       apt-get install -y -qq usbutils libusb-1.0-0-dev libhidapi-libusb0 libhidapi-hidraw0 libftdi1-dev udev bluez bluetooth
       # Load USB serial and Bluetooth modules
@@ -296,26 +304,86 @@ provision:
       vhci-hcd
       MODULES
       [ -e /dev/vhci ] && chmod 0666 /dev/vhci || true
-      # Udev rules for common SDR/RF devices and Bluetooth adapters
-      echo 'SUBSYSTEMS=="usb", ATTRS{idVendor}=="1d50", MODE="0666"' > /etc/udev/rules.d/99-rf.rules
-      echo 'SUBSYSTEMS=="usb", ATTRS{idVendor}=="0bda", MODE="0666"' >> /etc/udev/rules.d/99-rf.rules
-      echo 'SUBSYSTEMS=="usb", ATTRS{idVendor}=="2500", MODE="0666"' >> /etc/udev/rules.d/99-rf.rules
-      echo 'SUBSYSTEMS=="usb", ATTRS{idVendor}=="2cf0", MODE="0666"' >> /etc/udev/rules.d/99-rf.rules
-      echo 'SUBSYSTEMS=="usb", ATTRS{idVendor}=="03eb", MODE="0666"' >> /etc/udev/rules.d/99-rf.rules
-      echo 'SUBSYSTEMS=="usb", ATTRS{idVendor}=="0456", MODE="0666"' >> /etc/udev/rules.d/99-rf.rules
-      echo 'SUBSYSTEMS=="usb", ATTRS{idVendor}=="0403", MODE="0666"' >> /etc/udev/rules.d/99-rf.rules
-      echo 'SUBSYSTEMS=="usb", ATTRS{idVendor}=="fffe", MODE="0666"' >> /etc/udev/rules.d/99-rf.rules
-      echo 'SUBSYSTEMS=="usb", ATTRS{idVendor}=="3923", MODE="0666"' >> /etc/udev/rules.d/99-rf.rules
-      echo 'SUBSYSTEMS=="usb", ATTRS{idVendor}=="0a12", MODE="0666"' >> /etc/udev/rules.d/99-rf.rules
-      echo 'SUBSYSTEMS=="usb", ATTRS{idVendor}=="0a5c", MODE="0666"' >> /etc/udev/rules.d/99-rf.rules
-      echo 'SUBSYSTEMS=="usb", ATTRS{idVendor}=="8087", MODE="0666"' >> /etc/udev/rules.d/99-rf.rules
-      echo 'SUBSYSTEMS=="usb", ATTRS{idVendor}=="0cf3", MODE="0666"' >> /etc/udev/rules.d/99-rf.rules
-      echo 'SUBSYSTEMS=="usb", ATTRS{idVendor}=="1915", MODE="0666"' >> /etc/udev/rules.d/99-rf.rules
+      # Udev rules — permissive vendor-ID matching for broad device support
+      cat > /etc/udev/rules.d/99-rfswift.rules << 'UDEV'
+      # HackRF, Great Scott Gadgets, BladeRF, Airspy, LimeSDR, Ubertooth
+      SUBSYSTEMS=="usb", ATTRS{idVendor}=="1d50", MODE="0666"
+      # RTL-SDR, Realtek
+      SUBSYSTEMS=="usb", ATTRS{idVendor}=="0bda", MODE="0666"
+      # Ettus USRP
+      SUBSYSTEMS=="usb", ATTRS{idVendor}=="2500", MODE="0666"
+      SUBSYSTEMS=="usb", ATTRS{idVendor}=="3923", MODE="0666"
+      # Nuand BladeRF
+      SUBSYSTEMS=="usb", ATTRS{idVendor}=="2cf0", MODE="0666"
+      # Airspy HF+
+      SUBSYSTEMS=="usb", ATTRS{idVendor}=="03eb", MODE="0666"
+      # ADALM-Pluto / PlutoSDR
+      SUBSYSTEMS=="usb", ATTRS{idVendor}=="0456", MODE="0666"
+      SUBSYSTEMS=="usb", ATTRS{idVendor}=="2fa2", MODE="0666"
+      # FTDI (LimeSDR, JTAG, serial)
+      SUBSYSTEMS=="usb", ATTRS{idVendor}=="0403", MODE="0666"
+      # USRP1
+      SUBSYSTEMS=="usb", ATTRS{idVendor}=="fffe", MODE="0666"
+      # STM32 (VNA, ST-Link)
+      SUBSYSTEMS=="usb", ATTRS{idVendor}=="0483", MODE="0666"
+      # FUNcube Dongle
+      SUBSYSTEMS=="usb", ATTRS{idVendor}=="04d8", MODE="0666"
+      # VNA (SiLabs)
+      SUBSYSTEMS=="usb", ATTRS{idVendor}=="1209", MODE="0666"
+      # Cypress FX3 (BladeRF recovery)
+      SUBSYSTEMS=="usb", ATTRS{idVendor}=="04b4", MODE="0666"
+      # RFNM
+      SUBSYSTEMS=="usb", ATTRS{idVendor}=="15a2", MODE="0666"
+      # Saleae Logic
+      SUBSYSTEMS=="usb", ATTRS{idVendor}=="0925", MODE="0666"
+      SUBSYSTEMS=="usb", ATTRS{idVendor}=="21a9", MODE="0666"
+      # DSLogic / DreamSourceLab
+      SUBSYSTEMS=="usb", ATTRS{idVendor}=="2a0e", MODE="0666"
+      # Segger J-Link
+      SUBSYSTEMS=="usb", ATTRS{idVendor}=="1366", MODE="0666"
+      # CSR Bluetooth
+      SUBSYSTEMS=="usb", ATTRS{idVendor}=="0a12", MODE="0666"
+      # Broadcom Bluetooth
+      SUBSYSTEMS=="usb", ATTRS{idVendor}=="0a5c", MODE="0666"
+      # Intel Bluetooth
+      SUBSYSTEMS=="usb", ATTRS{idVendor}=="8087", MODE="0666"
+      # Qualcomm/Atheros Bluetooth
+      SUBSYSTEMS=="usb", ATTRS{idVendor}=="0cf3", MODE="0666"
+      # Nordic Semiconductor (nRF Sniffer)
+      SUBSYSTEMS=="usb", ATTRS{idVendor}=="1915", MODE="0666"
+      # TI CC2540/CC2531 (BLE sniffer)
+      SUBSYSTEMS=="usb", ATTRS{idVendor}=="0451", MODE="0666"
+      # NXP (HackRF bootloader)
+      SUBSYSTEMS=="usb", ATTRS{idVendor}=="1fc9", MODE="0666"
+      # Proxmark3
+      SUBSYSTEMS=="usb", ATTRS{idVendor}=="9ac4", MODE="0666"
+      SUBSYSTEMS=="usb", ATTRS{idVendor}=="2d2d", MODE="0666"
+      # ACS NFC readers (ACR122U)
+      SUBSYSTEMS=="usb", ATTRS{idVendor}=="072f", MODE="0666"
+      # SCM Microsystems NFC
+      SUBSYSTEMS=="usb", ATTRS{idVendor}=="04e6", MODE="0666"
+      # Maple/STM32 (ChameleonMini)
+      SUBSYSTEMS=="usb", ATTRS{idVendor}=="1eaf", MODE="0666"
+      # Teensy/VUSB
+      SUBSYSTEMS=="usb", ATTRS{idVendor}=="16c0", MODE="0666"
+      # Silicon Labs CP210x
+      SUBSYSTEMS=="usb", ATTRS{idVendor}=="10c4", MODE="0666"
+      # QinHeng CH340/CH341
+      SUBSYSTEMS=="usb", ATTRS{idVendor}=="1a86", MODE="0666"
+      # Espressif ESP32
+      SUBSYSTEMS=="usb", ATTRS{idVendor}=="303a", MODE="0666"
+      # Adafruit (nRF52, RP2040)
+      SUBSYSTEMS=="usb", ATTRS{idVendor}=="239a", MODE="0666"
+      # Arduino
+      SUBSYSTEMS=="usb", ATTRS{idVendor}=="2341", MODE="0666"
+      # HID raw devices (GPSDO, calibration)
+      KERNEL=="hidraw*", SUBSYSTEM=="hidraw", MODE="0660", GROUP="plugdev"
+      UDEV
       udevadm control --reload-rules && udevadm trigger
       [ -d /dev/bus/usb ] && chmod -R a+rw /dev/bus/usb || true
 
 portForwards:
-  - guestSocket: "/var/run/docker.sock"
+  - guestSocket: "/run/docker.sock"
     hostSocket: "{{.Dir}}/sock/docker.sock"
   - guestPort: 6080
     hostPort: 6080

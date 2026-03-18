@@ -50,14 +50,22 @@ provision:
       # ── Docker ──────────────────────────────────────────────────
       if ! command -v docker &> /dev/null; then
         curl -fsSL https://get.docker.com | sh
-        # Add the default Lima user to the docker group.
-        # Use the first non-root UID >= 1000 user (Lima convention) to avoid
-        # the deprecated LIMA_CIDATA_USER variable.
-        LIMA_USER=$(awk -F: '$3 >= 1000 && $3 < 65534 { print $1; exit }' /etc/passwd)
-        if [ -n "$LIMA_USER" ]; then
-          usermod -aG docker "$LIMA_USER"
-        fi
       fi
+
+      # Ensure the Lima user is in the docker group (UID >= 500 for macOS-mirrored users)
+      LIMA_USER=$(awk -F: '$3 >= 500 && $3 < 65534 && $6 ~ /^\/home\// { print $1; exit }' /etc/passwd)
+      if [ -n "$LIMA_USER" ]; then
+        usermod -aG docker "$LIMA_USER"
+      fi
+
+      # Make Docker socket accessible without requiring a VM restart for group
+      # membership to take effect. This is a single-user VM so 666 is fine.
+      mkdir -p /etc/systemd/system/docker.service.d
+      cat > /etc/systemd/system/docker.service.d/socket-permissions.conf << 'DROPIN'
+      [Service]
+      ExecStartPost=/bin/chmod 666 /var/run/docker.sock
+      DROPIN
+      systemctl daemon-reload
 
       # ── USB & hardware libraries ───────────────────────────────
       apt-get update -qq
@@ -233,6 +241,40 @@ provision:
       SUBSYSTEMS=="usb", ATTRS{idVendor}=="0451", ATTRS{idProduct}=="16a8", MODE="0666"
       UDEV
 
+      # -- Proxmark3 --
+      cat > /etc/udev/rules.d/99-proxmark3.rules << 'UDEV'
+      # Proxmark3 RDV4
+      SUBSYSTEMS=="usb", ATTRS{idVendor}=="9ac4", MODE="0666"
+      # Proxmark3 generic
+      SUBSYSTEMS=="usb", ATTRS{idVendor}=="2d2d", MODE="0666"
+      UDEV
+
+      # -- NFC readers --
+      cat > /etc/udev/rules.d/99-nfc.rules << 'UDEV'
+      # ACS ACR122U
+      SUBSYSTEMS=="usb", ATTRS{idVendor}=="072f", MODE="0666"
+      # SCM Microsystems
+      SUBSYSTEMS=="usb", ATTRS{idVendor}=="04e6", MODE="0666"
+      UDEV
+
+      # -- Development boards & serial adapters --
+      cat > /etc/udev/rules.d/99-devboards.rules << 'UDEV'
+      # Maple/STM32 (ChameleonMini, etc.)
+      SUBSYSTEMS=="usb", ATTRS{idVendor}=="1eaf", MODE="0666"
+      # Teensy/VUSB
+      SUBSYSTEMS=="usb", ATTRS{idVendor}=="16c0", MODE="0666"
+      # Silicon Labs CP210x
+      SUBSYSTEMS=="usb", ATTRS{idVendor}=="10c4", MODE="0666"
+      # QinHeng CH340/CH341
+      SUBSYSTEMS=="usb", ATTRS{idVendor}=="1a86", MODE="0666"
+      # Espressif ESP32
+      SUBSYSTEMS=="usb", ATTRS{idVendor}=="303a", MODE="0666"
+      # Adafruit (nRF52, RP2040)
+      SUBSYSTEMS=="usb", ATTRS{idVendor}=="239a", MODE="0666"
+      # Arduino
+      SUBSYSTEMS=="usb", ATTRS{idVendor}=="2341", MODE="0666"
+      UDEV
+
       # Reload udev rules
       udevadm control --reload-rules
       udevadm trigger
@@ -241,12 +283,6 @@ provision:
       if [ -d /dev/bus/usb ]; then
         chmod -R a+rw /dev/bus/usb || true
       fi
-
-  - mode: user
-    script: |
-      #!/bin/bash
-      # Pull RF Swift base image
-      docker pull penthertz/rfswift:latest 2>/dev/null || true
 
 # Port forwarding for RF Swift services
 portForwards:
@@ -259,8 +295,3 @@ portForwards:
   # PulseAudio TCP
   - guestPort: 34567
     hostPort: 34567
-
-# DNS settings
-dns:
-  - 8.8.8.8
-  - 8.8.4.4
