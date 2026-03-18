@@ -762,6 +762,8 @@ offer_lima_for_usb() {
 
     if is_lima_installed; then
         echo -e "${GREEN}   Lima is already installed.${NC}"
+        # Always offer to update the template if a newer one is available
+        update_lima_template
         if ! is_lima_instance_exists "rfswift" 2>/dev/null; then
             if prompt_yes_no "   Would you like to create the rfswift Lima VM for USB passthrough?" "n"; then
                 setup_lima_instance
@@ -1406,14 +1408,15 @@ setup_lima_instance() {
 
     echo -e "${BLUE}Creating Lima instance '$instance' with QEMU backend...${NC}"
 
-    # Look for the template in common locations
+    # Look for the template — user config dirs first (updated by install scripts),
+    # then bundled locations relative to the script.
     local template_path=""
     local script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
     for candidate in \
-        "${script_dir}/../lima/rfswift.yaml" \
-        "$(pwd)/lima/rfswift.yaml" \
         "$HOME/.config/rfswift/lima.yaml" \
-        "$HOME/.rfswift/lima.yaml"; do
+        "$HOME/.rfswift/lima.yaml" \
+        "${script_dir}/../lima/rfswift.yaml" \
+        "$(pwd)/lima/rfswift.yaml"; do
         if [ -f "$candidate" ]; then
             template_path="$candidate"
             break

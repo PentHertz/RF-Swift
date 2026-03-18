@@ -213,30 +213,33 @@ func (e *LimaEngine) createInstance() error {
 }
 
 // findLimaTemplate looks for rfswift.yaml in known locations.
+// User config directories are checked first so that an updated template
+// (e.g., from the install script) takes priority over one bundled next to the binary.
 func findLimaTemplate() string {
-	// Check relative to the binary
-	execPath, _ := os.Executable()
-	if execPath != "" {
-		candidates := []string{
-			filepath.Join(filepath.Dir(execPath), "lima", "rfswift.yaml"),
-			filepath.Join(filepath.Dir(execPath), "..", "lima", "rfswift.yaml"),
-		}
-		for _, p := range candidates {
-			if _, err := os.Stat(p); err == nil {
-				return p
-			}
-		}
-	}
-
-	// Check in home directory
 	home := os.Getenv("HOME")
-	candidates := []string{
+
+	// 1. Check user config directories first (these are updated by install scripts)
+	userCandidates := []string{
 		filepath.Join(home, ".config", "rfswift", "lima.yaml"),
 		filepath.Join(home, ".rfswift", "lima.yaml"),
 	}
-	for _, p := range candidates {
+	for _, p := range userCandidates {
 		if _, err := os.Stat(p); err == nil {
 			return p
+		}
+	}
+
+	// 2. Check relative to the binary (bundled with the release archive)
+	execPath, _ := os.Executable()
+	if execPath != "" {
+		bundledCandidates := []string{
+			filepath.Join(filepath.Dir(execPath), "lima", "rfswift.yaml"),
+			filepath.Join(filepath.Dir(execPath), "..", "lima", "rfswift.yaml"),
+		}
+		for _, p := range bundledCandidates {
+			if _, err := os.Stat(p); err == nil {
+				return p
+			}
 		}
 	}
 
