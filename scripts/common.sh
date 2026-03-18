@@ -1304,7 +1304,20 @@ update_lima_template() {
         return 0  # no bundled template found, nothing to do
     fi
 
-    local user_template="$HOME/.config/rfswift/lima.yaml"
+    # Check all locations where rfswift looks for the Lima template.
+    # Update whichever one exists, or create ~/.config/rfswift/lima.yaml by default.
+    local user_template=""
+    for candidate in \
+        "$HOME/.config/rfswift/lima.yaml" \
+        "$HOME/.rfswift/lima.yaml"; do
+        if [ -f "$candidate" ]; then
+            user_template="$candidate"
+            break
+        fi
+    done
+    # Default to ~/.config/rfswift/lima.yaml if none exists yet
+    [ -z "$user_template" ] && user_template="$HOME/.config/rfswift/lima.yaml"
+
     local needs_update=false
 
     if [ ! -f "$user_template" ]; then
@@ -1387,6 +1400,10 @@ setup_lima_instance() {
         return 0
     fi
 
+    # Before creating the instance, offer to install/update the user's template
+    # so the VM is provisioned with the latest modules, udev rules, etc.
+    update_lima_template
+
     echo -e "${BLUE}Creating Lima instance '$instance' with QEMU backend...${NC}"
 
     # Look for the template in common locations
@@ -1395,7 +1412,8 @@ setup_lima_instance() {
     for candidate in \
         "${script_dir}/../lima/rfswift.yaml" \
         "$(pwd)/lima/rfswift.yaml" \
-        "$HOME/.config/rfswift/lima.yaml"; do
+        "$HOME/.config/rfswift/lima.yaml" \
+        "$HOME/.rfswift/lima.yaml"; do
         if [ -f "$candidate" ]; then
             template_path="$candidate"
             break
@@ -1430,7 +1448,8 @@ provision:
       set -eux -o pipefail
       if ! command -v docker &> /dev/null; then
         curl -fsSL https://get.docker.com | sh
-        usermod -aG docker "${LIMA_CIDATA_USER}"
+        LIMA_USER=$(awk -F: '$3 >= 1000 && $3 < 65534 { print $1; exit }' /etc/passwd)
+        [ -n "$LIMA_USER" ] && usermod -aG docker "$LIMA_USER"
       fi
       apt-get update -qq
       apt-get install -y -qq usbutils libusb-1.0-0-dev libhidapi-libusb0 libhidapi-hidraw0 libftdi1-dev udev

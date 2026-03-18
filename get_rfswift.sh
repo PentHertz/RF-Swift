@@ -927,16 +927,56 @@ offer_lima_for_usb_get_rfswift() {
 
   if command_exists limactl; then
     color_echo "green" "   Lima is already installed."
+    # Offer to update the Lima template if a bundled one is available
+    local bundled_template=""
+    local script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    for candidate in \
+        "${script_dir}/lima/rfswift.yaml" \
+        "$(pwd)/lima/rfswift.yaml"; do
+      if [ -f "$candidate" ]; then
+        bundled_template="$(cd "$(dirname "$candidate")" && pwd)/$(basename "$candidate")"
+        break
+      fi
+    done
+    if [ -n "$bundled_template" ]; then
+      # Find existing user template or default location
+      local user_template=""
+      for candidate in \
+          "$HOME/.config/rfswift/lima.yaml" \
+          "$HOME/.rfswift/lima.yaml"; do
+        if [ -f "$candidate" ]; then
+          user_template="$candidate"
+          break
+        fi
+      done
+      [ -z "$user_template" ] && user_template="$HOME/.config/rfswift/lima.yaml"
+
+      local needs_update=false
+      if [ ! -f "$user_template" ]; then
+        needs_update=true
+      elif ! diff -q "$bundled_template" "$user_template" >/dev/null 2>&1; then
+        needs_update=true
+      fi
+
+      if $needs_update; then
+        echo ""
+        color_echo "yellow" "   A newer Lima template is available (kernel modules, Bluetooth, udev rules)."
+        if prompt_yes_no "   Would you like to update your Lima template?" "y"; then
+          mkdir -p "$(dirname "$user_template")"
+          cp "$bundled_template" "$user_template"
+          color_echo "green" "   Lima template updated at ${user_template}"
+          color_echo "cyan" "   Apply with: rfswift engine lima reconfig"
+          color_echo "cyan" "   Or full rebuild: rfswift engine lima reset"
+        fi
+      fi
+    fi
+
     if ! limactl list --json 2>/dev/null | grep -q '"name":"rfswift"'; then
       color_echo "yellow" "   No rfswift Lima instance yet."
       color_echo "cyan" "   Create with: limactl create --name rfswift lima/rfswift.yaml"
       color_echo "cyan" "   Or let RF Swift auto-create it on first 'rfswift --engine lima run'."
     else
       color_echo "green" "   Lima instance 'rfswift' exists. USB passthrough available."
-      color_echo "yellow" "   It is advised to update your Lima template in case something changed"
-      color_echo "yellow" "   (new kernel modules, udev rules, Bluetooth support, etc.)."
-      color_echo "cyan" "   Update with: rfswift engine lima reconfig"
-      color_echo "cyan" "   Or for a full rebuild: rfswift engine lima reset"
     fi
   else
     if prompt_yes_no "   Would you like to install Lima for USB passthrough?" "n"; then

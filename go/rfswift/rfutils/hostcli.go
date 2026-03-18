@@ -648,11 +648,19 @@ func ensureMacOSAudioRunning() error {
 		}
 	}
 
-	// Start PulseAudio as a daemon
+	// Clean up stale runtime symlinks that prevent PulseAudio from starting.
+	// macOS cleans /var/folders/*/T/ aggressively, leaving dangling symlinks
+	// in ~/.config/pulse/<machine-id>-runtime.
+	cleanStalePulseRuntime()
+
+	// Start PulseAudio as a daemon.
+	// Use --daemonize instead of --start: on macOS Homebrew, --start uses the
+	// client autospawn mechanism which is unreliable (fails silently or with
+	// "Daemon startup failed"). --daemonize launches the daemon directly.
 	common.PrintInfoMessage("Starting PulseAudio on macOS...")
-	cmd := exec.Command("pulseaudio", "--start", "--exit-idle-time=-1")
+	cmd := exec.Command("pulseaudio", "--daemonize", "--exit-idle-time=-1")
 	if output, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("failed to start PulseAudio on macOS: %w\n%s", err, string(output))
+		return fmt.Errorf("failed to start PulseAudio on macOS: %w\n%s\nTry: rm -f ~/.config/pulse/*-runtime && pulseaudio --daemonize --exit-idle-time=-1", err, string(output))
 	}
 
 	// Wait for it to be ready
@@ -839,8 +847,14 @@ func setMacOSPulseTCPModule(ip, port string) error {
 }
 
 // macOSPulseEnv returns the environment for pactl/pulseaudio commands on macOS,
-// ensuring the PulseAudio runtime path is discoverable. Homebrew PulseAudio may
-// create its socket under /tmp or a user-specific runtime directory.
+// ensuring the PulseAudio runtime path is discoverable.
+//
+// On macOS with Homebrew PulseAudio, the runtime directory is located via a symlink:
+//
+//	~/.config/pulse/<machine-id>-runtime -> /var/folders/.../T/pulse-XXXXX/
+//
+// The socket "native" lives inside that target directory. If the symlink is stale
+// (macOS cleaned /var/folders), pactl will fail with "Connection refused".
 func macOSPulseEnv() []string {
 	env := os.Environ()
 
@@ -851,29 +865,82 @@ func macOSPulseEnv() []string {
 		}
 	}
 
-	// Check common macOS PulseAudio socket locations
-	home := os.Getenv("HOME")
-	candidates := []string{
-		fmt.Sprintf("/tmp/pulse-%s", uidString()),
-		filepath.Join(home, ".config", "pulse"),
-		"/tmp/pulse-socket",
+	// Find the runtime directory via the ~/.config/pulse/<machine-id>-runtime symlink
+	if runtimeDir := findMacOSPulseRuntime(); runtimeDir != "" {
+		env = append(env, fmt.Sprintf("PULSE_RUNTIME_PATH=%s", runtimeDir))
+		return env
 	}
 
+	// Fallback: check common locations
+	candidates := []string{
+		fmt.Sprintf("/tmp/pulse-%s", uidString()),
+		filepath.Join(os.Getenv("HOME"), ".config", "pulse"),
+	}
 	for _, dir := range candidates {
 		sock := filepath.Join(dir, "native")
 		if _, err := os.Stat(sock); err == nil {
 			env = append(env, fmt.Sprintf("PULSE_RUNTIME_PATH=%s", dir))
 			return env
 		}
-		// Also check for pid file as indicator
-		pid := filepath.Join(dir, "pid")
-		if _, err := os.Stat(pid); err == nil {
-			env = append(env, fmt.Sprintf("PULSE_RUNTIME_PATH=%s", dir))
-			return env
-		}
 	}
 
 	return env
+}
+
+// findMacOSPulseRuntime resolves the PulseAudio runtime directory on macOS by
+// looking for a *-runtime symlink in ~/.config/pulse/ and following it.
+// Returns the resolved path if the target exists, or empty string.
+func findMacOSPulseRuntime() string {
+	pulseDir := filepath.Join(os.Getenv("HOME"), ".config", "pulse")
+	entries, err := os.ReadDir(pulseDir)
+	if err != nil {
+		return ""
+	}
+
+	for _, entry := range entries {
+		if !strings.HasSuffix(entry.Name(), "-runtime") {
+			continue
+		}
+		linkPath := filepath.Join(pulseDir, entry.Name())
+		target, err := os.Readlink(linkPath)
+		if err != nil {
+			continue // not a symlink
+		}
+		// Check if the target directory and its native socket exist
+		sock := filepath.Join(target, "native")
+		if _, err := os.Stat(sock); err == nil {
+			return target
+		}
+	}
+	return ""
+}
+
+// cleanStalePulseRuntime removes stale PulseAudio runtime symlinks on macOS.
+// macOS aggressively cleans /var/folders/*/T/, which can leave dangling symlinks
+// in ~/.config/pulse/<machine-id>-runtime. PulseAudio will fail to start if these
+// exist because it can't create its socket at the dead target.
+func cleanStalePulseRuntime() {
+	pulseDir := filepath.Join(os.Getenv("HOME"), ".config", "pulse")
+	entries, err := os.ReadDir(pulseDir)
+	if err != nil {
+		return
+	}
+
+	for _, entry := range entries {
+		if !strings.HasSuffix(entry.Name(), "-runtime") {
+			continue
+		}
+		linkPath := filepath.Join(pulseDir, entry.Name())
+		target, err := os.Readlink(linkPath)
+		if err != nil {
+			continue
+		}
+		// If the symlink target no longer exists, remove the stale symlink
+		if _, err := os.Stat(target); os.IsNotExist(err) {
+			common.PrintInfoMessage(fmt.Sprintf("Removing stale PulseAudio runtime symlink: %s -> %s", linkPath, target))
+			os.Remove(linkPath)
+		}
+	}
 }
 
 // uidString returns the current user's numeric UID as a string.
