@@ -1476,6 +1476,8 @@ provision:
       ExecStartPost=/bin/chmod 666 /var/run/docker.sock
       DROPIN
       systemctl daemon-reload
+      systemctl restart docker
+      while ! docker info >/dev/null 2>&1; do sleep 1; done
       apt-get update -qq
       apt-get install -y -qq usbutils libusb-1.0-0-dev libhidapi-libusb0 libhidapi-hidraw0 libftdi1-dev udev
       for mod in cdc_acm cp210x ftdi_sio ch341 pl2303; do modprobe "$mod" 2>/dev/null || true; done

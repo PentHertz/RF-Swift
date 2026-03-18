@@ -66,6 +66,9 @@ provision:
       ExecStartPost=/bin/chmod 666 /var/run/docker.sock
       DROPIN
       systemctl daemon-reload
+      systemctl restart docker
+      # Wait for Docker to be ready after restart
+      while ! docker info >/dev/null 2>&1; do sleep 1; done
 
       # ── USB & hardware libraries ───────────────────────────────
       apt-get update -qq

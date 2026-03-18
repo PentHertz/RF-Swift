@@ -288,6 +288,8 @@ provision:
       ExecStartPost=/bin/chmod 666 /var/run/docker.sock
       DROPIN
       systemctl daemon-reload
+      systemctl restart docker
+      while ! docker info >/dev/null 2>&1; do sleep 1; done
       apt-get update -qq
       apt-get install -y -qq usbutils libusb-1.0-0-dev libhidapi-libusb0 libhidapi-hidraw0 libftdi1-dev udev bluez bluetooth
       # Load USB serial and Bluetooth modules
