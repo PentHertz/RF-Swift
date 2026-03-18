@@ -10,6 +10,8 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"os/user"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"time"
@@ -625,14 +627,25 @@ func ensurePulseAudioRunning() error {
 //
 //	out: error
 func ensureMacOSAudioRunning() error {
-	if isPulseAudioRunning() {
-		common.PrintInfoMessage("PulseAudio is already running on macOS.")
-		return nil
-	}
-
 	// Check if PulseAudio is installed
 	if !IsPulseAudioInstalled() {
 		return fmt.Errorf("PulseAudio is not installed on macOS — install with: brew install pulseaudio")
+	}
+
+	if isPulseAudioRunning() {
+		// Process is running, but verify pactl can actually connect
+		checkCmd := exec.Command("pactl", "info")
+		checkCmd.Env = macOSPulseEnv()
+		if err := checkCmd.Run(); err != nil {
+			// PulseAudio process exists but pactl cannot connect — stale daemon
+			common.PrintInfoMessage("PulseAudio process found but not responding. Restarting...")
+			killCmd := exec.Command("pulseaudio", "--kill")
+			killCmd.Run() // best-effort kill
+			time.Sleep(1 * time.Second)
+		} else {
+			common.PrintInfoMessage("PulseAudio is already running on macOS.")
+			return nil
+		}
 	}
 
 	// Start PulseAudio as a daemon
@@ -809,17 +822,66 @@ func setMacOSPulseTCPModule(ip, port string) error {
 	moduleArgs := fmt.Sprintf("port=%s auth-ip-acl=%s", port, ip)
 
 	cmd := exec.Command("pactl", "load-module", "module-native-protocol-tcp", moduleArgs)
+	// Help pactl find the PulseAudio socket on macOS.
+	// Homebrew PulseAudio may place the socket in a non-default location.
+	cmd.Env = macOSPulseEnv()
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		// If pactl fails, try the native Go client as fallback
 		if nativeErr := setPulseAudioTCPModule(ip, port); nativeErr != nil {
-			return fmt.Errorf("failed to load module-native-protocol-tcp on macOS: %w\npactl output: %s", err, string(output))
+			return fmt.Errorf("failed to load module-native-protocol-tcp on macOS.\npactl error: %w\npactl output: %s\nnative client error: %v\nTry: brew services restart pulseaudio", err, string(output), nativeErr)
 		}
 		return nil
 	}
 
 	common.PrintSuccessMessage("Loaded module-native-protocol-tcp on macOS PulseAudio")
 	return nil
+}
+
+// macOSPulseEnv returns the environment for pactl/pulseaudio commands on macOS,
+// ensuring the PulseAudio runtime path is discoverable. Homebrew PulseAudio may
+// create its socket under /tmp or a user-specific runtime directory.
+func macOSPulseEnv() []string {
+	env := os.Environ()
+
+	// If PULSE_RUNTIME_PATH is already set, use the inherited environment as-is
+	for _, e := range env {
+		if strings.HasPrefix(e, "PULSE_RUNTIME_PATH=") {
+			return env
+		}
+	}
+
+	// Check common macOS PulseAudio socket locations
+	home := os.Getenv("HOME")
+	candidates := []string{
+		fmt.Sprintf("/tmp/pulse-%s", uidString()),
+		filepath.Join(home, ".config", "pulse"),
+		"/tmp/pulse-socket",
+	}
+
+	for _, dir := range candidates {
+		sock := filepath.Join(dir, "native")
+		if _, err := os.Stat(sock); err == nil {
+			env = append(env, fmt.Sprintf("PULSE_RUNTIME_PATH=%s", dir))
+			return env
+		}
+		// Also check for pid file as indicator
+		pid := filepath.Join(dir, "pid")
+		if _, err := os.Stat(pid); err == nil {
+			env = append(env, fmt.Sprintf("PULSE_RUNTIME_PATH=%s", dir))
+			return env
+		}
+	}
+
+	return env
+}
+
+// uidString returns the current user's numeric UID as a string.
+func uidString() string {
+	if u, err := user.Current(); err == nil {
+		return u.Uid
+	}
+	return fmt.Sprintf("%d", os.Getuid())
 }
 
 // UnloadPulseCTL unloads the audio TCP module (module-native-protocol-tcp) from either

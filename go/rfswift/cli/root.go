@@ -66,7 +66,10 @@ var HostPulseAudioEnableCmd = &cobra.Command{
 	Long:  `Allow connections to a specific port and interface. Warning: command to be executed as user!`,
 	Run: func(cmd *cobra.Command, args []string) {
 		pulseServer, _ := cmd.Flags().GetString("pulseserver")
-		rfutils.SetPulseCTL(pulseServer)
+		if err := rfutils.SetPulseCTL(pulseServer); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
 	},
 }
 
@@ -74,7 +77,10 @@ var HostPulseAudioUnloadCmd = &cobra.Command{
 	Use:   "unload",
 	Short: "Unload TCP module from Pulseaudio server",
 	Run: func(cmd *cobra.Command, args []string) {
-		rfutils.UnloadPulseCTL()
+		if err := rfutils.UnloadPulseCTL(); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
 	},
 }
 

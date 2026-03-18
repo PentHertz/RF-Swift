@@ -933,6 +933,10 @@ offer_lima_for_usb_get_rfswift() {
       color_echo "cyan" "   Or let RF Swift auto-create it on first 'rfswift --engine lima run'."
     else
       color_echo "green" "   Lima instance 'rfswift' exists. USB passthrough available."
+      color_echo "yellow" "   It is advised to update your Lima template in case something changed"
+      color_echo "yellow" "   (new kernel modules, udev rules, Bluetooth support, etc.)."
+      color_echo "cyan" "   Update with: rfswift engine lima reconfig"
+      color_echo "cyan" "   Or for a full rebuild: rfswift engine lima reset"
     fi
   else
     if prompt_yes_no "   Would you like to install Lima for USB passthrough?" "n"; then
@@ -2279,6 +2283,8 @@ main() {
         color_echo "green" "   Lima is already installed."
         if limactl list --json 2>/dev/null | grep -q '"name":"rfswift"'; then
           color_echo "green" "   rfswift Lima instance exists."
+          color_echo "yellow" "   Tip: update your Lima template if upgrading (new modules, Bluetooth, udev rules):"
+          color_echo "cyan" "   rfswift engine lima reconfig"
         else
           color_echo "yellow" "   No rfswift Lima instance yet. Create one with:"
           color_echo "cyan" "   limactl create --name rfswift lima/rfswift.yaml && limactl start rfswift"
@@ -2308,6 +2314,11 @@ main() {
     color_echo "magenta" "🎮 Steam Deck setup complete! RF-Swift is optimized for your device."
     color_echo "cyan" "💡 Tip: You may need to reboot or log out/in for Docker group changes to take effect."
   fi
+
+  # Suggest profile initialization/update
+  echo ""
+  color_echo "cyan" "📋 Default profiles provide quick-start presets for common RF tasks."
+  color_echo "cyan" "   Initialize or update them with: rfswift profile init --force"
 
   color_echo "cyan" "📡 Happy RF hacking! 🚀"
 }

@@ -1285,6 +1285,89 @@ install_lima() {
     echo -e "${GREEN}Lima and QEMU installed successfully.${NC}"
 }
 
+# Offer to update the Lima template if a newer one ships with the installation.
+# Copies the bundled template to ~/.config/rfswift/lima.yaml so that
+# rfswift engine lima reconfig picks it up on the next reconfigure.
+update_lima_template() {
+    local script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    local bundled=""
+    for candidate in \
+        "${script_dir}/../lima/rfswift.yaml" \
+        "$(pwd)/lima/rfswift.yaml"; do
+        if [ -f "$candidate" ]; then
+            bundled="$(cd "$(dirname "$candidate")" && pwd)/$(basename "$candidate")"
+            break
+        fi
+    done
+
+    if [ -z "$bundled" ]; then
+        return 0  # no bundled template found, nothing to do
+    fi
+
+    local user_template="$HOME/.config/rfswift/lima.yaml"
+    local needs_update=false
+
+    if [ ! -f "$user_template" ]; then
+        needs_update=true
+    elif ! diff -q "$bundled" "$user_template" >/dev/null 2>&1; then
+        needs_update=true
+    fi
+
+    if $needs_update; then
+        echo ""
+        echo -e "${CYAN}A newer Lima VM template is available with this release.${NC}"
+        echo -e "${CYAN}It may include updated kernel modules, udev rules, or Bluetooth support.${NC}"
+        if prompt_yes_no "Would you like to update your Lima template?" "y"; then
+            mkdir -p "$(dirname "$user_template")"
+            cp "$bundled" "$user_template"
+            echo -e "${GREEN}Lima template updated at ${user_template}${NC}"
+            echo -e "${YELLOW}To apply changes to a running VM, run:${NC}"
+            echo -e "${CYAN}  rfswift engine lima reconfig${NC}"
+            echo -e "${YELLOW}For changes that require a full VM rebuild (e.g., disk/OS):${NC}"
+            echo -e "${CYAN}  rfswift engine lima reset${NC}"
+        else
+            echo -e "${YELLOW}Skipped. You can manually update later by copying:${NC}"
+            echo -e "${CYAN}  cp ${bundled} ${user_template}${NC}"
+        fi
+    fi
+}
+
+# Offer to regenerate default profiles if they have changed or are missing.
+update_profiles() {
+    local rfswift_bin="${1:-rfswift}"
+
+    if ! command_exists "$rfswift_bin"; then
+        # Try to find rfswift in common locations
+        local script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+        for candidate in \
+            "${script_dir}/../rfswift" \
+            "${script_dir}/../build/rfswift" \
+            "$(pwd)/rfswift"; do
+            if [ -x "$candidate" ]; then
+                rfswift_bin="$candidate"
+                break
+            fi
+        done
+    fi
+
+    if ! command_exists "$rfswift_bin" && [ ! -x "$rfswift_bin" ]; then
+        return 0  # binary not found, skip
+    fi
+
+    echo ""
+    echo -e "${CYAN}Default profiles may have been updated in this release (new images, options).${NC}"
+    if prompt_yes_no "Would you like to regenerate default profiles?" "y"; then
+        "$rfswift_bin" profile init --force 2>/dev/null
+        if [ $? -eq 0 ]; then
+            echo -e "${GREEN}Default profiles updated.${NC}"
+        else
+            echo -e "${YELLOW}Could not update profiles. You can run manually: rfswift profile init --force${NC}"
+        fi
+    else
+        echo -e "${YELLOW}Skipped. You can update later with: rfswift profile init --force${NC}"
+    fi
+}
+
 # Setup the rfswift Lima instance with QEMU backend for USB passthrough
 setup_lima_instance() {
     local instance="${1:-rfswift}"
@@ -1439,6 +1522,8 @@ check_lima() {
                 echo -e "${GREEN}Lima instance 'rfswift' started.${NC}"
             fi
         fi
+        # Offer to update the template in case something changed (new modules, udev rules, etc.)
+        update_lima_template
     else
         echo -e "${YELLOW}No 'rfswift' Lima instance found.${NC}"
         if prompt_yes_no "Would you like to create the rfswift Lima VM for USB passthrough?" "y"; then

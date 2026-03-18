@@ -24,6 +24,8 @@ fi
 export PATH=$PATH:/usr/local/go/bin
 # Check config file
 check_config_file
+# Offer to update default profiles
+update_profiles
 # Ask the user if they want to create an alias after the installation
 install_binary_alias
 echo -e "${GREEN}🎉 RF Swift setup complete! 🎉${NC}"

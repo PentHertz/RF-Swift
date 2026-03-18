@@ -63,7 +63,8 @@ func getDefaultDevices() string {
 	case "darwin":
 		// When running inside a Lima VM, USB devices are available via /dev/bus/usb
 		// Use 'rfswift macusb attach' to hot-plug USB devices into the VM
-		return "/dev/bus/usb:/dev/bus/usb,/dev/snd:/dev/snd,/dev/console:/dev/console"
+		// /dev/vhci is needed for Bluetooth Virtual HCI (btusb dongles + btvirt)
+		return "/dev/bus/usb:/dev/bus/usb,/dev/snd:/dev/snd,/dev/vhci:/dev/vhci,/dev/console:/dev/console"
 	case "windows":
 		// WSL2/Docker Desktop - fewer device mappings available
 		return "/dev/bus/usb:/dev/bus/usb,/dev/snd:/dev/snd,/dev/console:/dev/console,/dev/vcsa:/dev/vcsa,/dev/tty:/dev/tty,/dev/tty0:/dev/tty0,/dev/tty1:/dev/tty1,/dev/tty2:/dev/tty2,/dev/uinput:/dev/uinput"
