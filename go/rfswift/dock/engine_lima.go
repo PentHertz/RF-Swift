@@ -277,13 +277,26 @@ provision:
       set -eux -o pipefail
       if ! command -v docker &> /dev/null; then
         curl -fsSL https://get.docker.com | sh
-        usermod -aG docker "${LIMA_CIDATA_USER}"
+        LIMA_USER=$(awk -F: '$3 >= 1000 && $3 < 65534 { print $1; exit }' /etc/passwd)
+        [ -n "$LIMA_USER" ] && usermod -aG docker "$LIMA_USER"
       fi
       apt-get update -qq
-      apt-get install -y -qq usbutils libusb-1.0-0-dev libhidapi-libusb0 libhidapi-hidraw0 libftdi1-dev udev
-      # Load USB serial modules
-      for mod in cdc_acm cp210x ftdi_sio ch341 pl2303; do modprobe "$mod" 2>/dev/null || true; done
-      # Udev rules for common SDR devices (HackRF, RTL-SDR, USRP, BladeRF, Airspy, PlutoSDR)
+      apt-get install -y -qq usbutils libusb-1.0-0-dev libhidapi-libusb0 libhidapi-hidraw0 libftdi1-dev udev bluez bluetooth
+      # Load USB serial and Bluetooth modules
+      for mod in cdc_acm cp210x ftdi_sio ch341 pl2303 bluetooth btusb rfcomm vhci-hcd; do modprobe "$mod" 2>/dev/null || true; done
+      cat > /etc/modules-load.d/rfswift.conf << 'MODULES'
+      cdc_acm
+      cp210x
+      ftdi_sio
+      ch341
+      pl2303
+      bluetooth
+      btusb
+      rfcomm
+      vhci-hcd
+      MODULES
+      [ -e /dev/vhci ] && chmod 0666 /dev/vhci || true
+      # Udev rules for common SDR/RF devices and Bluetooth adapters
       echo 'SUBSYSTEMS=="usb", ATTRS{idVendor}=="1d50", MODE="0666"' > /etc/udev/rules.d/99-rf.rules
       echo 'SUBSYSTEMS=="usb", ATTRS{idVendor}=="0bda", MODE="0666"' >> /etc/udev/rules.d/99-rf.rules
       echo 'SUBSYSTEMS=="usb", ATTRS{idVendor}=="2500", MODE="0666"' >> /etc/udev/rules.d/99-rf.rules
@@ -293,6 +306,11 @@ provision:
       echo 'SUBSYSTEMS=="usb", ATTRS{idVendor}=="0403", MODE="0666"' >> /etc/udev/rules.d/99-rf.rules
       echo 'SUBSYSTEMS=="usb", ATTRS{idVendor}=="fffe", MODE="0666"' >> /etc/udev/rules.d/99-rf.rules
       echo 'SUBSYSTEMS=="usb", ATTRS{idVendor}=="3923", MODE="0666"' >> /etc/udev/rules.d/99-rf.rules
+      echo 'SUBSYSTEMS=="usb", ATTRS{idVendor}=="0a12", MODE="0666"' >> /etc/udev/rules.d/99-rf.rules
+      echo 'SUBSYSTEMS=="usb", ATTRS{idVendor}=="0a5c", MODE="0666"' >> /etc/udev/rules.d/99-rf.rules
+      echo 'SUBSYSTEMS=="usb", ATTRS{idVendor}=="8087", MODE="0666"' >> /etc/udev/rules.d/99-rf.rules
+      echo 'SUBSYSTEMS=="usb", ATTRS{idVendor}=="0cf3", MODE="0666"' >> /etc/udev/rules.d/99-rf.rules
+      echo 'SUBSYSTEMS=="usb", ATTRS{idVendor}=="1915", MODE="0666"' >> /etc/udev/rules.d/99-rf.rules
       udevadm control --reload-rules && udevadm trigger
       [ -d /dev/bus/usb ] && chmod -R a+rw /dev/bus/usb || true
 

@@ -1291,8 +1291,9 @@ install_lima() {
 # Copies the bundled template to ~/.config/rfswift/lima.yaml so that
 # rfswift engine lima reconfig picks it up on the next reconfigure.
 update_lima_template() {
-    local script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    local script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd 2>/dev/null || echo ".")"
     local bundled=""
+    local tmp_downloaded=""
     for candidate in \
         "${script_dir}/../lima/rfswift.yaml" \
         "$(pwd)/lima/rfswift.yaml"; do
@@ -1302,8 +1303,20 @@ update_lima_template() {
         fi
     done
 
+    # If no local template found (e.g., running via curl|sh), download from GitHub
     if [ -z "$bundled" ]; then
-        return 0  # no bundled template found, nothing to do
+        local lima_url="https://raw.githubusercontent.com/PentHertz/RF-Swift/main/lima/rfswift.yaml"
+        tmp_downloaded=$(mktemp /tmp/rfswift-lima-XXXXXX.yaml 2>/dev/null || echo "/tmp/rfswift-lima-$$.yaml")
+        if curl -fsSL "$lima_url" -o "$tmp_downloaded" 2>/dev/null || wget -qO "$tmp_downloaded" "$lima_url" 2>/dev/null; then
+            bundled="$tmp_downloaded"
+        else
+            rm -f "$tmp_downloaded"
+            tmp_downloaded=""
+        fi
+    fi
+
+    if [ -z "$bundled" ]; then
+        return 0  # no template available (no local file and download failed)
     fi
 
     # Check all locations where rfswift looks for the Lima template.
@@ -1345,6 +1358,9 @@ update_lima_template() {
             echo -e "${CYAN}  cp ${bundled} ${user_template}${NC}"
         fi
     fi
+
+    # Clean up temp file if we downloaded one
+    [ -n "$tmp_downloaded" ] && rm -f "$tmp_downloaded"
 }
 
 # Offer to regenerate default profiles if they have changed or are missing.
@@ -1936,8 +1952,35 @@ check_config_file() {
         return 1
     else
         echo -e "${GREEN}✅ Config file validation successful! All required keys present. ✅${NC}"
-        return 0
     fi
+
+    # Check if the config has outdated default values that should be refreshed.
+    # The devices line may be missing /dev/vhci (Bluetooth) if generated before the update.
+    local current_devices
+    current_devices=$(grep -E '^devices\s*=' "$CONFIG_FILE" 2>/dev/null | head -1 | sed 's/^devices\s*=\s*//')
+    if [ -n "$current_devices" ]; then
+        local needs_refresh=false
+        if ! echo "$current_devices" | grep -q '/dev/vhci'; then
+            needs_refresh=true
+        fi
+
+        if $needs_refresh; then
+            echo ""
+            echo -e "${YELLOW}Your config file has an outdated 'devices' value (missing /dev/vhci for Bluetooth).${NC}"
+            if prompt_yes_no "Would you like to regenerate the config with updated defaults?" "y"; then
+                local backup="${CONFIG_FILE}.bak.$(date +%Y%m%d%H%M%S)"
+                cp "$CONFIG_FILE" "$backup"
+                echo -e "${GREEN}Backup saved to ${backup}${NC}"
+                rm "$CONFIG_FILE"
+                echo -e "${GREEN}Config removed. A fresh one with updated defaults will be created on next rfswift run.${NC}"
+            else
+                echo -e "${YELLOW}Skipped. You can manually add /dev/vhci:/dev/vhci to the devices line in:${NC}"
+                echo -e "${CYAN}  $CONFIG_FILE${NC}"
+            fi
+        fi
+    fi
+
+    return 0
 }
 
 # ═══════════════════════════════════════════════════════════════════════════════
