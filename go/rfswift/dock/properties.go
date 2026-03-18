@@ -1439,7 +1439,8 @@ func recreateContainerWithProperties(ctx context.Context, cli *client.Client, co
 	var newContainerID string
 
 	// Podman: use native CLI when cgroup rules are present
-	if len(hostConfig.DeviceCgroupRules) > 0 && !EngineSupportsDirectConfigEdit() && !IsRootlessPodman() {
+	// (Lima uses Docker inside the VM, so it goes through the compat API below)
+	if len(hostConfig.DeviceCgroupRules) > 0 && GetEngine().Type() == EnginePodman && !IsRootlessPodman() {
 		cid, err := podmanCreateViaCLI(tempContainerName, tempImageTag, containerConfig, hostConfig)
 		if err != nil {
 			common.PrintErrorMessage(fmt.Errorf("failed to create container via Podman CLI: %v", err))
@@ -1799,7 +1800,8 @@ func recreateContainerWithUpdatedBinds(ctx context.Context, cli *client.Client, 
 	// ── Podman: use native CLI for creation when cgroup rules are present ──
 	// The Docker compat API silently ignores DeviceCgroupRules in ContainerCreate.
 	// We must use `podman create` directly to guarantee the rules are applied.
-	if len(oldHostConfig.DeviceCgroupRules) > 0 && !EngineSupportsDirectConfigEdit() {
+	// (Lima uses Docker inside the VM, so cgroup rules work via the compat API.)
+	if len(oldHostConfig.DeviceCgroupRules) > 0 && GetEngine().Type() == EnginePodman {
 		containerID, err := podmanCreateViaCLI(tempContainerName, tempImageTag, oldConfig, oldHostConfig)
 		if err != nil {
 			return fmt.Errorf("failed to create new container via Podman CLI: %v", err)

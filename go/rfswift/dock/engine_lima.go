@@ -396,6 +396,126 @@ func queryLimaDockerSocket(instance string) string {
 	return ""
 }
 
+// ReconfigureInstance applies an updated YAML template to the Lima instance.
+// When force is false, it stops the instance, overwrites its config, and restarts.
+// When force is true, it deletes the instance entirely and recreates it from the template.
+//
+//	in(1): string templatePath path to the new YAML template
+//	in(2): bool force if true, delete and recreate (destructive)
+//	out: error
+func (e *LimaEngine) ReconfigureInstance(templatePath string, force bool) error {
+	instance := e.getInstance()
+
+	if !limaInstanceExists(instance) {
+		return fmt.Errorf("Lima instance '%s' does not exist — run a container command first to create it, or use 'reset' to create from scratch", instance)
+	}
+
+	wasRunning := rfutils.IsLimaInstanceRunning(instance)
+
+	if force {
+		// Destructive path: delete + recreate
+		if wasRunning {
+			common.PrintInfoMessage(fmt.Sprintf("Stopping Lima instance '%s'...", instance))
+			if err := rfutils.StopLimaInstance(instance); err != nil {
+				return fmt.Errorf("failed to stop instance: %w", err)
+			}
+			common.PrintSuccessMessage("Instance stopped.")
+		}
+
+		common.PrintInfoMessage(fmt.Sprintf("Deleting Lima instance '%s'...", instance))
+		if err := rfutils.DeleteLimaInstance(instance); err != nil {
+			return fmt.Errorf("failed to delete instance: %w", err)
+		}
+		common.PrintSuccessMessage("Instance deleted.")
+
+		common.PrintInfoMessage(fmt.Sprintf("Creating Lima instance '%s' from %s...", instance, templatePath))
+		if err := rfutils.CreateLimaInstance(templatePath, instance); err != nil {
+			return fmt.Errorf("failed to create instance: %w", err)
+		}
+	} else {
+		// Non-destructive: stop, overwrite config, start
+		if wasRunning {
+			common.PrintInfoMessage(fmt.Sprintf("Stopping Lima instance '%s'...", instance))
+			if err := rfutils.StopLimaInstance(instance); err != nil {
+				return fmt.Errorf("failed to stop instance: %w", err)
+			}
+			common.PrintSuccessMessage("Instance stopped.")
+		}
+
+		destPath := rfutils.GetLimaInstanceConfigPath(instance)
+		common.PrintInfoMessage(fmt.Sprintf("Applying new configuration to %s...", destPath))
+		data, err := os.ReadFile(templatePath)
+		if err != nil {
+			return fmt.Errorf("failed to read template %s: %w", templatePath, err)
+		}
+		if err := os.WriteFile(destPath, data, 0644); err != nil {
+			return fmt.Errorf("failed to write config to %s: %w", destPath, err)
+		}
+		common.PrintSuccessMessage("Configuration updated.")
+
+		common.PrintInfoMessage(fmt.Sprintf("Starting Lima instance '%s'...", instance))
+		if err := rfutils.StartLimaInstance(instance); err != nil {
+			return fmt.Errorf("failed to start instance: %w", err)
+		}
+	}
+
+	// Reset cached socket so it's re-detected
+	e.socket = ""
+
+	common.PrintInfoMessage("Waiting for Docker inside Lima VM...")
+	if err := e.waitForDocker(); err != nil {
+		return err
+	}
+
+	common.PrintSuccessMessage(fmt.Sprintf("Lima instance '%s' reconfigured successfully.", instance))
+	if !force {
+		common.PrintInfoMessage("Note: disk size and base image changes require --force (destructive recreate)")
+	}
+	return nil
+}
+
+// ResetInstance deletes and recreates the Lima instance from a YAML template.
+// If the instance does not exist, it creates it directly.
+//
+//	in(1): string templatePath path to the YAML template
+//	out: error
+func (e *LimaEngine) ResetInstance(templatePath string) error {
+	instance := e.getInstance()
+
+	if limaInstanceExists(instance) {
+		if rfutils.IsLimaInstanceRunning(instance) {
+			common.PrintInfoMessage(fmt.Sprintf("Stopping Lima instance '%s'...", instance))
+			if err := rfutils.StopLimaInstance(instance); err != nil {
+				return fmt.Errorf("failed to stop instance: %w", err)
+			}
+		}
+		common.PrintInfoMessage(fmt.Sprintf("Deleting Lima instance '%s'...", instance))
+		if err := rfutils.DeleteLimaInstance(instance); err != nil {
+			return fmt.Errorf("failed to delete instance: %w", err)
+		}
+		common.PrintSuccessMessage("Old instance deleted.")
+	}
+
+	common.PrintInfoMessage(fmt.Sprintf("Creating Lima instance '%s' from %s...", instance, templatePath))
+	if err := rfutils.CreateLimaInstance(templatePath, instance); err != nil {
+		return fmt.Errorf("failed to create instance: %w", err)
+	}
+
+	e.socket = ""
+	if err := e.waitForDocker(); err != nil {
+		return err
+	}
+
+	common.PrintSuccessMessage(fmt.Sprintf("Lima instance '%s' created and ready.", instance))
+	return nil
+}
+
+// FindTemplate locates the Lima YAML template using the standard search paths.
+// Returns the path if found, or empty string.
+func (e *LimaEngine) FindTemplate() string {
+	return findLimaTemplate()
+}
+
 // IsLimaEngineCandidate returns true if Lima should be considered as an engine
 // on the current platform. Used by detectEngine().
 func IsLimaEngineCandidate() bool {

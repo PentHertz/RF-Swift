@@ -335,7 +335,7 @@ var runCmd = &cobra.Command{
 				rfdock.ContainerSetDesktopSSL(desktopSSL)
 			}
 			rfdock.ContainerSetVPN(vpnConfig)
-			if runtime.GOOS == "linux" {
+			if runtime.GOOS == "linux" || runtime.GOOS == "darwin" {
 				rfutils.SetPulseCTL(pulseServer)
 			}
 			rfdock.ContainerRun(dockerName)

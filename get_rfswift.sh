@@ -467,10 +467,32 @@ start_pulseaudio() {
 check_audio_system() {
   color_echo "blue" "🔍 Checking audio system..."
   
-  # Skip audio setup on macOS
+  # macOS: install PulseAudio via Homebrew for container audio support
   case "$(uname -s)" in
     Darwin*)
-      color_echo "yellow" "🍎 macOS detected. Audio system management is handled by the system"
+      color_echo "yellow" "🍎 macOS detected. Setting up PulseAudio for container audio..."
+      if ! command_exists brew; then
+        color_echo "red" "❌ Homebrew is not installed. Please install Homebrew first."
+        color_echo "yellow" "Run: /bin/bash -c \"\$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)\""
+        return 1
+      fi
+
+      if ! command_exists pulseaudio; then
+        color_echo "blue" "📦 Installing PulseAudio via Homebrew..."
+        brew install pulseaudio
+      fi
+      color_echo "green" "✅ PulseAudio installed on macOS"
+
+      # Verify pactl is available (comes with Homebrew pulseaudio)
+      if ! command_exists pactl; then
+        color_echo "red" "❌ pactl not found — required for audio TCP module management"
+        color_echo "yellow" "Try reinstalling: brew reinstall pulseaudio"
+        return 1
+      fi
+      color_echo "green" "✅ pactl available"
+
+      color_echo "cyan" "ℹ️ Audio chain: Container → Lima VM → port 34567 → macOS PulseAudio → CoreAudio"
+      color_echo "cyan" "ℹ️ Enable audio with: rfswift host audio enable"
       return 0
       ;;
   esac
@@ -545,7 +567,37 @@ check_audio_system() {
       fi
     fi
   fi
-  
+
+  # Verify pactl is available (required for TCP module management)
+  if ! command_exists pactl; then
+    color_echo "yellow" "⚠️ pactl not found — installing pulseaudio-utils..."
+    case "$distro" in
+      "arch")
+        sudo pacman -S --noconfirm --needed libpulse
+        ;;
+      "fedora"|"rhel"|"centos")
+        if command_exists dnf; then
+          sudo dnf install -y pulseaudio-utils
+        else
+          sudo yum install -y pulseaudio-utils
+        fi
+        ;;
+      "debian"|"ubuntu")
+        sudo apt install -y pulseaudio-utils
+        ;;
+      "opensuse")
+        sudo zypper install -y pulseaudio-utils
+        ;;
+    esac
+    if command_exists pactl; then
+      color_echo "green" "✅ pactl installed"
+    else
+      color_echo "red" "❌ pactl still not found — audio TCP module may not work"
+    fi
+  else
+    color_echo "green" "✅ pactl available"
+  fi
+
   return 0
 }
 
@@ -556,8 +608,22 @@ show_audio_status() {
   
   case "$(uname -s)" in
     Darwin*)
-      color_echo "yellow" "🍎 macOS: Audio is managed by the system (CoreAudio)"
-      color_echo "cyan" "💡 For container audio, install PulseAudio: brew install pulseaudio"
+      color_echo "yellow" "🍎 macOS: Audio via PulseAudio → CoreAudio"
+      if command_exists pulseaudio; then
+        color_echo "green" "✅ PulseAudio installed"
+      else
+        color_echo "red" "❌ PulseAudio not installed — run: brew install pulseaudio"
+      fi
+      if command_exists pactl; then
+        color_echo "green" "✅ pactl available"
+      else
+        color_echo "red" "❌ pactl not found"
+      fi
+      if pgrep -x pulseaudio >/dev/null 2>&1; then
+        color_echo "green" "✅ PulseAudio is running"
+      else
+        color_echo "yellow" "⚠️ PulseAudio is not running — enable with: rfswift host audio enable"
+      fi
       echo "=================================="
       return 0
       ;;

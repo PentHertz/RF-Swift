@@ -265,25 +265,26 @@ detect_audio_system() {
 }
 
 # Install PipeWire packages with enhanced Arch Linux support
+# Also installs pulseaudio-utils (pactl) which is required for TCP module management
 install_pipewire() {
     local distro="$1"
     local pkg_manager="$2"
-    
+
     echo -e "${YELLOW}🔊 Installing PipeWire... 🔊${NC}"
-    
+
     case "$distro" in
         "arch")
             echo -e "${CYAN}🏛️ Using pacman for PipeWire installation on Arch Linux${NC}"
             sudo pacman -Sy --noconfirm
-            sudo pacman -S --noconfirm --needed pipewire pipewire-pulse pipewire-alsa pipewire-jack wireplumber
+            sudo pacman -S --noconfirm --needed pipewire pipewire-pulse pipewire-alsa pipewire-jack wireplumber libpulse
             sudo pacman -S --noconfirm --needed pipewire-audio pipewire-media-session || true
             ;;
         "fedora")
-            sudo dnf install -y pipewire pipewire-pulseaudio pipewire-alsa pipewire-jack-audio-connection-kit wireplumber
+            sudo dnf install -y pipewire pipewire-pulseaudio pipewire-alsa pipewire-jack-audio-connection-kit wireplumber pulseaudio-utils
             ;;
         "rhel"|"centos")
             if command -v dnf &> /dev/null; then
-                sudo dnf install -y pipewire pipewire-pulseaudio pipewire-alsa wireplumber
+                sudo dnf install -y pipewire pipewire-pulseaudio pipewire-alsa wireplumber pulseaudio-utils
             else
                 echo -e "${YELLOW}ℹ️ PipeWire not available on RHEL/CentOS 7, installing PulseAudio instead ℹ️${NC}"
                 sudo yum install -y epel-release
@@ -293,17 +294,17 @@ install_pipewire() {
             ;;
         "debian"|"ubuntu")
             sudo apt update
-            sudo apt install -y pipewire pipewire-pulse pipewire-alsa wireplumber
+            sudo apt install -y pipewire pipewire-pulse pipewire-alsa wireplumber pulseaudio-utils
             ;;
         "opensuse")
-            sudo zypper install -y pipewire pipewire-pulseaudio pipewire-alsa wireplumber
+            sudo zypper install -y pipewire pipewire-pulseaudio pipewire-alsa wireplumber pulseaudio-utils
             ;;
         *)
             echo -e "${RED}❌ Unsupported distribution for PipeWire installation ❌${NC}"
             return 1
             ;;
     esac
-    
+
     echo -e "${YELLOW}🔧 Enabling PipeWire services... 🔧${NC}"
     systemctl --user enable pipewire.service pipewire-pulse.service 2>/dev/null || true
     systemctl --user enable wireplumber.service 2>/dev/null || true
@@ -392,20 +393,30 @@ should_prefer_pipewire() {
 # Enhanced audio system check with better Arch Linux support
 check_audio_system() {
     if [[ "$OSTYPE" == "darwin"* ]]; then
-        echo -e "${YELLOW}🍎 Detected macOS. Checking for Homebrew... 🍎${NC}"
+        echo -e "${YELLOW}🍎 Detected macOS. Checking audio setup... 🍎${NC}"
         if ! command -v brew &> /dev/null; then
             echo -e "${RED}❌ Homebrew is not installed. Please install Homebrew first. ❌${NC}"
             echo -e "${YELLOW}ℹ️ You can install Homebrew by running: ℹ️${NC}"
             echo -e "${BLUE}🍺 /bin/bash -c \"\$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)\" 🍺${NC}"
             exit 1
         fi
-        
+
         if ! command -v pulseaudio &> /dev/null; then
             echo -e "${YELLOW}🔊 Installing PulseAudio using Homebrew... 🔊${NC}"
             brew install pulseaudio
         fi
         echo -e "${GREEN}✅ PulseAudio installed on macOS ✅${NC}"
-        echo -e "${YELLOW}🍎 macOS detected. Audio server management is handled by the system 🍎${NC}"
+
+        # Verify pactl is available (comes with Homebrew pulseaudio)
+        if ! command -v pactl &> /dev/null; then
+            echo -e "${RED}❌ pactl not found — required for audio TCP module management ❌${NC}"
+            echo -e "${YELLOW}ℹ️ Try reinstalling: brew reinstall pulseaudio ℹ️${NC}"
+            return 1
+        fi
+        echo -e "${GREEN}✅ pactl available ✅${NC}"
+
+        echo -e "${CYAN}ℹ️ Audio chain: Container → Lima VM → port 34567 → macOS PulseAudio → CoreAudio${NC}"
+        echo -e "${CYAN}ℹ️ Enable audio with: rfswift host audio enable${NC}"
         return
     fi
 
@@ -464,13 +475,64 @@ check_audio_system() {
             fi
         fi
     fi
+
+    # Verify pactl is available (required for TCP module management)
+    if ! command -v pactl &> /dev/null; then
+        echo -e "${YELLOW}⚠️ pactl not found — installing pulseaudio-utils... ⚠️${NC}"
+        case "$distro" in
+            "arch")
+                sudo pacman -S --noconfirm --needed libpulse
+                ;;
+            "fedora"|"rhel"|"centos")
+                if command -v dnf &> /dev/null; then
+                    sudo dnf install -y pulseaudio-utils
+                else
+                    sudo yum install -y pulseaudio-utils
+                fi
+                ;;
+            "debian"|"ubuntu")
+                sudo apt install -y pulseaudio-utils
+                ;;
+            "opensuse")
+                sudo zypper install -y pulseaudio-utils
+                ;;
+        esac
+        if command -v pactl &> /dev/null; then
+            echo -e "${GREEN}✅ pactl installed ✅${NC}"
+        else
+            echo -e "${RED}❌ pactl still not found — audio TCP module may not work ❌${NC}"
+        fi
+    else
+        echo -e "${GREEN}✅ pactl available ✅${NC}"
+    fi
 }
 
 # Display audio system status
 show_audio_status() {
     echo -e "${BLUE}🎵 Audio System Status 🎵${NC}"
     echo "=================================="
-    
+
+    if [[ "$OSTYPE" == "darwin"* ]]; then
+        echo -e "${YELLOW}🍎 macOS: Audio via PulseAudio → CoreAudio${NC}"
+        if command -v pulseaudio &> /dev/null; then
+            echo -e "${GREEN}✅ PulseAudio installed${NC}"
+        else
+            echo -e "${RED}❌ PulseAudio not installed — run: brew install pulseaudio${NC}"
+        fi
+        if command -v pactl &> /dev/null; then
+            echo -e "${GREEN}✅ pactl available${NC}"
+        else
+            echo -e "${RED}❌ pactl not found${NC}"
+        fi
+        if pgrep -x pulseaudio &>/dev/null; then
+            echo -e "${GREEN}✅ PulseAudio is running${NC}"
+        else
+            echo -e "${YELLOW}⚠️ PulseAudio is not running — enable with: rfswift host audio enable${NC}"
+        fi
+        echo "=================================="
+        return
+    fi
+
     local current_audio=$(detect_audio_system)
     case "$current_audio" in
         "pipewire")

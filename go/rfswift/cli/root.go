@@ -87,15 +87,6 @@ var UpdateCmd = &cobra.Command{
 	},
 }
 
-var engineCmd = &cobra.Command{
-	Use:   "engine",
-	Short: "Display container engine information",
-	Long:  `Show which container engine (Docker/Podman) is active and its status.`,
-	Run: func(cmd *cobra.Command, args []string) {
-		rfdock.PrintEngineInfo()
-	},
-}
-
 func registerHostCommands() {
 	rootCmd.AddCommand(HostCmd)
 	rootCmd.AddCommand(UpdateCmd)
@@ -144,7 +135,7 @@ func init() {
 	if runtime.GOOS == "darwin" {
 		registerMacUSBCommands()
 	}
-	rootCmd.AddCommand(engineCmd)
+	registerEngineCommands()
 	registerNetworkCommands()
 	registerProfileCommands()
 	registerReportCommands()

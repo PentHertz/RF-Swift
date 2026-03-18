@@ -188,7 +188,7 @@ func RunWizard(images []string, defaults *RunWizardDefaults, existingNets []stri
 	// Fast path: profile as-is — only ask for container name, then recap & confirm
 	if profileUsed && useProfileAsIs {
 		if result.Name == "" {
-			err := huh.NewInput().
+			err := newInput().
 				Title("Container name").
 				Placeholder("my_sdr").
 				Value(&result.Name).
@@ -257,7 +257,7 @@ func RunWizard(images []string, defaults *RunWizardDefaults, existingNets []stri
 		}
 		if result.Image == "__manual__" {
 			result.Image = ""
-			err = huh.NewInput().
+			err = newInput().
 				Title("Image name (e.g., penthertz/rfswift:sdr_full)").
 				Value(&result.Image).
 				Run()
@@ -268,7 +268,7 @@ func RunWizard(images []string, defaults *RunWizardDefaults, existingNets []stri
 	} else if result.Image == "" {
 		if len(images) == 0 {
 			// No images available, ask for manual input
-			err := huh.NewInput().
+			err := newInput().
 				Title("Image name (e.g., penthertz/rfswift:sdr_full)").
 				Value(&result.Image).
 				Run()
@@ -293,7 +293,7 @@ func RunWizard(images []string, defaults *RunWizardDefaults, existingNets []stri
 
 	// Step 2: Container name (skip if already provided via CLI)
 	if result.Name == "" {
-		err := huh.NewInput().
+		err := newInput().
 			Title("Container name").
 			Placeholder("my_sdr").
 			Value(&result.Name).
@@ -350,7 +350,7 @@ func RunWizard(images []string, defaults *RunWizardDefaults, existingNets []stri
 			result.Workspace = "cwd"
 		case "custom":
 			customPath := result.Workspace
-			err := huh.NewInput().
+			err := newInput().
 				Title("Workspace path on host").
 				Description("This directory will be mounted at /workspace inside the container").
 				Placeholder("/home/user/my-project").
@@ -376,7 +376,7 @@ func RunWizard(images []string, defaults *RunWizardDefaults, existingNets []stri
 		return nil, err
 	}
 	if addBindings {
-		err = huh.NewInput().
+		err = newInput().
 			Title("Volume bindings").
 			Description("host_path:container_path — separate multiple with commas").
 			Placeholder("/home/user/data:/root/data,/tmp/captures:/tmp/captures").
@@ -402,7 +402,7 @@ func RunWizard(images []string, defaults *RunWizardDefaults, existingNets []stri
 		return nil, err
 	}
 	if addDevices {
-		err = huh.NewInput().
+		err = newInput().
 			Title("Device mappings").
 			Description("Device paths — separate multiple with commas").
 			Placeholder("/dev/ttyUSB0,/dev/bus/usb").
@@ -433,7 +433,7 @@ func RunWizard(images []string, defaults *RunWizardDefaults, existingNets []stri
 		return nil, err
 	}
 	if addPorts {
-		err = huh.NewInput().
+		err = newInput().
 			Title("Port mappings").
 			Description("hostPort:containerPort — separate multiple with commas (e.g., 8080:80,4443:443)").
 			Placeholder("8080:80,4443:443").
@@ -484,7 +484,7 @@ func RunWizard(images []string, defaults *RunWizardDefaults, existingNets []stri
 	// If creating a new NAT network (not joining an existing one), offer custom subnet
 	if result.Network == "nat" {
 		var customSubnet string
-		err = huh.NewInput().
+		err = newInput().
 			Title("Custom subnet (leave empty for auto-allocation)").
 			Description("e.g., 10.10.0.0/24 or 192.168.100.0/28 — empty uses 172.30.x.x/28").
 			Value(&customSubnet).
@@ -579,7 +579,7 @@ func RunWizard(images []string, defaults *RunWizardDefaults, existingNets []stri
 					return nil, err
 				}
 
-				err = huh.NewInput().
+				err = newInput().
 					Title("Desktop port").
 					Description("Host port to map to the container's desktop service").
 					Placeholder("6080").
@@ -630,7 +630,7 @@ func RunWizard(images []string, defaults *RunWizardDefaults, existingNets []stri
 
 			switch vpnType {
 			case "wireguard":
-				err = huh.NewInput().
+				err = newInput().
 					Title("WireGuard config file path").
 					Placeholder("./wg0.conf").
 					Value(&vpnArg).
@@ -639,7 +639,7 @@ func RunWizard(images []string, defaults *RunWizardDefaults, existingNets []stri
 					return nil, err
 				}
 			case "openvpn":
-				err = huh.NewInput().
+				err = newInput().
 					Title("OpenVPN config file path").
 					Placeholder("./client.ovpn").
 					Value(&vpnArg).
@@ -648,7 +648,7 @@ func RunWizard(images []string, defaults *RunWizardDefaults, existingNets []stri
 					return nil, err
 				}
 			case "tailscale":
-				err = huh.NewInput().
+				err = newInput().
 					Title("Tailscale auth key (leave empty for interactive login)").
 					Placeholder("tskey-auth-xxxxx or empty").
 					Value(&vpnArg).
@@ -657,7 +657,7 @@ func RunWizard(images []string, defaults *RunWizardDefaults, existingNets []stri
 					return nil, err
 				}
 			case "netbird":
-				err = huh.NewInput().
+				err = newInput().
 					Title("Netbird setup key (leave empty for interactive login)").
 					Placeholder("setup key or empty").
 					Value(&vpnArg).
@@ -1000,7 +1000,7 @@ func ProfileCreateWizard(images []string, existingNets []string) (*ProfileCreate
 	result := &ProfileCreateResult{}
 
 	// Step 1: Profile name
-	err := huh.NewInput().
+	err := newInput().
 		Title("Profile name").
 		Placeholder("my-sdr-setup").
 		Value(&result.Name).
@@ -1016,7 +1016,7 @@ func ProfileCreateWizard(images []string, existingNets []string) (*ProfileCreate
 	}
 
 	// Step 2: Description
-	err = huh.NewInput().
+	err = newInput().
 		Title("Description").
 		Placeholder("Brief description of what this profile is for").
 		Value(&result.Description).
@@ -1027,7 +1027,7 @@ func ProfileCreateWizard(images []string, existingNets []string) (*ProfileCreate
 
 	// Step 3: Image selection
 	if len(images) == 0 {
-		err = huh.NewInput().
+		err = newInput().
 			Title("Image name (e.g., penthertz/rfswift_noble:sdr_full)").
 			Value(&result.Image).
 			Run()
@@ -1051,7 +1051,7 @@ func ProfileCreateWizard(images []string, existingNets []string) (*ProfileCreate
 		}
 		if result.Image == "__manual__" {
 			result.Image = ""
-			err = huh.NewInput().
+			err = newInput().
 				Title("Image name (e.g., penthertz/rfswift_noble:sdr_full)").
 				Value(&result.Image).
 				Run()
@@ -1087,7 +1087,7 @@ func ProfileCreateWizard(images []string, existingNets []string) (*ProfileCreate
 	// If creating a new NAT network (not joining an existing one), offer custom subnet
 	if result.Network == "nat" {
 		var customSubnet string
-		err = huh.NewInput().
+		err = newInput().
 			Title("Custom subnet (leave empty for auto-allocation)").
 			Description("e.g., 10.10.0.0/24 or 192.168.100.0/28 — empty uses 172.30.x.x/28").
 			Value(&customSubnet).
@@ -1148,7 +1148,7 @@ func ProfileCreateWizard(images []string, existingNets []string) (*ProfileCreate
 		return nil, err
 	}
 	if addDevices {
-		err = huh.NewInput().
+		err = newInput().
 			Title("Device mappings").
 			Description("Device paths — separate multiple with commas").
 			Placeholder("/dev/ttyUSB0,/dev/bus/usb").
@@ -1171,7 +1171,7 @@ func ProfileCreateWizard(images []string, existingNets []string) (*ProfileCreate
 		return nil, err
 	}
 	if addBindings {
-		err = huh.NewInput().
+		err = newInput().
 			Title("Volume bindings").
 			Description("host_path:container_path — separate multiple with commas").
 			Placeholder("/home/user/data:/root/data").
@@ -1196,7 +1196,7 @@ func ProfileCreateWizard(images []string, existingNets []string) (*ProfileCreate
 		return nil, err
 	}
 	if addPorts {
-		err = huh.NewInput().
+		err = newInput().
 			Title("Port mappings").
 			Description("hostPort:containerPort — separate multiple with commas (e.g., 8080:80,4443:443)").
 			Placeholder("8080:80,4443:443").

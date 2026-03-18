@@ -61,7 +61,7 @@ func PromptInput(title string, placeholder string) (string, error) {
 	}
 
 	var result string
-	err := huh.NewInput().
+	err := newInput().
 		Title(title).
 		Placeholder(placeholder).
 		Value(&result).

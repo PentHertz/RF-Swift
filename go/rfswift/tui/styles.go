@@ -5,7 +5,9 @@ package tui
 
 import (
 	"os"
+	"runtime"
 
+	"github.com/charmbracelet/huh"
 	"github.com/charmbracelet/lipgloss"
 	"golang.org/x/term"
 )
@@ -73,4 +75,15 @@ func TerminalWidth() int {
 // IsInteractive returns true if stdout is a terminal (not piped).
 func IsInteractive() bool {
 	return term.IsTerminal(int(os.Stdout.Fd()))
+}
+
+// newInput creates a new huh text input with accessible mode enabled on macOS.
+// This works around a charmbracelet/huh cursor rendering issue where typed text
+// appears backward on macOS terminals.
+func newInput() *huh.Input {
+	input := huh.NewInput()
+	if runtime.GOOS == "darwin" {
+		input.WithAccessible(true)
+	}
+	return input
 }

@@ -394,3 +394,40 @@ func CreateLimaInstance(yamlPath, instance string) error {
 
 	return StartLimaInstance(instance)
 }
+
+// StopLimaInstance stops a running Lima instance.
+//
+//	in(1): string instance name of the Lima instance to stop
+//	out: error
+func StopLimaInstance(instance string) error {
+	cmd := exec.Command("limactl", "stop", instance)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("failed to stop Lima instance '%s': %w", instance, err)
+	}
+	return nil
+}
+
+// DeleteLimaInstance deletes a Lima instance (must be stopped first).
+//
+//	in(1): string instance name of the Lima instance to delete
+//	out: error
+func DeleteLimaInstance(instance string) error {
+	cmd := exec.Command("limactl", "delete", instance)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("failed to delete Lima instance '%s': %w", instance, err)
+	}
+	return nil
+}
+
+// GetLimaInstanceConfigPath returns the path to the active Lima instance config.
+//
+//	in(1): string instance name of the Lima instance
+//	out: string path to ~/.lima/<instance>/lima.yaml
+func GetLimaInstanceConfigPath(instance string) string {
+	home := os.Getenv("HOME")
+	return filepath.Join(home, ".lima", instance, "lima.yaml")
+}

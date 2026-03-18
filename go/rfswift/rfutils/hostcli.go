@@ -287,8 +287,21 @@ func isPipeWireRunning() bool {
 //
 //	out: bool true if PulseAudio is running, false otherwise
 func isPulseAudioRunning() bool {
+	if runtime.GOOS == "darwin" {
+		// On macOS, pulseaudio --check may not exist; check for the process
+		cmd := exec.Command("pgrep", "-x", "pulseaudio")
+		return cmd.Run() == nil
+	}
 	cmd := exec.Command("pulseaudio", "--check")
 	return cmd.Run() == nil
+}
+
+// IsPulseAudioInstalled checks if PulseAudio is installed on the system.
+//
+//	out: bool true if pulseaudio binary is found in PATH
+func IsPulseAudioInstalled() bool {
+	_, err := exec.LookPath("pulseaudio")
+	return err == nil
 }
 
 // checkPulseServer attempts to connect to an audio server at the given address and port,
@@ -568,6 +581,10 @@ func isRedHat() bool {
 //
 //	out: error
 func ensureAudioSystemRunning() error {
+	if runtime.GOOS == "darwin" {
+		return ensureMacOSAudioRunning()
+	}
+
 	audioSystem := detectAudioSystem()
 
 	switch audioSystem {
@@ -600,6 +617,38 @@ func ensurePulseAudioRunning() error {
 	} else {
 		common.PrintInfoMessage(fmt.Sprintf("PulseAudio is already running."))
 	}
+	return nil
+}
+
+// ensureMacOSAudioRunning checks if PulseAudio is running on macOS and starts
+// it if not. On macOS, PulseAudio is installed via Homebrew and outputs to CoreAudio.
+//
+//	out: error
+func ensureMacOSAudioRunning() error {
+	if isPulseAudioRunning() {
+		common.PrintInfoMessage("PulseAudio is already running on macOS.")
+		return nil
+	}
+
+	// Check if PulseAudio is installed
+	if !IsPulseAudioInstalled() {
+		return fmt.Errorf("PulseAudio is not installed on macOS — install with: brew install pulseaudio")
+	}
+
+	// Start PulseAudio as a daemon
+	common.PrintInfoMessage("Starting PulseAudio on macOS...")
+	cmd := exec.Command("pulseaudio", "--start", "--exit-idle-time=-1")
+	if output, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("failed to start PulseAudio on macOS: %w\n%s", err, string(output))
+	}
+
+	// Wait for it to be ready
+	time.Sleep(2 * time.Second)
+	if !isPulseAudioRunning() {
+		return fmt.Errorf("PulseAudio started but is not responding")
+	}
+
+	common.PrintSuccessMessage("PulseAudio started on macOS (output via CoreAudio).")
 	return nil
 }
 
@@ -688,6 +737,11 @@ func SetPulseCTL(address string) error {
 		return fmt.Errorf("failed to ensure audio system is running: %w", err)
 	}
 
+	// On macOS, use pactl (works with Homebrew PulseAudio)
+	if runtime.GOOS == "darwin" {
+		return setMacOSPulseTCPModule(ip, port)
+	}
+
 	audioSystem := detectAudioSystem()
 
 	switch audioSystem {
@@ -742,6 +796,29 @@ func setPipeWireTCPModule(ip, port string) error {
 	}
 
 	common.PrintSuccessMessage(fmt.Sprintf("Successfully loaded module-native-protocol-tcp via PipeWire"))
+	return nil
+}
+
+// setMacOSPulseTCPModule loads the PulseAudio TCP module on macOS using pactl.
+// On macOS, PulseAudio is installed via Homebrew and the pactl command is available.
+//
+//	in(1): string ip the IP address to restrict connections to via auth-ip-acl
+//	in(2): string port the TCP port to listen on
+//	out: error
+func setMacOSPulseTCPModule(ip, port string) error {
+	moduleArgs := fmt.Sprintf("port=%s auth-ip-acl=%s", port, ip)
+
+	cmd := exec.Command("pactl", "load-module", "module-native-protocol-tcp", moduleArgs)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		// If pactl fails, try the native Go client as fallback
+		if nativeErr := setPulseAudioTCPModule(ip, port); nativeErr != nil {
+			return fmt.Errorf("failed to load module-native-protocol-tcp on macOS: %w\npactl output: %s", err, string(output))
+		}
+		return nil
+	}
+
+	common.PrintSuccessMessage("Loaded module-native-protocol-tcp on macOS PulseAudio")
 	return nil
 }
 
