@@ -36,6 +36,7 @@ type Profile struct {
 	Bindings     string `yaml:"bindings,omitempty"`
 	Caps         string `yaml:"caps,omitempty"`
 	Cgroups      string `yaml:"cgroups,omitempty"`
+	GPUs         string `yaml:"gpus,omitempty"`
 	VPN          string `yaml:"vpn,omitempty"`
 }
 

@@ -150,6 +150,7 @@ type ContainerConfig struct {
 	desktopSSL   bool
 	vpn          string // format: "type:argument" (e.g., "wireguard:./wg0.conf")
 	workspace    string // host path for workspace mount (empty = auto, "none" = disabled)
+	gpus         string // GPU device requests: "all" or comma-separated device IDs (empty = none)
 }
 
 var containerCfg = ContainerConfig{

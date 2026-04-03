@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"runtime"
 	"strings"
 	"time"
 
@@ -110,6 +111,7 @@ func printContainerProperties(ctx context.Context, cli *client.Client, container
 		{Key: "Seccomp profile", Value: seccompValue},
 		{Key: "Cgroup rules", Value: props["Cgroups"]},
 		{Key: "Ulimits", Value: props["Ulimits"]},
+		{Key: "GPUs", Value: props["GPUs"]},
 	}
 
 	tui.RenderPropertySheet("🧊 Container Summary", tui.ColorPrimary, items)
@@ -230,6 +232,27 @@ func getContainerProperties(ctx context.Context, cli *client.Client, containerID
         }
     }
     props["Ulimits"] = strings.Join(ulimitStrs, ",")
+
+	// Get GPU info — check label first (set during creation/gpus add),
+	// then DeviceRequests (NVIDIA), then /dev/kfd (AMD).
+	// We don't infer Intel from /dev/dri alone since it's in the default config.
+	gpuSpec := ""
+	if label, ok := containerJSON.Config.Labels["org.rfswift.gpus"]; ok && label != "" {
+		gpuSpec = label
+	}
+	if gpuSpec == "" {
+		gpuSpec = convertGPUsToString(containerJSON.HostConfig.Resources.DeviceRequests)
+	}
+	if gpuSpec == "" {
+		// Check for AMD GPU: /dev/kfd is never in defaults, so it's a reliable indicator
+		for _, d := range containerJSON.HostConfig.Devices {
+			if d.PathOnHost == "/dev/kfd" {
+				gpuSpec = "all (amd)"
+				break
+			}
+		}
+	}
+	props["GPUs"] = gpuSpec
 
 	return props, nil
 }
@@ -967,6 +990,161 @@ func UpdateCgroupRule(containerID string, rule string, add bool) error {
 	})
 }
 
+// UpdateGPUs adds or removes GPU device requests from a container.
+// On Docker, it directly edits hostconfig.json. On Podman, it falls back to
+// container recreation.
+//
+//	in(1): string containerID   container ID or name to modify
+//	in(2): string gpus          GPU specifier: "all" or comma-separated IDs (e.g. "0,1")
+//	in(3): bool add             true to add GPU access, false to remove it
+//	out:   error
+func UpdateGPUs(containerID string, gpus string, add bool) error {
+	ctx := context.Background()
+	cli, err := NewEngineClient()
+	if err != nil {
+		common.PrintErrorMessage(err)
+		return err
+	}
+	defer cli.Close()
+
+	containerJSON, err := cli.ContainerInspect(ctx, containerID)
+	if err != nil {
+		common.PrintErrorMessage(fmt.Errorf("failed to inspect container: %v", err))
+		return err
+	}
+	containerName := strings.TrimPrefix(containerJSON.Name, "/")
+
+	if runtime.GOOS != "linux" {
+		common.PrintWarningMessage("GPU passthrough is not supported on macOS/Windows — containers run inside a VM without GPU access.")
+		common.PrintInfoMessage("Use Docker or Podman directly on a Linux host for GPU support.")
+		return fmt.Errorf("GPU passthrough not supported on %s", runtime.GOOS)
+	}
+
+	if !EngineSupportsDirectConfigEdit() {
+		common.PrintInfoMessage(fmt.Sprintf("%s does not support direct config editing — using container recreation", GetEngine().Name()))
+		props, err := getContainerProperties(ctx, cli, containerID)
+		if err != nil {
+			return err
+		}
+		if add {
+			props["GPUs"] = gpus
+		} else {
+			props["GPUs"] = ""
+		}
+		return recreateContainerWithProperties(ctx, cli, containerID, props)
+	}
+
+	// Docker path: direct hostconfig.json edit (auto-detects GPU vendor)
+	vendors := detectGPUVendors()
+	return directEditContainer(ctx, cli, containerID, containerName, func(hostConfig *HostConfigFull, configV2 map[string]interface{}) (bool, error) {
+		if add {
+			for _, vendor := range vendors {
+				switch vendor {
+				case GPUVendorNVIDIA:
+					gpuReq := DeviceRequest{
+						Driver:       "nvidia",
+						Capabilities: [][]string{{"gpu"}},
+					}
+					if strings.ToLower(gpus) == "all" {
+						gpuReq.Count = -1
+					} else {
+						gpuReq.DeviceIDs = strings.Split(gpus, ",")
+						for i := range gpuReq.DeviceIDs {
+							gpuReq.DeviceIDs[i] = strings.TrimSpace(gpuReq.DeviceIDs[i])
+						}
+					}
+					hostConfig.DeviceRequests = []DeviceRequest{gpuReq}
+					common.PrintSuccessMessage("NVIDIA GPU detected — added DeviceRequests")
+
+				case GPUVendorAMD:
+					amdDevs := []DeviceMapping{
+						{PathOnHost: "/dev/kfd", PathInContainer: "/dev/kfd", CgroupPermissions: "rwm"},
+						{PathOnHost: "/dev/dri", PathInContainer: "/dev/dri", CgroupPermissions: "rwm"},
+					}
+					for _, dev := range amdDevs {
+						if !deviceExists(hostConfig.Devices, dev.PathOnHost, dev.PathInContainer) {
+							hostConfig.Devices = append(hostConfig.Devices, dev)
+						}
+					}
+					driRule := "c 226:* rwm"
+					if !stringSliceContains(hostConfig.DeviceCgroupRules, driRule) {
+						hostConfig.DeviceCgroupRules = append(hostConfig.DeviceCgroupRules, driRule)
+					}
+					common.PrintSuccessMessage("AMD GPU detected — added /dev/kfd, /dev/dri, and cgroup rule c 226:* rwm")
+
+				case GPUVendorIntel:
+					intelDev := DeviceMapping{
+						PathOnHost: "/dev/dri", PathInContainer: "/dev/dri", CgroupPermissions: "rwm",
+					}
+					if !deviceExists(hostConfig.Devices, intelDev.PathOnHost, intelDev.PathInContainer) {
+						hostConfig.Devices = append(hostConfig.Devices, intelDev)
+					}
+					driRule := "c 226:* rwm"
+					if !stringSliceContains(hostConfig.DeviceCgroupRules, driRule) {
+						hostConfig.DeviceCgroupRules = append(hostConfig.DeviceCgroupRules, driRule)
+					}
+					common.PrintSuccessMessage("Intel GPU detected — added /dev/dri and cgroup rule c 226:* rwm")
+				}
+			}
+			if len(vendors) == 0 {
+				// Fallback to NVIDIA if no vendor detected
+				common.PrintWarningMessage("No GPU vendor detected — falling back to NVIDIA DeviceRequests")
+				gpuReq := DeviceRequest{
+					Driver:       "nvidia",
+					Capabilities: [][]string{{"gpu"}},
+					Count:        -1,
+				}
+				hostConfig.DeviceRequests = []DeviceRequest{gpuReq}
+			}
+			common.PrintSuccessMessage(fmt.Sprintf("Added GPU access: %s", gpus))
+		} else {
+			changed := false
+			if len(hostConfig.DeviceRequests) > 0 {
+				hostConfig.DeviceRequests = nil
+				changed = true
+			}
+			// Remove AMD-specific GPU device (/dev/kfd).
+			// /dev/dri is kept since it's in the default config.
+			newDevices := []DeviceMapping{}
+			for _, d := range hostConfig.Devices {
+				if d.PathOnHost == "/dev/kfd" {
+					changed = true
+					continue
+				}
+				newDevices = append(newDevices, d)
+			}
+			hostConfig.Devices = newDevices
+			// Remove DRI cgroup rule
+			newRules := []string{}
+			for _, r := range hostConfig.DeviceCgroupRules {
+				if r == "c 226:* rwm" {
+					changed = true
+					continue
+				}
+				newRules = append(newRules, r)
+			}
+			hostConfig.DeviceCgroupRules = newRules
+
+			if !changed {
+				common.PrintWarningMessage(fmt.Sprintf("No GPU configuration found in container '%s'", containerName))
+				return false, nil
+			}
+			common.PrintSuccessMessage("Removed GPU configuration")
+		}
+		// Update label in config.v2.json
+		if configLabels, ok := configV2["Config"].(map[string]interface{}); ok {
+			if labels, ok := configLabels["Labels"].(map[string]interface{}); ok {
+				if add {
+					labels["org.rfswift.gpus"] = gpus
+				} else {
+					delete(labels, "org.rfswift.gpus")
+				}
+			}
+		}
+		return true, nil
+	})
+}
+
 // UpdateExposedPort adds or removes an exposed port declaration from a container
 // by recreating the container with the updated ExposedPorts set via
 // recreateContainerWithProperties.
@@ -1361,6 +1539,11 @@ func recreateContainerWithProperties(ctx context.Context, cli *client.Client, co
 	// Handle ulimits
 	if props["Ulimits"] != "" {
 		hostConfig.Resources.Ulimits = parseUlimitsFromString(props["Ulimits"])
+	}
+
+	// Handle GPU passthrough (auto-detects vendor)
+	if props["GPUs"] != "" {
+		applyGPUConfig(props["GPUs"], hostConfig)
 	}
 
 	if !privileged {

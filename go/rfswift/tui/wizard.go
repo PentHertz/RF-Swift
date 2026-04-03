@@ -30,6 +30,7 @@ type RunWizardResult struct {
 	Privileged   int
 	Realtime     bool
 	VPN          string // format: "type:argument"
+	GPUs         string // GPU specifier: "all" or comma-separated IDs
 	Workspace    string // "none" = disabled, "" = auto, path = custom
 	Confirmed    bool
 }
@@ -51,6 +52,7 @@ type ProfileOption struct {
 	Bindings     string
 	Caps         string
 	Cgroups      string
+	GPUs         string
 	VPN          string
 }
 
@@ -71,6 +73,7 @@ type RunWizardDefaults struct {
 	Privileged     int
 	Realtime       bool
 	VPN            string
+	GPUs           string
 	Workspace      string          // "" = auto, "none" = disabled, path = custom
 	WorkspaceRoot  string          // default workspace root (for display in wizard)
 	Profiles       []ProfileOption // available profiles for wizard selection
@@ -105,6 +108,7 @@ func RunWizard(images []string, defaults *RunWizardDefaults, existingNets []stri
 		result.Realtime = defaults.Realtime
 		result.Network = defaults.Network
 		result.VPN = defaults.VPN
+		result.GPUs = defaults.GPUs
 		result.Workspace = defaults.Workspace
 	}
 
@@ -163,6 +167,9 @@ func RunWizard(images []string, defaults *RunWizardDefaults, existingNets []stri
 					if p.Cgroups != "" {
 						result.Cgroups = p.Cgroups
 					}
+					if p.GPUs != "" {
+						result.GPUs = p.GPUs
+					}
 					if p.VPN != "" {
 						result.VPN = p.VPN
 					}
@@ -213,6 +220,7 @@ func RunWizard(images []string, defaults *RunWizardDefaults, existingNets []stri
 			"Ports":        valueOrNone(result.PortBindings),
 			"Capabilities": valueOrNone(result.Caps),
 			"Cgroups":      valueOrNone(result.Cgroups),
+			"GPUs":         valueOrNone(result.GPUs),
 			"Network":      result.Network,
 			"Desktop":      boolStr(result.Desktop),
 			"SSL/TLS":      boolStr(result.DesktopSSL),
@@ -221,7 +229,7 @@ func RunWizard(images []string, defaults *RunWizardDefaults, existingNets []stri
 			"Realtime":     boolStr(result.Realtime),
 			"VPN":          valueOrNone(result.VPN),
 		}
-		keys := []string{"Image", "Name", "Bindings", "Devices", "Ports", "Capabilities", "Cgroups", "Network", "Desktop", "SSL/TLS", "X11", "Privileged", "Realtime", "VPN"}
+		keys := []string{"Image", "Name", "Bindings", "Devices", "Ports", "Capabilities", "Cgroups", "GPUs", "Network", "Desktop", "SSL/TLS", "X11", "Privileged", "Realtime", "VPN"}
 		PrintRecap("Container Configuration (from profile)", items, keys)
 
 		cmd := buildCLICommand(result)
@@ -518,6 +526,9 @@ func RunWizard(images []string, defaults *RunWizardDefaults, existingNets []stri
 	if result.VPN != "" {
 		features = append(features, "vpn")
 	}
+	if result.GPUs != "" {
+		features = append(features, "gpus")
+	}
 	err = huh.NewMultiSelect[string]().
 		Title("Enable features").
 		Options(
@@ -526,6 +537,7 @@ func RunWizard(images []string, defaults *RunWizardDefaults, existingNets []stri
 			huh.NewOption("Disable X11 forwarding", "no-x11"),
 			huh.NewOption("Privileged mode", "privileged"),
 			huh.NewOption("Realtime mode (audio/SDR)", "realtime"),
+			huh.NewOption("GPU passthrough", "gpus"),
 			huh.NewOption("VPN (WireGuard/OpenVPN/Tailscale/Netbird)", "vpn"),
 		).
 		Value(&features).
@@ -540,6 +552,7 @@ func RunWizard(images []string, defaults *RunWizardDefaults, existingNets []stri
 	result.NoX11 = false
 	result.Privileged = 0
 	result.Realtime = false
+	result.GPUs = ""
 	// Preserve VPN config temporarily for pre-populating the VPN sub-form
 	savedVPN := result.VPN
 	result.VPN = ""
@@ -603,6 +616,8 @@ func RunWizard(images []string, defaults *RunWizardDefaults, existingNets []stri
 			result.Privileged = 1
 		case "realtime":
 			result.Realtime = true
+		case "gpus":
+			result.GPUs = "all"
 		case "vpn":
 			// Follow-up: select VPN type and config
 			// Pre-populate from existing VPN config if set via CLI
@@ -807,6 +822,7 @@ func RunWizard(images []string, defaults *RunWizardDefaults, existingNets []stri
 		"Ports":        valueOrNone(result.PortBindings),
 		"Capabilities": valueOrNone(result.Caps),
 		"Cgroups":      valueOrNone(result.Cgroups),
+		"GPUs":         valueOrNone(result.GPUs),
 		"Network":      result.Network,
 		"Desktop":      desktopLabel,
 		"SSL/TLS":      boolStr(result.DesktopSSL),
@@ -815,7 +831,7 @@ func RunWizard(images []string, defaults *RunWizardDefaults, existingNets []stri
 		"Realtime":     boolStr(result.Realtime),
 		"VPN":          valueOrNone(result.VPN),
 	}
-	keys := []string{"Image", "Name", "Workspace", "Bindings", "Devices", "Ports", "Capabilities", "Cgroups", "Network", "Desktop", "SSL/TLS", "X11", "Privileged", "Realtime", "VPN"}
+	keys := []string{"Image", "Name", "Workspace", "Bindings", "Devices", "Ports", "Capabilities", "Cgroups", "GPUs", "Network", "Desktop", "SSL/TLS", "X11", "Privileged", "Realtime", "VPN"}
 	PrintRecap("Container Configuration", items, keys)
 
 	// Build equivalent CLI command
@@ -963,6 +979,9 @@ func buildCLICommand(r *RunWizardResult) string {
 	if r.Realtime {
 		parts = append(parts, "--realtime")
 	}
+	if r.GPUs != "" {
+		parts = append(parts, fmt.Sprintf("--gpus %s", r.GPUs))
+	}
 	if r.VPN != "" {
 		parts = append(parts, fmt.Sprintf("--vpn %s", r.VPN))
 	}
@@ -986,6 +1005,7 @@ type ProfileCreateResult struct {
 	Bindings     string
 	Caps         string
 	Cgroups      string
+	GPUs         string
 	VPN          string
 }
 
@@ -1110,6 +1130,7 @@ func ProfileCreateWizard(images []string, existingNets []string) (*ProfileCreate
 			huh.NewOption("Disable X11 forwarding", "no-x11"),
 			huh.NewOption("Privileged mode", "privileged"),
 			huh.NewOption("Realtime mode (audio/SDR)", "realtime"),
+			huh.NewOption("GPU passthrough", "gpus"),
 		).
 		Value(&features).
 		Run()
@@ -1129,6 +1150,8 @@ func ProfileCreateWizard(images []string, existingNets []string) (*ProfileCreate
 			result.Privileged = true
 		case "realtime":
 			result.Realtime = true
+		case "gpus":
+			result.GPUs = "all"
 		}
 	}
 
@@ -1288,6 +1311,7 @@ func ProfileCreateWizard(images []string, existingNets []string) (*ProfileCreate
 		"Ports":        valueOrNone(result.PortBindings),
 		"Capabilities": valueOrNone(result.Caps),
 		"Cgroups":      valueOrNone(result.Cgroups),
+		"GPUs":         valueOrNone(result.GPUs),
 		"Desktop":      boolStr(result.Desktop),
 		"SSL/TLS":      boolStr(result.DesktopSSL),
 		"X11":          boolStr(!result.NoX11),
@@ -1296,7 +1320,7 @@ func ProfileCreateWizard(images []string, existingNets []string) (*ProfileCreate
 		"Devices":      valueOrNone(result.Devices),
 		"Bindings":     valueOrNone(result.Bindings),
 	}
-	keys := []string{"Name", "Description", "Image", "Network", "Ports", "Capabilities", "Cgroups", "Desktop", "SSL/TLS", "X11", "Privileged", "Realtime", "Devices", "Bindings"}
+	keys := []string{"Name", "Description", "Image", "Network", "Ports", "Capabilities", "Cgroups", "GPUs", "Desktop", "SSL/TLS", "X11", "Privileged", "Realtime", "Devices", "Bindings"}
 	PrintRecap("New Profile", items, keys)
 
 	if !Confirm("Save this profile?") {

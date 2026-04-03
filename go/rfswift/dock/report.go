@@ -59,6 +59,7 @@ type ReportData struct {
 	Devices      string
 	Capabilities string
 	Cgroups      string
+	GPUs         string
 	Bindings     string
 	Ulimits      string
 	WorkspacePath string
@@ -135,6 +136,7 @@ func GenerateReport(containerName string, format ReportFormat, outputPath string
 		Devices:      props["Devices"],
 		Capabilities: props["Caps"],
 		Cgroups:      props["Cgroups"],
+		GPUs:         props["GPUs"],
 		Bindings:     strings.ReplaceAll(props["Bindings"], ";;", "\n"),
 		Ulimits:      props["Ulimits"],
 		WorkspacePath: workspacePath,
@@ -412,6 +414,7 @@ const markdownTemplate = `# {{.Title}}
 | **Devices** | {{if .Devices}}{{.Devices}}{{else}}none{{end}} |
 | **Capabilities** | {{if .Capabilities}}{{.Capabilities}}{{else}}default{{end}} |
 | **Cgroups** | {{if .Cgroups}}{{.Cgroups}}{{else}}default{{end}} |
+| **GPUs** | {{if .GPUs}}{{.GPUs}}{{else}}none{{end}} |
 | **Ulimits** | {{if .Ulimits}}{{.Ulimits}}{{else}}default{{end}} |
 
 {{if .Bindings}}
@@ -545,6 +548,7 @@ const htmlTemplateStr = `<!DOCTYPE html>
 <tr><td>Devices</td><td>{{if .Devices}}{{.Devices}}{{else}}<em>none</em>{{end}}</td></tr>
 <tr><td>Capabilities</td><td>{{if .Capabilities}}{{.Capabilities}}{{else}}<em>default</em>{{end}}</td></tr>
 <tr><td>Cgroups</td><td>{{if .Cgroups}}{{.Cgroups}}{{else}}<em>default</em>{{end}}</td></tr>
+<tr><td>GPUs</td><td>{{if .GPUs}}{{.GPUs}}{{else}}<em>none</em>{{end}}</td></tr>
 <tr><td>Ulimits</td><td>{{if .Ulimits}}{{.Ulimits}}{{else}}<em>default</em>{{end}}</td></tr>
 </table>
 

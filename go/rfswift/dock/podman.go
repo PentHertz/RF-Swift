@@ -94,6 +94,23 @@ func podmanCreateViaCLI(name string, imageName string, cfg *container.Config, hc
 		args = append(args, "--cap-drop", cap)
 	}
 
+	// GPU device requests (Podman uses CDI: --device nvidia.com/gpu=all)
+	for _, dr := range hc.Resources.DeviceRequests {
+		for _, caps := range dr.Capabilities {
+			for _, c := range caps {
+				if c == "gpu" {
+					if dr.Count == -1 {
+						args = append(args, "--device", "nvidia.com/gpu=all")
+					} else {
+						for _, id := range dr.DeviceIDs {
+							args = append(args, "--device", fmt.Sprintf("nvidia.com/gpu=%s", id))
+						}
+					}
+				}
+			}
+		}
+	}
+
 	// Hostname
 	if cfg.Hostname != "" {
 		args = append(args, "--hostname", cfg.Hostname)

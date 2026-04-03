@@ -497,6 +497,196 @@ func convertExposedPortsToString(exposedPorts nat.PortSet) string {
 	return strings.Join(result, ", ")
 }
 
+// GPUVendor represents a detected GPU vendor on the host.
+type GPUVendor string
+
+const (
+	GPUVendorNVIDIA  GPUVendor = "nvidia"
+	GPUVendorAMD     GPUVendor = "amd"
+	GPUVendorIntel   GPUVendor = "intel"
+	GPUVendorUnknown GPUVendor = "unknown"
+)
+
+// detectGPUVendors scans /sys/class/drm/card*/device/vendor and vendor-specific
+// device nodes to determine which GPU vendors are present on the host.
+//
+//	out: []GPUVendor - list of detected vendors (may contain duplicates removed)
+func detectGPUVendors() []GPUVendor {
+	vendorMap := map[GPUVendor]bool{}
+
+	// Check sysfs vendor IDs for each DRM card
+	cards, _ := filepath.Glob("/sys/class/drm/card[0-9]*/device/vendor")
+	for _, vendorPath := range cards {
+		data, err := os.ReadFile(vendorPath)
+		if err != nil {
+			continue
+		}
+		vid := strings.TrimSpace(strings.ToLower(string(data)))
+		switch vid {
+		case "0x10de":
+			vendorMap[GPUVendorNVIDIA] = true
+		case "0x1002":
+			vendorMap[GPUVendorAMD] = true
+		case "0x8086":
+			vendorMap[GPUVendorIntel] = true
+		}
+	}
+
+	// Also check for vendor-specific device nodes (in case sysfs is incomplete)
+	if _, err := os.Stat("/dev/nvidia0"); err == nil {
+		vendorMap[GPUVendorNVIDIA] = true
+	} else if _, err := os.Stat("/dev/nvidiactl"); err == nil {
+		vendorMap[GPUVendorNVIDIA] = true
+	}
+	if _, err := os.Stat("/dev/kfd"); err == nil {
+		vendorMap[GPUVendorAMD] = true
+	}
+
+	var vendors []GPUVendor
+	for v := range vendorMap {
+		vendors = append(vendors, v)
+	}
+	return vendors
+}
+
+// applyGPUConfig detects GPU vendors on the host and configures the container
+// HostConfig accordingly:
+//   - NVIDIA: adds DeviceRequests (requires nvidia-container-toolkit)
+//   - AMD:    adds /dev/kfd + /dev/dri device bindings and cgroup rule c 226:* rwm
+//   - Intel:  adds /dev/dri device binding and cgroup rule c 226:* rwm
+//
+// The gpus parameter is "all" or comma-separated device IDs (only used for NVIDIA).
+// Returns a human-readable summary of what was configured.
+//
+//	in(1): string gpus - GPU specifier
+//	in(2): *container.HostConfig hostConfig - container host config to modify
+//	out: string - summary of what was configured
+func applyGPUConfig(gpus string, hostConfig *container.HostConfig) string {
+	gpus = strings.TrimSpace(gpus)
+	if gpus == "" {
+		return ""
+	}
+
+	vendors := detectGPUVendors()
+	if len(vendors) == 0 {
+		common.PrintWarningMessage("No GPU detected on this host. Falling back to NVIDIA DeviceRequests.")
+		common.PrintInfoMessage("If using NVIDIA, ensure drivers are installed. For AMD, check /dev/kfd. For Intel, check /dev/dri.")
+		// Fall back to NVIDIA DeviceRequests (the Docker default)
+		hostConfig.Resources.DeviceRequests = buildNVIDIADeviceRequests(gpus)
+		return "nvidia (fallback)"
+	}
+
+	var summary []string
+
+	for _, vendor := range vendors {
+		switch vendor {
+		case GPUVendorNVIDIA:
+			hostConfig.Resources.DeviceRequests = buildNVIDIADeviceRequests(gpus)
+			common.PrintSuccessMessage("NVIDIA GPU detected — using DeviceRequests (nvidia-container-toolkit)")
+			summary = append(summary, "nvidia")
+
+		case GPUVendorAMD:
+			// Add /dev/kfd and /dev/dri as device bindings
+			amdDevices := []container.DeviceMapping{
+				{PathOnHost: "/dev/kfd", PathInContainer: "/dev/kfd", CgroupPermissions: "rwm"},
+				{PathOnHost: "/dev/dri", PathInContainer: "/dev/dri", CgroupPermissions: "rwm"},
+			}
+			for _, dev := range amdDevices {
+				if !deviceMappingExists(hostConfig.Devices, dev.PathOnHost) {
+					hostConfig.Devices = append(hostConfig.Devices, dev)
+				}
+			}
+			// Add DRI cgroup rule
+			driRule := "c 226:* rwm"
+			if !stringSliceContains(hostConfig.DeviceCgroupRules, driRule) {
+				hostConfig.DeviceCgroupRules = append(hostConfig.DeviceCgroupRules, driRule)
+			}
+			common.PrintSuccessMessage("AMD GPU detected — adding /dev/kfd, /dev/dri, and cgroup rule c 226:* rwm")
+			summary = append(summary, "amd")
+
+		case GPUVendorIntel:
+			// Add /dev/dri as device binding
+			intelDev := container.DeviceMapping{
+				PathOnHost: "/dev/dri", PathInContainer: "/dev/dri", CgroupPermissions: "rwm",
+			}
+			if !deviceMappingExists(hostConfig.Devices, intelDev.PathOnHost) {
+				hostConfig.Devices = append(hostConfig.Devices, intelDev)
+			}
+			// Add DRI cgroup rule
+			driRule := "c 226:* rwm"
+			if !stringSliceContains(hostConfig.DeviceCgroupRules, driRule) {
+				hostConfig.DeviceCgroupRules = append(hostConfig.DeviceCgroupRules, driRule)
+			}
+			common.PrintSuccessMessage("Intel GPU detected — adding /dev/dri and cgroup rule c 226:* rwm")
+			summary = append(summary, "intel")
+		}
+	}
+
+	return strings.Join(summary, ",")
+}
+
+// buildNVIDIADeviceRequests creates Docker DeviceRequests for NVIDIA GPUs.
+func buildNVIDIADeviceRequests(gpus string) []container.DeviceRequest {
+	req := container.DeviceRequest{
+		Driver:       "nvidia",
+		Capabilities: [][]string{{"gpu"}},
+	}
+	if strings.ToLower(gpus) == "all" {
+		req.Count = -1
+	} else {
+		ids := strings.Split(gpus, ",")
+		for i := range ids {
+			ids[i] = strings.TrimSpace(ids[i])
+		}
+		req.DeviceIDs = ids
+	}
+	return []container.DeviceRequest{req}
+}
+
+// deviceMappingExists checks if a device with the given host path is already mapped.
+func deviceMappingExists(devices []container.DeviceMapping, hostPath string) bool {
+	for _, d := range devices {
+		if d.PathOnHost == hostPath {
+			return true
+		}
+	}
+	return false
+}
+
+// stringSliceContains checks if a string slice contains a specific value.
+func stringSliceContains(slice []string, val string) bool {
+	for _, s := range slice {
+		if s == val {
+			return true
+		}
+	}
+	return false
+}
+
+// convertGPUsToString extracts GPU specifier from Docker DeviceRequests.
+// It also checks for AMD/Intel GPU indicators (device bindings for /dev/kfd or /dev/dri
+// with cgroup rule c 226:* rwm).
+//
+//	in(1): []container.DeviceRequest requests
+//	out: string - "all", comma-separated IDs, or ""
+func convertGPUsToString(requests []container.DeviceRequest) string {
+	for _, dr := range requests {
+		for _, caps := range dr.Capabilities {
+			for _, c := range caps {
+				if c == "gpu" {
+					if dr.Count == -1 {
+						return "all"
+					}
+					if len(dr.DeviceIDs) > 0 {
+						return strings.Join(dr.DeviceIDs, ",")
+					}
+				}
+			}
+		}
+	}
+	return ""
+}
+
 // convertDevicesToString formats a slice of container.DeviceMapping as a
 // comma-separated string of "hostPath:containerPath" pairs.
 //

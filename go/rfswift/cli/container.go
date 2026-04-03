@@ -48,6 +48,7 @@ var runCmd = &cobra.Command{
 		desktopPass, _ := cmd.Flags().GetString("desktop-pass")
 		desktopSSL, _ := cmd.Flags().GetBool("desktop-ssl")
 		vpnConfig, _ := cmd.Flags().GetString("vpn")
+		gpus, _ := cmd.Flags().GetString("gpus")
 		profileName, _ := cmd.Flags().GetString("profile")
 		workspacePath, _ := cmd.Flags().GetString("workspace")
 		noWorkspace, _ := cmd.Flags().GetBool("no-workspace")
@@ -112,6 +113,9 @@ var runCmd = &cobra.Command{
 			if vpnConfig == "" && prof.VPN != "" {
 				vpnConfig = prof.VPN
 			}
+			if gpus == "" && prof.GPUs != "" {
+				gpus = prof.GPUs
+			}
 			common.PrintInfoMessage(fmt.Sprintf("Using profile: %s (%s)", prof.Name, prof.Description))
 		}
 
@@ -140,6 +144,7 @@ var runCmd = &cobra.Command{
 						Bindings:     p.Bindings,
 						Caps:         p.Caps,
 						Cgroups:      p.Cgroups,
+						GPUs:         p.GPUs,
 						VPN:          p.VPN,
 					})
 				}
@@ -161,6 +166,7 @@ var runCmd = &cobra.Command{
 				Privileged:    privileged,
 				Realtime:      realtime,
 				VPN:           vpnConfig,
+				GPUs:          gpus,
 				Workspace:     workspacePath,
 				WorkspaceRoot: rfdock.DefaultWorkspaceRoot(),
 				Profiles:      profileOpts,
@@ -215,6 +221,9 @@ var runCmd = &cobra.Command{
 			realtime = wizResult.Realtime
 			if wizResult.VPN != "" {
 				vpnConfig = wizResult.VPN
+			}
+			if wizResult.GPUs != "" {
+				gpus = wizResult.GPUs
 			}
 			// Process workspace from wizard
 			switch wizResult.Workspace {
@@ -298,6 +307,9 @@ var runCmd = &cobra.Command{
 			if vpnConfig != "" {
 				extraArgs["--vpn"] = vpnConfig
 			}
+			if gpus != "" {
+				extraArgs["--gpus"] = gpus
+			}
 
 			if err := rfdock.ContainerRunWithRecording(dockerName, recordOutput, image, extraArgs); err != nil {
 				common.PrintErrorMessage(err)
@@ -335,6 +347,7 @@ var runCmd = &cobra.Command{
 				rfdock.ContainerSetDesktopSSL(desktopSSL)
 			}
 			rfdock.ContainerSetVPN(vpnConfig)
+			rfdock.ContainerSetGPUs(gpus)
 			if runtime.GOOS == "linux" || runtime.GOOS == "darwin" {
 				rfutils.SetPulseCTL(pulseServer)
 			}
@@ -693,6 +706,7 @@ func registerContainerCommands() {
 	runCmd.Flags().String("desktop-pass", "", "Set VNC password for desktop access (recommended when exposing on 0.0.0.0)")
 	runCmd.Flags().Bool("desktop-ssl", false, "Enable SSL/TLS for desktop connections (auto-generates self-signed certificate)")
 	runCmd.Flags().String("vpn", "", "Enable VPN inside container (wireguard:./wg0.conf, openvpn:./client.ovpn, tailscale:--auth-key=tskey-xxx, netbird:--setup-key=xxx)")
+	runCmd.Flags().String("gpus", "", "GPU devices to add ('all' for all GPUs, or comma-separated IDs: '0,1')")
 	runCmd.Flags().String("profile", "", "Use a preset profile (e.g., sdr-full, wifi, pentest-full). See 'rfswift profile list'")
 	runCmd.Flags().String("workspace", "", "Workspace path on host (default: ~/rfswift-workspace/<name>/)")
 	runCmd.Flags().Bool("no-workspace", false, "Disable automatic workspace mounting")

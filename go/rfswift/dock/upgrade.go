@@ -287,6 +287,7 @@ func ContainerUpgrade(containerIdentifier string, repositoriesToPreserve string,
 	props["Caps"] = convertCapsToString(containerJSON.HostConfig.CapAdd)
 	props["Seccomp"] = convertSecurityOptToString(containerJSON.HostConfig.SecurityOpt)
 	props["Cgroups"] = strings.Join(containerJSON.HostConfig.DeviceCgroupRules, ",")
+	props["GPUs"] = convertGPUsToString(containerJSON.HostConfig.Resources.DeviceRequests)
 	props["XDisplay"] = ":0"
 	for _, env := range containerJSON.Config.Env {
 		if strings.HasPrefix(env, "DISPLAY=") {
@@ -324,6 +325,11 @@ func ContainerUpgrade(containerIdentifier string, repositoriesToPreserve string,
 		ExtraHosts:   extrahosts,
 		PortBindings: bindedPorts,
 		Privileged:   privileged,
+	}
+
+	// Handle GPU passthrough (auto-detects vendor)
+	if props["GPUs"] != "" {
+		applyGPUConfig(props["GPUs"], hostConfig)
 	}
 
 	// Set devices and other settings based on privilege mode

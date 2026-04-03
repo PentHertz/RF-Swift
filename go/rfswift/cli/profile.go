@@ -119,9 +119,10 @@ var profileShowCmd = &cobra.Command{
 			"Realtime":     enabledStr(p.Realtime),
 			"Devices":      valueOrDash(p.Devices),
 			"Bindings":     valueOrDash(p.Bindings),
+			"GPUs":         valueOrDash(p.GPUs),
 			"VPN":          valueOrDash(p.VPN),
 		}
-		keys := []string{"Name", "Description", "Image", "Network", "Ports", "Capabilities", "Cgroups", "Desktop", "Desktop SSL", "X11", "Privileged", "Realtime", "Devices", "Bindings", "VPN"}
+		keys := []string{"Name", "Description", "Image", "Network", "Ports", "Capabilities", "Cgroups", "GPUs", "Desktop", "Desktop SSL", "X11", "Privileged", "Realtime", "Devices", "Bindings", "VPN"}
 
 		tui.PrintRecap(fmt.Sprintf("Profile: %s", p.Name), items, keys)
 
@@ -166,6 +167,7 @@ var profileCreateCmd = &cobra.Command{
 			Bindings:     p.Bindings,
 			Caps:         p.Caps,
 			Cgroups:      p.Cgroups,
+			GPUs:         p.GPUs,
 			VPN:          p.VPN,
 		}
 
@@ -351,6 +353,9 @@ func profileToCLICommand(p *rfdock.Profile) string {
 	}
 	if p.Cgroups != "" {
 		parts = append(parts, fmt.Sprintf("-g %s", p.Cgroups))
+	}
+	if p.GPUs != "" {
+		parts = append(parts, fmt.Sprintf("--gpus %s", p.GPUs))
 	}
 	if p.VPN != "" {
 		parts = append(parts, fmt.Sprintf("--vpn %s", p.VPN))

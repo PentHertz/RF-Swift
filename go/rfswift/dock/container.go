@@ -715,6 +715,17 @@ func ContainerRun(containerName string) {
 		}
 	}
 
+	// Handle GPU passthrough (auto-detects vendor: NVIDIA, AMD, Intel)
+	// Must run after device setup above to avoid being overwritten.
+	if containerCfg.gpus != "" {
+		if runtime.GOOS != "linux" {
+			common.PrintWarningMessage("GPU passthrough is not supported on macOS/Windows — containers run inside a VM without GPU access. Ignoring --gpus flag.")
+			common.PrintInfoMessage("Use Docker or Podman directly on a Linux host for GPU support.")
+		} else {
+			applyGPUConfig(containerCfg.gpus, hostConfig)
+		}
+	}
+
 	containerLabels := map[string]string{
 		"org.container.project": "rfswift",
 	}
@@ -723,6 +734,9 @@ func ContainerRun(containerName string) {
 	}
 	if len(hostConfig.DeviceCgroupRules) > 0 {
 		containerLabels["org.rfswift.cgroup_rules"] = strings.Join(hostConfig.DeviceCgroupRules, ",")
+	}
+	if containerCfg.gpus != "" {
+		containerLabels["org.rfswift.gpus"] = containerCfg.gpus
 	}
 	if containerCfg.exposedPorts == "" {
 		containerLabels["org.rfswift.exposedPorts"] = "none"

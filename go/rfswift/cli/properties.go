@@ -173,10 +173,43 @@ var PortsUnbindCmd = &cobra.Command{
 	},
 }
 
+var GPUsCmd = &cobra.Command{
+	Use:   "gpus",
+	Short: "Manage container GPU device requests",
+	Long:  `Add or remove GPU device requests for a container`,
+}
+
+var GPUsAddCmd = &cobra.Command{
+	Use:   "add",
+	Short: "Add GPU access",
+	Long:  `Add GPU device request to a container (e.g., 'all' or '0,1')`,
+	Run: func(cmd *cobra.Command, args []string) {
+		contID, _ := cmd.Flags().GetString("container")
+		gpus, _ := cmd.Flags().GetString("gpus")
+		if err := rfdock.UpdateGPUs(contID, gpus, true); err != nil {
+			os.Exit(1)
+		}
+	},
+}
+
+var GPUsRmCmd = &cobra.Command{
+	Use:   "rm",
+	Short: "Remove GPU access",
+	Long:  `Remove GPU device requests from a container`,
+	Run: func(cmd *cobra.Command, args []string) {
+		contID, _ := cmd.Flags().GetString("container")
+		gpus, _ := cmd.Flags().GetString("gpus")
+		if err := rfdock.UpdateGPUs(contID, gpus, false); err != nil {
+			os.Exit(1)
+		}
+	},
+}
+
 func registerPropertyCommands() {
 	rootCmd.AddCommand(BindingsCmd)
 	rootCmd.AddCommand(CapabilitiesCmd)
 	rootCmd.AddCommand(CgroupsCmd)
+	rootCmd.AddCommand(GPUsCmd)
 	rootCmd.AddCommand(PortsCmd)
 
 	// Bindings
@@ -217,6 +250,16 @@ func registerPropertyCommands() {
 	CgroupsRmCmd.Flags().StringP("rule", "r", "", "cgroup rule to remove")
 	CgroupsRmCmd.MarkFlagRequired("container")
 	CgroupsRmCmd.MarkFlagRequired("rule")
+
+	// GPUs
+	GPUsCmd.AddCommand(GPUsAddCmd)
+	GPUsCmd.AddCommand(GPUsRmCmd)
+	GPUsAddCmd.Flags().StringP("container", "c", "", "container ID or name")
+	GPUsAddCmd.Flags().StringP("gpus", "g", "all", "GPU specifier ('all' or comma-separated IDs)")
+	GPUsAddCmd.MarkFlagRequired("container")
+	GPUsRmCmd.Flags().StringP("container", "c", "", "container ID or name")
+	GPUsRmCmd.Flags().StringP("gpus", "g", "", "GPU specifier to remove (empty = remove all)")
+	GPUsRmCmd.MarkFlagRequired("container")
 
 	// Ports
 	PortsCmd.AddCommand(PortsExposeCmd)

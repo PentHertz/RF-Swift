@@ -81,6 +81,14 @@ func ContainerSetWorkspace(workspace string) {
 	containerCfg.workspace = workspace
 }
 
+// ContainerSetGPUs sets the GPU device requests for the container.
+// Use "all" for all GPUs, or comma-separated device IDs (e.g., "0,1").
+//
+//	in(1): string gpus GPU specifier
+func ContainerSetGPUs(gpus string) {
+	setIfNotEmpty(&containerCfg.gpus, gpus)
+}
+
 // ContainerSetImage sets the image name to use for container creation.
 //
 //	in(1): string imagename image name
