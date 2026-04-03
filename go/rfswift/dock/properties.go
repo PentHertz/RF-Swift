@@ -360,9 +360,10 @@ func UpdateMountBinding(containerName string, source string, target string, add 
 	}
 	common.PrintSuccessMessage(fmt.Sprintf("HostConfig path: %s", hostConfigPath))
 
+	engine := GetEngine()
 	common.PrintInfoMessage("Loading hostconfig.json...")
 	var hostConfig HostConfigFull
-	if err := loadJSON(hostConfigPath, &hostConfig); err != nil {
+	if err := engineLoadJSON(engine, hostConfigPath, &hostConfig); err != nil {
 		common.PrintErrorMessage(fmt.Errorf("failed to load hostconfig.json: %v", err))
 		os.Exit(1)
 	}
@@ -373,7 +374,7 @@ func UpdateMountBinding(containerName string, source string, target string, add 
 	configV2Path := strings.Replace(hostConfigPath, "hostconfig.json", "config.v2.json", 1)
 	common.PrintInfoMessage(fmt.Sprintf("Loading config.v2.json from: %s", configV2Path))
 	var configV2 map[string]interface{}
-	if err := loadJSON(configV2Path, &configV2); err != nil {
+	if err := engineLoadJSON(engine, configV2Path, &configV2); err != nil {
 		common.PrintErrorMessage(fmt.Errorf("failed to load config.v2.json: %v", err))
 		os.Exit(1)
 	}
@@ -397,14 +398,14 @@ func UpdateMountBinding(containerName string, source string, target string, add 
 
 	// Save changes
 	common.PrintInfoMessage("Saving updated hostconfig.json...")
-	if err := saveJSON(hostConfigPath, hostConfig); err != nil {
+	if err := engineSaveJSON(engine, hostConfigPath, hostConfig); err != nil {
 		common.PrintErrorMessage(fmt.Errorf("failed to save hostconfig.json: %v", err))
 		os.Exit(1)
 	}
 	common.PrintSuccessMessage("hostconfig.json updated successfully.")
 
 	common.PrintInfoMessage("Saving updated config.v2.json...")
-	if err := saveJSON(configV2Path, configV2); err != nil {
+	if err := engineSaveJSON(engine, configV2Path, configV2); err != nil {
 		common.PrintErrorMessage(fmt.Errorf("failed to save config.v2.json: %v", err))
 		os.Exit(1)
 	}
@@ -582,9 +583,10 @@ func UpdateDeviceBinding(containerName string, deviceHost string, deviceContaine
 	}
 	common.PrintSuccessMessage(fmt.Sprintf("HostConfig path: %s", hostConfigPath))
 
+	engine := GetEngine()
 	common.PrintInfoMessage("Loading hostconfig.json...")
 	var hostConfig HostConfigFull
-	if err := loadJSON(hostConfigPath, &hostConfig); err != nil {
+	if err := engineLoadJSON(engine, hostConfigPath, &hostConfig); err != nil {
 		common.PrintErrorMessage(fmt.Errorf("failed to load hostconfig.json: %v", err))
 		os.Exit(1)
 	}
@@ -595,7 +597,7 @@ func UpdateDeviceBinding(containerName string, deviceHost string, deviceContaine
 	configV2Path := strings.Replace(hostConfigPath, "hostconfig.json", "config.v2.json", 1)
 	common.PrintInfoMessage(fmt.Sprintf("Loading config.v2.json from: %s", configV2Path))
 	var configV2 map[string]interface{}
-	if err := loadJSON(configV2Path, &configV2); err != nil {
+	if err := engineLoadJSON(engine, configV2Path, &configV2); err != nil {
 		common.PrintErrorMessage(fmt.Errorf("failed to load config.v2.json: %v", err))
 		os.Exit(1)
 	}
@@ -624,14 +626,14 @@ func UpdateDeviceBinding(containerName string, deviceHost string, deviceContaine
 
 	// Save changes
 	common.PrintInfoMessage("Saving updated hostconfig.json...")
-	if err := saveJSON(hostConfigPath, hostConfig); err != nil {
+	if err := engineSaveJSON(engine, hostConfigPath, hostConfig); err != nil {
 		common.PrintErrorMessage(fmt.Errorf("failed to save hostconfig.json: %v", err))
 		os.Exit(1)
 	}
 	common.PrintSuccessMessage("hostconfig.json updated successfully.")
 
 	common.PrintInfoMessage("Saving updated config.v2.json...")
-	if err := saveJSON(configV2Path, configV2); err != nil {
+	if err := engineSaveJSON(engine, configV2Path, configV2); err != nil {
 		common.PrintErrorMessage(fmt.Errorf("failed to save config.v2.json: %v", err))
 		os.Exit(1)
 	}
@@ -720,6 +722,7 @@ func directEditContainer(ctx context.Context, cli *client.Client, containerID st
 	fullID := containerJSON.ID
 
 	// Load hostconfig.json
+	engine := GetEngine()
 	hostConfigPath, err := EngineGetHostConfigPath(fullID)
 	if err != nil {
 		common.PrintErrorMessage(fmt.Errorf("failed to locate hostconfig.json: %v", err))
@@ -727,7 +730,7 @@ func directEditContainer(ctx context.Context, cli *client.Client, containerID st
 	}
 	common.PrintInfoMessage(fmt.Sprintf("Loading hostconfig.json from: %s", hostConfigPath))
 	var hostConfig HostConfigFull
-	if err := loadJSON(hostConfigPath, &hostConfig); err != nil {
+	if err := engineLoadJSON(engine, hostConfigPath, &hostConfig); err != nil {
 		common.PrintErrorMessage(fmt.Errorf("failed to load hostconfig.json: %v", err))
 		return err
 	}
@@ -735,7 +738,7 @@ func directEditContainer(ctx context.Context, cli *client.Client, containerID st
 	// Load config.v2.json
 	configV2Path := strings.Replace(hostConfigPath, "hostconfig.json", "config.v2.json", 1)
 	var configV2 map[string]interface{}
-	if err := loadJSON(configV2Path, &configV2); err != nil {
+	if err := engineLoadJSON(engine, configV2Path, &configV2); err != nil {
 		common.PrintErrorMessage(fmt.Errorf("failed to load config.v2.json: %v", err))
 		return err
 	}
@@ -751,13 +754,13 @@ func directEditContainer(ctx context.Context, cli *client.Client, containerID st
 	}
 
 	// Save both files
-	if err := saveJSON(hostConfigPath, hostConfig); err != nil {
+	if err := engineSaveJSON(engine, hostConfigPath, hostConfig); err != nil {
 		common.PrintErrorMessage(fmt.Errorf("failed to save hostconfig.json: %v", err))
 		return err
 	}
 	common.PrintSuccessMessage("hostconfig.json updated successfully.")
 
-	if err := saveJSON(configV2Path, configV2); err != nil {
+	if err := engineSaveJSON(engine, configV2Path, configV2); err != nil {
 		common.PrintErrorMessage(fmt.Errorf("failed to save config.v2.json: %v", err))
 		return err
 	}
@@ -1494,7 +1497,7 @@ func recreateContainerWithProperties(ctx context.Context, cli *client.Client, co
 	// ── 7. Clean up the temporary image ──
 	// Docker allows removing an image tag while a container uses it (layers stay).
 	// Podman does not — skip the attempt; cleanupStaleTempImages handles it next time.
-	if EngineSupportsDirectConfigEdit() {
+	if GetEngine().Type() != EnginePodman {
 		if _, err := cli.ImageRemove(ctx, tempImageTag, image.RemoveOptions{Force: false}); err != nil {
 			common.PrintWarningMessage(fmt.Sprintf("Could not remove temp image '%s': %v (you can remove it manually)", tempImageTag, err))
 		} else {
@@ -1848,7 +1851,7 @@ func recreateContainerWithUpdatedBinds(ctx context.Context, cli *client.Client, 
 
 	// Clean up the temporary image.
 	// Docker allows removing a tag while the container uses it; Podman does not.
-	if EngineSupportsDirectConfigEdit() {
+	if GetEngine().Type() != EnginePodman {
 		if _, err := cli.ImageRemove(ctx, tempImageTag, image.RemoveOptions{Force: false}); err != nil {
 			common.PrintWarningMessage(fmt.Sprintf("Could not remove temp image '%s': %v (will be cleaned up next time)", tempImageTag, err))
 		} else {

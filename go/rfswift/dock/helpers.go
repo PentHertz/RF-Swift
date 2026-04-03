@@ -49,6 +49,37 @@ func saveJSON(path string, v interface{}) error {
 	return ioutil.WriteFile(path, data, 0644)
 }
 
+// engineLoadJSON reads a JSON file via the engine's ReadFile method and
+// unmarshals its contents into v. This works across platforms — on Linux it
+// reads from the local filesystem, on macOS/Windows it reaches into the VM.
+//
+//	in(1): ContainerEngine engine - the active engine
+//	in(2): string path - path to the JSON file (may be inside a VM)
+//	in(3): interface{} v - pointer to the value to unmarshal into
+//	out: error
+func engineLoadJSON(engine ContainerEngine, path string, v interface{}) error {
+	data, err := engine.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	return json.Unmarshal(data, v)
+}
+
+// engineSaveJSON marshals v to indented JSON and writes it via the engine's
+// WriteFile method. This works across platforms.
+//
+//	in(1): ContainerEngine engine - the active engine
+//	in(2): string path - path to the JSON file (may be inside a VM)
+//	in(3): interface{} v - value to marshal into JSON
+//	out: error
+func engineSaveJSON(engine ContainerEngine, path string, v interface{}) error {
+	data, err := json.MarshalIndent(v, "", "  ")
+	if err != nil {
+		return err
+	}
+	return engine.WriteFile(path, data)
+}
+
 // ocontains reports whether item is present in slice.
 //
 //	in(1): []string slice - the slice to search

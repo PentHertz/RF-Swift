@@ -231,6 +231,16 @@ func (e *PodmanEngine) SupportsDirectConfigEdit() bool {
 	return false
 }
 
+// ReadFile is not supported on Podman — returns an error.
+func (e *PodmanEngine) ReadFile(path string) ([]byte, error) {
+	return nil, fmt.Errorf("direct file access not supported on Podman")
+}
+
+// WriteFile is not supported on Podman — returns an error.
+func (e *PodmanEngine) WriteFile(path string, data []byte) error {
+	return fmt.Errorf("direct file access not supported on Podman")
+}
+
 // GetStorageRoot returns the Podman storage root directory.
 //
 //	out: string

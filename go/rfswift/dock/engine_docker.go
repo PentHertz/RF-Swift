@@ -193,6 +193,25 @@ func (e *DockerEngine) SupportsDirectConfigEdit() bool {
 	return runtime.GOOS == "linux"
 }
 
+// ReadFile reads a file from the Docker storage directory.
+// On Linux it uses direct filesystem access.
+//
+//	in(1): string path - absolute path to the file
+//	out: ([]byte, error)
+func (e *DockerEngine) ReadFile(path string) ([]byte, error) {
+	return os.ReadFile(path)
+}
+
+// WriteFile writes data to a file in the Docker storage directory.
+// On Linux it uses direct filesystem access.
+//
+//	in(1): string path - absolute path to the file
+//	in(2): []byte data - content to write
+//	out: error
+func (e *DockerEngine) WriteFile(path string, data []byte) error {
+	return os.WriteFile(path, data, 0644)
+}
+
 // GetStorageRoot returns the Docker storage root directory.
 //
 //	out: string

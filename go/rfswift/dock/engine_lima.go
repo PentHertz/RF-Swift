@@ -158,40 +158,70 @@ func (e *LimaEngine) StartService() error {
 	return nil
 }
 
-// RestartService stops and restarts the Lima VM.
+// RestartService restarts the Docker daemon inside the Lima VM.
+// This is faster and less disruptive than restarting the entire VM.
 func (e *LimaEngine) RestartService() error {
 	instance := e.getInstance()
 
-	common.PrintInfoMessage(fmt.Sprintf("Restarting Lima instance '%s'...", instance))
-	_ = exec.Command("limactl", "stop", instance).Run()
-	time.Sleep(2 * time.Second)
-
-	if err := rfutils.StartLimaInstance(instance); err != nil {
-		return fmt.Errorf("failed to restart Lima instance: %w", err)
+	common.PrintInfoMessage(fmt.Sprintf("Restarting Docker inside Lima instance '%s'...", instance))
+	if err := exec.Command("limactl", "shell", instance, "sudo", "systemctl", "restart", "docker").Run(); err != nil {
+		// Fall back to full VM restart if in-VM restart fails
+		common.PrintWarningMessage("In-VM Docker restart failed, falling back to full VM restart...")
+		_ = exec.Command("limactl", "stop", instance).Run()
+		time.Sleep(2 * time.Second)
+		if err := rfutils.StartLimaInstance(instance); err != nil {
+			return fmt.Errorf("failed to restart Lima instance: %w", err)
+		}
 	}
 
 	return e.waitForDocker()
 }
 
-// GetHostConfigPath returns the Docker container config path inside Lima.
-// Direct config editing is not supported through Lima.
+// GetHostConfigPath returns the Docker container config path inside the Lima VM.
 func (e *LimaEngine) GetHostConfigPath(containerID string) (string, error) {
-	return "", fmt.Errorf("direct config editing not supported through Lima — use container recreation")
+	return fmt.Sprintf("/var/lib/docker/containers/%s/hostconfig.json", containerID), nil
 }
 
-// GetConfigV2Path returns the Docker config.v2.json path inside Lima.
+// GetConfigV2Path returns the Docker config.v2.json path inside the Lima VM.
 func (e *LimaEngine) GetConfigV2Path(containerID string) (string, error) {
-	return "", fmt.Errorf("direct config editing not supported through Lima — use container recreation")
+	return fmt.Sprintf("/var/lib/docker/containers/%s/config.v2.json", containerID), nil
 }
 
-// SupportsDirectConfigEdit returns false — files are inside the VM.
+// SupportsDirectConfigEdit returns true — files are accessed via limactl shell.
 func (e *LimaEngine) SupportsDirectConfigEdit() bool {
-	return false
+	return true
 }
 
 // GetStorageRoot returns the Docker storage root (inside the VM).
 func (e *LimaEngine) GetStorageRoot() string {
 	return "/var/lib/docker (inside Lima VM)"
+}
+
+// ReadFile reads a file from inside the Lima VM via limactl shell.
+//
+//	in(1): string path - absolute path inside the VM
+//	out: ([]byte, error)
+func (e *LimaEngine) ReadFile(path string) ([]byte, error) {
+	out, err := exec.Command("limactl", "shell", e.getInstance(), "sudo", "cat", path).Output()
+	if err != nil {
+		return nil, fmt.Errorf("failed to read %s inside Lima VM: %w", path, err)
+	}
+	return out, nil
+}
+
+// WriteFile writes data to a file inside the Lima VM via limactl shell.
+//
+//	in(1): string path - absolute path inside the VM
+//	in(2): []byte data - content to write
+//	out: error
+func (e *LimaEngine) WriteFile(path string, data []byte) error {
+	cmd := exec.Command("limactl", "shell", e.getInstance(), "sudo", "sh", "-c",
+		fmt.Sprintf("cat > %s", path))
+	cmd.Stdin = strings.NewReader(string(data))
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("failed to write %s inside Lima VM: %w", path, err)
+	}
+	return nil
 }
 
 // ---------------------------------------------------------------------------

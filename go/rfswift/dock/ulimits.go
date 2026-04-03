@@ -326,7 +326,8 @@ func UpdateUlimit(containerID string, ulimitName string, ulimitValue string, add
 
 // EnableRealtimeMode enables realtime scheduling on an existing container by adding the
 // SYS_NICE capability and the realtime ulimits (rtprio=95, memlock=unlimited, nice=40).
-// The container is recreated to apply the changes.
+// On Docker, it directly edits hostconfig.json. On Podman, it falls back to container
+// recreation.
 //
 //	in(1): string containerID target container ID or name
 //	out: error nil on success, or an error describing the failure
@@ -349,42 +350,91 @@ func EnableRealtimeMode(containerID string) error {
 	common.PrintInfoMessage(fmt.Sprintf("Enabling realtime mode on container '%s'", containerName))
 	common.PrintInfoMessage("This will add: SYS_NICE capability, rtprio=95, memlock=unlimited, nice=40")
 
-	props, err := getContainerProperties(ctx, cli, containerID)
-	if err != nil {
-		common.PrintErrorMessage(fmt.Errorf("failed to get container properties: %v", err))
-		return err
-	}
-
-	caps := props["Caps"]
-	if !strings.Contains(caps, "SYS_NICE") {
-		if caps == "" {
-			caps = "SYS_NICE"
-		} else {
-			caps = caps + ",SYS_NICE"
+	if !EngineSupportsDirectConfigEdit() {
+		// Podman / non-direct-edit path: fall back to container recreation
+		common.PrintInfoMessage(fmt.Sprintf("%s does not support direct config editing — using container recreation", GetEngine().Name()))
+		props, err := getContainerProperties(ctx, cli, containerID)
+		if err != nil {
+			common.PrintErrorMessage(fmt.Errorf("failed to get container properties: %v", err))
+			return err
 		}
-		props["Caps"] = caps
+
+		caps := props["Caps"]
+		if !strings.Contains(caps, "SYS_NICE") {
+			if caps == "" {
+				caps = "SYS_NICE"
+			} else {
+				caps = caps + ",SYS_NICE"
+			}
+			props["Caps"] = caps
+		}
+
+		existingUlimits := parseUlimitsFromString(props["Ulimits"])
+		realtimeUlimits := getRealtimeUlimits()
+
+		for _, rtUlimit := range realtimeUlimits {
+			found := false
+			for i, existing := range existingUlimits {
+				if existing.Name == rtUlimit.Name {
+					existingUlimits[i] = rtUlimit
+					found = true
+					break
+				}
+			}
+			if !found {
+				existingUlimits = append(existingUlimits, rtUlimit)
+			}
+		}
+
+		props["Ulimits"] = convertUlimitsToString(existingUlimits)
+
+		err = recreateContainerWithProperties(ctx, cli, containerID, props)
+		if err != nil {
+			return err
+		}
+
+		common.PrintSuccessMessage("Realtime mode enabled successfully!")
+		common.PrintInfoMessage("You can now use chrt and nice commands inside the container for SDR operations")
+		common.PrintInfoMessage("Test with: ulimit -r (should show 95)")
+		return nil
 	}
 
-	existingUlimits := parseUlimitsFromString(props["Ulimits"])
+	// Docker path: direct hostconfig.json edit
 	realtimeUlimits := getRealtimeUlimits()
-
-	for _, rtUlimit := range realtimeUlimits {
-		found := false
-		for i, existing := range existingUlimits {
-			if existing.Name == rtUlimit.Name {
-				existingUlimits[i] = rtUlimit
-				found = true
+	err = directEditContainer(ctx, cli, containerID, containerName, func(hostConfig *HostConfigFull, _ map[string]interface{}) (bool, error) {
+		// Add SYS_NICE capability if not present
+		hasNice := false
+		for _, cap := range hostConfig.CapAdd {
+			if strings.TrimSpace(cap) == "SYS_NICE" {
+				hasNice = true
 				break
 			}
 		}
-		if !found {
-			existingUlimits = append(existingUlimits, rtUlimit)
+		if !hasNice {
+			hostConfig.CapAdd = append(hostConfig.CapAdd, "SYS_NICE")
 		}
-	}
 
-	props["Ulimits"] = convertUlimitsToString(existingUlimits)
-
-	err = recreateContainerWithProperties(ctx, cli, containerID, props)
+		// Add/update realtime ulimits
+		for _, rtUlimit := range realtimeUlimits {
+			found := false
+			for i, existing := range hostConfig.Ulimits {
+				if existing.Name == rtUlimit.Name {
+					hostConfig.Ulimits[i].Soft = rtUlimit.Soft
+					hostConfig.Ulimits[i].Hard = rtUlimit.Hard
+					found = true
+					break
+				}
+			}
+			if !found {
+				hostConfig.Ulimits = append(hostConfig.Ulimits, Ulimit{
+					Name: rtUlimit.Name,
+					Soft: rtUlimit.Soft,
+					Hard: rtUlimit.Hard,
+				})
+			}
+		}
+		return true, nil
+	})
 	if err != nil {
 		return err
 	}
@@ -397,7 +447,8 @@ func EnableRealtimeMode(containerID string) error {
 
 // DisableRealtimeMode disables realtime scheduling on an existing container by removing the
 // SYS_NICE capability and the realtime ulimits (rtprio, memlock, nice).
-// The container is recreated to apply the changes.
+// On Docker, it directly edits hostconfig.json. On Podman, it falls back to container
+// recreation.
 //
 //	in(1): string containerID target container ID or name
 //	out: error nil on success, or an error describing the failure
@@ -419,35 +470,69 @@ func DisableRealtimeMode(containerID string) error {
 
 	common.PrintInfoMessage(fmt.Sprintf("Disabling realtime mode on container '%s'", containerName))
 
-	props, err := getContainerProperties(ctx, cli, containerID)
-	if err != nil {
-		common.PrintErrorMessage(fmt.Errorf("failed to get container properties: %v", err))
-		return err
-	}
-
-	caps := strings.Split(props["Caps"], ",")
-	newCaps := []string{}
-	for _, cap := range caps {
-		cap = strings.TrimSpace(cap)
-		if cap != "SYS_NICE" && cap != "" {
-			newCaps = append(newCaps, cap)
+	if !EngineSupportsDirectConfigEdit() {
+		// Podman / non-direct-edit path: fall back to container recreation
+		common.PrintInfoMessage(fmt.Sprintf("%s does not support direct config editing — using container recreation", GetEngine().Name()))
+		props, err := getContainerProperties(ctx, cli, containerID)
+		if err != nil {
+			common.PrintErrorMessage(fmt.Errorf("failed to get container properties: %v", err))
+			return err
 		}
-	}
-	props["Caps"] = strings.Join(newCaps, ",")
 
-	existingUlimits := parseUlimitsFromString(props["Ulimits"])
+		caps := strings.Split(props["Caps"], ",")
+		newCaps := []string{}
+		for _, cap := range caps {
+			cap = strings.TrimSpace(cap)
+			if cap != "SYS_NICE" && cap != "" {
+				newCaps = append(newCaps, cap)
+			}
+		}
+		props["Caps"] = strings.Join(newCaps, ",")
+
+		existingUlimits := parseUlimitsFromString(props["Ulimits"])
+		realtimeNames := map[string]bool{"rtprio": true, "memlock": true, "nice": true}
+
+		newUlimits := []*container.Ulimit{}
+		for _, ul := range existingUlimits {
+			if !realtimeNames[ul.Name] {
+				newUlimits = append(newUlimits, ul)
+			}
+		}
+
+		props["Ulimits"] = convertUlimitsToString(newUlimits)
+
+		err = recreateContainerWithProperties(ctx, cli, containerID, props)
+		if err != nil {
+			return err
+		}
+
+		common.PrintSuccessMessage("Realtime mode disabled successfully!")
+		return nil
+	}
+
+	// Docker path: direct hostconfig.json edit
 	realtimeNames := map[string]bool{"rtprio": true, "memlock": true, "nice": true}
-
-	newUlimits := []*container.Ulimit{}
-	for _, ul := range existingUlimits {
-		if !realtimeNames[ul.Name] {
-			newUlimits = append(newUlimits, ul)
+	err = directEditContainer(ctx, cli, containerID, containerName, func(hostConfig *HostConfigFull, _ map[string]interface{}) (bool, error) {
+		// Remove SYS_NICE capability
+		newCaps := []string{}
+		for _, cap := range hostConfig.CapAdd {
+			if strings.TrimSpace(cap) != "SYS_NICE" {
+				newCaps = append(newCaps, cap)
+			}
 		}
-	}
+		hostConfig.CapAdd = newCaps
 
-	props["Ulimits"] = convertUlimitsToString(newUlimits)
+		// Remove realtime ulimits
+		newUlimits := []Ulimit{}
+		for _, ul := range hostConfig.Ulimits {
+			if !realtimeNames[ul.Name] {
+				newUlimits = append(newUlimits, ul)
+			}
+		}
+		hostConfig.Ulimits = newUlimits
 
-	err = recreateContainerWithProperties(ctx, cli, containerID, props)
+		return true, nil
+	})
 	if err != nil {
 		return err
 	}

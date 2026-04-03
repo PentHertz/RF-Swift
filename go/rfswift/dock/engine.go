@@ -54,8 +54,14 @@ type ContainerEngine interface {
 	GetConfigV2Path(containerID string) (string, error)
 
 	// Engine capabilities
-	SupportsDirectConfigEdit() bool // Docker: yes, Podman: no
+	SupportsDirectConfigEdit() bool // Docker/Lima: yes, Podman: no
 	GetStorageRoot() string
+
+	// File I/O — platform-aware read/write for container config files.
+	// On Linux, these use direct filesystem access. On macOS/Windows (Docker Desktop),
+	// they reach into the VM via nsenter. On Lima, they use limactl shell.
+	ReadFile(path string) ([]byte, error)
+	WriteFile(path string, data []byte) error
 }
 
 // ---------------------------------------------------------------------------
