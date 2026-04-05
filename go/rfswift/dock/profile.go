@@ -6,8 +6,11 @@
 package dock
 
 import (
+	"bufio"
+	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"os/user"
 	"path/filepath"
 	"runtime"
@@ -191,10 +194,17 @@ func GetProfileByName(name string) (*Profile, error) {
 }
 
 // SaveProfile saves a profile as a YAML file in the profiles directory.
+// If a permission error occurs, the user is prompted to retry with elevated privileges.
 func SaveProfile(p *Profile) error {
 	dir := ProfilesDirByPlatform()
 	if err := os.MkdirAll(dir, 0755); err != nil {
-		return fmt.Errorf("failed to create profiles directory: %w", err)
+		if !errors.Is(err, os.ErrPermission) {
+			return fmt.Errorf("failed to create profiles directory: %w", err)
+		}
+		if !promptProfileElevation("create profiles directory") {
+			return fmt.Errorf("cannot create profiles directory %s: permission denied", dir)
+		}
+		return writeProfileElevated(p, dir)
 	}
 
 	data, err := yaml.Marshal(p)
@@ -206,9 +216,57 @@ func SaveProfile(p *Profile) error {
 	path := filepath.Join(dir, filename)
 
 	if err := os.WriteFile(path, data, 0644); err != nil {
-		return fmt.Errorf("failed to write profile: %w", err)
+		if !errors.Is(err, os.ErrPermission) {
+			return fmt.Errorf("failed to write profile: %w", err)
+		}
+		if !promptProfileElevation("write profile file") {
+			return fmt.Errorf("cannot write profile %s: permission denied", path)
+		}
+		return writeProfileElevated(p, "")
 	}
 
+	return nil
+}
+
+// promptProfileElevation asks the user whether to retry with sudo.
+func promptProfileElevation(action string) bool {
+	fmt.Printf("\033[38;5;208mPermission denied to %s. Retry with elevated privileges (sudo)? (y/n)\033[0m ", action)
+	reader := bufio.NewReader(os.Stdin)
+	response, _ := reader.ReadString('\n')
+	return strings.ToLower(strings.TrimSpace(response)) == "y"
+}
+
+// writeProfileElevated writes a profile file using sudo.
+func writeProfileElevated(p *Profile, dir string) error {
+	if runtime.GOOS == "windows" {
+		return fmt.Errorf("elevated write not supported on Windows; please run as Administrator")
+	}
+	if dir != "" {
+		cmd := exec.Command("sudo", "mkdir", "-p", dir)
+		cmd.Stdin = os.Stdin
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		if err := cmd.Run(); err != nil {
+			return fmt.Errorf("failed to create directory with sudo: %w", err)
+		}
+	}
+
+	data, err := yaml.Marshal(p)
+	if err != nil {
+		return fmt.Errorf("failed to marshal profile: %w", err)
+	}
+
+	profileDir := ProfilesDirByPlatform()
+	filename := profileFilename(p.Name)
+	path := filepath.Join(profileDir, filename)
+
+	cmd := exec.Command("sudo", "tee", path)
+	cmd.Stdin = strings.NewReader(string(data))
+	cmd.Stdout = nil
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("failed to write profile with sudo: %w", err)
+	}
 	return nil
 }
 
@@ -233,12 +291,30 @@ func DeleteProfile(name string) error {
 }
 
 // InitDefaultProfiles writes the default profile YAML files to the profiles directory.
-// Existing files are not overwritten unless force is true.
+// Existing files are not overwritten unless force is true. If a permission error
+// occurs, the user is prompted to retry with elevated privileges.
 func InitDefaultProfiles(force bool) (created int, skipped int) {
 	dir := ProfilesDirByPlatform()
+	elevated := false
+
 	if err := os.MkdirAll(dir, 0755); err != nil {
-		common.PrintErrorMessage(fmt.Errorf("failed to create profiles directory: %w", err))
-		return 0, 0
+		if !errors.Is(err, os.ErrPermission) {
+			common.PrintErrorMessage(fmt.Errorf("failed to create profiles directory: %w", err))
+			return 0, 0
+		}
+		if !promptProfileElevation("create profiles directory") {
+			common.PrintErrorMessage(fmt.Errorf("cannot create profiles directory %s: permission denied", dir))
+			return 0, 0
+		}
+		cmd := exec.Command("sudo", "mkdir", "-p", dir)
+		cmd.Stdin = os.Stdin
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		if err := cmd.Run(); err != nil {
+			common.PrintErrorMessage(fmt.Errorf("failed to create directory with sudo: %w", err))
+			return 0, 0
+		}
+		elevated = true
 	}
 
 	for _, p := range defaultProfiles {
@@ -258,9 +334,37 @@ func InitDefaultProfiles(force bool) (created int, skipped int) {
 			continue
 		}
 
-		if err := os.WriteFile(path, data, 0644); err != nil {
-			common.PrintWarningMessage(fmt.Sprintf("Failed to write profile '%s': %v", p.Name, err))
-			continue
+		if elevated {
+			cmd := exec.Command("sudo", "tee", path)
+			cmd.Stdin = strings.NewReader(string(data))
+			cmd.Stdout = nil
+			cmd.Stderr = os.Stderr
+			if err := cmd.Run(); err != nil {
+				common.PrintWarningMessage(fmt.Sprintf("Failed to write profile '%s' with sudo: %v", p.Name, err))
+				continue
+			}
+		} else {
+			if err := os.WriteFile(path, data, 0644); err != nil {
+				if errors.Is(err, os.ErrPermission) && !elevated {
+					if promptProfileElevation(fmt.Sprintf("write profile '%s'", p.Name)) {
+						elevated = true
+						cmd := exec.Command("sudo", "tee", path)
+						cmd.Stdin = strings.NewReader(string(data))
+						cmd.Stdout = nil
+						cmd.Stderr = os.Stderr
+						if err := cmd.Run(); err != nil {
+							common.PrintWarningMessage(fmt.Sprintf("Failed to write profile '%s' with sudo: %v", p.Name, err))
+							continue
+						}
+					} else {
+						common.PrintWarningMessage(fmt.Sprintf("Failed to write profile '%s': permission denied", p.Name))
+						continue
+					}
+				} else {
+					common.PrintWarningMessage(fmt.Sprintf("Failed to write profile '%s': %v", p.Name, err))
+					continue
+				}
+			}
 		}
 		created++
 	}

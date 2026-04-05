@@ -2,8 +2,10 @@ package rfutils
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -54,17 +56,16 @@ func printOrange(message string) {
 	fmt.Printf("%s%s%s\n", orangeColor, message, resetColor)
 }
 
-// getDefaultDevices returns a comma-separated list of default device mappings
+// GetDefaultDevices returns a comma-separated list of default device mappings
 // appropriate for the current operating system.
 //
 //	out: string platform-specific comma-separated device mapping string
-func getDefaultDevices() string {
+func GetDefaultDevices() string {
 	switch runtime.GOOS {
 	case "darwin":
-		// When running inside a Lima VM, USB devices are available via /dev/bus/usb
-		// Use 'rfswift macusb attach' to hot-plug USB devices into the VM
-		// /dev/vhci is needed for Bluetooth Virtual HCI (btusb dongles + btvirt)
-		return "/dev/bus/usb:/dev/bus/usb,/dev/snd:/dev/snd,/dev/vhci:/dev/vhci,/dev/console:/dev/console"
+		// On macOS (Docker/OrbStack), /dev/snd and /dev/vhci do not exist.
+		// USB devices are available via Lima VM: use 'rfswift macusb attach' to hot-plug.
+		return "/dev/bus/usb:/dev/bus/usb,/dev/console:/dev/console"
 	case "windows":
 		// WSL2/Docker Desktop - fewer device mappings available
 		return "/dev/bus/usb:/dev/bus/usb,/dev/snd:/dev/snd,/dev/console:/dev/console,/dev/vcsa:/dev/vcsa,/dev/tty:/dev/tty,/dev/tty0:/dev/tty0,/dev/tty1:/dev/tty1,/dev/tty2:/dev/tty2,/dev/uinput:/dev/uinput"
@@ -254,7 +255,7 @@ func ReadOrCreateConfig(filename string) (*Config, error) {
 	}
 	if config.Container.Devices == "[missing]" {
 		printOrange("Devices field is missing in the config file.")
-		config.Container.Devices = promptForValue("Devices", getDefaultDevices())
+		config.Container.Devices = promptForValue("Devices", GetDefaultDevices())
 	}
 	if config.Container.Privileged == "[missing]" {
 		printOrange("Privileged value is missing in the config file.")
@@ -270,7 +271,7 @@ func ReadOrCreateConfig(filename string) (*Config, error) {
 	}
 	if config.Container.Cgroups == "[missing]" {
 		printOrange("Cgroup field is missing in the config file.")
-		config.Container.Seccomp = promptForValue("Cgroups", "c *:* rmw")
+		config.Container.Cgroups = promptForValue("Cgroups", "c 189:* rwm,c 166:* rwm,c 188:* rwm")
 	}
 
 	return config, nil
@@ -284,7 +285,7 @@ func ReadOrCreateConfig(filename string) (*Config, error) {
 //	out: error non-nil if the directory could not be created or the file could not be written
 func createDefaultConfig(filename string) error {
 	// Use platform-specific default devices
-	defaultDevices := getDefaultDevices()
+	defaultDevices := GetDefaultDevices()
 
 	content := fmt.Sprintf(`[general]
 imagename = myrfswift:latest
@@ -297,7 +298,7 @@ network = host
 exposedports =
 portbindings =
 x11forward = /tmp/.X11-unix:/tmp/.X11-unix
-xdisplay = "DISPLAY=:0"
+xdisplay = DISPLAY=:0
 extrahost = pluto.local:192.168.2.1
 extraenv =
 devices = %s
@@ -319,10 +320,60 @@ ssl =
 
 	dir := filepath.Dir(filename)
 	if err := os.MkdirAll(dir, os.ModePerm); err != nil {
-		return fmt.Errorf("failed to create directory %s: %w", dir, err)
+		if !errors.Is(err, os.ErrPermission) {
+			return fmt.Errorf("failed to create directory %s: %w", dir, err)
+		}
+		// Permission denied: try with elevated privileges
+		if ok := promptForElevation("create config directory"); !ok {
+			return fmt.Errorf("cannot create directory %s: permission denied", dir)
+		}
+		return writeFileElevated(filename, []byte(content), dir)
 	}
 
-	return os.WriteFile(filename, []byte(content), 0644)
+	if err := os.WriteFile(filename, []byte(content), 0644); err != nil {
+		if !errors.Is(err, os.ErrPermission) {
+			return err
+		}
+		if ok := promptForElevation("write config file"); !ok {
+			return fmt.Errorf("cannot write %s: permission denied", filename)
+		}
+		return writeFileElevated(filename, []byte(content), "")
+	}
+	return nil
+}
+
+// promptForElevation asks the user whether to retry an operation with elevated
+// privileges and returns true if the user agrees.
+func promptForElevation(action string) bool {
+	printOrange(fmt.Sprintf("Permission denied to %s. Retry with elevated privileges (sudo)? (y/n)", action))
+	reader := bufio.NewReader(os.Stdin)
+	response, _ := reader.ReadString('\n')
+	return strings.ToLower(strings.TrimSpace(response)) == "y"
+}
+
+// writeFileElevated writes content to a file using sudo. If dir is non-empty,
+// the directory is created first.
+func writeFileElevated(filename string, content []byte, dir string) error {
+	if runtime.GOOS == "windows" {
+		return fmt.Errorf("elevated write not supported on Windows; please run as Administrator")
+	}
+	if dir != "" {
+		cmd := exec.Command("sudo", "mkdir", "-p", dir)
+		cmd.Stdin = os.Stdin
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		if err := cmd.Run(); err != nil {
+			return fmt.Errorf("failed to create directory with sudo: %w", err)
+		}
+	}
+	cmd := exec.Command("sudo", "tee", filename)
+	cmd.Stdin = strings.NewReader(string(content))
+	cmd.Stdout = nil // suppress tee's stdout echo
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("failed to write file with sudo: %w", err)
+	}
+	return nil
 }
 
 // promptForValue displays a colored prompt to the user and reads a single line
