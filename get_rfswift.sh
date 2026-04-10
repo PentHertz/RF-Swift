@@ -980,12 +980,7 @@ offer_lima_for_usb_get_rfswift() {
     fi
   else
     if prompt_yes_no "   Would you like to install Lima for USB passthrough?" "n"; then
-      if command_exists brew; then
-        brew install lima qemu
-        color_echo "green" "   Lima installed. Use 'rfswift --engine lima' when you need USB devices."
-      else
-        color_echo "red" "   Homebrew is required. Install it first: https://brew.sh/"
-      fi
+      install_lima_fork
     fi
   fi
 }
@@ -1087,15 +1082,7 @@ check_container_engine() {
       if [ "$(uname -s)" = "Darwin" ]; then
         # Lima option on macOS
         color_echo "blue" "🦙 Installing Lima..."
-        if command_exists brew; then
-          brew install lima qemu
-          color_echo "green" "✅ Lima installed."
-          color_echo "cyan" "   RF Swift will auto-create a QEMU VM on first 'rfswift run'."
-          color_echo "cyan" "   Or create one manually: limactl create --name rfswift lima/rfswift.yaml"
-        else
-          color_echo "red" "❌ Homebrew is required. Install it first: https://brew.sh/"
-          return 1
-        fi
+        install_lima_fork
       else
         color_echo "yellow" "⚠️  Container engine installation skipped."
         color_echo "yellow" "   You will need Docker or Podman before using RF-Swift."
@@ -1133,6 +1120,65 @@ check_container_engine() {
 # ═══════════════════════════════════════════════════════════════════════════════
 # Podman Installation
 # ═══════════════════════════════════════════════════════════════════════════════
+
+# Install Lima from PentHertz fork (with USB passthrough support) + QEMU
+LIMA_VERSION="2.1.1"
+LIMA_RELEASE_BASE="https://github.com/PentHertz/lima/releases/download/v${LIMA_VERSION}"
+
+install_lima_fork() {
+  if [ "$(uname -s)" != "Darwin" ]; then
+    color_echo "yellow" "Lima is only needed on macOS for USB passthrough."
+    return 0
+  fi
+
+  if ! command_exists brew; then
+    color_echo "red" "Homebrew is required to install QEMU."
+    color_echo "yellow" "Install Homebrew: https://brew.sh/"
+    return 1
+  fi
+
+  # Install QEMU via Homebrew
+  if ! command_exists qemu-img; then
+    color_echo "blue" "Installing QEMU via Homebrew..."
+    brew install qemu
+  fi
+
+  # Remove Homebrew Lima if present (we use the PentHertz fork)
+  if brew list lima &>/dev/null; then
+    color_echo "yellow" "Removing Homebrew Lima in favor of PentHertz fork (USB support)..."
+    brew uninstall lima
+  fi
+
+  local arch
+  arch=$(uname -m)
+  case "$arch" in
+    arm64|aarch64) arch="arm64" ;;
+    x86_64|amd64)  arch="x86_64" ;;
+    *)
+      color_echo "red" "Unsupported architecture: $arch"
+      return 1
+      ;;
+  esac
+
+  local tarball="lima-${LIMA_VERSION}-Darwin-${arch}.tar.gz"
+  local url="${LIMA_RELEASE_BASE}/${tarball}"
+  local tmp="/tmp/${tarball}"
+
+  color_echo "blue" "Installing Lima ${LIMA_VERSION} (PentHertz fork with USB support)..."
+  curl -fsSL "$url" -o "$tmp"
+  sudo tar xz -C /usr/local -f "$tmp"
+  rm -f "$tmp"
+
+  if ! command_exists limactl; then
+    color_echo "red" "Lima installation failed — limactl not found in PATH."
+    color_echo "yellow" "Ensure /usr/local/bin is in your PATH."
+    return 1
+  fi
+
+  color_echo "green" "✅ Lima ${LIMA_VERSION} (PentHertz fork) and QEMU installed."
+  limactl --version
+  color_echo "cyan" "   Use 'rfswift --engine lima' when you need USB devices."
+}
 
 install_podman() {
   color_echo "blue" "🦭 Installing Podman..."
@@ -2331,7 +2377,7 @@ main() {
           color_echo "cyan" "   Or let RF Swift auto-create it on first 'rfswift run' when no Docker/Podman is found."
         fi
       else
-        color_echo "yellow" "   Lima is not installed. Install with: brew install lima qemu"
+        color_echo "yellow" "   Lima is not installed. Run the installer or see https://github.com/PentHertz/lima/releases"
         color_echo "cyan" "   After installing, RF Swift can auto-manage a QEMU VM with USB passthrough."
         color_echo "cyan" "   USB commands: rfswift macusb list | attach | detach | status"
       fi

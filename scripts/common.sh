@@ -1264,15 +1264,20 @@ is_lima_instance_running() {
     limactl list --json 2>/dev/null | grep "\"name\":\"${instance}\"" | grep -q "\"status\":\"Running\""
 }
 
-# Install Lima and QEMU on macOS via Homebrew
+# Lima version and release URL (PentHertz fork with USB passthrough support)
+LIMA_VERSION="2.1.1"
+LIMA_RELEASE_BASE="https://github.com/PentHertz/lima/releases/download/v${LIMA_VERSION}"
+
+# Install the PentHertz fork of Lima (with usb: true support) and QEMU on macOS
 install_lima() {
     if [[ "$(uname -s)" != "Darwin" ]]; then
         echo -e "${YELLOW}Lima is only needed on macOS for USB passthrough.${NC}"
         return 0
     fi
 
+    # QEMU still comes from Homebrew
     if ! command_exists brew; then
-        echo -e "${RED}Homebrew is required to install Lima.${NC}"
+        echo -e "${RED}Homebrew is required to install QEMU.${NC}"
         echo -e "${YELLOW}Install Homebrew: /bin/bash -c \"\$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)\"${NC}"
         return 1
     fi
@@ -1282,9 +1287,47 @@ install_lima() {
         return 0
     fi
 
-    echo -e "${BLUE}Installing Lima and QEMU for USB passthrough support...${NC}"
-    brew install lima qemu
-    echo -e "${GREEN}Lima and QEMU installed successfully.${NC}"
+    # Install QEMU via Homebrew
+    if ! command_exists qemu-img; then
+        echo -e "${BLUE}Installing QEMU via Homebrew...${NC}"
+        brew install qemu
+    fi
+
+    # Remove Homebrew Lima if present (we use the PentHertz fork)
+    if brew list lima &>/dev/null; then
+        echo -e "${YELLOW}Removing Homebrew Lima in favor of PentHertz fork (USB support)...${NC}"
+        brew uninstall lima
+    fi
+
+    # Install PentHertz Lima from GitHub release
+    local arch
+    arch=$(uname -m)
+    case "$arch" in
+        arm64|aarch64) arch="arm64" ;;
+        x86_64|amd64)  arch="x86_64" ;;
+        *)
+            echo -e "${RED}Unsupported architecture: $arch${NC}"
+            return 1
+            ;;
+    esac
+
+    local tarball="lima-${LIMA_VERSION}-Darwin-${arch}.tar.gz"
+    local url="${LIMA_RELEASE_BASE}/${tarball}"
+    local tmp="/tmp/${tarball}"
+
+    echo -e "${BLUE}Installing Lima ${LIMA_VERSION} (PentHertz fork with USB support)...${NC}"
+    curl -fsSL "$url" -o "$tmp"
+    sudo tar xz -C /usr/local -f "$tmp"
+    rm -f "$tmp"
+
+    if ! command_exists limactl; then
+        echo -e "${RED}Lima installation failed — limactl not found in PATH.${NC}"
+        echo -e "${YELLOW}Ensure /usr/local/bin is in your PATH.${NC}"
+        return 1
+    fi
+
+    echo -e "${GREEN}Lima ${LIMA_VERSION} (PentHertz fork) and QEMU installed successfully.${NC}"
+    limactl --version
 }
 
 # Offer to update the Lima template if a newer one ships with the installation.
@@ -1445,6 +1488,7 @@ setup_lima_instance() {
         local tmp_template=$(mktemp /tmp/rfswift-lima-XXXXXX.yaml)
         cat > "$tmp_template" << 'LIMAEOF'
 vmType: qemu
+usb: true
 cpus: 4
 memory: "8GiB"
 disk: "100GiB"

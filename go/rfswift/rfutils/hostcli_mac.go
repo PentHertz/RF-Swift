@@ -239,6 +239,24 @@ func AttachUSBToLima(vendorID, productID, instance string) error {
 		return fmt.Errorf("failed to attach USB device %s:%s: %w", vendorID, productID, err)
 	}
 
+	// If no USB bus exists, add a qemu-xhci controller and retry
+	if result != "" && strings.Contains(result, "No 'usb-bus' bus found") {
+		addBusCmd := "device_add qemu-xhci,id=usb-bus"
+		busResult, busErr := qmpHumanCommand(sockPath, addBusCmd)
+		if busErr != nil {
+			return fmt.Errorf("failed to add USB controller: %w (ensure Lima YAML has 'usb: true')", busErr)
+		}
+		if busResult != "" && strings.Contains(strings.ToLower(busResult), "error") {
+			return fmt.Errorf("failed to add USB controller: %s (ensure Lima YAML has 'usb: true')", busResult)
+		}
+
+		// Retry the device attach now that the USB bus exists
+		result, err = qmpHumanCommand(sockPath, hmpCmd)
+		if err != nil {
+			return fmt.Errorf("failed to attach USB device %s:%s after adding USB controller: %w", vendorID, productID, err)
+		}
+	}
+
 	if result != "" && strings.Contains(strings.ToLower(result), "error") {
 		return fmt.Errorf("QMP device_add failed: %s", result)
 	}

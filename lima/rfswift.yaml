@@ -12,10 +12,13 @@
 #   rfswift macusb status            # Check setup status
 #
 # IMPORTANT: vmType must be "qemu" for USB passthrough (not "vz")
-# Prerequisites: brew install lima qemu
+# Prerequisites: QEMU (brew install qemu) + Lima from https://github.com/PentHertz/lima/releases
 
 # Use QEMU backend - required for USB passthrough via QMP
 vmType: qemu
+
+# Enable USB controller (qemu-xhci) for USB device passthrough without requiring a display
+usb: true
 
 # VM resources - adjust as needed for your SDR workloads
 cpus: 4

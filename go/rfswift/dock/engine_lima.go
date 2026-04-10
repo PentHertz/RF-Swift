@@ -281,6 +281,7 @@ func findLimaTemplate() string {
 func createLimaInstanceInline(instance string) error {
 	template := `# RF Swift Lima VM - auto-generated
 vmType: qemu
+usb: true
 cpus: 4
 memory: "8GiB"
 disk: "100GiB"

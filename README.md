@@ -114,8 +114,10 @@ https://github.com/user-attachments/assets/14b6d50f-5250-420e-94e4-474991113372
 Docker Desktop and Podman on macOS **cannot forward USB devices** (SDR dongles, HackRF, RTL-SDR, etc.) into containers. RF Swift solves this with **Lima**, which runs a QEMU VM with USB hot-plug support:
 
 ```bash
-# Install Lima
-brew install lima
+# Install Lima (PentHertz fork with USB passthrough support) + QEMU
+brew install qemu
+curl -fsSL https://github.com/PentHertz/lima/releases/download/v2.1.1/lima-2.1.1-Darwin-$(uname -m).tar.gz -o /tmp/lima.tar.gz
+sudo tar xz -C /usr/local -f /tmp/lima.tar.gz
 
 # Attach your SDR dongle to the Lima VM
 rfswift macusb list                              # see host USB devices
