@@ -323,8 +323,10 @@ provision:
       while ! docker info >/dev/null 2>&1; do sleep 1; done
       apt-get update -qq
       apt-get install -y -qq usbutils libusb-1.0-0-dev libhidapi-libusb0 libhidapi-hidraw0 libftdi1-dev udev bluez bluetooth
+      # ── Kernel modules for RF devices ──────────────────────────
+      apt-get install -y -qq linux-modules-extra-$(uname -r)
       # Load USB serial and Bluetooth modules
-      for mod in cdc_acm cp210x ftdi_sio ch341 pl2303 bluetooth btusb rfcomm vhci-hcd; do modprobe "$mod" 2>/dev/null || true; done
+      for mod in usbcore usb_storage cdc_acm cp210x ftdi_sio ch341 pl2303 bluetooth btusb rfcomm vhci-hcd; do modprobe "$mod" 2>/dev/null || true; done
       cat > /etc/modules-load.d/rfswift.conf << 'MODULES'
       cdc_acm
       cp210x

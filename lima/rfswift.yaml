@@ -86,6 +86,8 @@ provision:
         bluetooth
 
       # ── Kernel modules for RF devices ──────────────────────────
+      apt-get install -y -qq linux-modules-extra-$(uname -r)
+      
       # Load common modules needed by SDR/RF hardware and Bluetooth
       for mod in usbcore usb_storage cdc_acm cp210x ftdi_sio ch341 pl2303 bluetooth btusb rfcomm vhci-hcd; do
         modprobe "$mod" 2>/dev/null || true
