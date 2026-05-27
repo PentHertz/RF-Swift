@@ -1166,8 +1166,12 @@ install_lima_fork() {
 
   color_echo "blue" "Installing Lima ${LIMA_VERSION} (PentHertz fork with USB support)..."
   curl -fsSL "$url" -o "$tmp"
-  sudo tar xz -C /usr/local -f "$tmp"
+  mkdir /tmp/lima
+  sudo tar xz -C /tmp/lima -f "$tmp"
+  rsync -a /tmp/lima/* /usr/local
+  #sudo tar xz -C /usr/local -f "$tmp"
   rm -f "$tmp"
+  rm -r /tmp/lima
 
   if ! command_exists limactl; then
     color_echo "red" "Lima installation failed — limactl not found in PATH."
