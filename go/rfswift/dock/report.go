@@ -18,7 +18,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/docker/docker/client"
+	"github.com/moby/moby/client"
 	common "penthertz/rfswift/common"
 )
 
@@ -102,7 +102,7 @@ func GenerateReport(containerName string, format ReportFormat, outputPath string
 	}
 
 	// Get container inspect for creation time and state
-	containerJSON, err := cli.ContainerInspect(ctx, containerID)
+	containerJSON, err := inspectContainer(ctx, cli, containerID)
 	if err != nil {
 		return "", fmt.Errorf("failed to inspect container: %w", err)
 	}
@@ -129,7 +129,7 @@ func GenerateReport(containerName string, format ReportFormat, outputPath string
 		CreatedAt:     created.Format("2006-01-02 15:04:05"),
 		GeneratedAt:   time.Now().Format("2006-01-02 15:04:05"),
 		Duration:      duration,
-		State:         containerJSON.State.Status,
+		State:         string(containerJSON.State.Status),
 
 		NetworkMode:  props["NetworkMode"],
 		Privileged:   props["Privileged"],
@@ -376,7 +376,7 @@ func formatSize(bytes int64) string {
 
 // resolveContainerIDForReport finds a container by name and returns its full ID.
 func resolveContainerIDForReport(ctx context.Context, cli *client.Client, name string) string {
-	containerJSON, err := cli.ContainerInspect(ctx, name)
+	containerJSON, err := inspectContainer(ctx, cli, name)
 	if err != nil {
 		return ""
 	}

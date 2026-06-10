@@ -14,7 +14,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/docker/docker/api/types/image"
+	"github.com/moby/moby/client"
 	common "penthertz/rfswift/common"
 	rfutils "penthertz/rfswift/rfutils"
 	"penthertz/rfswift/tui"
@@ -144,7 +144,7 @@ func checkContainerService(report *DoctorReport) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	ver, err := cli.ServerVersion(ctx)
+	ver, err := cli.ServerVersion(ctx, client.ServerVersionOptions{})
 	if err == nil {
 		report.add(CheckResult{"Engine version", "ok",
 			fmt.Sprintf("%s (API %s)", ver.Version, ver.APIVersion)})
@@ -217,14 +217,14 @@ func checkContainerImages(report *DoctorReport) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	images, err := cli.ImageList(ctx, image.ListOptions{All: true})
+	imagesRes, err := cli.ImageList(ctx, client.ImageListOptions{All: true})
 	if err != nil {
 		report.add(CheckResult{"RF Swift images", "warn", "Could not list images"})
 		return
 	}
 
 	rfswiftCount := 0
-	for _, img := range images {
+	for _, img := range imagesRes.Items {
 		for _, tag := range img.RepoTags {
 			if strings.Contains(tag, "rfswift") || strings.Contains(tag, "myrfswift") {
 				rfswiftCount++

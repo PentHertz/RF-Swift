@@ -14,7 +14,7 @@ import (
 	"time"
 
 	"github.com/charmbracelet/lipgloss"
-	"github.com/docker/docker/client"
+	"github.com/moby/moby/client"
 	common "penthertz/rfswift/common"
 	"penthertz/rfswift/tui"
 )
@@ -30,8 +30,9 @@ const (
 )
 
 // ContainerEngine defines the interface that both Docker and Podman implement.
-// Since Podman exposes a Docker-compatible API, the Docker Go SDK is used for
-// both backends — the engine layer handles socket routing and platform quirks.
+// Since Podman exposes a Docker-compatible API, the moby Go client
+// (github.com/moby/moby/client) is used for both backends — the engine layer
+// handles socket routing and platform quirks.
 type ContainerEngine interface {
 	// Identity
 	Name() string
@@ -41,7 +42,7 @@ type ContainerEngine interface {
 	IsAvailable() bool
 	IsServiceRunning() bool
 
-	// Client management — returns a Docker-compatible SDK client
+	// Client management — returns a Docker-compatible moby client
 	GetClient() (*client.Client, error)
 	GetSocketPath() string
 
@@ -124,7 +125,7 @@ func GetEngine() ContainerEngine {
 	activeEngine = detectEngine()
 
 	// Transparent socket routing: set DOCKER_HOST so every existing
-	// client.NewClientWithOpts(client.FromEnv, ...) call picks up the socket
+	// client.New(client.FromEnv, ...) call picks up the socket
 	// without requiring changes in rfdock.go.
 	if activeEngine.Type() == EnginePodman || activeEngine.Type() == EngineLima {
 		socketPath := activeEngine.GetSocketPath()
@@ -136,10 +137,10 @@ func GetEngine() ContainerEngine {
 	return activeEngine
 }
 
-// NewEngineClient creates a Docker-compatible SDK client routed through the
+// NewEngineClient creates a Docker-compatible moby client routed through the
 // active engine. If the engine service is not running, it attempts to start it.
 // Recommended replacement for direct
-// client.NewClientWithOpts(client.FromEnv, ...) calls.
+// client.New(client.FromEnv, ...) calls.
 //
 //	out: (*client.Client, error)
 func NewEngineClient() (*client.Client, error) {
@@ -382,7 +383,7 @@ func socketFileExists(path string) bool {
 func pingClient(cli *client.Client) bool {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
-	_, err := cli.Ping(ctx)
+	_, err := cli.Ping(ctx, client.PingOptions{})
 	return err == nil
 }
 

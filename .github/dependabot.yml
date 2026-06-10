@@ -1,0 +1,24 @@
+# Keeps the Go module graph and the SHA-pinned GitHub Actions current,
+# so security fixes (e.g. moby client/api patches) arrive as reviewable
+# PRs instead of being discovered by the weekly modules-audit run.
+version: 2
+updates:
+  - package-ecosystem: gomod
+    directory: /go/rfswift
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 10
+    groups:
+      moby:
+        patterns:
+          - "github.com/moby/*"
+      golang-x:
+        patterns:
+          - "golang.org/x/*"
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday

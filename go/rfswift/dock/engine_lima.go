@@ -15,7 +15,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/docker/docker/client"
+	"github.com/moby/moby/client"
 	common "penthertz/rfswift/common"
 	rfutils "penthertz/rfswift/rfutils"
 )
@@ -83,14 +83,14 @@ func (e *LimaEngine) IsServiceRunning() bool {
 	return pingClient(cli)
 }
 
-// GetClient returns a Docker SDK client connected to the Docker socket inside Lima.
+// GetClient returns a moby API client connected to the Docker socket inside Lima.
 func (e *LimaEngine) GetClient() (*client.Client, error) {
 	socketPath := e.GetSocketPath()
 	if socketPath == "" {
 		return nil, fmt.Errorf("Lima Docker socket not found — is the '%s' instance running?", e.getInstance())
 	}
 
-	return client.NewClientWithOpts(
+	return client.New(
 		client.WithHost(socketPath),
 		client.WithAPIVersionNegotiation(),
 	)

@@ -15,9 +15,8 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/api/types/image"
-	"github.com/docker/docker/client"
+	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/client"
 
 	common "penthertz/rfswift/common"
 )
@@ -168,17 +167,17 @@ func podmanCreateViaCLI(name string, imageName string, cfg *container.Config, hc
 
 	// Exposed ports
 	for port := range cfg.ExposedPorts {
-	    args = append(args, "--expose", string(port))
+	    args = append(args, "--expose", port.String())
 	}
 
 	// Port bindings
 	for port, bindings := range hc.PortBindings {
 	    for _, binding := range bindings {
 	        hostPart := binding.HostPort
-	        if binding.HostIP != "" {
-	            hostPart = binding.HostIP + ":" + hostPart
+	        if binding.HostIP.IsValid() {
+	            hostPart = binding.HostIP.String() + ":" + hostPart
 	        }
-	        args = append(args, "-p", hostPart+":"+string(port))
+	        args = append(args, "-p", hostPart+":"+port.String())
 	    }
 	}
 
@@ -216,11 +215,11 @@ func cleanupStaleTempImages(ctx context.Context, cli *client.Client, currentTemp
 	basePrefix := fmt.Sprintf("%s:%s_temp_", repo, tag)
 	localBasePrefix := fmt.Sprintf("localhost/%s:%s_temp_", repo, tag)
 
-	images, err := cli.ImageList(ctx, image.ListOptions{All: true})
+	imagesRes, err := cli.ImageList(ctx, client.ImageListOptions{All: true})
 	if err != nil {
 		return
 	}
-	for _, img := range images {
+	for _, img := range imagesRes.Items {
 		for _, imgTag := range img.RepoTags {
 			if !tempPattern.MatchString(imgTag) {
 				continue
@@ -233,7 +232,7 @@ func cleanupStaleTempImages(ctx context.Context, cli *client.Client, currentTemp
 			if imgTag == currentTempImage {
 				continue
 			}
-			_, err := cli.ImageRemove(ctx, img.ID, image.RemoveOptions{Force: false})
+			_, err := cli.ImageRemove(ctx, img.ID, client.ImageRemoveOptions{Force: false})
 			if err == nil {
 				common.PrintSuccessMessage(fmt.Sprintf("Cleaned up old temp image: %s", imgTag))
 			}
@@ -264,9 +263,7 @@ func sanitizeHostConfigForPodman(hc *container.HostConfig) {
 	swappiness := int64(-1)
 	hc.MemorySwappiness = &swappiness
 
-	// 3. KernelMemory — deprecated, rejected by Podman
-	hc.KernelMemory = 0
-	hc.KernelMemoryTCP = 0
+	// 3. KernelMemory — deprecated; the field no longer exists in the moby API
 
 	// 4. PidsLimit — Podman rejects 0 (use -1 for unlimited)
 	if hc.PidsLimit != nil && *hc.PidsLimit == 0 {

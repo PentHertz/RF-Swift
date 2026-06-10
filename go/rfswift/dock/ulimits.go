@@ -9,7 +9,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/docker/docker/api/types/container"
+	"github.com/moby/moby/api/types/container"
 
 	common "penthertz/rfswift/common"
 )
@@ -215,7 +215,7 @@ func UpdateUlimit(containerID string, ulimitName string, ulimitValue string, add
 	}
 	defer cli.Close()
 
-	containerJSON, err := cli.ContainerInspect(ctx, containerID)
+	containerJSON, err := inspectContainer(ctx, cli, containerID)
 	if err != nil {
 		common.PrintErrorMessage(fmt.Errorf("failed to inspect container: %v", err))
 		return err
@@ -340,7 +340,7 @@ func EnableRealtimeMode(containerID string) error {
 	}
 	defer cli.Close()
 
-	containerJSON, err := cli.ContainerInspect(ctx, containerID)
+	containerJSON, err := inspectContainer(ctx, cli, containerID)
 	if err != nil {
 		common.PrintErrorMessage(fmt.Errorf("failed to inspect container: %v", err))
 		return err
@@ -461,7 +461,7 @@ func DisableRealtimeMode(containerID string) error {
 	}
 	defer cli.Close()
 
-	containerJSON, err := cli.ContainerInspect(ctx, containerID)
+	containerJSON, err := inspectContainer(ctx, cli, containerID)
 	if err != nil {
 		common.PrintErrorMessage(fmt.Errorf("failed to inspect container: %v", err))
 		return err
@@ -555,7 +555,7 @@ func ListContainerUlimits(containerID string) error {
 	}
 	defer cli.Close()
 
-	containerJSON, err := cli.ContainerInspect(ctx, containerID)
+	containerJSON, err := inspectContainer(ctx, cli, containerID)
 	if err != nil {
 		common.PrintErrorMessage(fmt.Errorf("failed to inspect container: %v", err))
 		return err

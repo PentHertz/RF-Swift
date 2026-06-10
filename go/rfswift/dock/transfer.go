@@ -15,7 +15,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/docker/docker/api/types/image"
+	"github.com/moby/moby/client"
 
 	common "penthertz/rfswift/common"
 )
@@ -149,7 +149,7 @@ func ExportContainer(containerID string, outputFile string) error {
 	defer cli.Close()
 
 	// Get container info
-	containerJSON, err := cli.ContainerInspect(ctx, containerID)
+	containerJSON, err := inspectContainer(ctx, cli, containerID)
 	if err != nil {
 		return fmt.Errorf("failed to inspect container: %v", err)
 	}
@@ -158,7 +158,7 @@ func ExportContainer(containerID string, outputFile string) error {
 	common.PrintInfoMessage(fmt.Sprintf("Exporting container '%s' to %s", containerName, outputFile))
 
 	// Export container
-	reader, err := cli.ContainerExport(ctx, containerID)
+	reader, err := cli.ContainerExport(ctx, containerID, client.ContainerExportOptions{})
 	if err != nil {
 		return fmt.Errorf("failed to export container: %v", err)
 	}
@@ -278,10 +278,10 @@ func ImportContainer(inputFile string, imageName string) error {
 	}
 
 	// Import container with label
-	importResponse, err := cli.ImageImport(ctx, image.ImportSource{
+	importResponse, err := cli.ImageImport(ctx, client.ImageImportSource{
 		Source:     reader,
 		SourceName: "-",
-	}, imageName, image.ImportOptions{
+	}, imageName, client.ImageImportOptions{
 		// Add RF Swift label
 		Changes: []string{
 			`LABEL "org.container.project"="rfswift"`,
@@ -341,10 +341,10 @@ func ImportImage(inputFile string) error {
 	if err != nil {
 		return fmt.Errorf("failed to load images: %v", err)
 	}
-	defer loadResponse.Body.Close()
+	defer loadResponse.Close()
 
 	// Parse response to show loaded images
-	scanner := bufio.NewScanner(loadResponse.Body)
+	scanner := bufio.NewScanner(loadResponse)
 	for scanner.Scan() {
 		line := scanner.Text()
 		if strings.Contains(line, "Loaded image") || strings.Contains(line, "sha256") {

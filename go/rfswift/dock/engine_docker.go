@@ -11,7 +11,7 @@ import (
 	"runtime"
 	"strings"
 
-	"github.com/docker/docker/client"
+	"github.com/moby/moby/client"
 )
 
 // DockerEngine implements ContainerEngine for Docker Desktop / Docker CE
@@ -71,11 +71,11 @@ func (e *DockerEngine) IsServiceRunning() bool {
 	return engineIsServiceRunning(e)
 }
 
-// GetClient returns a standard Docker SDK client.
+// GetClient returns a standard moby API client.
 //
 //	out: (*client.Client, error)
 func (e *DockerEngine) GetClient() (*client.Client, error) {
-	return client.NewClientWithOpts(
+	return client.New(
 		client.FromEnv,
 		client.WithAPIVersionNegotiation(),
 	)

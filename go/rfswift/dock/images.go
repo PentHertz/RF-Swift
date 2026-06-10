@@ -16,11 +16,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/api/types/filters"
-	"github.com/docker/docker/api/types/image"
-	"github.com/docker/docker/client"
-	"github.com/docker/docker/pkg/jsonmessage"
+	"github.com/moby/moby/api/types/image"
+	"github.com/moby/moby/api/types/jsonstream"
+	"github.com/moby/moby/client"
+	"github.com/moby/moby/client/pkg/jsonmessage"
 	"github.com/moby/term"
 
 	common "penthertz/rfswift/common"
@@ -119,7 +118,7 @@ func checkIfImageIsUpToDate(repo, tag string) (bool, error) {
 //	out:   time.Time          parsed creation time of the local image
 //	out:   error              non-nil if the image does not exist locally or the timestamp is unparseable
 func getLocalImageCreationDate(ctx context.Context, cli *client.Client, imageName string) (time.Time, error) {
-	localImage, _, err := cli.ImageInspectWithRaw(ctx, imageName)
+	localImage, err := inspectImage(ctx, cli, imageName)
 	if err != nil {
 		return time.Time{}, err
 	}
@@ -169,7 +168,7 @@ func checkImageStatusWithCache(ctx context.Context, cli *client.Client, repo, ta
 	}
 
 	// Get local image info
-	localImage, _, err := cli.ImageInspectWithRaw(ctx, fullImageName)
+	localImage, err := inspectImage(ctx, cli, fullImageName)
 	if err != nil {
 		return false, true, err
 	}
@@ -316,7 +315,7 @@ func checkImageStatus(ctx context.Context, cli *client.Client, repo, tag string)
 //	in(3): string imageName fully-qualified image name or ID to inspect
 //	out:   string           digest string (e.g. "sha256:abc…"), empty string on failure
 func getLocalImageDigest(ctx context.Context, cli *client.Client, imageName string) string {
-	imageInspect, _, err := cli.ImageInspectWithRaw(ctx, imageName)
+	imageInspect, err := inspectImage(ctx, cli, imageName)
 	if err != nil {
 		return ""
 	}
@@ -338,7 +337,7 @@ func getLocalImageDigest(ctx context.Context, cli *client.Client, imageName stri
 //	in(3): string imageName fully-qualified image name or ID to inspect
 //	out:   []string         slice of digest strings; nil if the image is not found or has no digests
 func getLocalImageDigests(ctx context.Context, cli *client.Client, imageName string) []string {
-	imageInspect, _, err := cli.ImageInspectWithRaw(ctx, imageName)
+	imageInspect, err := inspectImage(ctx, cli, imageName)
 	if err != nil {
 		return nil
 	}
@@ -419,7 +418,7 @@ func ContainerPull(imageref string, imagetag string) {
 
 	// Pull the image from remote using the architecture-specific reference
 	common.PrintInfoMessage(fmt.Sprintf("Pulling image from: %s", actualPullRef))
-	out, err := cli.ImagePull(ctx, actualPullRef, image.PullOptions{})
+	out, err := cli.ImagePull(ctx, actualPullRef, client.ImagePullOptions{})
 	if err != nil {
 		common.PrintErrorMessage(err)
 		return
@@ -430,7 +429,7 @@ func ContainerPull(imageref string, imagetag string) {
 	pullProgress := tui.NewLayerProgress()
 	jsonDecoder := json.NewDecoder(out)
 	for {
-		var msg jsonmessage.JSONMessage
+		var msg jsonstream.Message
 		if err := jsonDecoder.Decode(&msg); err == io.EOF {
 			break
 		} else if err != nil {
@@ -455,7 +454,7 @@ func ContainerPull(imageref string, imagetag string) {
 	tui.PrintSuccess(fmt.Sprintf("Pull complete (%d/%d layers)", pullProgress.Done(), pullProgress.Total()))
 
 	// Get information about the pulled image
-	remoteInspect, _, err := cli.ImageInspectWithRaw(ctx, actualPullRef)
+	remoteInspect, err := inspectImage(ctx, cli, actualPullRef)
 	if err != nil {
 		common.PrintErrorMessage(err)
 		return
@@ -467,7 +466,7 @@ func ContainerPull(imageref string, imagetag string) {
 		if tui.Confirm("Do you want to rename the old image with a date tag?") {
 			currentTime := time.Now()
 			dateTag := fmt.Sprintf("%s-%02d%02d%d", imagetag, currentTime.Day(), currentTime.Month(), currentTime.Year())
-			err = cli.ImageTag(ctx, localDigest, dateTag)
+			_, err = cli.ImageTag(ctx, client.ImageTagOptions{Source: localDigest, Target: dateTag})
 			if err != nil {
 				common.PrintErrorMessage(err)
 				return
@@ -478,7 +477,7 @@ func ContainerPull(imageref string, imagetag string) {
 
 	// Tag the pulled image with the clean name (without architecture suffix)
 	if imagetag != actualPullRef {
-		err = cli.ImageTag(ctx, remoteInspect.ID, imagetag)
+		_, err = cli.ImageTag(ctx, client.ImageTagOptions{Source: remoteInspect.ID, Target: imagetag})
 		if err != nil {
 			common.PrintErrorMessage(err)
 			return
@@ -487,7 +486,7 @@ func ContainerPull(imageref string, imagetag string) {
 
 		// Remove the original architecture-suffixed tag to avoid duplicates in local listing
 		if IsOfficialImage(actualPullRef) {
-			_, err = cli.ImageRemove(ctx, actualPullRef, image.RemoveOptions{Force: false})
+			_, err = cli.ImageRemove(ctx, actualPullRef, client.ImageRemoveOptions{Force: false})
 			if err != nil {
 				// Only log if it's not a "tag not found" or "in use" error
 				if !strings.Contains(err.Error(), "No such image") && !strings.Contains(err.Error(), "image is referenced") {
@@ -527,13 +526,13 @@ func ContainerTag(imageref string, imagetag string) {
 	defer cli.Close()
 	// Normalize source image reference
 	imageref = normalizeImageName(imageref)
-	err = cli.ImageTag(ctx, imageref, imagetag)
+	_, err = cli.ImageTag(ctx, client.ImageTagOptions{Source: imageref, Target: imagetag})
 	if err != nil {
 		panic(err)
 	}
 
 	// Remove old tag (only removes the reference, not the image layers)
-	_, err = cli.ImageRemove(ctx, imageref, image.RemoveOptions{
+	_, err = cli.ImageRemove(ctx, imageref, client.ImageRemoveOptions{
 		Force:         false,
 		PruneChildren: false,
 	})
@@ -560,10 +559,10 @@ func ListImages(labelKey string, labelValue string) ([]image.Summary, error) {
 	defer cli.Close()
 
 	// Filter images by the specified image label
-	imagesFilters := filters.NewArgs()
+	imagesFilters := make(client.Filters)
 	imagesFilters.Add("label", fmt.Sprintf("%s=%s", labelKey, labelValue))
 
-	images, err := cli.ImageList(ctx, image.ListOptions{
+	imagesRes, err := cli.ImageList(ctx, client.ImageListOptions{
 		All:     true,
 		Filters: imagesFilters,
 	})
@@ -573,7 +572,7 @@ func ListImages(labelKey string, labelValue string) ([]image.Summary, error) {
 
 	// Only display images with RepoTags
 	var filteredImages []image.Summary
-	for _, image := range images {
+	for _, image := range imagesRes.Items {
 		if len(image.RepoTags) > 0 {
 			filteredImages = append(filteredImages, image)
 		}
@@ -758,7 +757,7 @@ func DeleteImage(imageIDOrTag string) error {
 	common.PrintInfoMessage(fmt.Sprintf("Attempting to delete image: %s", imageIDOrTag))
 
 	// List all images
-	images, err := cli.ImageList(ctx, image.ListOptions{All: true})
+	imagesRes, err := cli.ImageList(ctx, client.ImageListOptions{All: true})
 	if err != nil {
 		common.PrintErrorMessage(fmt.Errorf("failed to list images: %v", err))
 		return err
@@ -770,7 +769,7 @@ func DeleteImage(imageIDOrTag string) error {
 	// Get current architecture for matching
 	architecture := getArchitecture()
 
-	for _, img := range images {
+	for _, img := range imagesRes.Items {
 		// Check if the full image ID matches
 		if img.ID == "sha256:"+imageIDOrTag || img.ID == imageIDOrTag {
 			imageToDelete = img
@@ -838,7 +837,7 @@ func DeleteImage(imageIDOrTag string) error {
 	if !imageFound {
 		common.PrintErrorMessage(fmt.Errorf("image not found: %s", imageIDOrTag))
 		common.PrintInfoMessage("Available images:")
-		for _, img := range images {
+		for _, img := range imagesRes.Items {
 			// Display tags with clean names
 			displayTags := []string{}
 			for _, tag := range img.RepoTags {
@@ -878,23 +877,23 @@ func DeleteImage(imageIDOrTag string) error {
 	}
 
 	// Find and remove containers using the image
-	containers, err := cli.ContainerList(ctx, container.ListOptions{All: true})
+	containersRes, err := cli.ContainerList(ctx, client.ContainerListOptions{All: true})
 	if err != nil {
 		common.PrintErrorMessage(fmt.Errorf("failed to list containers: %v", err))
 		return err
 	}
 
-	for _, icontainer := range containers {
+	for _, icontainer := range containersRes.Items {
 		if icontainer.ImageID == imageID {
 			common.PrintWarningMessage(fmt.Sprintf("Removing container: %s", icontainer.ID[:12]))
-			if err := cli.ContainerRemove(ctx, icontainer.ID, container.RemoveOptions{Force: true}); err != nil {
+			if _, err := cli.ContainerRemove(ctx, icontainer.ID, client.ContainerRemoveOptions{Force: true}); err != nil {
 				common.PrintWarningMessage(fmt.Sprintf("Failed to remove container %s: %v", icontainer.ID[:12], err))
 			}
 		}
 	}
 
 	// Attempt to delete the image
-	_, err = cli.ImageRemove(ctx, imageID, image.RemoveOptions{Force: true, PruneChildren: true})
+	_, err = cli.ImageRemove(ctx, imageID, client.ImageRemoveOptions{Force: true, PruneChildren: true})
 	if err != nil {
 		common.PrintErrorMessage(fmt.Errorf("failed to delete image %s: %v", imageIDOrTag, err))
 		return err
@@ -961,7 +960,7 @@ func SaveImageToFile(imageName string, outputFile string, pullFirst bool) error 
 		}
 
 		// Pull the image
-		out, err := cli.ImagePull(ctx, actualPullRef, image.PullOptions{})
+		out, err := cli.ImagePull(ctx, actualPullRef, client.ImagePullOptions{})
 		if err != nil {
 			return fmt.Errorf("failed to pull image: %v", err)
 		}
@@ -978,9 +977,9 @@ func SaveImageToFile(imageName string, outputFile string, pullFirst bool) error 
 
 		// Tag if needed (for official images with architecture suffix)
 		if actualPullRef != imageName && isOfficial {
-			remoteInspect, _, _ := cli.ImageInspectWithRaw(ctx, actualPullRef)
+			remoteInspect, _ := inspectImage(ctx, cli, actualPullRef)
 			if remoteInspect.ID != "" {
-				cli.ImageTag(ctx, remoteInspect.ID, imageName)
+				cli.ImageTag(ctx, client.ImageTagOptions{Source: remoteInspect.ID, Target: imageName})
 				common.PrintSuccessMessage(fmt.Sprintf("Tagged as: %s", imageName))
 			}
 		}
@@ -1084,7 +1083,7 @@ func ContainerPullVersion(imageref string, version string, imagetag string) {
 
 	common.PrintInfoMessage(fmt.Sprintf("Pulling %s...", pullRef))
 
-	out, err := cli.ImagePull(ctx, pullRef, image.PullOptions{})
+	out, err := cli.ImagePull(ctx, pullRef, client.ImagePullOptions{})
 	if err != nil {
 		common.PrintErrorMessage(fmt.Errorf("failed to pull image: %v", err))
 		return
@@ -1095,7 +1094,7 @@ func ContainerPullVersion(imageref string, version string, imagetag string) {
 	pullProgress := tui.NewLayerProgress()
 	jsonDecoder := json.NewDecoder(out)
 	for {
-		var msg jsonmessage.JSONMessage
+		var msg jsonstream.Message
 		if err := jsonDecoder.Decode(&msg); err == io.EOF {
 			break
 		} else if err != nil {
@@ -1120,14 +1119,14 @@ func ContainerPullVersion(imageref string, version string, imagetag string) {
 	tui.PrintSuccess(fmt.Sprintf("Pull complete (%d/%d layers)", pullProgress.Done(), pullProgress.Total()))
 
 	// Get the pulled image info
-	remoteInspect, _, err := cli.ImageInspectWithRaw(ctx, pullRef)
+	remoteInspect, err := inspectImage(ctx, cli, pullRef)
 	if err != nil {
 		common.PrintErrorMessage(err)
 		return
 	}
 
 	// Tag with friendly name (without architecture suffix)
-	err = cli.ImageTag(ctx, remoteInspect.ID, imagetag)
+	_, err = cli.ImageTag(ctx, client.ImageTagOptions{Source: remoteInspect.ID, Target: imagetag})
 	if err != nil {
 		common.PrintErrorMessage(err)
 		return
@@ -1136,7 +1135,7 @@ func ContainerPullVersion(imageref string, version string, imagetag string) {
 	common.PrintSuccessMessage(fmt.Sprintf("Image tagged as '%s'", imagetag))
 
 	// Optionally remove the architecture-suffixed tag to keep things clean
-	_, err = cli.ImageRemove(ctx, pullRef, image.RemoveOptions{Force: false})
+	_, err = cli.ImageRemove(ctx, pullRef, client.ImageRemoveOptions{Force: false})
 	if err == nil {
 		common.PrintInfoMessage(fmt.Sprintf("Removed architecture-suffixed tag: %s", pullRef))
 	}
