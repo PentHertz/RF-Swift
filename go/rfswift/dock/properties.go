@@ -209,27 +209,27 @@ func getContainerProperties(ctx context.Context, cli *client.Client, containerID
 	}
 
 	// Get ulimits
-    var ulimitStrs []string
-    for _, ulimit := range containerJSON.HostConfig.Ulimits {
-        if ulimit.Soft == ulimit.Hard {
-            if ulimit.Soft == -1 {
-                ulimitStrs = append(ulimitStrs, fmt.Sprintf("%s=unlimited", ulimit.Name))
-            } else {
-                ulimitStrs = append(ulimitStrs, fmt.Sprintf("%s=%d", ulimit.Name, ulimit.Soft))
-            }
-        } else {
-            softStr := fmt.Sprintf("%d", ulimit.Soft)
-            hardStr := fmt.Sprintf("%d", ulimit.Hard)
-            if ulimit.Soft == -1 {
-                softStr = "unlimited"
-            }
-            if ulimit.Hard == -1 {
-                hardStr = "unlimited"
-            }
-            ulimitStrs = append(ulimitStrs, fmt.Sprintf("%s=%s:%s", ulimit.Name, softStr, hardStr))
-        }
-    }
-    props["Ulimits"] = strings.Join(ulimitStrs, ",")
+	var ulimitStrs []string
+	for _, ulimit := range containerJSON.HostConfig.Ulimits {
+		if ulimit.Soft == ulimit.Hard {
+			if ulimit.Soft == -1 {
+				ulimitStrs = append(ulimitStrs, fmt.Sprintf("%s=unlimited", ulimit.Name))
+			} else {
+				ulimitStrs = append(ulimitStrs, fmt.Sprintf("%s=%d", ulimit.Name, ulimit.Soft))
+			}
+		} else {
+			softStr := fmt.Sprintf("%d", ulimit.Soft)
+			hardStr := fmt.Sprintf("%d", ulimit.Hard)
+			if ulimit.Soft == -1 {
+				softStr = "unlimited"
+			}
+			if ulimit.Hard == -1 {
+				hardStr = "unlimited"
+			}
+			ulimitStrs = append(ulimitStrs, fmt.Sprintf("%s=%s:%s", ulimit.Name, softStr, hardStr))
+		}
+	}
+	props["Ulimits"] = strings.Join(ulimitStrs, ",")
 
 	// Get GPU info — check label first (set during creation/gpus add),
 	// then DeviceRequests (NVIDIA), then /dev/kfd (AMD).
@@ -1324,7 +1324,7 @@ func UpdatePortBinding(containerID string, binding string, add bool) error {
 		return fmt.Errorf("invalid port binding format: %s", binding)
 	}
 	containerPort := parts[0] // e.g., "8080/tcp"
-	hostPart := parts[1]     // e.g., "127.0.0.1:8080" or "8080"
+	hostPart := parts[1]      // e.g., "127.0.0.1:8080" or "8080"
 
 	// Parse host IP and port
 	hostIP := ""
@@ -1491,11 +1491,10 @@ func recreateContainerWithProperties(ctx context.Context, cli *client.Client, co
 
 	// ── 3. Rebuild container config from inspected data + prop overrides ──
 
-
 	// ── 1. Commit the container state to a temporary image ──
 	bindings := []string{}
 	if props["Bindings"] != "" {
-	    bindings = strings.Split(props["Bindings"], ";;")
+		bindings = strings.Split(props["Bindings"], ";;")
 	}
 
 	extrahosts := []string{}
@@ -1708,11 +1707,11 @@ func rollbackContainer(ctx context.Context, cli *client.Client, containerName st
 	// Try to create a basic container from the committed image with minimal config
 	// (avoid the fields that may have caused the original failure)
 	rollbackHostConfig := &container.HostConfig{
-	    NetworkMode: originalJSON.HostConfig.NetworkMode,
-	    Binds:       originalJSON.HostConfig.Binds,
-	    Privileged:  originalJSON.HostConfig.Privileged,
-	    CapAdd:      originalJSON.HostConfig.CapAdd,
-	    SecurityOpt: originalJSON.HostConfig.SecurityOpt,
+		NetworkMode: originalJSON.HostConfig.NetworkMode,
+		Binds:       originalJSON.HostConfig.Binds,
+		Privileged:  originalJSON.HostConfig.Privileged,
+		CapAdd:      originalJSON.HostConfig.CapAdd,
+		SecurityOpt: originalJSON.HostConfig.SecurityOpt,
 	}
 
 	// Sanitize for Podman if needed

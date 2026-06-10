@@ -289,12 +289,12 @@ func ContainerLast(ifilter string, labelKey string, labelValue string) {
 
 		containerName := ""
 		if len(container.Names) > 0 {
-		    containerName = container.Names[0]
-		    if len(containerName) > 0 && containerName[0] == '/' {
-		        containerName = containerName[1:]
-		    }
+			containerName = container.Names[0]
+			if len(containerName) > 0 && containerName[0] == '/' {
+				containerName = containerName[1:]
+			}
 		} else {
-		    containerName = container.ID[:12] // fallback to short ID
+			containerName = container.ID[:12] // fallback to short ID
 		}
 		containerID := container.ID[:12]
 		command := container.Command

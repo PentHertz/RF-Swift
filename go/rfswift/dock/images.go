@@ -36,54 +36,54 @@ import (
 //	out:   string              digest string for the matched tag, empty on failure
 //	out:   error               non-nil if the tag was not found or the request failed
 func getRemoteImageDigest(repo, tag, architecture string) (string, error) {
-    var digest string
+	var digest string
 
-    // Normalize tag to include architecture suffix
-    normalizedTag := normalizeTagForRemote(tag, architecture)
+	// Normalize tag to include architecture suffix
+	normalizedTag := normalizeTagForRemote(tag, architecture)
 
-    err := showLoadingIndicatorWithReturn(func() error {
-        url := fmt.Sprintf("https://hub.docker.com/v2/repositories/%s/tags/?page_size=100", repo)
-        client := &http.Client{Timeout: 10 * time.Second}
-        resp, err := client.Get(url)
-        if err != nil {
-            return err
-        }
-        defer resp.Body.Close()
+	err := showLoadingIndicatorWithReturn(func() error {
+		url := fmt.Sprintf("https://hub.docker.com/v2/repositories/%s/tags/?page_size=100", repo)
+		client := &http.Client{Timeout: 10 * time.Second}
+		resp, err := client.Get(url)
+		if err != nil {
+			return err
+		}
+		defer resp.Body.Close()
 
-        if resp.StatusCode == http.StatusNotFound {
-            return fmt.Errorf("tag not found")
-        } else if resp.StatusCode != http.StatusOK {
-            return fmt.Errorf("failed to get tags: %s", resp.Status)
-        }
+		if resp.StatusCode == http.StatusNotFound {
+			return fmt.Errorf("tag not found")
+		} else if resp.StatusCode != http.StatusOK {
+			return fmt.Errorf("failed to get tags: %s", resp.Status)
+		}
 
-        body, err := io.ReadAll(resp.Body)
-        if err != nil {
-            return err
-        }
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return err
+		}
 
-        var response DockerHubResponse
-        if err := json.Unmarshal(body, &response); err != nil {
-            return err
-        }
+		var response DockerHubResponse
+		if err := json.Unmarshal(body, &response); err != nil {
+			return err
+		}
 
-        for _, hubTag := range response.Results {
-            if hubTag.Name == normalizedTag {
-                if strings.HasPrefix(hubTag.Name, "cache_") {
-                    continue
-                }
-                if hubTag.MediaType != "application/vnd.oci.image.index.v1+json" {
-                    continue
-                }
+		for _, hubTag := range response.Results {
+			if hubTag.Name == normalizedTag {
+				if strings.HasPrefix(hubTag.Name, "cache_") {
+					continue
+				}
+				if hubTag.MediaType != "application/vnd.oci.image.index.v1+json" {
+					continue
+				}
 
-                digest = hubTag.Digest
-                return nil
-            }
-        }
+				digest = hubTag.Digest
+				return nil
+			}
+		}
 
-        return fmt.Errorf("tag not found")
-    }, fmt.Sprintf("Checking Docker Hub for '%s' (%s)", tag, architecture))
+		return fmt.Errorf("tag not found")
+	}, fmt.Sprintf("Checking Docker Hub for '%s' (%s)", tag, architecture))
 
-    return digest, err
+	return digest, err
 }
 
 // checkIfImageIsUpToDate reports whether the given tag is listed among the

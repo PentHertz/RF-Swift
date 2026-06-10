@@ -13,8 +13,8 @@ import (
 	"time"
 
 	"github.com/charmbracelet/lipgloss"
-	rfutils "penthertz/rfswift/rfutils"
 	common "penthertz/rfswift/common"
+	rfutils "penthertz/rfswift/rfutils"
 	"penthertz/rfswift/tui"
 )
 
@@ -488,7 +488,7 @@ func FormatVersionsString(versions []VersionInfo, maxVersions int) string {
 	// Deduplicate version strings while preserving order
 	seen := make(map[string]bool)
 	var uniqueVersions []string
-	
+
 	for _, v := range versions {
 		if !seen[v.Version] {
 			seen[v.Version] = true
@@ -812,11 +812,11 @@ func getLatestDockerHubTags(repo string, architecture string) ([]Tag, error) {
 				}
 
 				latestTags = append(latestTags, Tag{
-				Name:          hubTag.Name,
-				TagLastPushed: lastPushed,
-				Images:        images,
-				FullSize:      hubTag.FullSize,  // ADD THIS
-			})
+					Name:          hubTag.Name,
+					TagLastPushed: lastPushed,
+					Images:        images,
+					FullSize:      hubTag.FullSize, // ADD THIS
+				})
 			}
 
 			// Get next page URL
@@ -1173,4 +1173,3 @@ func removeArchitectureSuffix(tagName string) string {
 
 	return tagName
 }
-

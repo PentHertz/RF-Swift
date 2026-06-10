@@ -54,14 +54,14 @@ type ReportData struct {
 	State         string
 
 	// Environment
-	NetworkMode  string
-	Privileged   string
-	Devices      string
-	Capabilities string
-	Cgroups      string
-	GPUs         string
-	Bindings     string
-	Ulimits      string
+	NetworkMode   string
+	Privileged    string
+	Devices       string
+	Capabilities  string
+	Cgroups       string
+	GPUs          string
+	Bindings      string
+	Ulimits       string
 	WorkspacePath string
 
 	// Content
@@ -131,14 +131,14 @@ func GenerateReport(containerName string, format ReportFormat, outputPath string
 		Duration:      duration,
 		State:         string(containerJSON.State.Status),
 
-		NetworkMode:  props["NetworkMode"],
-		Privileged:   props["Privileged"],
-		Devices:      props["Devices"],
-		Capabilities: props["Caps"],
-		Cgroups:      props["Cgroups"],
-		GPUs:         props["GPUs"],
-		Bindings:     strings.ReplaceAll(props["Bindings"], ";;", "\n"),
-		Ulimits:      props["Ulimits"],
+		NetworkMode:   props["NetworkMode"],
+		Privileged:    props["Privileged"],
+		Devices:       props["Devices"],
+		Capabilities:  props["Caps"],
+		Cgroups:       props["Cgroups"],
+		GPUs:          props["GPUs"],
+		Bindings:      strings.ReplaceAll(props["Bindings"], ";;", "\n"),
+		Ulimits:       props["Ulimits"],
 		WorkspacePath: workspacePath,
 	}
 

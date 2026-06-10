@@ -343,12 +343,15 @@ func ParseExposedPorts(exposedPortsStr string) network.PortSet {
 // by "," when supplied directly from CLI input.
 //
 // Both Docker-standard format and internal format are accepted:
+//
 //   - Docker-standard: "hostPort:containerPort/proto" (e.g., "8080:80/tcp")
+//
 //   - Internal format: "containerPort/proto:hostPort" (e.g., "80/tcp:8080")
+//
 //   - With host IP:    "hostIP:hostPort:containerPort/proto" or "containerPort/proto:hostIP:hostPort"
 //
-//	in(1): string bindedPortsStr - delimited port binding specs
-//	out: network.PortMap - map of container ports to host bindings, empty on empty input
+//     in(1): string bindedPortsStr - delimited port binding specs
+//     out: network.PortMap - map of container ports to host bindings, empty on empty input
 func ParseBindedPorts(bindedPortsStr string) network.PortMap {
 	portBindings := network.PortMap{}
 

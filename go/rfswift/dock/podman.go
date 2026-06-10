@@ -167,18 +167,18 @@ func podmanCreateViaCLI(name string, imageName string, cfg *container.Config, hc
 
 	// Exposed ports
 	for port := range cfg.ExposedPorts {
-	    args = append(args, "--expose", port.String())
+		args = append(args, "--expose", port.String())
 	}
 
 	// Port bindings
 	for port, bindings := range hc.PortBindings {
-	    for _, binding := range bindings {
-	        hostPart := binding.HostPort
-	        if binding.HostIP.IsValid() {
-	            hostPart = binding.HostIP.String() + ":" + hostPart
-	        }
-	        args = append(args, "-p", hostPart+":"+port.String())
-	    }
+		for _, binding := range bindings {
+			hostPart := binding.HostPort
+			if binding.HostIP.IsValid() {
+				hostPart = binding.HostIP.String() + ":" + hostPart
+			}
+			args = append(args, "-p", hostPart+":"+port.String())
+		}
 	}
 
 	// Image (positional, must come before cmd)

@@ -88,7 +88,7 @@ func createNATNetwork(ctx context.Context, cli *client.Client, containerName str
 		Driver:     "bridge",
 		EnableIPv6: boolPtr(false),
 		Labels:     labels,
-		IPAM: natIPAM(subnet, gateway),
+		IPAM:       natIPAM(subnet, gateway),
 	})
 	if err != nil {
 		// Fallback to Podman CLI if the compat API fails
@@ -628,7 +628,7 @@ func createNamedNATNetwork(ctx context.Context, cli *client.Client, fullName str
 		Driver:     "bridge",
 		EnableIPv6: boolPtr(false),
 		Labels:     labels,
-		IPAM: natIPAM(subnet, gateway),
+		IPAM:       natIPAM(subnet, gateway),
 	})
 	if err != nil {
 		// Fallback to Podman CLI
