@@ -12,7 +12,7 @@
 #   - The scanners themselves (govulncheck, osv-scanner) are installed
 #     with `go install <module>@<version>`, which verifies every
 #     downloaded module against the Go checksum database
-#     (sum.golang.org) — the same transparency log that protects our
+#     (sum.golang.org) - the same transparency log that protects our
 #     regular dependencies. No curl-pipe-bash, no unverified release
 #     binaries.
 #   - `go mod verify` re-hashes the local module cache against go.sum,
@@ -22,12 +22,12 @@ name: Modules audit
 
 on:
   push:
-    branches: ["main"]
+    branches: ["main", "v3.0.0-dev"]
     paths:
       - "go/**"
       - ".github/workflows/modules-audit.yml"
   pull_request:
-    branches: ["main"]
+    branches: ["main", "v3.0.0-dev"]
     paths:
       - "go/**"
       - ".github/workflows/modules-audit.yml"
@@ -72,13 +72,13 @@ jobs:
         run: go mod verify
 
       - name: Check go.mod/go.sum drift
-        # Fails if `go mod tidy` would change anything — i.e. someone
+        # Fails if `go mod tidy` would change anything - i.e. someone
         # edited dependencies without regenerating the lock state.
         run: go mod tidy -diff
 
       - name: Banned modules guard
         # github.com/docker/docker is deprecated since Docker v29 and
-        # no longer receives CVE fixes — RF-Swift migrated to
+        # no longer receives CVE fixes - RF-Swift migrated to
         # github.com/moby/moby/{client,api}. The bare github.com/moby/moby
         # root module is the same dead codebase under another name (its
         # version counter is frozen at v28.x+incompatible; v29 moved to
@@ -98,7 +98,7 @@ jobs:
   # ---- Known vulnerabilities (CVEs), reachability-aware --------------------
   # govulncheck uses the official Go vulnerability database and only
   # reports vulnerabilities whose vulnerable symbols are actually
-  # reachable from our code — so a failure here is a real, actionable
+  # reachable from our code - so a failure here is a real, actionable
   # CVE exposure, not noise from an unused transitive dependency.
   govulncheck:
     name: govulncheck (CVEs)
@@ -122,7 +122,7 @@ jobs:
   # GitHub Security Advisories AND the OpenSSF malicious-packages
   # database (MAL-* advisories). The MAL-* coverage is what catches
   # supply-chain attacks: typosquats, hijacked maintainer releases,
-  # and packages with known backdoors — even when no CVE exists.
+  # and packages with known backdoors - even when no CVE exists.
   osv-scan:
     name: osv-scanner (CVEs + malicious packages)
     runs-on: ubuntu-latest

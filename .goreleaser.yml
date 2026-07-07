@@ -50,6 +50,9 @@ archives:
       - src: lima/rfswift.yaml
         dst: lima/
         strip_parent: true
+      - src: lima/rfswift-gpu.yaml
+        dst: lima/
+        strip_parent: true
     # Use zip for Windows archives
     format_overrides:
       - goos: windows

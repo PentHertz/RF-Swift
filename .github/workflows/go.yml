@@ -5,9 +5,9 @@ name: Go
 
 on:
   push:
-    branches: [ "main" ]
+    branches: [ "main", "v3.0.0-dev" ]
   pull_request:
-    branches: [ "main" ]
+    branches: [ "main", "v3.0.0-dev" ]
 
 permissions:
   contents: read
@@ -30,8 +30,8 @@ jobs:
     - name: Build
       run: |
         cd go/rfswift
-        go build -v .
+        go build -v ./...
     - name: Test
       run: |
         cd go/rfswift
-        go test -v .
+        go test -v -race ./...
