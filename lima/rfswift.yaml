@@ -12,13 +12,17 @@
 #   rfswift macusb status            # Check setup status
 #
 # IMPORTANT: vmType must be "qemu" for USB passthrough (not "vz")
-# Prerequisites: QEMU (brew install qemu) + Lima from https://github.com/PentHertz/lima/releases
+# Prerequisites: QEMU + official Lima (brew install qemu lima)
 
 # Use QEMU backend - required for USB passthrough via QMP
 vmType: qemu
 
-# Enable USB controller (qemu-xhci) for USB device passthrough without requiring a display
-usb: true
+# Any non-"none" display makes upstream Lima add the qemu-xhci,id=usb-bus
+# controller that RF Swift attaches USB devices to over QMP. "vnc" stays headless
+# (no host window) and, unlike cocoa/sdl/gtk, has no macOS QEMU perf penalty.
+# This replaces the old fork-only `usb: true` and works on official Lima.
+video:
+  display: "vnc"
 
 # VM resources - adjust as needed for your SDR workloads
 cpus: 4
@@ -27,9 +31,9 @@ disk: "100GiB"
 
 # Use Ubuntu as the guest OS (matches RF Swift container base)
 images:
-  - location: "https://cloud-images.ubuntu.com/releases/24.04/release/ubuntu-24.04-server-cloudimg-amd64.img"
+  - location: "https://cloud-images.ubuntu.com/releases/26.04/release/ubuntu-26.04-server-cloudimg-amd64.img"
     arch: "x86_64"
-  - location: "https://cloud-images.ubuntu.com/releases/24.04/release/ubuntu-24.04-server-cloudimg-arm64.img"
+  - location: "https://cloud-images.ubuntu.com/releases/26.04/release/ubuntu-26.04-server-cloudimg-arm64.img"
     arch: "aarch64"
 
 # Mount the host home directory for easy file sharing

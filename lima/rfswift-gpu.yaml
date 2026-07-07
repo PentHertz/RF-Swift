@@ -1,0 +1,109 @@
+# Lima template for RF Swift — macOS Apple Silicon GPU acceleration (krunkit)
+#
+# This is the OPT-IN GPU profile. Unlike lima/rfswift.yaml (QEMU + USB
+# passthrough for SDR hardware), this VM uses the krunkit (libkrun) backend,
+# which is the ONLY Lima backend that exposes the Apple GPU to Linux containers.
+# The guest sees a Vulkan device via paravirtualization:
+#     guest Mesa "Venus" driver  ->  host MoltenVK  ->  Metal
+# It is meant for GPU compute (llama.cpp Vulkan, GPU-accelerated DSP/ML), NOT SDR.
+#
+# Trade-off (this is a hard architectural split on Apple Silicon):
+#   * GPU works here, USB passthrough does NOT — use lima/rfswift.yaml for SDR.
+#   * It is Vulkan, not CUDA (there is no NVIDIA silicon to pass through).
+#   * Apple Silicon (arm64) only; requires macOS >= 14 (Sonoma) and Lima >= 2.0.
+#
+# Prerequisites:
+#   brew install lima
+#   brew tap slp/krunkit && brew install krunkit
+#
+# Managed transparently by:  rfswift --engine lima --gpu run -i <image> ...
+# Or manually:               limactl create --name rfswift-gpu lima/rfswift-gpu.yaml
+#
+# Inside a container, expose the GPU render node:  docker run --device /dev/dri ...
+
+# libkrun backend — the only Lima vmType that provides GPU acceleration on macOS.
+vmType: krunkit
+
+# krunkit uses virtiofs for host mounts.
+mountType: virtiofs
+
+# VM resources — bump memory for larger ML models as needed.
+cpus: 4
+memory: "8GiB"
+disk: "100GiB"
+
+# Ubuntu 26.04 LTS (aarch64). Vulkan-over-krunkit needs the virtio-gpu "Venus"
+# support that landed in Linux 6.13+, so a recent kernel is required. If
+# /dev/dri/renderD128 is missing after first boot, the guest kernel lacks Venus —
+# switch this to a Fedora 42 (or newer Ubuntu) cloud image.
+images:
+  - location: "https://cloud-images.ubuntu.com/releases/26.04/release/ubuntu-26.04-server-cloudimg-arm64.img"
+    arch: "aarch64"
+
+# Share the host home directory for easy file/model access.
+mounts:
+  - location: "~"
+    writable: true
+  - location: "/tmp/lima"
+    writable: true
+
+ssh:
+  forwardAgent: true
+
+provision:
+  - mode: system
+    script: |
+      #!/bin/bash
+      set -eux -o pipefail
+
+      # ── Docker ──────────────────────────────────────────────────
+      if ! command -v docker &> /dev/null; then
+        curl -fsSL https://get.docker.com | sh
+      fi
+
+      # Add the Lima user to the docker group (UID >= 500 for macOS-mirrored users)
+      LIMA_USER=$(awk -F: '$3 >= 500 && $3 < 65534 && $6 ~ /^\/home\// { print $1; exit }' /etc/passwd)
+      if [ -n "$LIMA_USER" ]; then
+        usermod -aG docker "$LIMA_USER"
+      fi
+
+      # Make the Docker socket usable without a VM restart (single-user VM).
+      mkdir -p /etc/systemd/system/docker.service.d
+      cat > /etc/systemd/system/docker.service.d/socket-permissions.conf << 'DROPIN'
+      [Service]
+      ExecStartPost=/bin/chmod 666 /var/run/docker.sock
+      DROPIN
+      systemctl daemon-reload
+      systemctl restart docker
+      while ! docker info >/dev/null 2>&1; do sleep 1; done
+
+      # ── GPU render node (virtio-gpu Venus -> MoltenVK) ──────────
+      # The Vulkan userspace lives in the RF Swift containers; the VM only needs
+      # to expose the DRM render node. mesa-vulkan-drivers/vulkan-tools let you
+      # sanity-check with `vulkaninfo` on the host VM.
+      apt-get update -qq
+      apt-get install -y -qq mesa-vulkan-drivers vulkan-tools || true
+
+      # World-accessible render node so containers can use `--device /dev/dri`.
+      cat > /etc/udev/rules.d/99-rfswift-dri.rules << 'UDEV'
+      SUBSYSTEM=="drm", KERNEL=="renderD*", MODE="0666"
+      SUBSYSTEM=="drm", KERNEL=="card*", MODE="0666"
+      UDEV
+      udevadm control --reload-rules || true
+      udevadm trigger || true
+
+      if [ -e /dev/dri/renderD128 ]; then
+        chmod 0666 /dev/dri/renderD128 || true
+        echo "[rfswift-gpu] GPU render node present: $(ls -l /dev/dri/renderD128)"
+      else
+        echo "[rfswift-gpu] WARNING: /dev/dri/renderD128 not found — guest kernel may lack virtio-gpu Venus support."
+      fi
+
+portForwards:
+  # Forward the Docker socket to the host for transparent engine access.
+  - guestSocket: "/run/docker.sock"
+    hostSocket: "{{.Dir}}/sock/docker.sock"
+  # noVNC desktop — distinct host port from the USB VM (6080) to avoid clashes
+  # if both VMs run at once.
+  - guestPort: 6080
+    hostPort: 6081

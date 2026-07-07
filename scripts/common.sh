@@ -1264,20 +1264,17 @@ is_lima_instance_running() {
     limactl list --json 2>/dev/null | grep "\"name\":\"${instance}\"" | grep -q "\"status\":\"Running\""
 }
 
-# Lima version and release URL (PentHertz fork with USB passthrough support)
-LIMA_VERSION="2.1.1"
-LIMA_RELEASE_BASE="https://github.com/PentHertz/lima/releases/download/v${LIMA_VERSION}"
-
-# Install the PentHertz fork of Lima (with usb: true support) and QEMU on macOS
+# Install QEMU + official Lima on macOS. USB passthrough works on stock Lima
+# because the rfswift VM template sets video.display, which makes Lima add a
+# qemu-xhci controller — the old PentHertz fork (and `usb: true`) is not needed.
 install_lima() {
     if [[ "$(uname -s)" != "Darwin" ]]; then
         echo -e "${YELLOW}Lima is only needed on macOS for USB passthrough.${NC}"
         return 0
     fi
 
-    # QEMU still comes from Homebrew
     if ! command_exists brew; then
-        echo -e "${RED}Homebrew is required to install QEMU.${NC}"
+        echo -e "${RED}Homebrew is required to install QEMU and Lima.${NC}"
         echo -e "${YELLOW}Install Homebrew: /bin/bash -c \"\$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)\"${NC}"
         return 1
     fi
@@ -1287,46 +1284,24 @@ install_lima() {
         return 0
     fi
 
-    # Install QEMU via Homebrew
+    # QEMU backend is required — USB passthrough does not work with the vz backend.
     if ! command_exists qemu-img; then
         echo -e "${BLUE}Installing QEMU via Homebrew...${NC}"
         brew install qemu
     fi
 
-    # Remove Homebrew Lima if present (we use the PentHertz fork)
-    if brew list lima &>/dev/null; then
-        echo -e "${YELLOW}Removing Homebrew Lima in favor of PentHertz fork (USB support)...${NC}"
-        brew uninstall lima
+    if ! command_exists limactl; then
+        echo -e "${BLUE}Installing Lima via Homebrew...${NC}"
+        brew install lima
     fi
-
-    # Install PentHertz Lima from GitHub release
-    local arch
-    arch=$(uname -m)
-    case "$arch" in
-        arm64|aarch64) arch="arm64" ;;
-        x86_64|amd64)  arch="x86_64" ;;
-        *)
-            echo -e "${RED}Unsupported architecture: $arch${NC}"
-            return 1
-            ;;
-    esac
-
-    local tarball="lima-${LIMA_VERSION}-Darwin-${arch}.tar.gz"
-    local url="${LIMA_RELEASE_BASE}/${tarball}"
-    local tmp="/tmp/${tarball}"
-
-    echo -e "${BLUE}Installing Lima ${LIMA_VERSION} (PentHertz fork with USB support)...${NC}"
-    curl -fsSL "$url" -o "$tmp"
-    sudo tar xz -C /usr/local -f "$tmp"
-    rm -f "$tmp"
 
     if ! command_exists limactl; then
         echo -e "${RED}Lima installation failed — limactl not found in PATH.${NC}"
-        echo -e "${YELLOW}Ensure /usr/local/bin is in your PATH.${NC}"
+        echo -e "${YELLOW}Ensure Homebrew's bin directory is in your PATH.${NC}"
         return 1
     fi
 
-    echo -e "${GREEN}Lima ${LIMA_VERSION} (PentHertz fork) and QEMU installed successfully.${NC}"
+    echo -e "${GREEN}Official Lima and QEMU installed successfully.${NC}"
     limactl --version
 }
 
@@ -1334,12 +1309,31 @@ install_lima() {
 # Copies the bundled template to ~/.config/rfswift/lima.yaml so that
 # rfswift engine lima reconfig picks it up on the next reconfigure.
 update_lima_template() {
+    # Default USB/QEMU template — migrate existing configs (e.g. old `usb: true`
+    # -> `video.display`) with a prompt, matching the historical behavior.
+    _sync_lima_template "rfswift.yaml" "lima.yaml" "your Lima VM template" "prompt"
+    # Opt-in GPU (krunkit) template — seed it quietly when missing so that
+    # `rfswift --gpu` works out of the box, and prompt only if an existing one
+    # has drifted.
+    _sync_lima_template "rfswift-gpu.yaml" "lima-gpu.yaml" "your GPU Lima VM template" "seed"
+}
+
+# _sync_lima_template <bundled_basename> <user_basename> <label> <mode>
+# Copies a bundled Lima template into the user's config dir. mode "prompt" always
+# asks before creating/updating; mode "seed" creates a missing file quietly and
+# only prompts when an existing file differs.
+_sync_lima_template() {
+    local bundled_name="$1"
+    local user_name="$2"
+    local label="$3"
+    local mode="$4"
+
     local script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd 2>/dev/null || echo ".")"
     local bundled=""
     local tmp_downloaded=""
     for candidate in \
-        "${script_dir}/../lima/rfswift.yaml" \
-        "$(pwd)/lima/rfswift.yaml"; do
+        "${script_dir}/../lima/${bundled_name}" \
+        "$(pwd)/lima/${bundled_name}"; do
         if [ -f "$candidate" ]; then
             bundled="$(cd "$(dirname "$candidate")" && pwd)/$(basename "$candidate")"
             break
@@ -1348,58 +1342,58 @@ update_lima_template() {
 
     # If no local template found (e.g., running via curl|sh), download from GitHub
     if [ -z "$bundled" ]; then
-        local lima_url="https://raw.githubusercontent.com/PentHertz/RF-Swift/main/lima/rfswift.yaml"
+        local lima_url="https://raw.githubusercontent.com/PentHertz/RF-Swift/main/lima/${bundled_name}"
         tmp_downloaded=$(mktemp /tmp/rfswift-lima-XXXXXX.yaml 2>/dev/null || echo "/tmp/rfswift-lima-$$.yaml")
         if curl -fsSL "$lima_url" -o "$tmp_downloaded" 2>/dev/null || wget -qO "$tmp_downloaded" "$lima_url" 2>/dev/null; then
             bundled="$tmp_downloaded"
         else
             rm -f "$tmp_downloaded"
-            tmp_downloaded=""
+            return 0
         fi
     fi
 
-    if [ -z "$bundled" ]; then
-        return 0  # no template available (no local file and download failed)
-    fi
-
-    # Check all locations where rfswift looks for the Lima template.
-    # Update whichever one exists, or create ~/.config/rfswift/lima.yaml by default.
+    # Check all locations where rfswift looks for the template.
+    # Update whichever one exists, or default to ~/.config/rfswift/<user_name>.
     local user_template=""
     for candidate in \
-        "$HOME/.config/rfswift/lima.yaml" \
-        "$HOME/.rfswift/lima.yaml"; do
+        "$HOME/.config/rfswift/${user_name}" \
+        "$HOME/.rfswift/${user_name}"; do
         if [ -f "$candidate" ]; then
             user_template="$candidate"
             break
         fi
     done
-    # Default to ~/.config/rfswift/lima.yaml if none exists yet
-    [ -z "$user_template" ] && user_template="$HOME/.config/rfswift/lima.yaml"
+    [ -z "$user_template" ] && user_template="$HOME/.config/rfswift/${user_name}"
 
-    local needs_update=false
-
+    # Missing file: seed quietly in "seed" mode; otherwise fall through to prompt.
     if [ ! -f "$user_template" ]; then
-        needs_update=true
-    elif ! diff -q "$bundled" "$user_template" >/dev/null 2>&1; then
-        needs_update=true
-    fi
-
-    if $needs_update; then
-        echo ""
-        echo -e "${CYAN}A newer Lima VM template is available with this release.${NC}"
-        echo -e "${CYAN}It may include updated kernel modules, udev rules, or Bluetooth support.${NC}"
-        if prompt_yes_no "Would you like to update your Lima template?" "y"; then
+        if [ "$mode" = "seed" ]; then
             mkdir -p "$(dirname "$user_template")"
             cp "$bundled" "$user_template"
-            echo -e "${GREEN}Lima template updated at ${user_template}${NC}"
-            echo -e "${YELLOW}To apply changes to a running VM, run:${NC}"
-            echo -e "${CYAN}  rfswift engine lima reconfig${NC}"
-            echo -e "${YELLOW}For changes that require a full VM rebuild (e.g., disk/OS):${NC}"
-            echo -e "${CYAN}  rfswift engine lima reset${NC}"
-        else
-            echo -e "${YELLOW}Skipped. You can manually update later by copying:${NC}"
-            echo -e "${CYAN}  cp ${bundled} ${user_template}${NC}"
+            echo -e "${GREEN}Added ${label} at ${user_template}${NC}"
+            [ -n "$tmp_downloaded" ] && rm -f "$tmp_downloaded"
+            return 0
         fi
+    elif diff -q "$bundled" "$user_template" >/dev/null 2>&1; then
+        # Already up to date.
+        [ -n "$tmp_downloaded" ] && rm -f "$tmp_downloaded"
+        return 0
+    fi
+
+    echo ""
+    echo -e "${CYAN}A newer version of ${label} is available with this release.${NC}"
+    echo -e "${CYAN}It may include updated images, kernel modules, udev rules, or Bluetooth support.${NC}"
+    if prompt_yes_no "Would you like to update ${label}?" "y"; then
+        mkdir -p "$(dirname "$user_template")"
+        cp "$bundled" "$user_template"
+        echo -e "${GREEN}Updated at ${user_template}${NC}"
+        echo -e "${YELLOW}To apply changes to a running VM, run:${NC}"
+        echo -e "${CYAN}  rfswift engine lima reconfig${NC}"
+        echo -e "${YELLOW}For changes that require a full VM rebuild (e.g., disk/OS):${NC}"
+        echo -e "${CYAN}  rfswift engine lima reset${NC}"
+    else
+        echo -e "${YELLOW}Skipped. You can manually update later by copying:${NC}"
+        echo -e "${CYAN}  cp ${bundled} ${user_template}${NC}"
     fi
 
     # Clean up temp file if we downloaded one
@@ -1488,14 +1482,17 @@ setup_lima_instance() {
         local tmp_template=$(mktemp /tmp/rfswift-lima-XXXXXX.yaml)
         cat > "$tmp_template" << 'LIMAEOF'
 vmType: qemu
-usb: true
+# Non-"none" display makes upstream Lima add qemu-xhci,id=usb-bus for USB
+# passthrough; "vnc" is headless with no macOS QEMU perf penalty.
+video:
+  display: "vnc"
 cpus: 4
 memory: "8GiB"
 disk: "100GiB"
 images:
-  - location: "https://cloud-images.ubuntu.com/releases/24.04/release/ubuntu-24.04-server-cloudimg-amd64.img"
+  - location: "https://cloud-images.ubuntu.com/releases/26.04/release/ubuntu-26.04-server-cloudimg-amd64.img"
     arch: "x86_64"
-  - location: "https://cloud-images.ubuntu.com/releases/24.04/release/ubuntu-24.04-server-cloudimg-arm64.img"
+  - location: "https://cloud-images.ubuntu.com/releases/26.04/release/ubuntu-26.04-server-cloudimg-arm64.img"
     arch: "aarch64"
 mounts:
   - location: "~"

@@ -107,6 +107,8 @@ func init() {
 	// Persistent flags
 	rootCmd.PersistentFlags().String("engine", "auto",
 		"Container engine to use: auto, docker, podman, lima (env: RFSWIFT_ENGINE)")
+	rootCmd.PersistentFlags().Bool("gpu", false,
+		"Use the GPU-accelerated Lima VM on macOS Apple Silicon (krunkit/Vulkan). Implies --engine lima; provides GPU compute but NOT USB passthrough")
 	rootCmd.PersistentFlags().BoolVarP(&common.Disconnected, "disconnect", "q", false, "Don't query updates (disconnected mode)")
 
 	rootCmd.PersistentPreRun = func(cmd *cobra.Command, args []string) {
@@ -114,6 +116,15 @@ func init() {
 		if !isCompletion {
 			// Initialize container engine BEFORE anything else
 			engineType, _ := cmd.Flags().GetString("engine")
+			// --gpu selects the separate krunkit Lima VM (Vulkan via Venus/MoltenVK).
+			// It exists only on Lima and is mutually exclusive with USB passthrough,
+			// so it is a distinct instance ("rfswift-gpu") on a distinct backend.
+			if gpu, _ := cmd.Flags().GetBool("gpu"); gpu {
+				if os.Getenv("RFSWIFT_LIMA_INSTANCE") == "" {
+					os.Setenv("RFSWIFT_LIMA_INSTANCE", "rfswift-gpu")
+				}
+				engineType = "lima"
+			}
 			if engineType != "" && engineType != "auto" {
 				rfdock.SetPreferredEngine(engineType)
 			}

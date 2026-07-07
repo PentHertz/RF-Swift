@@ -244,10 +244,10 @@ func AttachUSBToLima(vendorID, productID, instance string) error {
 		addBusCmd := "device_add qemu-xhci,id=usb-bus"
 		busResult, busErr := qmpHumanCommand(sockPath, addBusCmd)
 		if busErr != nil {
-			return fmt.Errorf("failed to add USB controller: %w (ensure Lima YAML has 'usb: true')", busErr)
+			return fmt.Errorf("failed to add USB controller: %w (ensure Lima YAML sets video.display to a non-\"none\" value, e.g. \"vnc\")", busErr)
 		}
 		if busResult != "" && strings.Contains(strings.ToLower(busResult), "error") {
-			return fmt.Errorf("failed to add USB controller: %s (ensure Lima YAML has 'usb: true')", busResult)
+			return fmt.Errorf("failed to add USB controller: %s (ensure Lima YAML sets video.display to a non-\"none\" value, e.g. \"vnc\")", busResult)
 		}
 
 		// Retry the device attach now that the USB bus exists
@@ -358,6 +358,16 @@ func IsQEMUInstalled() bool {
 	return false
 }
 
+// IsKrunkitInstalled checks if the krunkit backend (libkrun) is installed.
+// krunkit is required by Lima's GPU-accelerated VM on Apple Silicon: it exposes
+// the Apple GPU to Linux guests as a Vulkan device (Venus -> MoltenVK -> Metal).
+//
+//	out: bool true if the krunkit binary is found in PATH
+func IsKrunkitInstalled() bool {
+	_, err := exec.LookPath("krunkit")
+	return err == nil
+}
+
 // IsLimaInstanceRunning checks if a specific Lima instance is running.
 //
 //	in(1): string instance the Lima instance name
@@ -448,4 +458,123 @@ func DeleteLimaInstance(instance string) error {
 func GetLimaInstanceConfigPath(instance string) string {
 	home := os.Getenv("HOME")
 	return filepath.Join(home, ".lima", instance, "lima.yaml")
+}
+
+// CopyFile copies src to dst, creating the destination directory if needed.
+//
+//	in(1): string src source file path
+//	in(2): string dst destination file path
+//	out: error
+func CopyFile(src, dst string) error {
+	data, err := os.ReadFile(src)
+	if err != nil {
+		return fmt.Errorf("failed to read %s: %w", src, err)
+	}
+	if err := os.MkdirAll(filepath.Dir(dst), 0755); err != nil {
+		return fmt.Errorf("failed to create %s: %w", filepath.Dir(dst), err)
+	}
+	if err := os.WriteFile(dst, data, 0644); err != nil {
+		return fmt.Errorf("failed to write %s: %w", dst, err)
+	}
+	return nil
+}
+
+// IsValidLimaSize reports whether s is an acceptable Lima memory/disk size such
+// as "8GiB", "512MiB", "100GB", "2.5GiB", or a bare number of bytes.
+//
+//	in(1): string s the size string to validate
+//	out: bool true if the value is well-formed
+func IsValidLimaSize(s string) bool {
+	s = strings.TrimSpace(s)
+	if s == "" || strings.ContainsAny(s, " \t") {
+		return false
+	}
+	// Longest units first so "GiB" matches before "G".
+	for _, u := range []string{"GiB", "MiB", "KiB", "TiB", "GB", "MB", "KB", "TB", "G", "M", "K", "T", "B"} {
+		if strings.HasSuffix(s, u) {
+			s = strings.TrimSuffix(s, u)
+			break
+		}
+	}
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return false
+	}
+	dotSeen := false
+	for _, r := range s {
+		if r == '.' {
+			if dotSeen {
+				return false
+			}
+			dotSeen = true
+			continue
+		}
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+// SetLimaResources rewrites the top-level cpus/memory/disk fields of a Lima YAML
+// template in place, preserving comments and all other content. A zero cpus or
+// empty memory/disk leaves that field untouched; a requested field missing from
+// the template is appended. Returns the human-readable list of changes applied.
+//
+//	in(1): string path to the Lima YAML template
+//	in(2): int cpus number of vCPUs (0 = leave unchanged)
+//	in(3): string memory e.g. "16GiB" ("" = leave unchanged)
+//	in(4): string disk e.g. "200GiB" ("" = leave unchanged)
+//	out: ([]string, error) changes applied, and any error
+func SetLimaResources(path string, cpus int, memory, disk string) ([]string, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read template %s: %w", path, err)
+	}
+
+	lines := strings.Split(string(data), "\n")
+	var changes []string
+	setCPUs, setMem, setDisk := false, false, false
+
+	// Only rewrite top-level keys (column 0) so nested cpus/memory/disk keys in
+	// provisioning blocks are never touched.
+	for i, line := range lines {
+		switch {
+		case cpus > 0 && !setCPUs && strings.HasPrefix(line, "cpus:"):
+			lines[i] = fmt.Sprintf("cpus: %d", cpus)
+			changes = append(changes, fmt.Sprintf("cpus -> %d", cpus))
+			setCPUs = true
+		case memory != "" && !setMem && strings.HasPrefix(line, "memory:"):
+			lines[i] = fmt.Sprintf("memory: %q", memory)
+			changes = append(changes, fmt.Sprintf("memory -> %s", memory))
+			setMem = true
+		case disk != "" && !setDisk && strings.HasPrefix(line, "disk:"):
+			lines[i] = fmt.Sprintf("disk: %q", disk)
+			changes = append(changes, fmt.Sprintf("disk -> %s", disk))
+			setDisk = true
+		}
+	}
+
+	// Append any requested key that was not present in the template.
+	if cpus > 0 && !setCPUs {
+		lines = append(lines, fmt.Sprintf("cpus: %d", cpus))
+		changes = append(changes, fmt.Sprintf("cpus -> %d (added)", cpus))
+	}
+	if memory != "" && !setMem {
+		lines = append(lines, fmt.Sprintf("memory: %q", memory))
+		changes = append(changes, fmt.Sprintf("memory -> %s (added)", memory))
+	}
+	if disk != "" && !setDisk {
+		lines = append(lines, fmt.Sprintf("disk: %q", disk))
+		changes = append(changes, fmt.Sprintf("disk -> %s (added)", disk))
+	}
+
+	if len(changes) == 0 {
+		return nil, nil
+	}
+
+	if err := os.WriteFile(path, []byte(strings.Join(lines, "\n")), 0644); err != nil {
+		return nil, fmt.Errorf("failed to write template %s: %w", path, err)
+	}
+	return changes, nil
 }

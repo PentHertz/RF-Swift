@@ -7,6 +7,7 @@ package cli
 
 import (
 	"fmt"
+	"os"
 	"runtime"
 
 	"github.com/spf13/cobra"
@@ -181,6 +182,94 @@ var engineLimaStatusCmd = &cobra.Command{
 	},
 }
 
+var engineLimaSetCmd = &cobra.Command{
+	Use:   "set",
+	Short: "Set Lima VM resources (CPUs, memory, disk) without editing YAML",
+	Long: `Update the Lima VM's CPU, memory, and/or disk in the rfswift template so you
+don't have to locate and edit the YAML by hand.
+
+Changes are written to your user template (~/.config/rfswift/lima.yaml, or
+lima-gpu.yaml when combined with the global --gpu flag). CPU and memory changes
+apply with a VM restart (--apply); disk changes require a destructive rebuild.
+
+Examples:
+  rfswift engine lima set --memory 16GiB
+  rfswift engine lima set --cpus 8 --memory 16GiB --apply
+  rfswift --gpu engine lima set --disk 300GiB     # target the GPU VM`,
+	Run: func(cmd *cobra.Command, args []string) {
+		cpus, _ := cmd.Flags().GetInt("cpus")
+		memory, _ := cmd.Flags().GetString("memory")
+		disk, _ := cmd.Flags().GetString("disk")
+		apply, _ := cmd.Flags().GetBool("apply")
+
+		if cpus <= 0 && memory == "" && disk == "" {
+			tui.PrintError("Nothing to set. Provide at least one of --cpus, --memory, --disk.")
+			return
+		}
+		if memory != "" && !rfutils.IsValidLimaSize(memory) {
+			tui.PrintError(fmt.Sprintf("Invalid --memory value %q (expected e.g. 8GiB, 16GiB).", memory))
+			return
+		}
+		if disk != "" && !rfutils.IsValidLimaSize(disk) {
+			tui.PrintError(fmt.Sprintf("Invalid --disk value %q (expected e.g. 100GiB, 200GiB).", disk))
+			return
+		}
+
+		lima := &rfdock.LimaEngine{}
+
+		// Write to the user template so changes persist and take precedence over
+		// the bundled one. Seed it from the resolved template if it doesn't exist.
+		target := lima.UserTemplatePath()
+		if _, err := os.Stat(target); err != nil {
+			src := lima.FindTemplate()
+			if src == "" {
+				tui.PrintError("No Lima template found to base changes on.")
+				fmt.Println("  Run a container via '--engine lima' once to create one, or place a template at:")
+				fmt.Println("    ~/.config/rfswift/lima.yaml")
+				return
+			}
+			if err := rfutils.CopyFile(src, target); err != nil {
+				tui.PrintError(fmt.Sprintf("Failed to seed template: %v", err))
+				return
+			}
+			tui.PrintInfo(fmt.Sprintf("Created %s from %s", target, src))
+		}
+
+		changes, err := rfutils.SetLimaResources(target, cpus, memory, disk)
+		if err != nil {
+			tui.PrintError(fmt.Sprintf("Failed to update template: %v", err))
+			return
+		}
+		if len(changes) == 0 {
+			tui.PrintInfo("No changes needed (values already set).")
+			return
+		}
+		for _, c := range changes {
+			tui.PrintSuccess(fmt.Sprintf("Set %s", c))
+		}
+		tui.PrintInfo(fmt.Sprintf("Updated template: %s", target))
+
+		if !apply {
+			tui.PrintInfo("To apply: rfswift engine lima reconfig   (disk changes: rfswift engine lima reset)")
+			return
+		}
+
+		// Disk changes cannot be applied to an existing VM in place — they need a
+		// destructive recreate.
+		force := disk != ""
+		if force && tui.IsInteractive() {
+			if !tui.Confirm("Applying a disk change requires DELETING and recreating the VM (all VM data lost). Continue?") {
+				tui.PrintInfo("Template updated but not applied. Apply later with: rfswift engine lima reset")
+				return
+			}
+		}
+		if err := lima.ReconfigureInstance(target, force); err != nil {
+			tui.PrintError(fmt.Sprintf("Apply failed: %v", err))
+			return
+		}
+	},
+}
+
 func registerEngineCommands() {
 	rootCmd.AddCommand(engineCmd)
 
@@ -190,6 +279,7 @@ func registerEngineCommands() {
 		engineLimaCmd.AddCommand(engineLimaReconfigCmd)
 		engineLimaCmd.AddCommand(engineLimaResetCmd)
 		engineLimaCmd.AddCommand(engineLimaStatusCmd)
+		engineLimaCmd.AddCommand(engineLimaSetCmd)
 
 		// Instance flag (shared across lima subcommands)
 		engineLimaCmd.PersistentFlags().StringVar(&engineLimaInstance, "instance", "rfswift", "Lima instance name")
@@ -200,5 +290,11 @@ func registerEngineCommands() {
 
 		// Reset flags
 		engineLimaResetCmd.Flags().String("template", "", "Path to Lima YAML template (overrides auto-detection)")
+
+		// Set (resources) flags
+		engineLimaSetCmd.Flags().Int("cpus", 0, "Number of vCPUs for the VM")
+		engineLimaSetCmd.Flags().String("memory", "", "VM memory, e.g. 16GiB")
+		engineLimaSetCmd.Flags().String("disk", "", "VM disk size, e.g. 200GiB (requires a destructive rebuild to apply)")
+		engineLimaSetCmd.Flags().Bool("apply", false, "Apply changes to the VM now (restart for cpu/memory; recreate for disk)")
 	}
 }

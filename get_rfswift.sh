@@ -971,6 +971,19 @@ offer_lima_for_usb_get_rfswift() {
       fi
     fi
 
+    # Seed the opt-in GPU (krunkit) template if bundled and not already present,
+    # so `rfswift --gpu` works out of the box.
+    if [ ! -f "$HOME/.config/rfswift/lima-gpu.yaml" ]; then
+      for gpu_src in "${script_dir}/lima/rfswift-gpu.yaml" "$(pwd)/lima/rfswift-gpu.yaml"; do
+        if [ -f "$gpu_src" ]; then
+          mkdir -p "$HOME/.config/rfswift"
+          cp "$gpu_src" "$HOME/.config/rfswift/lima-gpu.yaml"
+          color_echo "green" "   Added GPU Lima template at ~/.config/rfswift/lima-gpu.yaml"
+          break
+        fi
+      done
+    fi
+
     if ! limactl list --json 2>/dev/null | grep -q '"name":"rfswift"'; then
       color_echo "yellow" "   No rfswift Lima instance yet."
       color_echo "cyan" "   Create with: limactl create --name rfswift lima/rfswift.yaml"
@@ -980,7 +993,7 @@ offer_lima_for_usb_get_rfswift() {
     fi
   else
     if prompt_yes_no "   Would you like to install Lima for USB passthrough?" "n"; then
-      install_lima_fork
+      install_lima
     fi
   fi
 }
@@ -1082,7 +1095,7 @@ check_container_engine() {
       if [ "$(uname -s)" = "Darwin" ]; then
         # Lima option on macOS
         color_echo "blue" "🦙 Installing Lima..."
-        install_lima_fork
+        install_lima
       else
         color_echo "yellow" "⚠️  Container engine installation skipped."
         color_echo "yellow" "   You will need Docker or Podman before using RF-Swift."
@@ -1121,61 +1134,40 @@ check_container_engine() {
 # Podman Installation
 # ═══════════════════════════════════════════════════════════════════════════════
 
-# Install Lima from PentHertz fork (with USB passthrough support) + QEMU
-LIMA_VERSION="2.1.1"
-LIMA_RELEASE_BASE="https://github.com/PentHertz/lima/releases/download/v${LIMA_VERSION}"
-
-install_lima_fork() {
+# Install QEMU + official Lima. USB passthrough works on stock Lima because the
+# rfswift VM template sets video.display, which makes Lima add a qemu-xhci
+# controller — the old PentHertz fork (and its `usb: true` field) is no longer
+# needed.
+install_lima() {
   if [ "$(uname -s)" != "Darwin" ]; then
     color_echo "yellow" "Lima is only needed on macOS for USB passthrough."
     return 0
   fi
 
   if ! command_exists brew; then
-    color_echo "red" "Homebrew is required to install QEMU."
+    color_echo "red" "Homebrew is required to install QEMU and Lima."
     color_echo "yellow" "Install Homebrew: https://brew.sh/"
     return 1
   fi
 
-  # Install QEMU via Homebrew
+  # QEMU backend is required — USB passthrough does not work with the vz backend.
   if ! command_exists qemu-img; then
     color_echo "blue" "Installing QEMU via Homebrew..."
     brew install qemu
   fi
 
-  # Remove Homebrew Lima if present (we use the PentHertz fork)
-  if brew list lima &>/dev/null; then
-    color_echo "yellow" "Removing Homebrew Lima in favor of PentHertz fork (USB support)..."
-    brew uninstall lima
+  if ! command_exists limactl; then
+    color_echo "blue" "Installing Lima via Homebrew..."
+    brew install lima
   fi
-
-  local arch
-  arch=$(uname -m)
-  case "$arch" in
-    arm64|aarch64) arch="arm64" ;;
-    x86_64|amd64)  arch="x86_64" ;;
-    *)
-      color_echo "red" "Unsupported architecture: $arch"
-      return 1
-      ;;
-  esac
-
-  local tarball="lima-${LIMA_VERSION}-Darwin-${arch}.tar.gz"
-  local url="${LIMA_RELEASE_BASE}/${tarball}"
-  local tmp="/tmp/${tarball}"
-
-  color_echo "blue" "Installing Lima ${LIMA_VERSION} (PentHertz fork with USB support)..."
-  curl -fsSL "$url" -o "$tmp"
-  sudo tar xz -C /usr/local -f "$tmp"
-  rm -f "$tmp"
 
   if ! command_exists limactl; then
     color_echo "red" "Lima installation failed — limactl not found in PATH."
-    color_echo "yellow" "Ensure /usr/local/bin is in your PATH."
+    color_echo "yellow" "Ensure Homebrew's bin directory is in your PATH."
     return 1
   fi
 
-  color_echo "green" "✅ Lima ${LIMA_VERSION} (PentHertz fork) and QEMU installed."
+  color_echo "green" "✅ Official Lima and QEMU installed."
   limactl --version
   color_echo "cyan" "   Use 'rfswift --engine lima' when you need USB devices."
 }
@@ -1611,6 +1603,29 @@ download_files() {
   # GitHub release page for manual verification
   RELEASE_PAGE_URL="https://github.com/${GITHUB_REPO}/releases/tag/v${VERSION}"
   color_echo "yellow" "If needed, verify the checksum by visiting the GitHub release page: ${RELEASE_PAGE_URL}"
+
+  # Optional: verify GitHub build provenance attestation (Sigstore-backed).
+  # Proves the binary was built by the official RF-Swift release workflow and not
+  # swapped afterwards — same mechanism as LUKSbox.
+  if command_exists gh; then
+    if prompt_yes_no "Verify the GitHub build attestation for this binary (recommended)?" "y"; then
+      color_echo "blue" "🔏 Verifying build provenance with 'gh attestation verify'..."
+      if gh attestation verify "${TMP_DIR}/${FILENAME}" --repo "${GITHUB_REPO}"; then
+        color_echo "green" "✅ Attestation verified — provenance confirmed for ${GITHUB_REPO}."
+      else
+        color_echo "red" "🚨 Attestation verification FAILED (or 'gh' is not signed in — run 'gh auth login')."
+        color_echo "yellow" "   The binary could not be cryptographically verified against ${GITHUB_REPO}."
+        if ! prompt_yes_no "Continue anyway (NOT recommended)?" "n"; then
+          color_echo "red" "🚨 Installation aborted."
+          rm -rf "${TMP_DIR}"
+          exit 1
+        fi
+      fi
+    fi
+  else
+    color_echo "yellow" "ℹ️  Install the GitHub CLI (gh) to cryptographically verify build attestations:"
+    color_echo "yellow" "   https://cli.github.com  —  then: gh attestation verify ${FILENAME} --repo ${GITHUB_REPO}"
+  fi
   
   # Ask to continue
   if ! prompt_yes_no "Continue with installation?" "y"; then
@@ -2377,7 +2392,7 @@ main() {
           color_echo "cyan" "   Or let RF Swift auto-create it on first 'rfswift run' when no Docker/Podman is found."
         fi
       else
-        color_echo "yellow" "   Lima is not installed. Run the installer or see https://github.com/PentHertz/lima/releases"
+        color_echo "yellow" "   Lima is not installed. Run the installer, or: brew install qemu lima"
         color_echo "cyan" "   After installing, RF Swift can auto-manage a QEMU VM with USB passthrough."
         color_echo "cyan" "   USB commands: rfswift macusb list | attach | detach | status"
       fi
