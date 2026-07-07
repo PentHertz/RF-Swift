@@ -212,7 +212,7 @@ Recipes in `recipes/` define container images declaratively:
 
 ```yaml
 name: my_image
-base_image: penthertz/rfswift_noble:latest
+base_image: penthertz/rfswift_resolute:latest
 tag: my_custom_tag
 labels:
   org.container.project: rfswift

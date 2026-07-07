@@ -242,6 +242,10 @@ var runCmd = &cobra.Command{
 			return
 		}
 
+		// Warn once if the resolved image is an official RF-Swift image on an
+		// older Ubuntu base than the current one.
+		rfutils.NotifyIfOutdatedImage(image)
+
 		// On macOS with Lima engine, offer to attach USB devices before container creation
 		if runtime.GOOS == "darwin" && rfdock.GetEngine().Type() == rfdock.EngineLima && tui.IsInteractive() {
 			MacUSBWizardStep(limaInstance)

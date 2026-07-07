@@ -19,6 +19,12 @@ var Branch = "main"
 var Owner = "PentHertz"
 var Repo = "RF-Swift"
 
+// CurrentImageCodename is the Ubuntu base of the current official RF-Swift
+// container images (penthertz/rfswift_<codename>). Bump this when the images
+// move to a newer base so the binary can nudge users who are still pointing at
+// an older official image.
+var CurrentImageCodename = "resolute"
+
 var Disconnected bool = false // variable avoiding checks for updates
 
 var ascii_art_old = `                                                                                                    
@@ -128,7 +134,7 @@ func messageBox(icon string, title string, body string, borderColor lipgloss.Col
 	// Top border
 	fmt.Printf("%s\n", border.Render("┌"+strings.Repeat("─", boxWidth-2)+"┐"))
 
-	// Title line — use lipgloss.Width for correct Unicode display width
+	// Title line - use lipgloss.Width for correct Unicode display width
 	titleText := fmt.Sprintf(" %s %s", icon, title)
 	padded := titleText + strings.Repeat(" ", max(0, innerWidth-lipgloss.Width(titleText)))
 	fmt.Printf("%s%s%s\n", border.Render("│ "), titleStyle.Render(padded), border.Render(" │"))

@@ -30,7 +30,7 @@ import (
 // getRemoteImageDigest fetches the digest for a specific tag from Docker Hub,
 // normalizing the tag for the target architecture before querying the registry API.
 //
-//	in(1): string repo         Docker Hub repository path (e.g. "penthertz/rfswift_noble")
+//	in(1): string repo         Docker Hub repository path (e.g. "penthertz/rfswift_resolute")
 //	in(2): string tag          image tag to look up
 //	in(3): string architecture target architecture string used to normalize the tag
 //	out:   string              digest string for the matched tag, empty on failure
@@ -1076,7 +1076,7 @@ func ContainerPullVersion(imageref string, version string, imagetag string) {
 	pullRef := fmt.Sprintf("%s:%s", repo, versionedTag)
 
 	// Set display tag - use underscore format without 'v' prefix
-	// Format: repo:baseName_version (e.g., penthertz/rfswift_noble:reversing_0.0.7)
+	// Format: repo:baseName_version (e.g., penthertz/rfswift_resolute:reversing_0.0.7)
 	if imagetag == "" {
 		imagetag = fmt.Sprintf("%s:%s_%s", repo, baseName, version)
 	}

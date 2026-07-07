@@ -339,9 +339,9 @@ func determineArchitectureFromTag(tagName, requestedArch string) string {
 
 // OfficialRepos returns the list of official RF-Swift Docker Hub repository names.
 //
-//	out: []string slice of fully-qualified repository names (e.g. "penthertz/rfswift_noble")
+//	out: []string slice of fully-qualified repository names (e.g. "penthertz/rfswift_resolute")
 func OfficialRepos() []string {
-	return []string{"penthertz/rfswift_noble"}
+	return []string{"penthertz/rfswift_resolute"}
 }
 
 // IsOfficialImage reports whether imageName refers to one of the official RF-Swift
@@ -515,7 +515,7 @@ func FormatVersionsString(versions []VersionInfo, maxVersions int) string {
 // GetRemoteImageDigest fetches the content-addressable digest for a specific tag
 // from Docker Hub, normalising the tag name with an architecture suffix before querying.
 //
-//	in(1): string repo Docker Hub repository (e.g. "penthertz/rfswift_noble")
+//	in(1): string repo Docker Hub repository (e.g. "penthertz/rfswift_resolute")
 //	in(2): string tag image tag name, with or without architecture suffix
 //	in(3): string architecture target architecture used to normalise the tag
 //	out: string digest of the matching tag, or "" when not found
@@ -574,7 +574,7 @@ func GetRemoteImageDigest(repo, tag, architecture string) (string, error) {
 // GetRemoteVersionsForRepo fetches and parses all image tags from a single Docker Hub
 // repository, returning a map from base image name to its sorted list of VersionInfo entries.
 //
-//	in(1): string repo Docker Hub repository to query (e.g. "penthertz/rfswift_noble")
+//	in(1): string repo Docker Hub repository to query (e.g. "penthertz/rfswift_resolute")
 //	in(2): string architecture target architecture to filter tags by
 //	out: ImageVersionMap map of base image name to sorted []VersionInfo
 //	out: error non-nil if the Docker Hub request fails
@@ -661,7 +661,7 @@ func GetAllRemoteVersions(architecture string) ImageVersionMap {
 // getRemoteImageCreationDate queries Docker Hub for the push date of the specified tag
 // in repo, filtering by architecture, and returns the parsed timestamp.
 //
-//	in(1): string repo Docker Hub repository (e.g. "penthertz/rfswift_noble")
+//	in(1): string repo Docker Hub repository (e.g. "penthertz/rfswift_resolute")
 //	in(2): string tag image tag name whose creation date is requested
 //	in(3): string architecture target architecture used to match the correct tag variant
 //	out: time.Time UTC timestamp of when the tag was last pushed
@@ -749,7 +749,7 @@ func getRemoteImageCreationDateFallback(body []byte, tag, architecture string) (
 // filters by architecture and OCI index media type, deduplicates by tag name,
 // and returns the results sorted by push date descending.
 //
-//	in(1): string repo Docker Hub repository to paginate (e.g. "penthertz/rfswift_noble")
+//	in(1): string repo Docker Hub repository to paginate (e.g. "penthertz/rfswift_resolute")
 //	in(2): string architecture target architecture to filter tags by
 //	out: []Tag deduplicated and sorted list of matching Tag entries
 //	out: error non-nil if any HTTP request or JSON parsing step fails

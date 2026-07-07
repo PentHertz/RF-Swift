@@ -1048,7 +1048,7 @@ func ProfileCreateWizard(images []string, existingNets []string) (*ProfileCreate
 	// Step 3: Image selection
 	if len(images) == 0 {
 		err = newInput().
-			Title("Image name (e.g., penthertz/rfswift_noble:sdr_full)").
+			Title("Image name (e.g., penthertz/rfswift_resolute:sdr_full)").
 			Value(&result.Image).
 			Run()
 		if err != nil {
@@ -1072,7 +1072,7 @@ func ProfileCreateWizard(images []string, existingNets []string) (*ProfileCreate
 		if result.Image == "__manual__" {
 			result.Image = ""
 			err = newInput().
-				Title("Image name (e.g., penthertz/rfswift_noble:sdr_full)").
+				Title("Image name (e.g., penthertz/rfswift_resolute:sdr_full)").
 				Value(&result.Image).
 				Run()
 			if err != nil {

@@ -808,8 +808,8 @@ func imageExistsPodman(imageName string) bool {
 
 // ImageInspectCompat wraps image inspection with Podman compatibility.
 // Podman's Docker compat API sometimes fails to resolve short image names
-// (e.g., "penthertz/rfswift_noble:sdr_full") because Podman internally stores
-// them with the full registry prefix ("docker.io/penthertz/rfswift_noble:sdr_full").
+// (e.g., "penthertz/rfswift_resolute:sdr_full") because Podman internally stores
+// them with the full registry prefix ("docker.io/penthertz/rfswift_resolute:sdr_full").
 // This function tries the original name first, then with "docker.io/" prefix,
 // then falls back to the podman CLI as a last resort.
 func ImageInspectCompat(ctx context.Context, cli *client.Client, imageName string) (image.InspectResponse, error) {

@@ -90,9 +90,9 @@ RF Swift supports **both Docker and Podman** as container engines, giving you th
 RF Swift **automatically detects** the available container engine at startup. If both are installed, Docker is used by default. Override with:
 
 ```bash
-rfswift --engine podman run -n mycontainer -i penthertz/rfswift_noble:sdr_light
-rfswift --engine docker run -n mycontainer -i penthertz/rfswift_noble:sdr_light
-rfswift --engine lima run -n mycontainer -i penthertz/rfswift_noble:sdr_light  # macOS USB
+rfswift --engine podman run -n mycontainer -i penthertz/rfswift_resolute:sdr_light
+rfswift --engine docker run -n mycontainer -i penthertz/rfswift_resolute:sdr_light
+rfswift --engine lima run -n mycontainer -i penthertz/rfswift_resolute:sdr_light  # macOS USB
 ```
 
 #### Podman support example
@@ -122,7 +122,7 @@ rfswift macusb list                              # see host USB devices
 rfswift macusb attach --vid 0x1d50 --pid 0x604b  # forward HackRF to VM
 
 # Run container via Lima's Docker (where USB device lives)
-rfswift --engine lima run -i penthertz/rfswift_noble:sdr_light -n sdr_work
+rfswift --engine lima run -i penthertz/rfswift_resolute:sdr_light -n sdr_work
 
 # When done, detach
 rfswift macusb detach --vid 0x1d50 --pid 0x604b
@@ -141,7 +141,7 @@ brew tap slp/krunkit && brew install krunkit
 
 # Run a container in the GPU VM (auto-created on first use). --gpu implies --engine lima
 # and uses a separate instance (rfswift-gpu), leaving your USB/SDR VM untouched.
-rfswift --gpu run -i penthertz/rfswift_noble:sdr_light -n gpu_work --devices /dev/dri
+rfswift --gpu run -i penthertz/rfswift_resolute:sdr_light -n gpu_work --devices /dev/dri
 ```
 
 Use `--gpu` for GPU compute; use `--engine lima` (without `--gpu`) for SDR hardware. Requires macOS ≥ 14 and a guest kernel with virtio-gpu Venus support (Linux ≥ 6.13).
