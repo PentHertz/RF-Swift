@@ -56,7 +56,7 @@ check_xhost() {
             if [[ -x /opt/X11/bin/xhost ]]; then
                 color_echo "green" "✅ XQuartz installed successfully. ✅"
                 color_echo "yellow" "⚠️ You may need to log out and back in for XQuartz to work properly."
-                color_echo "yellow" "⚠️ Make sure to enable 'Allow connections from network clients' in XQuartz → Settings → Security."
+                color_echo "yellow" "⚠️ Make sure to enable 'Allow connections from network clients' in XQuartz -> Settings -> Security."
             else
                 color_echo "red" "❌ XQuartz installed but xhost not found. Please reboot and try again. ❌"
                 exit 1
@@ -314,7 +314,8 @@ install_pipewire() {
         fi
       else
         color_echo "yellow" "ℹ️ PipeWire not available on RHEL/CentOS 7, installing PulseAudio instead"
-        return install_pulseaudio "$distro"
+        install_pulseaudio "$distro"
+        return $?
       fi
       ;;
     "debian"|"ubuntu")
@@ -485,13 +486,13 @@ check_audio_system() {
 
       # Verify pactl is available (comes with Homebrew pulseaudio)
       if ! command_exists pactl; then
-        color_echo "red" "❌ pactl not found — required for audio TCP module management"
+        color_echo "red" "❌ pactl not found - required for audio TCP module management"
         color_echo "yellow" "Try reinstalling: brew reinstall pulseaudio"
         return 1
       fi
       color_echo "green" "✅ pactl available"
 
-      color_echo "cyan" "ℹ️ Audio chain: Container → Lima VM → port 34567 → macOS PulseAudio → CoreAudio"
+      color_echo "cyan" "ℹ️ Audio chain: Container -> Lima VM -> port 34567 -> macOS PulseAudio -> CoreAudio"
       color_echo "cyan" "ℹ️ Enable audio with: rfswift host audio enable"
       return 0
       ;;
@@ -570,7 +571,7 @@ check_audio_system() {
 
   # Verify pactl is available (required for TCP module management)
   if ! command_exists pactl; then
-    color_echo "yellow" "⚠️ pactl not found — installing pulseaudio-utils..."
+    color_echo "yellow" "⚠️ pactl not found - installing pulseaudio-utils..."
     case "$distro" in
       "arch")
         sudo pacman -S --noconfirm --needed libpulse
@@ -592,7 +593,7 @@ check_audio_system() {
     if command_exists pactl; then
       color_echo "green" "✅ pactl installed"
     else
-      color_echo "red" "❌ pactl still not found — audio TCP module may not work"
+      color_echo "red" "❌ pactl still not found - audio TCP module may not work"
     fi
   else
     color_echo "green" "✅ pactl available"
@@ -605,14 +606,14 @@ check_audio_system() {
 show_audio_status() {
   color_echo "blue" "🎵 Audio System Status"
   echo "=================================="
-
+  
   case "$(uname -s)" in
     Darwin*)
-      color_echo "yellow" "🍎 macOS: Audio via PulseAudio → CoreAudio"
+      color_echo "yellow" "🍎 macOS: Audio via PulseAudio -> CoreAudio"
       if command_exists pulseaudio; then
         color_echo "green" "✅ PulseAudio installed"
       else
-        color_echo "red" "❌ PulseAudio not installed — run: brew install pulseaudio"
+        color_echo "red" "❌ PulseAudio not installed - run: brew install pulseaudio"
       fi
       if command_exists pactl; then
         color_echo "green" "✅ pactl available"
@@ -622,7 +623,7 @@ show_audio_status() {
       if pgrep -x pulseaudio >/dev/null 2>&1; then
         color_echo "green" "✅ PulseAudio is running"
       else
-        color_echo "yellow" "⚠️ PulseAudio is not running — enable with: rfswift host audio enable"
+        color_echo "yellow" "⚠️ PulseAudio is not running - enable with: rfswift host audio enable"
       fi
       echo "=================================="
       return 0
@@ -893,7 +894,7 @@ detect_container_engines() {
     HAS_PODMAN=true
   fi
 
-  # Check Docker — must have a running daemon to count
+  # Check Docker - must have a running daemon to count
   # Skip 'docker info' if the binary is actually podman-docker shim
   if command_exists docker; then
     # Detect podman-docker shim: 'docker --version' contains "podman"
@@ -911,7 +912,94 @@ detect_container_engines() {
   fi
 }
 
-# Main container engine check — replaces the old check_docker()
+# Offer Lima for USB passthrough on macOS (called even when Docker/Podman is present)
+offer_lima_for_usb_get_rfswift() {
+  echo ""
+  color_echo "cyan" "🦙 USB passthrough on macOS"
+  color_echo "cyan" "   Docker Desktop and Podman on macOS cannot forward USB devices (SDR dongles,"
+  color_echo "cyan" "   HackRF, RTL-SDR, etc.) into containers. Lima runs a QEMU VM with its own"
+  color_echo "cyan" "   Docker that supports USB hot-plug for your RF hardware."
+  echo ""
+  color_echo "cyan" "   Workflow when you need USB:"
+  color_echo "cyan" "     rfswift macusb attach --vid 0x1d50 --pid 0x604b  # forward device to VM"
+  color_echo "cyan" "     rfswift --engine lima run -i <image>              # run via Lima's Docker"
+  color_echo "cyan" "     rfswift macusb detach --vid 0x1d50 --pid 0x604b  # unplug when done"
+  echo ""
+
+  if command_exists limactl; then
+    color_echo "green" "   Lima is already installed."
+    # Offer to update the Lima template if a bundled one is available
+    local bundled_template=""
+    local script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    for candidate in \
+        "${script_dir}/lima/rfswift.yaml" \
+        "$(pwd)/lima/rfswift.yaml"; do
+      if [ -f "$candidate" ]; then
+        bundled_template="$(cd "$(dirname "$candidate")" && pwd)/$(basename "$candidate")"
+        break
+      fi
+    done
+    if [ -n "$bundled_template" ]; then
+      # Find existing user template or default location
+      local user_template=""
+      for candidate in \
+          "$HOME/.config/rfswift/lima.yaml" \
+          "$HOME/.rfswift/lima.yaml"; do
+        if [ -f "$candidate" ]; then
+          user_template="$candidate"
+          break
+        fi
+      done
+      [ -z "$user_template" ] && user_template="$HOME/.config/rfswift/lima.yaml"
+
+      local needs_update=false
+      if [ ! -f "$user_template" ]; then
+        needs_update=true
+      elif ! diff -q "$bundled_template" "$user_template" >/dev/null 2>&1; then
+        needs_update=true
+      fi
+
+      if $needs_update; then
+        echo ""
+        color_echo "yellow" "   A newer Lima template is available (kernel modules, Bluetooth, udev rules)."
+        if prompt_yes_no "   Would you like to update your Lima template?" "y"; then
+          mkdir -p "$(dirname "$user_template")"
+          cp "$bundled_template" "$user_template"
+          color_echo "green" "   Lima template updated at ${user_template}"
+          color_echo "cyan" "   Apply with: rfswift engine lima reconfig"
+          color_echo "cyan" "   Or full rebuild: rfswift engine lima reset"
+        fi
+      fi
+    fi
+
+    # Seed the opt-in GPU (krunkit) template if bundled and not already present,
+    # so `rfswift --gpu` works out of the box.
+    if [ ! -f "$HOME/.config/rfswift/lima-gpu.yaml" ]; then
+      for gpu_src in "${script_dir}/lima/rfswift-gpu.yaml" "$(pwd)/lima/rfswift-gpu.yaml"; do
+        if [ -f "$gpu_src" ]; then
+          mkdir -p "$HOME/.config/rfswift"
+          cp "$gpu_src" "$HOME/.config/rfswift/lima-gpu.yaml"
+          color_echo "green" "   Added GPU Lima template at ~/.config/rfswift/lima-gpu.yaml"
+          break
+        fi
+      done
+    fi
+
+    if ! limactl list --json 2>/dev/null | grep -q '"name":"rfswift"'; then
+      color_echo "yellow" "   No rfswift Lima instance yet."
+      color_echo "cyan" "   Create with: limactl create --name rfswift lima/rfswift.yaml"
+      color_echo "cyan" "   Or let RF Swift auto-create it on first 'rfswift --engine lima run'."
+    else
+      color_echo "green" "   Lima instance 'rfswift' exists. USB passthrough available."
+    fi
+  else
+    if prompt_yes_no "   Would you like to install Lima for USB passthrough?" "n"; then
+      install_lima
+    fi
+  fi
+}
+
+# Main container engine check - replaces the old check_docker()
 check_container_engine() {
   color_echo "blue" "🔍 Checking for container engines..."
 
@@ -922,6 +1010,10 @@ check_container_engine() {
     color_echo "green" "✅ Both Docker and Podman are installed."
     color_echo "cyan" "ℹ️  RF-Swift auto-detects the engine at runtime."
     color_echo "cyan" "   Use 'rfswift --engine docker' or 'rfswift --engine podman' to override."
+    # On macOS, offer Lima for USB passthrough even with Docker/Podman present
+    if [ "$(uname -s)" = "Darwin" ]; then
+      offer_lima_for_usb_get_rfswift
+    fi
     return 0
   fi
 
@@ -930,6 +1022,10 @@ check_container_engine() {
     color_echo "green" "✅ Docker is already installed."
     if prompt_yes_no "Would you also like to install Podman (rootless containers)?" "n"; then
       install_podman
+    fi
+    # On macOS, offer Lima for USB passthrough
+    if [ "$(uname -s)" = "Darwin" ]; then
+      offer_lima_for_usb_get_rfswift
     fi
     return 0
   fi
@@ -940,6 +1036,10 @@ check_container_engine() {
     if prompt_yes_no "Would you also like to install Docker?" "n"; then
       install_docker
     fi
+    # On macOS, offer Lima for USB passthrough
+    if [ "$(uname -s)" = "Darwin" ]; then
+      offer_lima_for_usb_get_rfswift
+    fi
     return 0
   fi
 
@@ -949,14 +1049,21 @@ check_container_engine() {
   echo ""
   color_echo "cyan" "📝 Which container engine would you like to install?"
   echo ""
-  color_echo "cyan" "   🐳 Docker  — Industry standard, requires daemon (root)"
+  color_echo "cyan" "   🐳 Docker  - Industry standard, requires daemon (root)"
   color_echo "cyan" "              Best compatibility, large ecosystem"
   echo ""
-  color_echo "cyan" "   🦭 Podman  — Daemonless, rootless by default"
+  color_echo "cyan" "   🦭 Podman  - Daemonless, rootless by default"
   color_echo "cyan" "              Drop-in Docker replacement, no root needed"
   echo ""
 
-  # Check if this is a Steam Deck — special case
+  # macOS: also offer Lima
+  if [ "$(uname -s)" = "Darwin" ]; then
+    color_echo "cyan" "   🦙 Lima    - Lightweight VM with Docker inside (QEMU)"
+    color_echo "cyan" "              Enables USB device passthrough for SDR hardware"
+    echo ""
+  fi
+
+  # Check if this is a Steam Deck - special case
   if [ "$(uname -s)" = "Linux" ] && is_steam_deck; then
     color_echo "magenta" "🎮 Steam Deck detected! Docker with Steam Deck optimizations is recommended."
     if prompt_yes_no "Install Docker with Steam Deck optimizations?" "y"; then
@@ -965,7 +1072,14 @@ check_container_engine() {
     fi
   fi
 
-  CHOICE=$(prompt_choice "Select a container engine to install:" "Docker" "Podman" "Both" "Skip")
+  local choices="Docker Podman Both"
+  if [ "$(uname -s)" = "Darwin" ]; then
+    choices="Docker Podman Both Lima Skip"
+  else
+    choices="Docker Podman Both Skip"
+  fi
+
+  CHOICE=$(prompt_choice "Select a container engine to install:" $choices)
 
   case "$CHOICE" in
     1)
@@ -979,6 +1093,17 @@ check_container_engine() {
       install_podman
       ;;
     4)
+      if [ "$(uname -s)" = "Darwin" ]; then
+        # Lima option on macOS
+        color_echo "blue" "🦙 Installing Lima..."
+        install_lima
+      else
+        color_echo "yellow" "⚠️  Container engine installation skipped."
+        color_echo "yellow" "   You will need Docker or Podman before using RF-Swift."
+        return 1
+      fi
+      ;;
+    5)
       color_echo "yellow" "⚠️  Container engine installation skipped."
       color_echo "yellow" "   You will need Docker or Podman before using RF-Swift."
       return 1
@@ -1009,6 +1134,73 @@ check_container_engine() {
 # ═══════════════════════════════════════════════════════════════════════════════
 # Podman Installation
 # ═══════════════════════════════════════════════════════════════════════════════
+
+# Install QEMU + official Lima. USB passthrough works on stock Lima because the
+# rfswift VM template sets video.display, which makes Lima add a qemu-xhci
+# controller - the old PentHertz fork (and its `usb: true` field) is no longer
+# needed.
+# Detect and offer to remove the old PentHertz Lima fork (installed under
+# /usr/local by earlier RF-Swift releases). It shadows the official Homebrew Lima
+# in PATH, so leaving it in place blocks the migration to official Lima.
+maybe_remove_lima_fork() {
+  [ "$(uname -s)" = "Darwin" ] || return 0
+  [ -x /usr/local/bin/limactl ] || return 0
+
+  # On Intel Macs Homebrew's prefix is /usr/local, so a brew-managed lima also
+  # lives at /usr/local/bin/limactl - don't treat that as the fork.
+  if command_exists brew && [ "$(brew --prefix 2>/dev/null)" = "/usr/local" ] \
+      && brew list lima >/dev/null 2>&1; then
+    return 0
+  fi
+
+  color_echo "yellow" "⚠️  A non-Homebrew Lima (the old PentHertz fork) is installed at /usr/local/bin/limactl."
+  color_echo "yellow" "   RF-Swift now uses official Lima - the fork is no longer needed and can shadow it."
+  if prompt_yes_no "Remove the old Lima fork from /usr/local?" "y"; then
+    sudo rm -f /usr/local/bin/limactl /usr/local/bin/lima
+    sudo rm -rf /usr/local/share/lima /usr/local/share/doc/lima
+    hash -r 2>/dev/null || true
+    color_echo "green" "✅ Removed the old Lima fork; official Lima will be installed via Homebrew."
+  else
+    color_echo "yellow" "   Keeping the fork - note it may prevent the official Lima from being used."
+  fi
+}
+
+install_lima() {
+  if [ "$(uname -s)" != "Darwin" ]; then
+    color_echo "yellow" "Lima is only needed on macOS for USB passthrough."
+    return 0
+  fi
+
+  if ! command_exists brew; then
+    color_echo "red" "Homebrew is required to install QEMU and Lima."
+    color_echo "yellow" "Install Homebrew: https://brew.sh/"
+    return 1
+  fi
+
+  # Remove the old PentHertz Lima fork first so the official one can take over.
+  maybe_remove_lima_fork
+
+  # QEMU backend is required - USB passthrough does not work with the vz backend.
+  if ! command_exists qemu-img; then
+    color_echo "blue" "Installing QEMU via Homebrew..."
+    brew install qemu
+  fi
+
+  if ! command_exists limactl; then
+    color_echo "blue" "Installing Lima via Homebrew..."
+    brew install lima
+  fi
+
+  if ! command_exists limactl; then
+    color_echo "red" "Lima installation failed - limactl not found in PATH."
+    color_echo "yellow" "Ensure Homebrew's bin directory is in your PATH."
+    return 1
+  fi
+
+  color_echo "green" "✅ Official Lima and QEMU installed."
+  limactl --version
+  color_echo "cyan" "   Use 'rfswift --engine lima' when you need USB devices."
+}
 
 install_podman() {
   color_echo "blue" "🦭 Installing Podman..."
@@ -1317,7 +1509,7 @@ get_latest_release() {
   color_echo "blue" "🔍 Detecting the latest RF-Swift release..."
 
   # Default version as fallback
-  DEFAULT_VERSION="1.0.0"
+  DEFAULT_VERSION="2.2.5"
   VERSION="${DEFAULT_VERSION}"  # Initialize with default
   
   # First try: Use GitHub API with a proper User-Agent to avoid rate limiting issues
@@ -1437,10 +1629,56 @@ download_files() {
   # Set the exact checksums file URL format
   CHECKSUMS_URL="https://github.com/${GITHUB_REPO}/releases/download/v${VERSION}/RF-Swift_${VERSION}_checksums.txt"
   color_echo "blue" "GitHub checksums file: ${CHECKSUMS_URL}"
+
+  # Automatically verify the SHA-256 checksum against the published checksums
+  # file. A mismatch means the download is corrupted or tampered with - abort.
+  if [ -n "$CALCULATED_CHECKSUM" ]; then
+    CHECKSUMS_FILE="${TMP_DIR}/checksums.txt"
+    if { command_exists curl && curl -fsSL -o "$CHECKSUMS_FILE" "$CHECKSUMS_URL"; } \
+       || { command_exists wget && wget -qO "$CHECKSUMS_FILE" "$CHECKSUMS_URL"; }; then
+      EXPECTED_CHECKSUM=$(grep -E "[[:space:]][*]?${FILENAME}\$" "$CHECKSUMS_FILE" 2>/dev/null | awk '{print $1}' | head -1)
+      if [ -z "$EXPECTED_CHECKSUM" ]; then
+        color_echo "yellow" "⚠️  ${FILENAME} not found in checksums file; skipping checksum verification."
+      elif [ "$EXPECTED_CHECKSUM" = "$CALCULATED_CHECKSUM" ]; then
+        color_echo "green" "✅ Checksum verified: ${CALCULATED_CHECKSUM}"
+      else
+        color_echo "red" "🚨 CHECKSUM MISMATCH - the download may be corrupted or tampered with!"
+        color_echo "red" "   expected: ${EXPECTED_CHECKSUM}"
+        color_echo "red" "   got:      ${CALCULATED_CHECKSUM}"
+        rm -rf "${TMP_DIR}"
+        exit 1
+      fi
+    else
+      color_echo "yellow" "⚠️  Could not download the checksums file; skipping checksum verification."
+    fi
+  fi
   
   # GitHub release page for manual verification
   RELEASE_PAGE_URL="https://github.com/${GITHUB_REPO}/releases/tag/v${VERSION}"
   color_echo "yellow" "If needed, verify the checksum by visiting the GitHub release page: ${RELEASE_PAGE_URL}"
+
+  # Optional: verify GitHub build provenance attestation (Sigstore-backed).
+  # Proves the binary was built by the official RF-Swift release workflow and not
+  # swapped afterwards - same mechanism as LUKSbox.
+  if command_exists gh; then
+    if prompt_yes_no "Verify the GitHub build attestation for this binary (recommended)?" "y"; then
+      color_echo "blue" "🔏 Verifying build provenance with 'gh attestation verify'..."
+      if gh attestation verify "${TMP_DIR}/${FILENAME}" --repo "${GITHUB_REPO}"; then
+        color_echo "green" "✅ Attestation verified - provenance confirmed for ${GITHUB_REPO}."
+      else
+        color_echo "red" "🚨 Attestation verification FAILED (or 'gh' is not signed in - run 'gh auth login')."
+        color_echo "yellow" "   The binary could not be cryptographically verified against ${GITHUB_REPO}."
+        if ! prompt_yes_no "Continue anyway (NOT recommended)?" "n"; then
+          color_echo "red" "🚨 Installation aborted."
+          rm -rf "${TMP_DIR}"
+          exit 1
+        fi
+      fi
+    fi
+  else
+    color_echo "yellow" "ℹ️  Install the GitHub CLI (gh) to cryptographically verify build attestations:"
+    color_echo "yellow" "   https://cli.github.com  -  then: gh attestation verify ${FILENAME} --repo ${GITHUB_REPO}"
+  fi
   
   # Ask to continue
   if ! prompt_yes_no "Continue with installation?" "y"; then
@@ -1851,17 +2089,17 @@ show_font_configuration_help() {
   case "$(uname -s)" in
     Darwin*)
       color_echo "blue" "🍎 macOS Terminal Configuration:"
-      color_echo "cyan" "• Terminal.app: Preferences → Profiles → Text → Font"
-      color_echo "cyan" "• iTerm2: Preferences → Profiles → Text → Font"
-      color_echo "cyan" "• Recommended fonts: 'Fira Code Nerd Font', 'Hack Nerd Font'"
+      color_echo "cyan" "- Terminal.app: Preferences -> Profiles -> Text -> Font"
+      color_echo "cyan" "- iTerm2: Preferences -> Profiles -> Text -> Font"
+      color_echo "cyan" "- Recommended fonts: 'Fira Code Nerd Font', 'Hack Nerd Font'"
       ;;
     Linux*)
       color_echo "blue" "🐧 Linux Terminal Configuration:"
-      color_echo "cyan" "• GNOME Terminal: Preferences → Profiles → Text → Custom font"
-      color_echo "cyan" "• Konsole: Settings → Edit Current Profile → Appearance → Font"
-      color_echo "cyan" "• Alacritty: Edit ~/.config/alacritty/alacritty.yml"
-      color_echo "cyan" "• Terminator: Right-click → Preferences → Profiles → Font"
-      color_echo "cyan" "• VS Code: Settings → Terminal → Font Family"
+      color_echo "cyan" "- GNOME Terminal: Preferences -> Profiles -> Text -> Custom font"
+      color_echo "cyan" "- Konsole: Settings -> Edit Current Profile -> Appearance -> Font"
+      color_echo "cyan" "- Alacritty: Edit ~/.config/alacritty/alacritty.yml"
+      color_echo "cyan" "- Terminator: Right-click -> Preferences -> Profiles -> Font"
+      color_echo "cyan" "- VS Code: Settings -> Terminal -> Font Family"
       ;;
   esac
   
@@ -2180,18 +2418,37 @@ main() {
   # Show container engine status
   detect_container_engines
   if [ "$HAS_DOCKER" = true ] && [ "$HAS_PODMAN" = true ]; then
-    color_echo "cyan" "🐳🦭 Both Docker and Podman available — RF-Swift will auto-detect at runtime."
+    color_echo "cyan" "🐳🦭 Both Docker and Podman available - RF-Swift will auto-detect at runtime."
   elif [ "$HAS_DOCKER" = true ]; then
     color_echo "cyan" "🐳 Container engine: Docker"
   elif [ "$HAS_PODMAN" = true ]; then
     color_echo "cyan" "🦭 Container engine: Podman (rootless)"
   else
-    color_echo "yellow" "⚠️  No container engine installed — please install Docker or Podman before using RF-Swift."
+    color_echo "yellow" "⚠️  No container engine installed - please install Docker or Podman before using RF-Swift."
   fi
 
   case "$(uname -s)" in
     Darwin*)
       color_echo "cyan" "🎵 For container audio on macOS, see: brew install pulseaudio"
+      # Offer Lima installation for USB passthrough on macOS
+      echo ""
+      color_echo "cyan" "🦙 Lima VM enables USB device passthrough for SDR hardware on macOS."
+      if command_exists limactl; then
+        color_echo "green" "   Lima is already installed."
+        if limactl list --json 2>/dev/null | grep -q '"name":"rfswift"'; then
+          color_echo "green" "   rfswift Lima instance exists."
+          color_echo "yellow" "   Tip: update your Lima template if upgrading (new modules, Bluetooth, udev rules):"
+          color_echo "cyan" "   rfswift engine lima reconfig"
+        else
+          color_echo "yellow" "   No rfswift Lima instance yet. Create one with:"
+          color_echo "cyan" "   limactl create --name rfswift lima/rfswift.yaml && limactl start rfswift"
+          color_echo "cyan" "   Or let RF Swift auto-create it on first 'rfswift run' when no Docker/Podman is found."
+        fi
+      else
+        color_echo "yellow" "   Lima is not installed. Run the installer, or: brew install qemu lima"
+        color_echo "cyan" "   After installing, RF Swift can auto-manage a QEMU VM with USB passthrough."
+        color_echo "cyan" "   USB commands: rfswift macusb list | attach | detach | status"
+      fi
       ;;
     *)
       color_echo "magenta" "🎵 Audio system is configured and ready for RF-Swift containers!"
@@ -2211,6 +2468,11 @@ main() {
     color_echo "magenta" "🎮 Steam Deck setup complete! RF-Swift is optimized for your device."
     color_echo "cyan" "💡 Tip: You may need to reboot or log out/in for Docker group changes to take effect."
   fi
+
+  # Suggest profile initialization/update
+  echo ""
+  color_echo "cyan" "📋 Default profiles provide quick-start presets for common RF tasks."
+  color_echo "cyan" "   Initialize or update them with: rfswift profile init --force"
 
   color_echo "cyan" "📡 Happy RF hacking! 🚀"
 }

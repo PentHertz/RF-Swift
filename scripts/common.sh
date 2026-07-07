@@ -409,13 +409,13 @@ check_audio_system() {
 
         # Verify pactl is available (comes with Homebrew pulseaudio)
         if ! command -v pactl &> /dev/null; then
-            echo -e "${RED}❌ pactl not found — required for audio TCP module management ❌${NC}"
+            echo -e "${RED}❌ pactl not found - required for audio TCP module management ❌${NC}"
             echo -e "${YELLOW}ℹ️ Try reinstalling: brew reinstall pulseaudio ℹ️${NC}"
             return 1
         fi
         echo -e "${GREEN}✅ pactl available ✅${NC}"
 
-        echo -e "${CYAN}ℹ️ Audio chain: Container → Lima VM → port 34567 → macOS PulseAudio → CoreAudio${NC}"
+        echo -e "${CYAN}ℹ️ Audio chain: Container -> Lima VM -> port 34567 -> macOS PulseAudio -> CoreAudio${NC}"
         echo -e "${CYAN}ℹ️ Enable audio with: rfswift host audio enable${NC}"
         return
     fi
@@ -478,7 +478,7 @@ check_audio_system() {
 
     # Verify pactl is available (required for TCP module management)
     if ! command -v pactl &> /dev/null; then
-        echo -e "${YELLOW}⚠️ pactl not found — installing pulseaudio-utils... ⚠️${NC}"
+        echo -e "${YELLOW}⚠️ pactl not found - installing pulseaudio-utils... ⚠️${NC}"
         case "$distro" in
             "arch")
                 sudo pacman -S --noconfirm --needed libpulse
@@ -500,7 +500,7 @@ check_audio_system() {
         if command -v pactl &> /dev/null; then
             echo -e "${GREEN}✅ pactl installed ✅${NC}"
         else
-            echo -e "${RED}❌ pactl still not found — audio TCP module may not work ❌${NC}"
+            echo -e "${RED}❌ pactl still not found - audio TCP module may not work ❌${NC}"
         fi
     else
         echo -e "${GREEN}✅ pactl available ✅${NC}"
@@ -513,11 +513,11 @@ show_audio_status() {
     echo "=================================="
 
     if [[ "$OSTYPE" == "darwin"* ]]; then
-        echo -e "${YELLOW}🍎 macOS: Audio via PulseAudio → CoreAudio${NC}"
+        echo -e "${YELLOW}🍎 macOS: Audio via PulseAudio -> CoreAudio${NC}"
         if command -v pulseaudio &> /dev/null; then
             echo -e "${GREEN}✅ PulseAudio installed${NC}"
         else
-            echo -e "${RED}❌ PulseAudio not installed — run: brew install pulseaudio${NC}"
+            echo -e "${RED}❌ PulseAudio not installed - run: brew install pulseaudio${NC}"
         fi
         if command -v pactl &> /dev/null; then
             echo -e "${GREEN}✅ pactl available${NC}"
@@ -527,7 +527,7 @@ show_audio_status() {
         if pgrep -x pulseaudio &>/dev/null; then
             echo -e "${GREEN}✅ PulseAudio is running${NC}"
         else
-            echo -e "${YELLOW}⚠️ PulseAudio is not running — enable with: rfswift host audio enable${NC}"
+            echo -e "${YELLOW}⚠️ PulseAudio is not running - enable with: rfswift host audio enable${NC}"
         fi
         echo "=================================="
         return
@@ -729,7 +729,7 @@ detect_container_engines() {
         HAS_PODMAN=true
     fi
 
-    # Check Docker — must distinguish real Docker from podman-docker shim
+    # Check Docker - must distinguish real Docker from podman-docker shim
     if command_exists docker; then
         local docker_ver
         docker_ver=$(docker --version 2>/dev/null || true)
@@ -787,7 +787,7 @@ offer_lima_for_usb() {
     fi
 }
 
-# Main container engine check — replaces the old check_docker()
+# Main container engine check - replaces the old check_docker()
 check_container_engine() {
     echo -e "${BLUE}🔍 Checking for container engines... 🔍${NC}"
 
@@ -843,16 +843,16 @@ check_container_engine() {
     echo ""
     echo -e "${CYAN}📝 Which container engine would you like to install?${NC}"
     echo ""
-    echo -e "${CYAN}   🐳 Docker  — Industry standard, requires daemon (root)${NC}"
+    echo -e "${CYAN}   🐳 Docker  - Industry standard, requires daemon (root)${NC}"
     echo -e "${CYAN}              Best compatibility, large ecosystem${NC}"
     echo ""
-    echo -e "${CYAN}   🦭 Podman  — Daemonless, rootless by default${NC}"
+    echo -e "${CYAN}   🦭 Podman  - Daemonless, rootless by default${NC}"
     echo -e "${CYAN}              Drop-in Docker replacement, no root needed${NC}"
     echo ""
 
     # macOS: also offer Lima
     if [[ "$(uname -s)" == "Darwin" ]]; then
-        echo -e "${CYAN}   🦙 Lima    — Lightweight VM with Docker inside (QEMU)${NC}"
+        echo -e "${CYAN}   🦙 Lima    - Lightweight VM with Docker inside (QEMU)${NC}"
         echo -e "${CYAN}              Enables USB device passthrough for SDR hardware${NC}"
         echo ""
     fi
@@ -909,7 +909,7 @@ check_container_engine() {
     esac
 }
 
-# Legacy wrapper — scripts calling check_docker() still work
+# Legacy wrapper - scripts calling check_docker() still work
 check_docker() {
     check_container_engine
 }
@@ -1264,9 +1264,35 @@ is_lima_instance_running() {
     limactl list --json 2>/dev/null | grep "\"name\":\"${instance}\"" | grep -q "\"status\":\"Running\""
 }
 
+# Detect and offer to remove the old PentHertz Lima fork installed under
+# /usr/local by earlier RF-Swift releases. It shadows the official Homebrew Lima,
+# so leaving it in place blocks the migration to official Lima.
+maybe_remove_lima_fork() {
+    [[ "$(uname -s)" == "Darwin" ]] || return 0
+    [ -x /usr/local/bin/limactl ] || return 0
+
+    # On Intel Macs Homebrew's prefix is /usr/local, so a brew-managed lima also
+    # lives at /usr/local/bin/limactl - don't treat that as the fork.
+    if command_exists brew && [ "$(brew --prefix 2>/dev/null)" = "/usr/local" ] \
+        && brew list lima >/dev/null 2>&1; then
+        return 0
+    fi
+
+    echo -e "${YELLOW}⚠️  A non-Homebrew Lima (the old PentHertz fork) is installed at /usr/local/bin/limactl.${NC}"
+    echo -e "${YELLOW}   RF-Swift now uses official Lima - the fork is no longer needed and can shadow it.${NC}"
+    if prompt_yes_no "Remove the old Lima fork from /usr/local?" "y"; then
+        sudo rm -f /usr/local/bin/limactl /usr/local/bin/lima
+        sudo rm -rf /usr/local/share/lima /usr/local/share/doc/lima
+        hash -r 2>/dev/null || true
+        echo -e "${GREEN}Removed the old Lima fork; official Lima will be installed via Homebrew.${NC}"
+    else
+        echo -e "${YELLOW}Keeping the fork - note it may prevent the official Lima from being used.${NC}"
+    fi
+}
+
 # Install QEMU + official Lima on macOS. USB passthrough works on stock Lima
 # because the rfswift VM template sets video.display, which makes Lima add a
-# qemu-xhci controller — the old PentHertz fork (and `usb: true`) is not needed.
+# qemu-xhci controller - the old PentHertz fork (and `usb: true`) is not needed.
 install_lima() {
     if [[ "$(uname -s)" != "Darwin" ]]; then
         echo -e "${YELLOW}Lima is only needed on macOS for USB passthrough.${NC}"
@@ -1279,12 +1305,15 @@ install_lima() {
         return 1
     fi
 
+    # Remove the old PentHertz Lima fork first so the official one can take over.
+    maybe_remove_lima_fork
+
     if is_lima_installed && command_exists qemu-img; then
         echo -e "${GREEN}Lima and QEMU are already installed.${NC}"
         return 0
     fi
 
-    # QEMU backend is required — USB passthrough does not work with the vz backend.
+    # QEMU backend is required - USB passthrough does not work with the vz backend.
     if ! command_exists qemu-img; then
         echo -e "${BLUE}Installing QEMU via Homebrew...${NC}"
         brew install qemu
@@ -1296,7 +1325,7 @@ install_lima() {
     fi
 
     if ! command_exists limactl; then
-        echo -e "${RED}Lima installation failed — limactl not found in PATH.${NC}"
+        echo -e "${RED}Lima installation failed - limactl not found in PATH.${NC}"
         echo -e "${YELLOW}Ensure Homebrew's bin directory is in your PATH.${NC}"
         return 1
     fi
@@ -1309,10 +1338,10 @@ install_lima() {
 # Copies the bundled template to ~/.config/rfswift/lima.yaml so that
 # rfswift engine lima reconfig picks it up on the next reconfigure.
 update_lima_template() {
-    # Default USB/QEMU template — migrate existing configs (e.g. old `usb: true`
+    # Default USB/QEMU template - migrate existing configs (e.g. old `usb: true`
     # -> `video.display`) with a prompt, matching the historical behavior.
     _sync_lima_template "rfswift.yaml" "lima.yaml" "your Lima VM template" "prompt"
-    # Opt-in GPU (krunkit) template — seed it quietly when missing so that
+    # Opt-in GPU (krunkit) template - seed it quietly when missing so that
     # `rfswift --gpu` works out of the box, and prompt only if an existing one
     # has drifted.
     _sync_lima_template "rfswift-gpu.yaml" "lima-gpu.yaml" "your GPU Lima VM template" "seed"
@@ -1461,7 +1490,7 @@ setup_lima_instance() {
 
     echo -e "${BLUE}Creating Lima instance '$instance' with QEMU backend...${NC}"
 
-    # Look for the template — user config dirs first (updated by install scripts),
+    # Look for the template - user config dirs first (updated by install scripts),
     # then bundled locations relative to the script.
     local template_path=""
     local script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -2130,7 +2159,7 @@ show_system_info() {
     echo ""
 }
 
-# Main execution section — if this script is run directly
+# Main execution section - if this script is run directly
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
     display_rainbow_logo_animated
     echo -e "${BLUE}🎵 RF Swift Enhanced Installer with Arch Linux Support 🎵${NC}"

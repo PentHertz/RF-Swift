@@ -1,4 +1,4 @@
-# Lima template for RF Swift — macOS Apple Silicon GPU acceleration (krunkit)
+# Lima template for RF Swift - macOS Apple Silicon GPU acceleration (krunkit)
 #
 # This is the OPT-IN GPU profile. Unlike lima/rfswift.yaml (QEMU + USB
 # passthrough for SDR hardware), this VM uses the krunkit (libkrun) backend,
@@ -8,7 +8,7 @@
 # It is meant for GPU compute (llama.cpp Vulkan, GPU-accelerated DSP/ML), NOT SDR.
 #
 # Trade-off (this is a hard architectural split on Apple Silicon):
-#   * GPU works here, USB passthrough does NOT — use lima/rfswift.yaml for SDR.
+#   * GPU works here, USB passthrough does NOT - use lima/rfswift.yaml for SDR.
 #   * It is Vulkan, not CUDA (there is no NVIDIA silicon to pass through).
 #   * Apple Silicon (arm64) only; requires macOS >= 14 (Sonoma) and Lima >= 2.0.
 #
@@ -21,20 +21,20 @@
 #
 # Inside a container, expose the GPU render node:  docker run --device /dev/dri ...
 
-# libkrun backend — the only Lima vmType that provides GPU acceleration on macOS.
+# libkrun backend - the only Lima vmType that provides GPU acceleration on macOS.
 vmType: krunkit
 
 # krunkit uses virtiofs for host mounts.
 mountType: virtiofs
 
-# VM resources — bump memory for larger ML models as needed.
+# VM resources - bump memory for larger ML models as needed.
 cpus: 4
 memory: "8GiB"
 disk: "100GiB"
 
 # Ubuntu 26.04 LTS (aarch64). Vulkan-over-krunkit needs the virtio-gpu "Venus"
 # support that landed in Linux 6.13+, so a recent kernel is required. If
-# /dev/dri/renderD128 is missing after first boot, the guest kernel lacks Venus —
+# /dev/dri/renderD128 is missing after first boot, the guest kernel lacks Venus -
 # switch this to a Fedora 42 (or newer Ubuntu) cloud image.
 images:
   - location: "https://cloud-images.ubuntu.com/releases/26.04/release/ubuntu-26.04-server-cloudimg-arm64.img"
@@ -96,14 +96,14 @@ provision:
         chmod 0666 /dev/dri/renderD128 || true
         echo "[rfswift-gpu] GPU render node present: $(ls -l /dev/dri/renderD128)"
       else
-        echo "[rfswift-gpu] WARNING: /dev/dri/renderD128 not found — guest kernel may lack virtio-gpu Venus support."
+        echo "[rfswift-gpu] WARNING: /dev/dri/renderD128 not found - guest kernel may lack virtio-gpu Venus support."
       fi
 
 portForwards:
   # Forward the Docker socket to the host for transparent engine access.
   - guestSocket: "/run/docker.sock"
     hostSocket: "{{.Dir}}/sock/docker.sock"
-  # noVNC desktop — distinct host port from the USB VM (6080) to avoid clashes
+  # noVNC desktop - distinct host port from the USB VM (6080) to avoid clashes
   # if both VMs run at once.
   - guestPort: 6080
     hostPort: 6081

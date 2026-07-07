@@ -104,7 +104,7 @@ func (e *LimaEngine) IsServiceRunning() bool {
 func (e *LimaEngine) GetClient() (*client.Client, error) {
 	socketPath := e.GetSocketPath()
 	if socketPath == "" {
-		return nil, fmt.Errorf("Lima Docker socket not found — is the '%s' instance running?", e.getInstance())
+		return nil, fmt.Errorf("Lima Docker socket not found - is the '%s' instance running?", e.getInstance())
 	}
 
 	return client.New(
@@ -204,7 +204,7 @@ func (e *LimaEngine) GetConfigV2Path(containerID string) (string, error) {
 	return fmt.Sprintf("/var/lib/docker/containers/%s/config.v2.json", containerID), nil
 }
 
-// SupportsDirectConfigEdit returns true — files are accessed via limactl shell.
+// SupportsDirectConfigEdit returns true - files are accessed via limactl shell.
 func (e *LimaEngine) SupportsDirectConfigEdit() bool {
 	return true
 }
@@ -369,7 +369,7 @@ provision:
       vhci-hcd
       MODULES
       [ -e /dev/vhci ] && chmod 0666 /dev/vhci || true
-      # Udev rules — permissive vendor-ID matching for broad device support
+      # Udev rules - permissive vendor-ID matching for broad device support
       cat > /etc/udev/rules.d/99-rfswift.rules << 'UDEV'
       # HackRF, Great Scott Gadgets, BladeRF, Airspy, LimeSDR, Ubertooth
       SUBSYSTEMS=="usb", ATTRS{idVendor}=="1d50", MODE="0666"
@@ -561,7 +561,7 @@ func (e *LimaEngine) ReconfigureInstance(templatePath string, force bool) error 
 	instance := e.getInstance()
 
 	if !limaInstanceExists(instance) {
-		return fmt.Errorf("Lima instance '%s' does not exist — run a container command first to create it, or use 'reset' to create from scratch", instance)
+		return fmt.Errorf("Lima instance '%s' does not exist - run a container command first to create it, or use 'reset' to create from scratch", instance)
 	}
 
 	wasRunning := rfutils.IsLimaInstanceRunning(instance)

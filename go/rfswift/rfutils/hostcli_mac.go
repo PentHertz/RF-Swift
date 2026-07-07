@@ -132,13 +132,28 @@ func FindLimaQMPSocket(instance string) (string, error) {
 		return serialSock, nil
 	}
 
-	// Try to find via qemu process
-	cmd := exec.Command("bash", "-c", fmt.Sprintf("ps aux | grep qemu | grep %s | grep -oE '\\-qmp [^ ]+' | awk '{print $2}'", instance))
-	output, err := cmd.Output()
-	if err == nil {
-		sock := strings.TrimSpace(string(output))
-		if sock != "" {
-			return sock, nil
+	// Fallback: parse the running qemu process list for a -qmp argument. Done
+	// WITHOUT a shell (no `bash -c` with the instance name interpolated) so a
+	// crafted instance name cannot inject shell commands - `instance` is only
+	// ever compared as data below, never executed.
+	if psOut, psErr := exec.Command("ps", "-axww", "-o", "command").Output(); psErr == nil {
+		for _, line := range strings.Split(string(psOut), "\n") {
+			if !strings.Contains(line, "qemu") || !strings.Contains(line, instance) {
+				continue
+			}
+			fields := strings.Fields(line)
+			for i, f := range fields {
+				if f == "-qmp" && i+1 < len(fields) {
+					// e.g. "unix:/path/to/qmp.sock,server,nowait"
+					val := strings.TrimPrefix(fields[i+1], "unix:")
+					if idx := strings.IndexByte(val, ','); idx >= 0 {
+						val = val[:idx]
+					}
+					if val != "" {
+						return val, nil
+					}
+				}
+			}
 		}
 	}
 
@@ -218,6 +233,46 @@ func qmpHumanCommand(sockPath string, hmpCmd string) (string, error) {
 	return "", nil
 }
 
+// IsValidUSBID reports whether s is a well-formed USB vendor/product ID: an
+// optional "0x" prefix followed by 1-4 hexadecimal digits (USB IDs are 16-bit).
+// This is a security control: vid/pid values are interpolated into a QEMU
+// human-monitor "device_add" command, so anything outside this set (commas,
+// spaces, quotes, extra device properties) must be rejected to prevent
+// QMP/HMP argument injection.
+//
+//	in(1): string s the candidate USB ID
+//	out: bool true if s is a valid 16-bit hex ID
+func IsValidUSBID(s string) bool {
+	s = strings.TrimSpace(s)
+	s = strings.TrimPrefix(s, "0x")
+	s = strings.TrimPrefix(s, "0X")
+	if len(s) < 1 || len(s) > 4 {
+		return false
+	}
+	for _, r := range s {
+		if !((r >= '0' && r <= '9') || (r >= 'a' && r <= 'f') || (r >= 'A' && r <= 'F')) {
+			return false
+		}
+	}
+	return true
+}
+
+// isSafeQMPDeviceID reports whether devID is a safe QEMU device identifier
+// (letters, digits, dot, underscore, hyphen only). Used to guard the value
+// interpolated into a "device_del" human-monitor command against injection.
+func isSafeQMPDeviceID(devID string) bool {
+	if devID == "" || len(devID) > 64 {
+		return false
+	}
+	for _, r := range devID {
+		if !((r >= '0' && r <= '9') || (r >= 'a' && r <= 'z') ||
+			(r >= 'A' && r <= 'Z') || r == '.' || r == '_' || r == '-') {
+			return false
+		}
+	}
+	return true
+}
+
 // AttachUSBToLima attaches a USB device to a Lima VM via QMP hot-plug.
 //
 //	in(1): string vendorID hex vendor ID (e.g., "0x1234")
@@ -225,6 +280,11 @@ func qmpHumanCommand(sockPath string, hmpCmd string) (string, error) {
 //	in(3): string instance Lima instance name (default: "rfswift")
 //	out: error
 func AttachUSBToLima(vendorID, productID, instance string) error {
+	// Validate before building the human-monitor command (injection guard).
+	if !IsValidUSBID(vendorID) || !IsValidUSBID(productID) {
+		return fmt.Errorf("invalid USB vendor/product ID %q:%q (expected hex like 0x1d50)", vendorID, productID)
+	}
+
 	sockPath, err := FindLimaQMPSocket(instance)
 	if err != nil {
 		return err
@@ -272,6 +332,10 @@ func AttachUSBToLima(vendorID, productID, instance string) error {
 //	in(3): string instance Lima instance name (default: "rfswift")
 //	out: error
 func DetachUSBFromLima(vendorID, productID, instance string) error {
+	if !IsValidUSBID(vendorID) || !IsValidUSBID(productID) {
+		return fmt.Errorf("invalid USB vendor/product ID %q:%q (expected hex like 0x1d50)", vendorID, productID)
+	}
+
 	sockPath, err := FindLimaQMPSocket(instance)
 	if err != nil {
 		return err
@@ -299,6 +363,10 @@ func DetachUSBFromLima(vendorID, productID, instance string) error {
 //	in(2): string instance Lima instance name (default: "rfswift")
 //	out: error
 func DetachUSBByIDFromLima(devID, instance string) error {
+	if !isSafeQMPDeviceID(devID) {
+		return fmt.Errorf("invalid device ID %q (expected letters, digits, '.', '_', '-')", devID)
+	}
+
 	sockPath, err := FindLimaQMPSocket(instance)
 	if err != nil {
 		return err
@@ -485,8 +553,9 @@ func CopyFile(src, dst string) error {
 //	in(1): string s the size string to validate
 //	out: bool true if the value is well-formed
 func IsValidLimaSize(s string) bool {
-	s = strings.TrimSpace(s)
-	if s == "" || strings.ContainsAny(s, " \t") {
+	// Reject surrounding/embedded whitespace rather than trimming it: the value
+	// is written verbatim into the YAML, so it must be clean as-is.
+	if s == "" || strings.ContainsAny(s, " \t\r\n") {
 		return false
 	}
 	// Longest units first so "GiB" matches before "G".

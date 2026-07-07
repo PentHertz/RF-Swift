@@ -1,6 +1,6 @@
 /* This code is part of RF Swift by @Penthertz
 *  Author(s): Sébastien Dudek (@FlUxIuS)
-*  Engine management commands — Lima VM lifecycle on macOS
+*  Engine management commands - Lima VM lifecycle on macOS
  */
 
 package cli
@@ -45,7 +45,7 @@ This is useful after modifying the Lima template (e.g., changing CPU, memory,
 port forwards, or provisioning scripts). The VM filesystem is preserved.
 
 Use --force for changes that require a full VM recreation (disk size, base image).
-With --force, the VM is deleted and recreated — all data inside the VM is lost,
+With --force, the VM is deleted and recreated - all data inside the VM is lost,
 but Docker images can be re-pulled.
 
 Template search order:
@@ -254,7 +254,7 @@ Examples:
 			return
 		}
 
-		// Disk changes cannot be applied to an existing VM in place — they need a
+		// Disk changes cannot be applied to an existing VM in place - they need a
 		// destructive recreate.
 		force := disk != ""
 		if force && tui.IsInteractive() {
@@ -273,7 +273,7 @@ Examples:
 func registerEngineCommands() {
 	rootCmd.AddCommand(engineCmd)
 
-	// Lima subcommands — macOS only
+	// Lima subcommands - macOS only
 	if runtime.GOOS == "darwin" {
 		engineCmd.AddCommand(engineLimaCmd)
 		engineLimaCmd.AddCommand(engineLimaReconfigCmd)
@@ -285,7 +285,7 @@ func registerEngineCommands() {
 		engineLimaCmd.PersistentFlags().StringVar(&engineLimaInstance, "instance", "rfswift", "Lima instance name")
 
 		// Reconfig flags
-		engineLimaReconfigCmd.Flags().Bool("force", false, "Delete and recreate the VM (destructive — loses all VM data)")
+		engineLimaReconfigCmd.Flags().Bool("force", false, "Delete and recreate the VM (destructive - loses all VM data)")
 		engineLimaReconfigCmd.Flags().String("template", "", "Path to Lima YAML template (overrides auto-detection)")
 
 		// Reset flags
