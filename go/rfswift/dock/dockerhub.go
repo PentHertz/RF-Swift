@@ -337,11 +337,22 @@ func determineArchitectureFromTag(tagName, requestedArch string) string {
 	return requestedArch
 }
 
-// OfficialRepos returns the list of official RF-Swift Docker Hub repository names.
+// OfficialRepos returns the list of official RF-Swift Docker Hub repository names
+// to query for remote images. It honours the configured repository (config
+// [general] repotag, surfaced as containerCfg.repotag) so that `images remote`
+// lists the repo the user is actually pointed at.
 //
-//	out: []string slice of fully-qualified repository names (e.g. "penthertz/rfswift_resolute")
+// Previously this was hardcoded to the current-codename repo, so a user who had
+// set repotag to another official repo (e.g. penthertz/rfswift_noble, which has
+// images, while penthertz/rfswift_resolute may not be published yet) got an empty
+// listing. Falls back to penthertz/rfswift_<current-codename> when repotag is unset.
+//
+//	out: []string slice of fully-qualified repository names (e.g. "penthertz/rfswift_noble")
 func OfficialRepos() []string {
-	return []string{"penthertz/rfswift_resolute"}
+	if repo := strings.TrimSpace(containerCfg.repotag); repo != "" {
+		return []string{repo}
+	}
+	return []string{"penthertz/rfswift_" + common.CurrentImageCodename}
 }
 
 // IsOfficialImage reports whether imageName refers to one of the official RF-Swift
