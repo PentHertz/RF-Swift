@@ -1172,7 +1172,7 @@ install_docker_compose_steamdeck() {
     DOCKER_CONFIG=${DOCKER_CONFIG:-$HOME/.docker}
     mkdir -p $DOCKER_CONFIG/cli-plugins
     
-    curl -SL https://github.com/docker/compose/releases/download/v5.0.2/docker-compose-linux-x86_64 -o $DOCKER_CONFIG/cli-plugins/docker-compose
+    curl -SL https://github.com/docker/compose/releases/download/v5.3.1/docker-compose-linux-x86_64 -o $DOCKER_CONFIG/cli-plugins/docker-compose
     chmod +x $DOCKER_CONFIG/cli-plugins/docker-compose
 
     echo -e "${GREEN}✅ Docker Compose v2 installed successfully for Steam Deck ✅${NC}"
@@ -1181,7 +1181,7 @@ install_docker_compose_steamdeck() {
 install_buildx() {
     arch=$(uname -m)
     os=$(uname -s | tr '[:upper:]' '[:lower:]')
-    version="v0.31.0"
+    version="v0.35.0"
 
     case "$arch" in
         x86_64|amd64)  arch="amd64";;
@@ -1679,7 +1679,7 @@ install_go() {
     arch=$(uname -m)
     os=$(uname -s | tr '[:upper:]' '[:lower:]')
     prog=""
-    version="1.26.0"
+    version="1.26.5"
 
     case "$arch" in
         x86_64|amd64)  arch="amd64";;
