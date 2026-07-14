@@ -29,11 +29,27 @@ type MacUSBDevice struct {
 }
 
 // ListMacUSBDevices discovers USB devices on macOS using system_profiler.
+// Older macOS exposes the USB tree as SPUSBDataType; macOS 26 (Darwin 25)
+// renamed it to SPUSBHostDataType and the legacy name silently returns an
+// empty tree, so both are queried.
 //
 //	out(1): []MacUSBDevice array of discovered USB devices
 //	out(2): error
 func ListMacUSBDevices() ([]MacUSBDevice, error) {
-	cmd := exec.Command("system_profiler", "SPUSBDataType", "-json")
+	devices, err := listMacUSBDevicesForType("SPUSBDataType")
+	if err == nil && len(devices) > 0 {
+		return devices, nil
+	}
+	if hostDevices, hostErr := listMacUSBDevicesForType("SPUSBHostDataType"); hostErr == nil && len(hostDevices) > 0 {
+		return hostDevices, nil
+	}
+	return devices, err
+}
+
+// listMacUSBDevicesForType queries system_profiler for one USB data type and
+// extracts the devices found in its JSON tree.
+func listMacUSBDevicesForType(dataType string) ([]MacUSBDevice, error) {
+	cmd := exec.Command("system_profiler", dataType, "-json")
 	output, err := cmd.Output()
 	if err != nil {
 		return nil, fmt.Errorf("failed to execute system_profiler: %w", err)
@@ -45,7 +61,7 @@ func ListMacUSBDevices() ([]MacUSBDevice, error) {
 	}
 
 	var devices []MacUSBDevice
-	if spUSB, ok := result["SPUSBDataType"]; ok {
+	if spUSB, ok := result[dataType]; ok {
 		if items, ok := spUSB.([]interface{}); ok {
 			for _, item := range items {
 				extractUSBDevices(item, &devices)
@@ -56,17 +72,28 @@ func ListMacUSBDevices() ([]MacUSBDevice, error) {
 	return devices, nil
 }
 
+// usbStringField returns the first present string value among the given keys,
+// covering both the legacy SPUSBDataType and newer SPUSBHostDataType namings.
+func usbStringField(m map[string]interface{}, keys ...string) (string, bool) {
+	for _, k := range keys {
+		if v, ok := m[k].(string); ok {
+			return v, true
+		}
+	}
+	return "", false
+}
+
 // extractUSBDevices recursively walks the system_profiler JSON tree to find
-// USB devices with vendor_id and product_id fields.
+// USB devices carrying vendor/product ID fields.
 func extractUSBDevices(item interface{}, devices *[]MacUSBDevice) {
 	m, ok := item.(map[string]interface{})
 	if !ok {
 		return
 	}
 
-	// If this node has vendor_id and product_id, it's a device
-	vendorID, hasVendor := m["vendor_id"].(string)
-	productID, hasProduct := m["product_id"].(string)
+	// If this node has vendor and product IDs, it's a device
+	vendorID, hasVendor := usbStringField(m, "vendor_id", "USBDeviceKeyVendorID")
+	productID, hasProduct := usbStringField(m, "product_id", "USBDeviceKeyProductID")
 	if hasVendor && hasProduct {
 		dev := MacUSBDevice{
 			VendorID:  cleanHexID(vendorID),
@@ -75,10 +102,10 @@ func extractUSBDevices(item interface{}, devices *[]MacUSBDevice) {
 		if name, ok := m["_name"].(string); ok {
 			dev.Name = name
 		}
-		if serial, ok := m["serial_num"].(string); ok {
+		if serial, ok := usbStringField(m, "serial_num", "USBDeviceKeySerialNumber"); ok {
 			dev.Serial = serial
 		}
-		if loc, ok := m["location_id"].(string); ok {
+		if loc, ok := usbStringField(m, "location_id", "USBKeyLocationID"); ok {
 			dev.Location = loc
 		}
 		*devices = append(*devices, dev)
