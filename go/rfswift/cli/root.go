@@ -132,6 +132,12 @@ func init() {
 			rfdock.GetEngine()
 
 			rfutils.DisplayVersion()
+
+			// Nudge the user when the configured repository still points at an
+			// official image on an older Ubuntu base than the current one
+			// (e.g. rfswift_noble while resolute is current). Runs after the
+			// banner so the notice lands in the normal output flow.
+			rfutils.NotifyIfOutdatedImage(rfdock.ContainerGetRepoTag())
 		}
 	}
 

@@ -264,6 +264,52 @@ detect_audio_system() {
     fi
 }
 
+# Ensure pactl (pulseaudio-utils) is installed - required by
+# 'rfswift host audio enable' to manage the TCP module. Must run even when an
+# audio server is already up: modern Ubuntu ships PipeWire by default, but
+# pulseaudio-utils is not always installed with it.
+ensure_pactl() {
+    local distro="$1"
+
+    if command -v pactl &> /dev/null; then
+        echo -e "${GREEN}✅ pactl available ✅${NC}"
+        return 0
+    fi
+
+    echo -e "${YELLOW}⚠️ pactl not found - installing pulseaudio-utils... ⚠️${NC}"
+    case "$distro" in
+        "arch")
+            sudo pacman -S --noconfirm --needed libpulse
+            ;;
+        "fedora"|"rhel"|"centos")
+            if command -v dnf &> /dev/null; then
+                sudo dnf install -y pulseaudio-utils
+            else
+                sudo yum install -y pulseaudio-utils
+            fi
+            ;;
+        "debian"|"ubuntu")
+            sudo apt update
+            sudo apt install -y pulseaudio-utils
+            ;;
+        "opensuse")
+            sudo zypper install -y pulseaudio-utils
+            ;;
+        *)
+            echo -e "${RED}❌ Unsupported distribution - please install pulseaudio-utils (pactl) manually ❌${NC}"
+            return 1
+            ;;
+    esac
+
+    if command -v pactl &> /dev/null; then
+        echo -e "${GREEN}✅ pactl installed ✅${NC}"
+        return 0
+    fi
+
+    echo -e "${RED}❌ pactl still not found - audio TCP module may not work ❌${NC}"
+    return 1
+}
+
 # Install PipeWire packages with enhanced Arch Linux support
 # Also installs pulseaudio-utils (pactl) which is required for TCP module management
 install_pipewire() {
@@ -427,13 +473,17 @@ check_audio_system() {
     echo -e "${BLUE}🐧 Detected distribution: $distro 🐧${NC}"
     echo -e "${BLUE}📦 Package manager: $pkg_manager 📦${NC}"
     
+    # Even when a server is already running, pactl may still be missing
+    # (e.g. default PipeWire on Ubuntu), so verify it before returning.
     case "$current_audio" in
         "pipewire")
             echo -e "${GREEN}✅ PipeWire is already running ✅${NC}"
+            ensure_pactl "$distro" || true
             return
             ;;
         "pulseaudio")
             echo -e "${GREEN}✅ PulseAudio is already running ✅${NC}"
+            ensure_pactl "$distro" || true
             return
             ;;
         "none")
@@ -477,34 +527,7 @@ check_audio_system() {
     fi
 
     # Verify pactl is available (required for TCP module management)
-    if ! command -v pactl &> /dev/null; then
-        echo -e "${YELLOW}⚠️ pactl not found - installing pulseaudio-utils... ⚠️${NC}"
-        case "$distro" in
-            "arch")
-                sudo pacman -S --noconfirm --needed libpulse
-                ;;
-            "fedora"|"rhel"|"centos")
-                if command -v dnf &> /dev/null; then
-                    sudo dnf install -y pulseaudio-utils
-                else
-                    sudo yum install -y pulseaudio-utils
-                fi
-                ;;
-            "debian"|"ubuntu")
-                sudo apt install -y pulseaudio-utils
-                ;;
-            "opensuse")
-                sudo zypper install -y pulseaudio-utils
-                ;;
-        esac
-        if command -v pactl &> /dev/null; then
-            echo -e "${GREEN}✅ pactl installed ✅${NC}"
-        else
-            echo -e "${RED}❌ pactl still not found - audio TCP module may not work ❌${NC}"
-        fi
-    else
-        echo -e "${GREEN}✅ pactl available ✅${NC}"
-    fi
+    ensure_pactl "$distro" || true
 }
 
 # Display audio system status
