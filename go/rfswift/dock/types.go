@@ -239,10 +239,6 @@ func updateContainerCfgFromConfig() {
 	containerCfg.imagename = config.General.ImageName
 	containerCfg.repotag = config.General.RepoTag
 
-	// Nudge the user if the configured official image is built on an older Ubuntu
-	// base than the current one (e.g. rfswift_noble while resolute is current).
-	rfutils.NotifyIfOutdatedImage(config.General.RepoTag)
-
 	containerCfg.shell = config.Container.Shell
 	containerCfg.networkMode = config.Container.Network
 	containerCfg.exposedPorts = config.Container.ExposedPorts
