@@ -648,6 +648,24 @@ func ContainerRun(containerName string) {
 			}
 		}
 
+		// Drop devices the host does not have. The daemon aborts creation with
+		// "error gathering device information" on a missing device, which would
+		// make an optional mapping (/dev/net/tun without the tun module,
+		// /dev/rfkill on a machine without radios) fatal. Only checked when the
+		// engine shares this filesystem: with Lima the paths belong to the VM.
+		engine := GetEngine()
+		if runtime.GOOS == "linux" && (engine == nil || engine.Type() != EngineLima) {
+			var presentDevices []container.DeviceMapping
+			for _, dev := range filteredDevices {
+				if _, err := os.Stat(dev.PathOnHost); err != nil {
+					common.PrintWarningMessage(fmt.Sprintf("Skipping non-existent device: %s", dev.PathOnHost))
+					continue
+				}
+				presentDevices = append(presentDevices, dev)
+			}
+			filteredDevices = presentDevices
+		}
+
 		hostConfig.Devices = filteredDevices
 
 		// ── Cgroup rules ───────────────────────────────────────────────

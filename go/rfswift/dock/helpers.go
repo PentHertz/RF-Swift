@@ -145,6 +145,9 @@ func getContainerIDByName(ctx context.Context, containerName string) string {
 
 // combineBindings merges X11-forwarding bind mounts and extra bind mounts into
 // a single slice. Each argument is a comma-separated list of bind mount specs.
+// Entries sharing a container destination are deduplicated (last one wins), as
+// the config file, a profile and -b can all ask for the same mount and Podman
+// rejects duplicate destinations.
 //
 //	in(1): string x11forward - comma-separated X11 socket bind mount specs
 //	in(2): string extrabinding - comma-separated additional bind mount specs
@@ -152,13 +155,12 @@ func getContainerIDByName(ctx context.Context, containerName string) string {
 func combineBindings(x11forward, extrabinding string) []string {
 	var bindings []string
 
-	if extrabinding != "" {
-		bindings = append(bindings, strings.Split(extrabinding, ",")...)
+	for _, spec := range append(strings.Split(extrabinding, ","), strings.Split(x11forward, ",")...) {
+		if spec = strings.TrimSpace(spec); spec != "" {
+			bindings = append(bindings, spec)
+		}
 	}
-	if x11forward != "" {
-		bindings = append(bindings, strings.Split(x11forward, ",")...)
-	}
-	return bindings
+	return deduplicateBinds(bindings)
 }
 
 // splitAndCombine splits a comma-separated string into a slice of strings.
@@ -594,6 +596,43 @@ func detectGPUVendors() []GPUVendor {
 		vendors = append(vendors, v)
 	}
 	return vendors
+}
+
+// GPUAvailable reports whether this host can actually pass a GPU through to a
+// container. AMD and Intel only need their DRM/KFD nodes, which are mapped as
+// plain devices; NVIDIA goes through DeviceRequests, which the daemon rejects
+// with "could not select device driver" unless the container toolkit is
+// installed. Used to decide whether a profile asking for a GPU can be honoured
+// An explicit --gpus flag is never silently downgraded.
+//
+//	out: bool true when GPU passthrough can be configured
+func GPUAvailable() bool {
+	if runtime.GOOS != "linux" {
+		return false
+	}
+	for _, vendor := range detectGPUVendors() {
+		switch vendor {
+		case GPUVendorAMD, GPUVendorIntel:
+			return true
+		case GPUVendorNVIDIA:
+			if nvidiaToolkitInstalled() {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// nvidiaToolkitInstalled reports whether the NVIDIA container toolkit is present.
+//
+//	out: bool true when one of the toolkit binaries is in PATH
+func nvidiaToolkitInstalled() bool {
+	for _, bin := range []string{"nvidia-container-runtime", "nvidia-container-runtime-hook", "nvidia-ctk"} {
+		if _, err := exec.LookPath(bin); err == nil {
+			return true
+		}
+	}
+	return false
 }
 
 // applyGPUConfig detects GPU vendors on the host and configures the container
