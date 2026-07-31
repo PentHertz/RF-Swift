@@ -71,7 +71,7 @@ var ascii_art = `
     888_-~   888             8888    Y8/  Y8/    888  888    888   
     888 ~-_  888          \__88P'     Y    Y     888  888    "88_/       
 
-                RF toolbox for HAMs and professionals                                                                             
+    RF, hardware and security toolbox for hams and professionals                                                                             
 `
 
 // termWidth returns the current terminal width, defaulting to 80.
@@ -103,7 +103,7 @@ func PrintASCII() {
 
 	// Display version and codename
 	versionStr := fmt.Sprintf("v%s \"%s\"", Version, Codename)
-	artWidth := 75
+	artWidth := 60
 	pad := (artWidth - len(versionStr)) / 2
 	if pad < 0 {
 		pad = 0
