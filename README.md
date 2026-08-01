@@ -44,7 +44,11 @@ https://github.com/user-attachments/assets/518c5045-4380-48d0-a731-6ec0273a02c5
 
 ## 🔍 What is RF Swift?
 
-RF Swift is a revolutionary toolbox that transforms any computer into a powerful RF testing laboratory without requiring a dedicated operating system. 🔄 Unlike traditional approaches that force you to sacrifice your primary OS, RF Swift brings containerized RF tools to your existing environment. 🏠
+RF Swift builds you a **complete hardware and RF security lab in seconds** — on the machine you already use. 🔄 From a ham shack on a Sunday afternoon to a full James Bond-grade engagement on Monday morning: same tool, different image.
+
+Unlike traditional approaches that force you to sacrifice your primary OS, RF Swift brings **200+ containerized RF, hardware and security tools** to your existing environment — on Linux, Windows and macOS, across x86_64, ARM64 and RISC-V64. 🏠
+
+> **🆕 v3.0.0 "Resonance"** — images rebased on **Ubuntu 26.04 "Resolute"**, CLI rebuilt on the new **Moby SDK**, and new **`ad`**, **`android`** and **`osint`** images for full engagements. See [What's new in v3.0.0](#-whats-new-in-v300-resonance).
 
 ### ⚡ Why RF Swift Outperforms Dedicated OS Solutions
 
@@ -60,6 +64,48 @@ RF Swift is a revolutionary toolbox that transforms any computer into a powerful
 | **💼 Work Environment** | ✅ Use alongside productivity tools | ❌ Switch contexts between systems |
 | **📹 Session Recording** | ✅ Built-in recording for documentation | ❌ Manual setup required |
 | **🎨 Easy Customization** | ✅ Simple YAML recipes for custom images | ❌ Complex OS modifications |
+
+## 🆕 What's new in v3.0.0 "Resonance"
+
+### 📦 New base: Ubuntu Noble → Resolute (26.04)
+
+Every official image (`penthertz/rfswift_resolute:*`) now runs on Ubuntu 26.04. This was the heaviest part of the release: GCC 15 promoted long-tolerated K&R C patterns to hard errors, CMake 4 dropped compatibility with `cmake_minimum_required(VERSION < 3.5)`, Boost 1.90 removed the `io_context` APIs much of the SDR ecosystem depends on, and Python 3.14 / Java 25 became the defaults.
+
+Rather than pinning an old base, we patched the software and maintain the forks publicly, so **50+ GNU Radio out-of-tree modules build on a current LTS again**:
+
+`gr-osmosdr` · `gr-gsm` · `gr-fosphor` · `gr-dvbs2` · `gr-nordic` · `gr-grnet` · `gr-pdu_utils` · `gr-sandia_utils` · `gr-fhss_utils` · `gr-timing_utils` · `srsRAN 4G` · `YATE` · `OpenBTS` · `OpenBTS-UMTS`
+
+`OpenBTS` and `OpenBTS-UMTS` are legacy C++ that GCC 15 rejects outright; both are maintained on the `resolute` branches of our forks.
+
+### 📡 Telecom: 5G SA now runs on OCUDU
+
+The 5G SA stack shipped in the telecom images has moved from srsRAN Project to **[OCUDU](https://gitlab.com/ocudu/ocudu)** as the CU/DU stack. srsRAN 4G (and the 4G/5G-NSA path) still ships from our patched `srsRAN_4G_resolute` fork, so 2G through 5G remains one pull.
+
+### ⚡ GNU Radio 4, testable in seconds
+
+Want to try GNU Radio 4 without building it from source or risking your working 3.10 install? There's now a dedicated image — your existing setup stays untouched:
+
+```bash
+rfswift run -i penthertz/rfswift_resolute:sdr_gnuradio4
+```
+
+### ⚙️ Rebuilt CLI
+
+- Container operations moved from the legacy Docker Go client to the **new Moby SDK** (`moby/moby/api` + `moby/moby/client`)
+- Full Go dependency tree brought up to date
+- **Dependabot**, a **module-audit** workflow and **security scanning** in CI
+- **Signed build attestations** published with every release
+
+### 🧰 New images for full engagements
+
+| Image | What it covers |
+|---|---|
+| 🏛 `ad` | Active Directory assessments |
+| 📱 `android` | Mobile app testing and instrumentation |
+| 🕵️ `osint` | Open-source intelligence and recon |
+| ⚡ `sdr_gnuradio4` | GNU Radio 4, ready to run (see above) |
+
+Plus new tooling inside the existing images — SAST/DAST in `reversing` (Semgrep, Joern, cppcheck, honggfuzz, clang static analyzer, Trivy), `grimoire` in the shell harness, and WhisperPair (CVE-2025-36911) and `caeruleus` on the RF/Bluetooth side.
 
 ## ✨ Key Features
 
@@ -185,12 +231,16 @@ graph TD;
     A-->D[automotive];
     A-->E[reversing];
     A-->H[network];
+    A-->T[osint];
+    A-->U[android];
     B-->I[sdr_light];
     B-->J[bluetooth];
     B-->K[telecom_utils];
     B-->L[hardware];
     H-->M[wifi];
+    H-->V[ad];
     I-->N[sdr_full];
+    I-->W[sdr_gnuradio4];
     K-->P[telecom_2Gto3G];
     K-->Q[telecom_4G_5GNSA];
     K-->R[telecom_4Gto5G];
@@ -199,18 +249,21 @@ graph TD;
 
 | Category | Images | Key Tools |
 |----------|--------|-----------|
-| 📻 **SDR** | `sdr_light`, `sdr_full` | GNU Radio, GQRX, SDR++, SDRangel, SigDigger, CyberEther, Inspectrum, URH, rtl_433, dump1090, GNSS-SDR, SatDump, Jupyter + 50+ GNU Radio OOT modules (gr-gsm, gr-lora, gr-satellites, gr-ieee802-11, gr-droneid, gr-tempest, ...) |
+| 📻 **SDR** | `sdr_light`, `sdr_full`, `sdr_gnuradio4` 🆕 | GNU Radio (3.10 + a dedicated GNU Radio 4 image), GQRX, SDR++, SDRangel, SigDigger, CyberEther, Inspectrum, URH, rtl_433, dump1090, GNSS-SDR, SatDump, Jupyter + 50+ GNU Radio OOT modules (gr-gsm, gr-lora, gr-satellites, gr-ieee802-11, gr-droneid, gr-tempest, ...) |
 | 📡 **SDR Devices** | `sdrsa_devices` | Drivers for USRP (UHD), RTL-SDR, HackRF, BladeRF, Airspy, LimeSDR, PlutoSDR, XTRX, RFNM, HydraSDR, LiteX M2SDR, SignalHound, Harogic, LibreSDR, SoapySDR |
-| 📱 **Telecom** | `telecom_utils`, `telecom_2Gto3G`, `telecom_4G_5GNSA`, `telecom_4Gto5G`, `telecom_5G` | PySIM, pycrate, srsRAN 4G/5G, Open5GS, UERANSIM, YateBTS, OpenBTS, OsmoCom BTS Suite, SigPloit, PyHSS, SCAT, jSS7, 5Greplay |
+| 📱 **Telecom** | `telecom_utils`, `telecom_2Gto3G`, `telecom_4G_5GNSA`, `telecom_4Gto5G`, `telecom_5G` | PySIM, pycrate, srsRAN 4G, **OCUDU** 🆕 (5G SA CU/DU), Open5GS, UERANSIM, YateBTS, OpenBTS, OpenBTS-UMTS, OsmoCom BTS Suite, SigPloit, PyHSS, SCAT, jSS7, 5Greplay |
 | 📶 **Bluetooth** | `bluetooth` | BlueZ, WHAD, Mirage, Sniffle, Bluing, bdaddr, ice9-bluetooth, esp32 BT Classic sniffer |
 | 📡 **Wi-Fi** | `wifi` | Aircrack-ng, hcxdumptool, Reaver, Bully, Pixiewps, EAPHammer, Airgeddon, Wifite2, WPA3 attack suite (Dragonslayer/Dragonforce/Wacker), Hostapd-mana, Wifiphisher |
 | 🏷️ **RFID** | `rfid` | Proxmark3 (RRG/Iceman), libnfc, mfoc, mfcuk, RFIDler, miLazyCracker |
 | 🚗 **Automotive** | `automotive` | can-utils, CANtact, Caring Caribou, SavvyCAN, Gallia, V2GInjector |
 | 🔧 **Hardware** | `hardware` | PulseView, DSView, Logic 2 (Saleae), Arduino IDE, Flashrom, OpenOCD, esptool, openFPGALoader, MTKClient, ngscopeclient, dfu-util, SeerGDB, AVRDUDE |
-| 🔍 **Reversing** | `reversing` | Ghidra, Radare2, Cutter, ImHex, Binwalk (v2+v3), Unblob, AFL, Honggfuzz, Semgrep, Joern, Kaitai Struct, Qiling, Unicorn/Keystone |
+| 🔍 **Reversing & SAST** | `reversing` | Ghidra, Radare2, Cutter, ImHex, Binwalk (v2+v3), Unblob, Sasquatch, AFL, Honggfuzz, Kaitai Struct, Qiling, Unicorn/Keystone, plus SAST/DAST: Semgrep, Joern, cppcheck, clang static analyzer, Trivy 🆕 |
 | 🌐 **Network** | `network` | Nmap, Wireshark, Metasploit, Burp Suite, Caido, Impacket, NetExec, Responder, Hashcat, John the Ripper, Kismet, Bettercap, SIPVicious, MBTget |
+| 🏛 **Active Directory** 🆕 | `ad` | Impacket, NetExec, Responder, BloodHound.py, Certipy, bloodyAD, certsync, mitm6, kerbrute, lsassy, ldapdomaindump, sprayhound, DonPAPI, SharpLAPS, skewrun |
+| 📱 **Mobile** 🆕 | `android` | adb/fastboot, apktool, apksigner, zipalign, smali, scrcpy, dex2jar, Frida, objection, androguard, drozer, MobSF |
+| 🕵️ **OSINT** 🆕 | `osint` | theHarvester, Sherlock, maigret, holehe, GHunt, toutatis, instaloader, Sublist3r, h8mail, censys, SpiderFoot, recon-ng, FinalRecon |
 
-> **200+ tools** across 15+ images, all on **x86_64**, **ARM64**, and **RISC-V64**.
+> **200+ tools** across 18+ images, all on **x86_64**, **ARM64**, and **RISC-V64**.
 
 Full image list with detailed tool inventory available at [rfswift.io/docs/guide/list-of-tools/](https://rfswift.io/docs/guide/list-of-tools/)
 
