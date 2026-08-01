@@ -6,7 +6,7 @@ require (
 	github.com/FlUxIuS/pulseaudio_2 v0.0.0-20250608163549-43fae16119df
 	github.com/charmbracelet/huh v1.0.0
 	github.com/charmbracelet/lipgloss v1.1.0
-	github.com/cheggaaa/pb/v3 v3.1.7
+	github.com/cheggaaa/pb/v3 v3.2.0
 	github.com/go-resty/resty/v2 v2.17.2
 	github.com/moby/moby/api v1.55.0
 	github.com/moby/moby/client v0.5.0
