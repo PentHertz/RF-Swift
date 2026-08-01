@@ -8,20 +8,35 @@ import (
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
+	"net/netip"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
 
-	"github.com/docker/docker/api/types"
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/client"
-	"github.com/docker/go-connections/nat"
+	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/api/types/image"
+	"github.com/moby/moby/api/types/network"
+	"github.com/moby/moby/client"
 
 	common "penthertz/rfswift/common"
 	"penthertz/rfswift/tui"
 )
+
+// inspectContainer wraps the moby client's ContainerInspect, unwrapping the
+// result struct so call sites keep the familiar (InspectResponse, error) shape.
+func inspectContainer(ctx context.Context, cli *client.Client, containerID string) (container.InspectResponse, error) {
+	res, err := cli.ContainerInspect(ctx, containerID, client.ContainerInspectOptions{})
+	return res.Container, err
+}
+
+// inspectImage wraps the moby client's ImageInspect, unwrapping the result
+// struct so call sites keep the familiar (InspectResponse, error) shape.
+func inspectImage(ctx context.Context, cli *client.Client, imageName string) (image.InspectResponse, error) {
+	res, err := cli.ImageInspect(ctx, imageName)
+	return res.InspectResponse, err
+}
 
 // loadJSON reads a JSON file from disk and unmarshals its contents into v.
 //
@@ -116,9 +131,9 @@ func removeFromSlice(slice []string, item string) []string {
 //	in(2): string containerName - container name to search for (without leading '/')
 //	out: string - container ID, or empty string if no match is found
 func getContainerIDByName(ctx context.Context, containerName string) string {
-	cli, _ := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
-	containers, _ := cli.ContainerList(ctx, container.ListOptions{All: true})
-	for _, container := range containers {
+	cli, _ := client.New(client.FromEnv, client.WithAPIVersionNegotiation())
+	listRes, _ := cli.ContainerList(ctx, client.ContainerListOptions{All: true})
+	for _, container := range listRes.Items {
 		for _, name := range container.Names {
 			if strings.TrimPrefix(name, "/") == containerName {
 				return container.ID
@@ -130,6 +145,9 @@ func getContainerIDByName(ctx context.Context, containerName string) string {
 
 // combineBindings merges X11-forwarding bind mounts and extra bind mounts into
 // a single slice. Each argument is a comma-separated list of bind mount specs.
+// Entries sharing a container destination are deduplicated (last one wins), as
+// the config file, a profile and -b can all ask for the same mount and Podman
+// rejects duplicate destinations.
 //
 //	in(1): string x11forward - comma-separated X11 socket bind mount specs
 //	in(2): string extrabinding - comma-separated additional bind mount specs
@@ -137,13 +155,12 @@ func getContainerIDByName(ctx context.Context, containerName string) string {
 func combineBindings(x11forward, extrabinding string) []string {
 	var bindings []string
 
-	if extrabinding != "" {
-		bindings = append(bindings, strings.Split(extrabinding, ",")...)
+	for _, spec := range append(strings.Split(extrabinding, ","), strings.Split(x11forward, ",")...) {
+		if spec = strings.TrimSpace(spec); spec != "" {
+			bindings = append(bindings, spec)
+		}
 	}
-	if x11forward != "" {
-		bindings = append(bindings, strings.Split(x11forward, ",")...)
-	}
-	return bindings
+	return deduplicateBinds(bindings)
 }
 
 // splitAndCombine splits a comma-separated string into a slice of strings.
@@ -295,12 +312,12 @@ func IsRootlessPodman() bool {
 }
 
 // ParseExposedPorts parses a comma-separated list of port/protocol entries into
-// a nat.PortSet suitable for use in container configuration.
+// a network.PortSet suitable for use in container configuration.
 //
 //	in(1): string exposedPortsStr - comma-separated port specs (e.g. "80/tcp,443/tcp")
-//	out: nat.PortSet - set of exposed ports, empty if input is empty
-func ParseExposedPorts(exposedPortsStr string) nat.PortSet {
-	exposedPorts := nat.PortSet{}
+//	out: network.PortSet - set of exposed ports, empty if input is empty
+func ParseExposedPorts(exposedPortsStr string) network.PortSet {
+	exposedPorts := network.PortSet{}
 
 	if exposedPortsStr == "" {
 		return exposedPorts
@@ -308,11 +325,16 @@ func ParseExposedPorts(exposedPortsStr string) nat.PortSet {
 
 	portEntries := strings.Split(exposedPortsStr, ",")
 	for _, entry := range portEntries {
-		port := strings.TrimSpace(entry)
-		if port == "" {
+		portSpec := strings.TrimSpace(entry)
+		if portSpec == "" {
 			continue
 		}
-		exposedPorts[nat.Port(port)] = struct{}{}
+		port, err := network.ParsePort(portSpec)
+		if err != nil {
+			fmt.Printf("Invalid exposed port: %s (%v)\n", portSpec, err)
+			continue
+		}
+		exposedPorts[port] = struct{}{}
 	}
 
 	return exposedPorts
@@ -323,14 +345,17 @@ func ParseExposedPorts(exposedPortsStr string) nat.PortSet {
 // by "," when supplied directly from CLI input.
 //
 // Both Docker-standard format and internal format are accepted:
+//
 //   - Docker-standard: "hostPort:containerPort/proto" (e.g., "8080:80/tcp")
+//
 //   - Internal format: "containerPort/proto:hostPort" (e.g., "80/tcp:8080")
+//
 //   - With host IP:    "hostIP:hostPort:containerPort/proto" or "containerPort/proto:hostIP:hostPort"
 //
-//	in(1): string bindedPortsStr - delimited port binding specs
-//	out: nat.PortMap - map of container ports to host bindings, empty on empty input
-func ParseBindedPorts(bindedPortsStr string) nat.PortMap {
-	portBindings := nat.PortMap{}
+//     in(1): string bindedPortsStr - delimited port binding specs
+//     out: network.PortMap - map of container ports to host bindings, empty on empty input
+func ParseBindedPorts(bindedPortsStr string) network.PortMap {
+	portBindings := network.PortMap{}
 
 	if bindedPortsStr == "" || bindedPortsStr == "\"\"" {
 		return portBindings
@@ -377,10 +402,24 @@ func ParseBindedPorts(bindedPortsStr string) nat.PortMap {
 			continue
 		}
 
-		portKey := nat.Port(containerPortProto)
+		portKey, err := network.ParsePort(containerPortProto)
+		if err != nil {
+			fmt.Printf("Invalid port binding format: %s (%v)\n", entry, err)
+			continue
+		}
 
-		portBindings[portKey] = append(portBindings[portKey], nat.PortBinding{
-			HostIP:   hostAddress,
+		var hostIP netip.Addr
+		if hostAddress != "" {
+			parsed, err := netip.ParseAddr(hostAddress)
+			if err != nil {
+				fmt.Printf("Invalid host IP in port binding: %s (%v)\n", entry, err)
+				continue
+			}
+			hostIP = parsed
+		}
+
+		portBindings[portKey] = append(portBindings[portKey], network.PortBinding{
+			HostIP:   hostIP,
 			HostPort: hostPort,
 		})
 	}
@@ -415,17 +454,17 @@ func getDeviceMappingsFromString(devicesStr string) []container.DeviceMapping {
 	return devices
 }
 
-// convertPortBindingsToString formats a nat.PortMap as a human-readable
+// convertPortBindingsToString formats a network.PortMap as a human-readable
 // comma-separated string of "hostIP:hostPort -> containerPort/proto" entries.
 //
-//	in(1): nat.PortMap portBindings - port binding map to format
+//	in(1): network.PortMap portBindings - port binding map to format
 //	out: string - comma-separated human-readable port binding descriptions
-func convertPortBindingsToString(portBindings nat.PortMap) string {
+func convertPortBindingsToString(portBindings network.PortMap) string {
 	var result []string
 
 	for port, bindings := range portBindings {
 		for _, binding := range bindings {
-			entry := fmt.Sprintf("%s:%s -> %s", binding.HostIP, binding.HostPort, port)
+			entry := fmt.Sprintf("%s:%s -> %s", hostIPString(binding.HostIP), binding.HostPort, port)
 			result = append(result, entry)
 		}
 	}
@@ -433,18 +472,28 @@ func convertPortBindingsToString(portBindings nat.PortMap) string {
 	return strings.Join(result, ", ")
 }
 
+// hostIPString renders a binding host IP as a string, mapping the zero
+// netip.Addr (no host IP set) to an empty string like the old API did.
+func hostIPString(addr netip.Addr) string {
+	if !addr.IsValid() {
+		return ""
+	}
+	return addr.String()
+}
+
 // convertPortBindingsToRoundTrip serialises a nat.PortMap into the internal
 // ";;" -delimited round-trip format so it can be stored and later re-parsed by
 // ParseBindedPorts. Entries with a non-default host IP include it in the output.
 //
-//	in(1): nat.PortMap portBindings - port binding map to serialise
+//	in(1): network.PortMap portBindings - port binding map to serialise
 //	out: string - ";;" -delimited string of "containerPort/proto:hostPort" (or ":hostIP:hostPort") entries
-func convertPortBindingsToRoundTrip(portBindings nat.PortMap) string {
+func convertPortBindingsToRoundTrip(portBindings network.PortMap) string {
 	var result []string
 	for port, bindings := range portBindings {
 		for _, binding := range bindings {
-			if binding.HostIP != "" && binding.HostIP != "0.0.0.0" {
-				result = append(result, fmt.Sprintf("%s:%s:%s", port, binding.HostIP, binding.HostPort))
+			hostIP := hostIPString(binding.HostIP)
+			if hostIP != "" && hostIP != "0.0.0.0" {
+				result = append(result, fmt.Sprintf("%s:%s:%s", port, hostIP, binding.HostPort))
 			} else {
 				result = append(result, fmt.Sprintf("%s:%s", port, binding.HostPort))
 			}
@@ -484,15 +533,15 @@ func normalizePortBinding(binding string) string {
 	return binding
 }
 
-// convertExposedPortsToString formats a nat.PortSet as a comma-separated string
+// convertExposedPortsToString formats a network.PortSet as a comma-separated string
 // of port/protocol entries.
 //
-//	in(1): nat.PortSet exposedPorts - set of exposed ports to format
+//	in(1): network.PortSet exposedPorts - set of exposed ports to format
 //	out: string - comma-separated port/protocol entries (e.g. "80/tcp, 443/tcp")
-func convertExposedPortsToString(exposedPorts nat.PortSet) string {
+func convertExposedPortsToString(exposedPorts network.PortSet) string {
 	var result []string
 	for port := range exposedPorts {
-		result = append(result, string(port))
+		result = append(result, port.String())
 	}
 	return strings.Join(result, ", ")
 }
@@ -547,6 +596,43 @@ func detectGPUVendors() []GPUVendor {
 		vendors = append(vendors, v)
 	}
 	return vendors
+}
+
+// GPUAvailable reports whether this host can actually pass a GPU through to a
+// container. AMD and Intel only need their DRM/KFD nodes, which are mapped as
+// plain devices; NVIDIA goes through DeviceRequests, which the daemon rejects
+// with "could not select device driver" unless the container toolkit is
+// installed. Used to decide whether a profile asking for a GPU can be honoured
+// An explicit --gpus flag is never silently downgraded.
+//
+//	out: bool true when GPU passthrough can be configured
+func GPUAvailable() bool {
+	if runtime.GOOS != "linux" {
+		return false
+	}
+	for _, vendor := range detectGPUVendors() {
+		switch vendor {
+		case GPUVendorAMD, GPUVendorIntel:
+			return true
+		case GPUVendorNVIDIA:
+			if nvidiaToolkitInstalled() {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// nvidiaToolkitInstalled reports whether the NVIDIA container toolkit is present.
+//
+//	out: bool true when one of the toolkit binaries is in PATH
+func nvidiaToolkitInstalled() bool {
+	for _, bin := range []string{"nvidia-container-runtime", "nvidia-container-runtime-hook", "nvidia-ctk"} {
+		if _, err := exec.LookPath(bin); err == nil {
+			return true
+		}
+	}
+	return false
 }
 
 // applyGPUConfig detects GPU vendors on the host and configures the container
@@ -759,28 +845,28 @@ func imageExistsPodman(imageName string) bool {
 	return err == nil
 }
 
-// ImageInspectCompat wraps ImageInspectWithRaw with Podman compatibility.
+// ImageInspectCompat wraps image inspection with Podman compatibility.
 // Podman's Docker compat API sometimes fails to resolve short image names
-// (e.g., "penthertz/rfswift_noble:sdr_full") because Podman internally stores
-// them with the full registry prefix ("docker.io/penthertz/rfswift_noble:sdr_full").
+// (e.g., "penthertz/rfswift_resolute:sdr_full") because Podman internally stores
+// them with the full registry prefix ("docker.io/penthertz/rfswift_resolute:sdr_full").
 // This function tries the original name first, then with "docker.io/" prefix,
 // then falls back to the podman CLI as a last resort.
-func ImageInspectCompat(ctx context.Context, cli *client.Client, imageName string) (types.ImageInspect, error) {
+func ImageInspectCompat(ctx context.Context, cli *client.Client, imageName string) (image.InspectResponse, error) {
 	// Try the name as-is
-	inspect, _, err := cli.ImageInspectWithRaw(ctx, imageName)
+	inspect, err := inspectImage(ctx, cli, imageName)
 	if err == nil {
 		return inspect, nil
 	}
 
 	// Only apply fallbacks for Podman
 	if GetEngine().Type() != EnginePodman {
-		return types.ImageInspect{}, err
+		return image.InspectResponse{}, err
 	}
 
 	// Try with docker.io/ prefix
 	if !strings.HasPrefix(imageName, "docker.io/") && !strings.HasPrefix(imageName, "localhost/") {
 		fullRef := "docker.io/" + imageName
-		inspect, _, err = cli.ImageInspectWithRaw(ctx, fullRef)
+		inspect, err = inspectImage(ctx, cli, fullRef)
 		if err == nil {
 			return inspect, nil
 		}
@@ -790,12 +876,12 @@ func ImageInspectCompat(ctx context.Context, cli *client.Client, imageName strin
 	out, cliErr := exec.Command("podman", "image", "inspect", "--format", "{{.Id}}", imageName).Output()
 	if cliErr == nil && strings.TrimSpace(string(out)) != "" {
 		// Image exists in Podman store; return a minimal ImageInspect
-		return types.ImageInspect{
+		return image.InspectResponse{
 			ID: strings.TrimSpace(string(out)),
 		}, nil
 	}
 
-	return types.ImageInspect{}, fmt.Errorf("image '%s' not found", imageName)
+	return image.InspectResponse{}, fmt.Errorf("image '%s' not found", imageName)
 }
 
 // ---------------------------------------------------------------------------

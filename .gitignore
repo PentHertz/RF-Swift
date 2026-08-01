@@ -1,2 +1,5 @@
-
-rfswift
+# Compiled rfswift binary. Anchored with a leading slash so it matches ONLY the
+# built executable, not the go/rfswift/ source directory (a bare "rfswift"
+# pattern silently ignored every new file added under go/rfswift/).
+/rfswift
+/go/rfswift/rfswift

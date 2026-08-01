@@ -9,11 +9,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/docker/docker/api/types"
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/api/types/filters"
-	"github.com/docker/docker/api/types/image"
-	"github.com/docker/docker/client"
+	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/api/types/image"
+	"github.com/moby/moby/client"
 
 	common "penthertz/rfswift/common"
 	"penthertz/rfswift/tui"
@@ -130,10 +128,10 @@ func CleanupContainers(olderThan string, force bool, dryRun bool, onlyStopped bo
 
 	cutoffTime := time.Now().Add(-duration)
 
-	containerFilters := filters.NewArgs()
+	containerFilters := make(client.Filters)
 	containerFilters.Add("label", "org.container.project=rfswift")
 
-	containers, err := cli.ContainerList(ctx, container.ListOptions{
+	containersRes, err := cli.ContainerList(ctx, client.ContainerListOptions{
 		All:     true,
 		Filters: containerFilters,
 	})
@@ -141,8 +139,8 @@ func CleanupContainers(olderThan string, force bool, dryRun bool, onlyStopped bo
 		return fmt.Errorf("failed to list containers: %v", err)
 	}
 
-	var toDelete []types.Container
-	for _, cont := range containers {
+	var toDelete []container.Summary
+	for _, cont := range containersRes.Items {
 		if onlyStopped && cont.State == "running" {
 			continue
 		}
@@ -216,7 +214,7 @@ func CleanupContainers(olderThan string, force bool, dryRun bool, onlyStopped bo
 			hasNAT = true
 		}
 
-		err := cli.ContainerRemove(ctx, cont.ID, container.RemoveOptions{Force: true})
+		_, err := cli.ContainerRemove(ctx, cont.ID, client.ContainerRemoveOptions{Force: true})
 		if err != nil {
 			if strings.Contains(err.Error(), "No such container") {
 				common.PrintWarningMessage(fmt.Sprintf("Skipped ghost container: %s (already removed from engine)", containerName))
@@ -270,13 +268,13 @@ func CleanupImages(olderThan string, force bool, dryRun bool, onlyDangling bool,
 
 	cutoffTime := time.Now().Add(-duration)
 
-	imageFilters := filters.NewArgs()
+	imageFilters := make(client.Filters)
 	imageFilters.Add("label", "org.container.project=rfswift")
 	if onlyDangling {
 		imageFilters.Add("dangling", "true")
 	}
 
-	images, err := cli.ImageList(ctx, image.ListOptions{
+	imagesRes, err := cli.ImageList(ctx, client.ImageListOptions{
 		All:     true,
 		Filters: imageFilters,
 	})
@@ -285,7 +283,7 @@ func CleanupImages(olderThan string, force bool, dryRun bool, onlyDangling bool,
 	}
 
 	var toDelete []image.Summary
-	for _, img := range images {
+	for _, img := range imagesRes.Items {
 		if !onlyDangling && len(img.RepoTags) == 0 {
 			continue
 		}
@@ -384,7 +382,7 @@ func CleanupImages(olderThan string, force bool, dryRun bool, onlyDangling bool,
 				removed++
 			}
 		} else {
-			_, err := cli.ImageRemove(ctx, img.ID, image.RemoveOptions{Force: true})
+			_, err := cli.ImageRemove(ctx, img.ID, client.ImageRemoveOptions{Force: true})
 			if err != nil {
 				if strings.Contains(err.Error(), "No such image") {
 					common.PrintSuccessMessage(fmt.Sprintf("Removed image: %s (cascaded)", displayName))
@@ -415,12 +413,12 @@ func CleanupImages(olderThan string, force bool, dryRun bool, onlyDangling bool,
 func getChildImages(ctx context.Context, cli *client.Client, parentID string) []image.Summary {
 	var children []image.Summary
 
-	allImages, err := cli.ImageList(ctx, image.ListOptions{All: true})
+	allImagesRes, err := cli.ImageList(ctx, client.ImageListOptions{All: true})
 	if err != nil {
 		return children
 	}
 
-	for _, img := range allImages {
+	for _, img := range allImagesRes.Items {
 		if img.ParentID == parentID {
 			children = append(children, img)
 		}
@@ -471,7 +469,7 @@ func removeImageWithDescendants(ctx context.Context, cli *client.Client, imageID
 		for i := len(descendants) - 1; i >= 0; i-- {
 			desc := descendants[i]
 
-			_, _, err := cli.ImageInspectWithRaw(ctx, desc.ID)
+			_, err := inspectImage(ctx, cli, desc.ID)
 			if err != nil {
 				continue
 			}
@@ -483,7 +481,7 @@ func removeImageWithDescendants(ctx context.Context, cli *client.Client, imageID
 				descName = desc.ID[7:19]
 			}
 
-			_, err = cli.ImageRemove(ctx, desc.ID, image.RemoveOptions{Force: true, PruneChildren: true})
+			_, err = cli.ImageRemove(ctx, desc.ID, client.ImageRemoveOptions{Force: true, PruneChildren: true})
 			if err != nil {
 				if strings.Contains(err.Error(), "No such image") {
 					continue
@@ -496,13 +494,13 @@ func removeImageWithDescendants(ctx context.Context, cli *client.Client, imageID
 		}
 	}
 
-	_, _, err := cli.ImageInspectWithRaw(ctx, imageID)
+	_, err := inspectImage(ctx, cli, imageID)
 	if err != nil {
 		common.PrintSuccessMessage(fmt.Sprintf("Image %s was already removed (cascaded)", displayName))
 		return removedCount, nil
 	}
 
-	_, err = cli.ImageRemove(ctx, imageID, image.RemoveOptions{Force: true, PruneChildren: true})
+	_, err = cli.ImageRemove(ctx, imageID, client.ImageRemoveOptions{Force: true, PruneChildren: true})
 	if err != nil && strings.Contains(err.Error(), "No such image") {
 		return removedCount, nil
 	}

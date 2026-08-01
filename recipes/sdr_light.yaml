@@ -1,6 +1,6 @@
 # RF Swift Build Recipe
 name: rfswift_core
-base_image: penthertz/rfswift_noble:sdrsa_devices
+base_image: penthertz/rfswift_resolute:sdrsa_devices
 tag: telecom_01012025
 
 labels:

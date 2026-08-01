@@ -13,10 +13,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/docker/docker/api/types"
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/api/types/image"
-	"github.com/docker/docker/client"
+	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/client"
 	common "penthertz/rfswift/common"
 	"penthertz/rfswift/tui"
 )
@@ -121,9 +119,9 @@ func printContainerProperties(ctx context.Context, cli *client.Client, container
 // preferring the org.rfswift.original_image label set during recreation
 // over the raw Config.Image field.
 //
-//	in(1): types.ContainerJSON containerJSON   full container inspection result
+//	in(1): container.InspectResponse containerJSON   full container inspection result
 //	out:   string                              image name suitable for display
-func getDisplayImageName(containerJSON types.ContainerJSON) string {
+func getDisplayImageName(containerJSON container.InspectResponse) string {
 	// Check for original image label first (set during recreation)
 	if label, ok := containerJSON.Config.Labels["org.rfswift.original_image"]; ok && label != "" {
 		return label
@@ -135,9 +133,9 @@ func getDisplayImageName(containerJSON types.ContainerJSON) string {
 // org.rfswift.exposed_ports label, falling back to the live ExposedPorts map
 // when the label is absent. The special label value "none" is treated as empty.
 //
-//	in(1): types.ContainerJSON containerJSON   full container inspection result
+//	in(1): container.InspectResponse containerJSON   full container inspection result
 //	out:   string                              comma-separated exposed ports, or empty string
-func getExposedPortsFromLabel(containerJSON types.ContainerJSON) string {
+func getExposedPortsFromLabel(containerJSON container.InspectResponse) string {
 	if label, ok := containerJSON.Config.Labels["org.rfswift.exposed_ports"]; ok {
 		if label == "none" {
 			return ""
@@ -157,7 +155,7 @@ func getExposedPortsFromLabel(containerJSON types.ContainerJSON) string {
 //	out:   map[string]string      property map keyed by property name
 //	out:   error                  non-nil if the inspect or image lookup fails
 func getContainerProperties(ctx context.Context, cli *client.Client, containerID string) (map[string]string, error) {
-	containerJSON, err := cli.ContainerInspect(ctx, containerID)
+	containerJSON, err := inspectContainer(ctx, cli, containerID)
 	if err != nil {
 		return nil, err
 	}
@@ -172,7 +170,7 @@ func getContainerProperties(ctx context.Context, cli *client.Client, containerID
 	}
 
 	// Get the image details to find the size
-	imageInfo, _, err := cli.ImageInspectWithRaw(ctx, containerJSON.Image)
+	imageInfo, err := inspectImage(ctx, cli, containerJSON.Image)
 	if err != nil {
 		return nil, err
 	}
@@ -211,27 +209,27 @@ func getContainerProperties(ctx context.Context, cli *client.Client, containerID
 	}
 
 	// Get ulimits
-    var ulimitStrs []string
-    for _, ulimit := range containerJSON.HostConfig.Ulimits {
-        if ulimit.Soft == ulimit.Hard {
-            if ulimit.Soft == -1 {
-                ulimitStrs = append(ulimitStrs, fmt.Sprintf("%s=unlimited", ulimit.Name))
-            } else {
-                ulimitStrs = append(ulimitStrs, fmt.Sprintf("%s=%d", ulimit.Name, ulimit.Soft))
-            }
-        } else {
-            softStr := fmt.Sprintf("%d", ulimit.Soft)
-            hardStr := fmt.Sprintf("%d", ulimit.Hard)
-            if ulimit.Soft == -1 {
-                softStr = "unlimited"
-            }
-            if ulimit.Hard == -1 {
-                hardStr = "unlimited"
-            }
-            ulimitStrs = append(ulimitStrs, fmt.Sprintf("%s=%s:%s", ulimit.Name, softStr, hardStr))
-        }
-    }
-    props["Ulimits"] = strings.Join(ulimitStrs, ",")
+	var ulimitStrs []string
+	for _, ulimit := range containerJSON.HostConfig.Ulimits {
+		if ulimit.Soft == ulimit.Hard {
+			if ulimit.Soft == -1 {
+				ulimitStrs = append(ulimitStrs, fmt.Sprintf("%s=unlimited", ulimit.Name))
+			} else {
+				ulimitStrs = append(ulimitStrs, fmt.Sprintf("%s=%d", ulimit.Name, ulimit.Soft))
+			}
+		} else {
+			softStr := fmt.Sprintf("%d", ulimit.Soft)
+			hardStr := fmt.Sprintf("%d", ulimit.Hard)
+			if ulimit.Soft == -1 {
+				softStr = "unlimited"
+			}
+			if ulimit.Hard == -1 {
+				hardStr = "unlimited"
+			}
+			ulimitStrs = append(ulimitStrs, fmt.Sprintf("%s=%s:%s", ulimit.Name, softStr, hardStr))
+		}
+	}
+	props["Ulimits"] = strings.Join(ulimitStrs, ",")
 
 	// Get GPU info — check label first (set during creation/gpus add),
 	// then DeviceRequests (NVIDIA), then /dev/kfd (AMD).
@@ -306,21 +304,22 @@ func UpdateMountBinding(containerName string, source string, target string, add 
 	// Stop the container
 	common.PrintInfoMessage("Stopping the container...")
 	if err := showLoadingIndicator(ctx, func() error {
-		return cli.ContainerStop(ctx, containerID, container.StopOptions{Timeout: &timeout})
+		_, err := cli.ContainerStop(ctx, containerID, client.ContainerStopOptions{Timeout: &timeout})
+		return err
 	}, "Stopping the container..."); err != nil {
 		common.PrintErrorMessage(fmt.Errorf("Failed to stop the container gracefully: %v", err))
 		os.Exit(1)
 	}
 
 	// Check if the container is still running
-	containerJSON, err := cli.ContainerInspect(ctx, containerID)
+	containerJSON, err := inspectContainer(ctx, cli, containerID)
 	if err != nil {
 		common.PrintErrorMessage(fmt.Errorf("Error inspecting container: %v", err))
 		os.Exit(1)
 	}
 	if containerJSON.State.Running {
 		common.PrintWarningMessage("Container is still running. Forcing stop...")
-		err = cli.ContainerKill(ctx, containerID, "SIGKILL")
+		_, err = cli.ContainerKill(ctx, containerID, client.ContainerKillOptions{Signal: "SIGKILL"})
 		if err != nil {
 			common.PrintErrorMessage(fmt.Errorf("Failed to force stop the container: %v", err))
 			os.Exit(1)
@@ -342,7 +341,7 @@ func UpdateMountBinding(containerName string, source string, target string, add 
 		common.PrintInfoMessage(fmt.Sprintf("%s does not support direct config editing — using container recreation", GetEngine().Name()))
 
 		// Get current container config for recreation
-		inspectData, err := cli.ContainerInspect(ctx, containerID)
+		inspectData, err := inspectContainer(ctx, cli, containerID)
 		if err != nil {
 			common.PrintErrorMessage(fmt.Errorf("failed to inspect container: %v", err))
 			os.Exit(1)
@@ -524,21 +523,22 @@ func UpdateDeviceBinding(containerName string, deviceHost string, deviceContaine
 
 	// Attempt graceful stop
 	if err := showLoadingIndicator(ctx, func() error {
-		return cli.ContainerStop(ctx, containerID, container.StopOptions{Timeout: &timeout})
+		_, err := cli.ContainerStop(ctx, containerID, client.ContainerStopOptions{Timeout: &timeout})
+		return err
 	}, "Stopping the container..."); err != nil {
 		common.PrintErrorMessage(fmt.Errorf("Failed to stop the container gracefully: %v", err))
 		os.Exit(1)
 	}
 
 	// Check if the container is still running
-	containerJSON, err := cli.ContainerInspect(ctx, containerID)
+	containerJSON, err := inspectContainer(ctx, cli, containerID)
 	if err != nil {
 		common.PrintErrorMessage(fmt.Errorf("Error inspecting container: %v", err))
 		os.Exit(1)
 	}
 	if containerJSON.State.Running {
 		common.PrintWarningMessage("Container is still running. Forcing stop...")
-		err = cli.ContainerKill(ctx, containerID, "SIGKILL")
+		_, err = cli.ContainerKill(ctx, containerID, client.ContainerKillOptions{Signal: "SIGKILL"})
 		if err != nil {
 			common.PrintErrorMessage(fmt.Errorf("Failed to force stop the container: %v", err))
 			os.Exit(1)
@@ -558,7 +558,7 @@ func UpdateDeviceBinding(containerName string, deviceHost string, deviceContaine
 		common.PrintInfoMessage(fmt.Sprintf("%s does not support direct config editing — using container recreation", GetEngine().Name()))
 
 		// Get current container config for recreation
-		inspectData, err := cli.ContainerInspect(ctx, containerID)
+		inspectData, err := inspectContainer(ctx, cli, containerID)
 		if err != nil {
 			common.PrintErrorMessage(fmt.Errorf("failed to inspect container: %v", err))
 			os.Exit(1)
@@ -720,21 +720,22 @@ func directEditContainer(ctx context.Context, cli *client.Client, containerID st
 	// Stop the container
 	common.PrintInfoMessage("Stopping the container...")
 	if err := showLoadingIndicator(ctx, func() error {
-		return cli.ContainerStop(ctx, containerID, container.StopOptions{Timeout: &timeout})
+		_, err := cli.ContainerStop(ctx, containerID, client.ContainerStopOptions{Timeout: &timeout})
+		return err
 	}, "Stopping the container..."); err != nil {
 		common.PrintErrorMessage(fmt.Errorf("failed to stop container: %v", err))
 		return fmt.Errorf("failed to stop container: %v", err)
 	}
 
 	// Ensure container is stopped and get full ID
-	containerJSON, err := cli.ContainerInspect(ctx, containerID)
+	containerJSON, err := inspectContainer(ctx, cli, containerID)
 	if err != nil {
 		common.PrintErrorMessage(fmt.Errorf("error inspecting container: %v", err))
 		return fmt.Errorf("error inspecting container: %v", err)
 	}
 	if containerJSON.State.Running {
 		common.PrintWarningMessage("Container is still running. Forcing stop...")
-		if err := cli.ContainerKill(ctx, containerID, "SIGKILL"); err != nil {
+		if _, err := cli.ContainerKill(ctx, containerID, client.ContainerKillOptions{Signal: "SIGKILL"}); err != nil {
 			common.PrintErrorMessage(fmt.Errorf("failed to force stop container: %v", err))
 			return fmt.Errorf("failed to force stop container: %v", err)
 		}
@@ -818,7 +819,7 @@ func UpdateCapability(containerID string, capability string, add bool) error {
 	}
 	defer cli.Close()
 
-	containerJSON, err := cli.ContainerInspect(ctx, containerID)
+	containerJSON, err := inspectContainer(ctx, cli, containerID)
 	if err != nil {
 		common.PrintErrorMessage(fmt.Errorf("failed to inspect container: %v", err))
 		return err
@@ -913,7 +914,7 @@ func UpdateCgroupRule(containerID string, rule string, add bool) error {
 	}
 	defer cli.Close()
 
-	containerJSON, err := cli.ContainerInspect(ctx, containerID)
+	containerJSON, err := inspectContainer(ctx, cli, containerID)
 	if err != nil {
 		common.PrintErrorMessage(fmt.Errorf("failed to inspect container: %v", err))
 		return err
@@ -1007,7 +1008,7 @@ func UpdateGPUs(containerID string, gpus string, add bool) error {
 	}
 	defer cli.Close()
 
-	containerJSON, err := cli.ContainerInspect(ctx, containerID)
+	containerJSON, err := inspectContainer(ctx, cli, containerID)
 	if err != nil {
 		common.PrintErrorMessage(fmt.Errorf("failed to inspect container: %v", err))
 		return err
@@ -1162,7 +1163,7 @@ func UpdateExposedPort(containerID string, port string, add bool) error {
 	}
 	defer cli.Close()
 
-	containerJSON, err := cli.ContainerInspect(ctx, containerID)
+	containerJSON, err := inspectContainer(ctx, cli, containerID)
 	if err != nil {
 		common.PrintErrorMessage(fmt.Errorf("failed to inspect container: %v", err))
 		return err
@@ -1268,7 +1269,7 @@ func UpdatePortBinding(containerID string, binding string, add bool) error {
 	}
 	defer cli.Close()
 
-	containerJSON, err := cli.ContainerInspect(ctx, containerID)
+	containerJSON, err := inspectContainer(ctx, cli, containerID)
 	if err != nil {
 		common.PrintErrorMessage(fmt.Errorf("failed to inspect container: %v", err))
 		return err
@@ -1323,7 +1324,7 @@ func UpdatePortBinding(containerID string, binding string, add bool) error {
 		return fmt.Errorf("invalid port binding format: %s", binding)
 	}
 	containerPort := parts[0] // e.g., "8080/tcp"
-	hostPart := parts[1]     // e.g., "127.0.0.1:8080" or "8080"
+	hostPart := parts[1]      // e.g., "127.0.0.1:8080" or "8080"
 
 	// Parse host IP and port
 	hostIP := ""
@@ -1417,7 +1418,7 @@ func UpdatePortBinding(containerID string, binding string, add bool) error {
 //	out:   error                        non-nil if any step of the recreation process fails
 func recreateContainerWithProperties(ctx context.Context, cli *client.Client, containerID string, props map[string]string) error {
 	// Get fresh container info
-	containerJSON, err := cli.ContainerInspect(ctx, containerID)
+	containerJSON, err := inspectContainer(ctx, cli, containerID)
 	if err != nil {
 		common.PrintErrorMessage(fmt.Errorf("failed to inspect container: %v", err))
 		return err
@@ -1430,7 +1431,7 @@ func recreateContainerWithProperties(ctx context.Context, cli *client.Client, co
 	// Stop the container
 	common.PrintInfoMessage("Stopping container...")
 	timeout := 10
-	if err := cli.ContainerStop(ctx, containerID, container.StopOptions{Timeout: &timeout}); err != nil {
+	if _, err := cli.ContainerStop(ctx, containerID, client.ContainerStopOptions{Timeout: &timeout}); err != nil {
 		// Container might already be stopped — not fatal
 		common.PrintWarningMessage(fmt.Sprintf("Stop returned: %v (may already be stopped)", err))
 	}
@@ -1462,10 +1463,9 @@ func recreateContainerWithProperties(ctx context.Context, cli *client.Client, co
 		commitLabels["org.rfswift.exposed_ports"] = props["ExposedPorts"]
 	}
 
-	commitResp, err := cli.ContainerCommit(ctx, containerID, container.CommitOptions{
+	commitResp, err := cli.ContainerCommit(ctx, containerID, client.ContainerCommitOptions{
 		Reference: tempImageTag,
 		Comment:   "RF Swift: temporary image for container property update",
-		Pause:     true,
 		Config: &container.Config{
 			ExposedPorts: ParseExposedPorts(props["ExposedPorts"]),
 			Labels:       commitLabels,
@@ -1480,7 +1480,7 @@ func recreateContainerWithProperties(ctx context.Context, cli *client.Client, co
 
 	// ── 2. Remove old container ──
 	common.PrintInfoMessage("Removing old container...")
-	if err := cli.ContainerRemove(ctx, containerID, container.RemoveOptions{Force: true}); err != nil {
+	if _, err := cli.ContainerRemove(ctx, containerID, client.ContainerRemoveOptions{Force: true}); err != nil {
 		common.PrintErrorMessage(fmt.Errorf("failed to remove container: %v", err))
 		return err
 	}
@@ -1491,11 +1491,10 @@ func recreateContainerWithProperties(ctx context.Context, cli *client.Client, co
 
 	// ── 3. Rebuild container config from inspected data + prop overrides ──
 
-
 	// ── 1. Commit the container state to a temporary image ──
 	bindings := []string{}
 	if props["Bindings"] != "" {
-	    bindings = strings.Split(props["Bindings"], ";;")
+		bindings = strings.Split(props["Bindings"], ";;")
 	}
 
 	extrahosts := []string{}
@@ -1646,13 +1645,13 @@ func recreateContainerWithProperties(ctx context.Context, cli *client.Client, co
 		// ── Compat API path ──
 		// CRITICAL: pass nil for networking and platform.
 		// Podman's compat API rejects empty structs like &network.NetworkingConfig{}.
-		resp, err := cli.ContainerCreate(ctx,
-			containerConfig,
-			hostConfig,
-			nil, // networking — must be nil, NOT &network.NetworkingConfig{}
-			nil, // platform
-			tempContainerName,
-		)
+		// Networking and platform are left unset: Podman's compat API rejects
+		// empty structs like &network.NetworkingConfig{}.
+		resp, err := cli.ContainerCreate(ctx, client.ContainerCreateOptions{
+			Config:     containerConfig,
+			HostConfig: hostConfig,
+			Name:       tempContainerName,
+		})
 		if err != nil {
 			common.PrintErrorMessage(fmt.Errorf("failed to create new container: %v", err))
 			// ── ROLLBACK ──
@@ -1665,14 +1664,14 @@ func recreateContainerWithProperties(ctx context.Context, cli *client.Client, co
 
 	// ── 5. Rename temp container to original name ──
 	common.PrintInfoMessage(fmt.Sprintf("Renaming container to '%s'...", containerName))
-	if err := cli.ContainerRename(ctx, newContainerID, containerName); err != nil {
+	if _, err := cli.ContainerRename(ctx, newContainerID, client.ContainerRenameOptions{NewName: containerName}); err != nil {
 		common.PrintErrorMessage(fmt.Errorf("failed to rename container: %v", err))
 		return err
 	}
 
 	// ── 6. Start the new container ──
 	common.PrintInfoMessage("Starting new container...")
-	if err := cli.ContainerStart(ctx, newContainerID, container.StartOptions{}); err != nil {
+	if _, err := cli.ContainerStart(ctx, newContainerID, client.ContainerStartOptions{}); err != nil {
 		common.PrintErrorMessage(fmt.Errorf("failed to start new container: %v", err))
 		return err
 	}
@@ -1681,7 +1680,7 @@ func recreateContainerWithProperties(ctx context.Context, cli *client.Client, co
 	// Docker allows removing an image tag while a container uses it (layers stay).
 	// Podman does not — skip the attempt; cleanupStaleTempImages handles it next time.
 	if GetEngine().Type() != EnginePodman {
-		if _, err := cli.ImageRemove(ctx, tempImageTag, image.RemoveOptions{Force: false}); err != nil {
+		if _, err := cli.ImageRemove(ctx, tempImageTag, client.ImageRemoveOptions{Force: false}); err != nil {
 			common.PrintWarningMessage(fmt.Sprintf("Could not remove temp image '%s': %v (you can remove it manually)", tempImageTag, err))
 		} else {
 			common.PrintSuccessMessage(fmt.Sprintf("Cleaned up temporary image: %s", tempImageTag))
@@ -1700,19 +1699,19 @@ func recreateContainerWithProperties(ctx context.Context, cli *client.Client, co
 //	in(2): *client.Client cli                engine client
 //	in(3): string containerName              original name to restore the container under
 //	in(4): string tempImageTag               tag of the committed temporary image to recover from
-//	in(5): types.ContainerJSON originalJSON  original container inspection data used to
+//	in(5): container.InspectResponse originalJSON  original container inspection data used to
 //	                                         rebuild a minimal host and container config
-func rollbackContainer(ctx context.Context, cli *client.Client, containerName string, tempImageTag string, originalJSON types.ContainerJSON) {
+func rollbackContainer(ctx context.Context, cli *client.Client, containerName string, tempImageTag string, originalJSON container.InspectResponse) {
 	common.PrintWarningMessage("Creation failed — attempting rollback from committed image...")
 
 	// Try to create a basic container from the committed image with minimal config
 	// (avoid the fields that may have caused the original failure)
 	rollbackHostConfig := &container.HostConfig{
-	    NetworkMode: originalJSON.HostConfig.NetworkMode,
-	    Binds:       originalJSON.HostConfig.Binds,
-	    Privileged:  originalJSON.HostConfig.Privileged,
-	    CapAdd:      originalJSON.HostConfig.CapAdd,
-	    SecurityOpt: originalJSON.HostConfig.SecurityOpt,
+		NetworkMode: originalJSON.HostConfig.NetworkMode,
+		Binds:       originalJSON.HostConfig.Binds,
+		Privileged:  originalJSON.HostConfig.Privileged,
+		CapAdd:      originalJSON.HostConfig.CapAdd,
+		SecurityOpt: originalJSON.HostConfig.SecurityOpt,
 	}
 
 	// Sanitize for Podman if needed
@@ -1720,18 +1719,17 @@ func rollbackContainer(ctx context.Context, cli *client.Client, containerName st
 		sanitizeHostConfigForPodman(rollbackHostConfig)
 	}
 
-	resp, err := cli.ContainerCreate(ctx,
-		&container.Config{
+	resp, err := cli.ContainerCreate(ctx, client.ContainerCreateOptions{
+		Config: &container.Config{
 			Image:     tempImageTag,
 			OpenStdin: true,
 			Tty:       true,
 			Labels:    originalJSON.Config.Labels,
 			Env:       originalJSON.Config.Env,
 		},
-		rollbackHostConfig,
-		nil, nil,
-		containerName,
-	)
+		HostConfig: rollbackHostConfig,
+		Name:       containerName,
+	})
 	if err != nil {
 		common.PrintErrorMessage(fmt.Errorf("rollback also failed: %v", err))
 		common.PrintWarningMessage(fmt.Sprintf("Your container state is preserved in image: %s", tempImageTag))
@@ -1739,7 +1737,7 @@ func rollbackContainer(ctx context.Context, cli *client.Client, containerName st
 		return
 	}
 
-	if err := cli.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
+	if _, err := cli.ContainerStart(ctx, resp.ID, client.ContainerStartOptions{}); err != nil {
 		common.PrintWarningMessage(fmt.Sprintf("Rollback container created but failed to start: %v", err))
 		common.PrintWarningMessage(fmt.Sprintf("Try manually: podman start %s", containerName))
 	} else {
@@ -1873,10 +1871,10 @@ func removeDeviceMapping(config map[string]interface{}, hostPath string, contain
 //	in(2): *client.Client cli               engine client
 //	in(3): string containerName             original container name to restore after recreation
 //	in(4): string containerID               ID of the container to replace
-//	in(5): types.ContainerJSON inspectData  full inspection result of the original container
+//	in(5): container.InspectResponse inspectData  full inspection result of the original container
 //	in(6): []string newBinds                complete list of bind-mount strings to apply
 //	out:   error                            non-nil if any step of the recreation process fails
-func recreateContainerWithUpdatedBinds(ctx context.Context, cli *client.Client, containerName string, containerID string, inspectData types.ContainerJSON, newBinds []string) error {
+func recreateContainerWithUpdatedBinds(ctx context.Context, cli *client.Client, containerName string, containerID string, inspectData container.InspectResponse, newBinds []string) error {
 
 	// 0. Determine original image name
 	oldConfig := inspectData.Config
@@ -1896,10 +1894,9 @@ func recreateContainerWithUpdatedBinds(ctx context.Context, cli *client.Client, 
 	tempImageTag := fmt.Sprintf("localhost/%s:%s_temp_%s", repo, tag, time.Now().Format("20060102150405"))
 	common.PrintInfoMessage(fmt.Sprintf("Committing container state to temporary image: %s", tempImageTag))
 
-	commitResp, err := cli.ContainerCommit(ctx, containerID, container.CommitOptions{
+	commitResp, err := cli.ContainerCommit(ctx, containerID, client.ContainerCommitOptions{
 		Reference: tempImageTag,
 		Comment:   "RF Swift: temporary image for mount binding update",
-		Pause:     true,
 	})
 	if err != nil {
 		return fmt.Errorf("failed to commit container: %v", err)
@@ -1994,13 +1991,11 @@ func recreateContainerWithUpdatedBinds(ctx context.Context, cli *client.Client, 
 		}
 		newContainerID = containerID
 	} else {
-		resp, err := cli.ContainerCreate(ctx,
-			oldConfig,
-			oldHostConfig,
-			nil, // networking config — will be reattached
-			nil, // platform
-			tempContainerName,
-		)
+		resp, err := cli.ContainerCreate(ctx, client.ContainerCreateOptions{
+			Config:     oldConfig,
+			HostConfig: oldHostConfig,
+			Name:       tempContainerName,
+		})
 		if err != nil {
 			return fmt.Errorf("failed to create new container: %v", err)
 		}
@@ -2010,7 +2005,7 @@ func recreateContainerWithUpdatedBinds(ctx context.Context, cli *client.Client, 
 
 	// 4. Remove old container (safe — new one already exists)
 	common.PrintInfoMessage("Removing old container...")
-	err = cli.ContainerRemove(ctx, containerID, container.RemoveOptions{Force: true})
+	_, err = cli.ContainerRemove(ctx, containerID, client.ContainerRemoveOptions{Force: true})
 	if err != nil {
 		return fmt.Errorf("failed to remove old container: %v", err)
 	}
@@ -2021,13 +2016,13 @@ func recreateContainerWithUpdatedBinds(ctx context.Context, cli *client.Client, 
 
 	// 5. Rename temp container to original name
 	common.PrintInfoMessage(fmt.Sprintf("Renaming container to '%s'...", containerName))
-	if err := cli.ContainerRename(ctx, newContainerID, containerName); err != nil {
+	if _, err := cli.ContainerRename(ctx, newContainerID, client.ContainerRenameOptions{NewName: containerName}); err != nil {
 		return fmt.Errorf("failed to rename container: %v", err)
 	}
 
 	// 6. Start the new container
 	common.PrintInfoMessage("Starting new container...")
-	if err := cli.ContainerStart(ctx, newContainerID, container.StartOptions{}); err != nil {
+	if _, err := cli.ContainerStart(ctx, newContainerID, client.ContainerStartOptions{}); err != nil {
 		return fmt.Errorf("failed to start new container: %v", err)
 	}
 	common.PrintSuccessMessage("Container started with updated mount bindings.")
@@ -2035,7 +2030,7 @@ func recreateContainerWithUpdatedBinds(ctx context.Context, cli *client.Client, 
 	// Clean up the temporary image.
 	// Docker allows removing a tag while the container uses it; Podman does not.
 	if GetEngine().Type() != EnginePodman {
-		if _, err := cli.ImageRemove(ctx, tempImageTag, image.RemoveOptions{Force: false}); err != nil {
+		if _, err := cli.ImageRemove(ctx, tempImageTag, client.ImageRemoveOptions{Force: false}); err != nil {
 			common.PrintWarningMessage(fmt.Sprintf("Could not remove temp image '%s': %v (will be cleaned up next time)", tempImageTag, err))
 		} else {
 			common.PrintSuccessMessage(fmt.Sprintf("Cleaned up temporary image: %s", tempImageTag))

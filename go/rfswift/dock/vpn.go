@@ -13,8 +13,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/client"
+	"github.com/moby/moby/client"
 
 	common "penthertz/rfswift/common"
 )
@@ -266,22 +265,22 @@ func startVPNInContainer(ctx context.Context, cli *client.Client, containerID st
 
 // checkDeviceAvailable checks if a device exists inside the container.
 func checkDeviceAvailable(ctx context.Context, cli *client.Client, containerID string, device string) error {
-	execConfig := container.ExecOptions{
+	execConfig := client.ExecCreateOptions{
 		AttachStdout: true,
 		AttachStderr: true,
 		Cmd:          []string{"test", "-e", device},
 	}
-	execID, err := cli.ContainerExecCreate(ctx, containerID, execConfig)
+	execID, err := cli.ExecCreate(ctx, containerID, execConfig)
 	if err != nil {
 		return err
 	}
-	resp, err := cli.ContainerExecAttach(ctx, execID.ID, container.ExecStartOptions{})
+	resp, err := cli.ExecAttach(ctx, execID.ID, client.ExecAttachOptions{})
 	if err != nil {
 		return err
 	}
 	_, _ = io.Copy(io.Discard, resp.Reader)
 	resp.Close()
-	inspect, err := cli.ContainerExecInspect(ctx, execID.ID)
+	inspect, err := cli.ExecInspect(ctx, execID.ID, client.ExecInspectOptions{})
 	if err != nil {
 		return err
 	}
@@ -293,7 +292,7 @@ func checkDeviceAvailable(ctx context.Context, cli *client.Client, containerID s
 
 // isContainerPrivileged checks if a container is running in privileged mode.
 func isContainerPrivileged(ctx context.Context, cli *client.Client, containerID string) bool {
-	containerJSON, err := cli.ContainerInspect(ctx, containerID)
+	containerJSON, err := inspectContainer(ctx, cli, containerID)
 	if err != nil {
 		return false
 	}
@@ -302,18 +301,17 @@ func isContainerPrivileged(ctx context.Context, cli *client.Client, containerID 
 
 // execVPNCmd runs a detached exec command inside the container for VPN setup.
 func execVPNCmd(ctx context.Context, cli *client.Client, containerID string, cmd []string, env []string, vpnName string) error {
-	execConfig := container.ExecOptions{
-		Detach: true,
-		Cmd:    cmd,
-		Env:    env,
+	execConfig := client.ExecCreateOptions{
+		Cmd: cmd,
+		Env: env,
 	}
 
-	execID, err := cli.ContainerExecCreate(ctx, containerID, execConfig)
+	execID, err := cli.ExecCreate(ctx, containerID, execConfig)
 	if err != nil {
 		return fmt.Errorf("failed to start %s: %v (is %s installed in the container image?)", vpnName, err, strings.ToLower(vpnName))
 	}
 
-	if err := cli.ContainerExecStart(ctx, execID.ID, container.ExecStartOptions{Detach: true}); err != nil {
+	if _, err := cli.ExecStart(ctx, execID.ID, client.ExecStartOptions{Detach: true}); err != nil {
 		return fmt.Errorf("failed to start %s: %v", vpnName, err)
 	}
 
@@ -325,17 +323,17 @@ func execVPNCmd(ctx context.Context, cli *client.Client, containerID string, cmd
 func waitForDaemon(ctx context.Context, cli *client.Client, containerID string, checkCmd []string, maxRetries int, daemonName string) error {
 	for i := 0; i < maxRetries; i++ {
 		time.Sleep(1 * time.Second)
-		execConfig := container.ExecOptions{
+		execConfig := client.ExecCreateOptions{
 			AttachStdout: true,
 			AttachStderr: true,
 			Cmd:          checkCmd,
 		}
-		execID, err := cli.ContainerExecCreate(ctx, containerID, execConfig)
+		execID, err := cli.ExecCreate(ctx, containerID, execConfig)
 		if err != nil {
 			continue
 		}
 		// Attach and wait for the command to finish
-		resp, err := cli.ContainerExecAttach(ctx, execID.ID, container.ExecStartOptions{})
+		resp, err := cli.ExecAttach(ctx, execID.ID, client.ExecAttachOptions{})
 		if err != nil {
 			continue
 		}
@@ -344,7 +342,7 @@ func waitForDaemon(ctx context.Context, cli *client.Client, containerID string, 
 		resp.Close()
 
 		// Now the exec has finished, check exit code
-		inspect, err := cli.ContainerExecInspect(ctx, execID.ID)
+		inspect, err := cli.ExecInspect(ctx, execID.ID, client.ExecInspectOptions{})
 		if err != nil {
 			continue
 		}
@@ -358,7 +356,7 @@ func waitForDaemon(ctx context.Context, cli *client.Client, containerID string, 
 // execVPNInteractive runs a VPN command attached to the terminal so the user can see
 // login URLs and interactive output (used for Tailscale/Netbird without auth keys).
 func execVPNInteractive(ctx context.Context, cli *client.Client, containerID string, cmd []string, vpnName string, env ...[]string) error {
-	execConfig := container.ExecOptions{
+	execConfig := client.ExecCreateOptions{
 		AttachStdout: true,
 		AttachStderr: true,
 		Cmd:          cmd,
@@ -367,12 +365,12 @@ func execVPNInteractive(ctx context.Context, cli *client.Client, containerID str
 		execConfig.Env = env[0]
 	}
 
-	execID, err := cli.ContainerExecCreate(ctx, containerID, execConfig)
+	execID, err := cli.ExecCreate(ctx, containerID, execConfig)
 	if err != nil {
 		return fmt.Errorf("failed to start %s: %v (is %s installed in the container image?)", vpnName, err, strings.ToLower(vpnName))
 	}
 
-	resp, err := cli.ContainerExecAttach(ctx, execID.ID, container.ExecStartOptions{})
+	resp, err := cli.ExecAttach(ctx, execID.ID, client.ExecAttachOptions{})
 	if err != nil {
 		return fmt.Errorf("failed to attach to %s: %v", vpnName, err)
 	}
@@ -382,7 +380,7 @@ func execVPNInteractive(ctx context.Context, cli *client.Client, containerID str
 	_, _ = io.Copy(os.Stdout, resp.Reader)
 
 	// Check the exit code
-	inspect, err := cli.ContainerExecInspect(ctx, execID.ID)
+	inspect, err := cli.ExecInspect(ctx, execID.ID, client.ExecInspectOptions{})
 	if err != nil {
 		return fmt.Errorf("failed to check %s status: %v", vpnName, err)
 	}

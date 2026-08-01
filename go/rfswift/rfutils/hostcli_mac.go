@@ -29,11 +29,27 @@ type MacUSBDevice struct {
 }
 
 // ListMacUSBDevices discovers USB devices on macOS using system_profiler.
+// Older macOS exposes the USB tree as SPUSBDataType; macOS 26 (Darwin 25)
+// renamed it to SPUSBHostDataType and the legacy name silently returns an
+// empty tree, so both are queried.
 //
 //	out(1): []MacUSBDevice array of discovered USB devices
 //	out(2): error
 func ListMacUSBDevices() ([]MacUSBDevice, error) {
-	cmd := exec.Command("system_profiler", "SPUSBDataType", "-json")
+	devices, err := listMacUSBDevicesForType("SPUSBDataType")
+	if err == nil && len(devices) > 0 {
+		return devices, nil
+	}
+	if hostDevices, hostErr := listMacUSBDevicesForType("SPUSBHostDataType"); hostErr == nil && len(hostDevices) > 0 {
+		return hostDevices, nil
+	}
+	return devices, err
+}
+
+// listMacUSBDevicesForType queries system_profiler for one USB data type and
+// extracts the devices found in its JSON tree.
+func listMacUSBDevicesForType(dataType string) ([]MacUSBDevice, error) {
+	cmd := exec.Command("system_profiler", dataType, "-json")
 	output, err := cmd.Output()
 	if err != nil {
 		return nil, fmt.Errorf("failed to execute system_profiler: %w", err)
@@ -45,7 +61,7 @@ func ListMacUSBDevices() ([]MacUSBDevice, error) {
 	}
 
 	var devices []MacUSBDevice
-	if spUSB, ok := result["SPUSBDataType"]; ok {
+	if spUSB, ok := result[dataType]; ok {
 		if items, ok := spUSB.([]interface{}); ok {
 			for _, item := range items {
 				extractUSBDevices(item, &devices)
@@ -56,17 +72,28 @@ func ListMacUSBDevices() ([]MacUSBDevice, error) {
 	return devices, nil
 }
 
+// usbStringField returns the first present string value among the given keys,
+// covering both the legacy SPUSBDataType and newer SPUSBHostDataType namings.
+func usbStringField(m map[string]interface{}, keys ...string) (string, bool) {
+	for _, k := range keys {
+		if v, ok := m[k].(string); ok {
+			return v, true
+		}
+	}
+	return "", false
+}
+
 // extractUSBDevices recursively walks the system_profiler JSON tree to find
-// USB devices with vendor_id and product_id fields.
+// USB devices carrying vendor/product ID fields.
 func extractUSBDevices(item interface{}, devices *[]MacUSBDevice) {
 	m, ok := item.(map[string]interface{})
 	if !ok {
 		return
 	}
 
-	// If this node has vendor_id and product_id, it's a device
-	vendorID, hasVendor := m["vendor_id"].(string)
-	productID, hasProduct := m["product_id"].(string)
+	// If this node has vendor and product IDs, it's a device
+	vendorID, hasVendor := usbStringField(m, "vendor_id", "USBDeviceKeyVendorID")
+	productID, hasProduct := usbStringField(m, "product_id", "USBDeviceKeyProductID")
 	if hasVendor && hasProduct {
 		dev := MacUSBDevice{
 			VendorID:  cleanHexID(vendorID),
@@ -75,10 +102,10 @@ func extractUSBDevices(item interface{}, devices *[]MacUSBDevice) {
 		if name, ok := m["_name"].(string); ok {
 			dev.Name = name
 		}
-		if serial, ok := m["serial_num"].(string); ok {
+		if serial, ok := usbStringField(m, "serial_num", "USBDeviceKeySerialNumber"); ok {
 			dev.Serial = serial
 		}
-		if loc, ok := m["location_id"].(string); ok {
+		if loc, ok := usbStringField(m, "location_id", "USBKeyLocationID"); ok {
 			dev.Location = loc
 		}
 		*devices = append(*devices, dev)
@@ -132,13 +159,28 @@ func FindLimaQMPSocket(instance string) (string, error) {
 		return serialSock, nil
 	}
 
-	// Try to find via qemu process
-	cmd := exec.Command("bash", "-c", fmt.Sprintf("ps aux | grep qemu | grep %s | grep -oE '\\-qmp [^ ]+' | awk '{print $2}'", instance))
-	output, err := cmd.Output()
-	if err == nil {
-		sock := strings.TrimSpace(string(output))
-		if sock != "" {
-			return sock, nil
+	// Fallback: parse the running qemu process list for a -qmp argument. Done
+	// WITHOUT a shell (no `bash -c` with the instance name interpolated) so a
+	// crafted instance name cannot inject shell commands - `instance` is only
+	// ever compared as data below, never executed.
+	if psOut, psErr := exec.Command("ps", "-axww", "-o", "command").Output(); psErr == nil {
+		for _, line := range strings.Split(string(psOut), "\n") {
+			if !strings.Contains(line, "qemu") || !strings.Contains(line, instance) {
+				continue
+			}
+			fields := strings.Fields(line)
+			for i, f := range fields {
+				if f == "-qmp" && i+1 < len(fields) {
+					// e.g. "unix:/path/to/qmp.sock,server,nowait"
+					val := strings.TrimPrefix(fields[i+1], "unix:")
+					if idx := strings.IndexByte(val, ','); idx >= 0 {
+						val = val[:idx]
+					}
+					if val != "" {
+						return val, nil
+					}
+				}
+			}
 		}
 	}
 
@@ -218,6 +260,46 @@ func qmpHumanCommand(sockPath string, hmpCmd string) (string, error) {
 	return "", nil
 }
 
+// IsValidUSBID reports whether s is a well-formed USB vendor/product ID: an
+// optional "0x" prefix followed by 1-4 hexadecimal digits (USB IDs are 16-bit).
+// This is a security control: vid/pid values are interpolated into a QEMU
+// human-monitor "device_add" command, so anything outside this set (commas,
+// spaces, quotes, extra device properties) must be rejected to prevent
+// QMP/HMP argument injection.
+//
+//	in(1): string s the candidate USB ID
+//	out: bool true if s is a valid 16-bit hex ID
+func IsValidUSBID(s string) bool {
+	s = strings.TrimSpace(s)
+	s = strings.TrimPrefix(s, "0x")
+	s = strings.TrimPrefix(s, "0X")
+	if len(s) < 1 || len(s) > 4 {
+		return false
+	}
+	for _, r := range s {
+		if !((r >= '0' && r <= '9') || (r >= 'a' && r <= 'f') || (r >= 'A' && r <= 'F')) {
+			return false
+		}
+	}
+	return true
+}
+
+// isSafeQMPDeviceID reports whether devID is a safe QEMU device identifier
+// (letters, digits, dot, underscore, hyphen only). Used to guard the value
+// interpolated into a "device_del" human-monitor command against injection.
+func isSafeQMPDeviceID(devID string) bool {
+	if devID == "" || len(devID) > 64 {
+		return false
+	}
+	for _, r := range devID {
+		if !((r >= '0' && r <= '9') || (r >= 'a' && r <= 'z') ||
+			(r >= 'A' && r <= 'Z') || r == '.' || r == '_' || r == '-') {
+			return false
+		}
+	}
+	return true
+}
+
 // AttachUSBToLima attaches a USB device to a Lima VM via QMP hot-plug.
 //
 //	in(1): string vendorID hex vendor ID (e.g., "0x1234")
@@ -225,6 +307,11 @@ func qmpHumanCommand(sockPath string, hmpCmd string) (string, error) {
 //	in(3): string instance Lima instance name (default: "rfswift")
 //	out: error
 func AttachUSBToLima(vendorID, productID, instance string) error {
+	// Validate before building the human-monitor command (injection guard).
+	if !IsValidUSBID(vendorID) || !IsValidUSBID(productID) {
+		return fmt.Errorf("invalid USB vendor/product ID %q:%q (expected hex like 0x1d50)", vendorID, productID)
+	}
+
 	sockPath, err := FindLimaQMPSocket(instance)
 	if err != nil {
 		return err
@@ -244,10 +331,10 @@ func AttachUSBToLima(vendorID, productID, instance string) error {
 		addBusCmd := "device_add qemu-xhci,id=usb-bus"
 		busResult, busErr := qmpHumanCommand(sockPath, addBusCmd)
 		if busErr != nil {
-			return fmt.Errorf("failed to add USB controller: %w (ensure Lima YAML has 'usb: true')", busErr)
+			return fmt.Errorf("failed to add USB controller: %w (ensure Lima YAML sets video.display to a non-\"none\" value, e.g. \"vnc\")", busErr)
 		}
 		if busResult != "" && strings.Contains(strings.ToLower(busResult), "error") {
-			return fmt.Errorf("failed to add USB controller: %s (ensure Lima YAML has 'usb: true')", busResult)
+			return fmt.Errorf("failed to add USB controller: %s (ensure Lima YAML sets video.display to a non-\"none\" value, e.g. \"vnc\")", busResult)
 		}
 
 		// Retry the device attach now that the USB bus exists
@@ -272,6 +359,10 @@ func AttachUSBToLima(vendorID, productID, instance string) error {
 //	in(3): string instance Lima instance name (default: "rfswift")
 //	out: error
 func DetachUSBFromLima(vendorID, productID, instance string) error {
+	if !IsValidUSBID(vendorID) || !IsValidUSBID(productID) {
+		return fmt.Errorf("invalid USB vendor/product ID %q:%q (expected hex like 0x1d50)", vendorID, productID)
+	}
+
 	sockPath, err := FindLimaQMPSocket(instance)
 	if err != nil {
 		return err
@@ -299,6 +390,10 @@ func DetachUSBFromLima(vendorID, productID, instance string) error {
 //	in(2): string instance Lima instance name (default: "rfswift")
 //	out: error
 func DetachUSBByIDFromLima(devID, instance string) error {
+	if !isSafeQMPDeviceID(devID) {
+		return fmt.Errorf("invalid device ID %q (expected letters, digits, '.', '_', '-')", devID)
+	}
+
 	sockPath, err := FindLimaQMPSocket(instance)
 	if err != nil {
 		return err
@@ -356,6 +451,16 @@ func IsQEMUInstalled() bool {
 		}
 	}
 	return false
+}
+
+// IsKrunkitInstalled checks if the krunkit backend (libkrun) is installed.
+// krunkit is required by Lima's GPU-accelerated VM on Apple Silicon: it exposes
+// the Apple GPU to Linux guests as a Vulkan device (Venus -> MoltenVK -> Metal).
+//
+//	out: bool true if the krunkit binary is found in PATH
+func IsKrunkitInstalled() bool {
+	_, err := exec.LookPath("krunkit")
+	return err == nil
 }
 
 // IsLimaInstanceRunning checks if a specific Lima instance is running.
@@ -448,4 +553,124 @@ func DeleteLimaInstance(instance string) error {
 func GetLimaInstanceConfigPath(instance string) string {
 	home := os.Getenv("HOME")
 	return filepath.Join(home, ".lima", instance, "lima.yaml")
+}
+
+// CopyFile copies src to dst, creating the destination directory if needed.
+//
+//	in(1): string src source file path
+//	in(2): string dst destination file path
+//	out: error
+func CopyFile(src, dst string) error {
+	data, err := os.ReadFile(src)
+	if err != nil {
+		return fmt.Errorf("failed to read %s: %w", src, err)
+	}
+	if err := os.MkdirAll(filepath.Dir(dst), 0755); err != nil {
+		return fmt.Errorf("failed to create %s: %w", filepath.Dir(dst), err)
+	}
+	if err := os.WriteFile(dst, data, 0644); err != nil {
+		return fmt.Errorf("failed to write %s: %w", dst, err)
+	}
+	return nil
+}
+
+// IsValidLimaSize reports whether s is an acceptable Lima memory/disk size such
+// as "8GiB", "512MiB", "100GB", "2.5GiB", or a bare number of bytes.
+//
+//	in(1): string s the size string to validate
+//	out: bool true if the value is well-formed
+func IsValidLimaSize(s string) bool {
+	// Reject surrounding/embedded whitespace rather than trimming it: the value
+	// is written verbatim into the YAML, so it must be clean as-is.
+	if s == "" || strings.ContainsAny(s, " \t\r\n") {
+		return false
+	}
+	// Longest units first so "GiB" matches before "G".
+	for _, u := range []string{"GiB", "MiB", "KiB", "TiB", "GB", "MB", "KB", "TB", "G", "M", "K", "T", "B"} {
+		if strings.HasSuffix(s, u) {
+			s = strings.TrimSuffix(s, u)
+			break
+		}
+	}
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return false
+	}
+	dotSeen := false
+	for _, r := range s {
+		if r == '.' {
+			if dotSeen {
+				return false
+			}
+			dotSeen = true
+			continue
+		}
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+// SetLimaResources rewrites the top-level cpus/memory/disk fields of a Lima YAML
+// template in place, preserving comments and all other content. A zero cpus or
+// empty memory/disk leaves that field untouched; a requested field missing from
+// the template is appended. Returns the human-readable list of changes applied.
+//
+//	in(1): string path to the Lima YAML template
+//	in(2): int cpus number of vCPUs (0 = leave unchanged)
+//	in(3): string memory e.g. "16GiB" ("" = leave unchanged)
+//	in(4): string disk e.g. "200GiB" ("" = leave unchanged)
+//	out: ([]string, error) changes applied, and any error
+func SetLimaResources(path string, cpus int, memory, disk string) ([]string, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read template %s: %w", path, err)
+	}
+
+	lines := strings.Split(string(data), "\n")
+	var changes []string
+	setCPUs, setMem, setDisk := false, false, false
+
+	// Only rewrite top-level keys (column 0) so nested cpus/memory/disk keys in
+	// provisioning blocks are never touched.
+	for i, line := range lines {
+		switch {
+		case cpus > 0 && !setCPUs && strings.HasPrefix(line, "cpus:"):
+			lines[i] = fmt.Sprintf("cpus: %d", cpus)
+			changes = append(changes, fmt.Sprintf("cpus -> %d", cpus))
+			setCPUs = true
+		case memory != "" && !setMem && strings.HasPrefix(line, "memory:"):
+			lines[i] = fmt.Sprintf("memory: %q", memory)
+			changes = append(changes, fmt.Sprintf("memory -> %s", memory))
+			setMem = true
+		case disk != "" && !setDisk && strings.HasPrefix(line, "disk:"):
+			lines[i] = fmt.Sprintf("disk: %q", disk)
+			changes = append(changes, fmt.Sprintf("disk -> %s", disk))
+			setDisk = true
+		}
+	}
+
+	// Append any requested key that was not present in the template.
+	if cpus > 0 && !setCPUs {
+		lines = append(lines, fmt.Sprintf("cpus: %d", cpus))
+		changes = append(changes, fmt.Sprintf("cpus -> %d (added)", cpus))
+	}
+	if memory != "" && !setMem {
+		lines = append(lines, fmt.Sprintf("memory: %q", memory))
+		changes = append(changes, fmt.Sprintf("memory -> %s (added)", memory))
+	}
+	if disk != "" && !setDisk {
+		lines = append(lines, fmt.Sprintf("disk: %q", disk))
+		changes = append(changes, fmt.Sprintf("disk -> %s (added)", disk))
+	}
+
+	if len(changes) == 0 {
+		return nil, nil
+	}
+
+	if err := os.WriteFile(path, []byte(strings.Join(lines, "\n")), 0644); err != nil {
+		return nil, fmt.Errorf("failed to write template %s: %w", path, err)
+	}
+	return changes, nil
 }

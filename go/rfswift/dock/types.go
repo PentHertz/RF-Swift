@@ -7,8 +7,8 @@ import (
 	"log"
 	"strings"
 
-	rfutils "penthertz/rfswift/rfutils"
 	common "penthertz/rfswift/common"
+	rfutils "penthertz/rfswift/rfutils"
 )
 
 // HostConfigFull mirrors Docker's host config JSON for direct file manipulation.
@@ -162,7 +162,7 @@ var containerCfg = ContainerConfig{
 	usbforward:   "",
 	extrabinding: "/run/dbus/system_bus_socket:/run/dbus/system_bus_socket",
 	imagename:    "myrfswift:latest",
-	repotag:      "penthertz/rfswift_noble",
+	repotag:      "penthertz/rfswift_resolute",
 	extrahosts:   "",
 	extraenv:     "",
 	networkMode:  "host",
@@ -238,6 +238,7 @@ func updateContainerCfgFromConfig() {
 
 	containerCfg.imagename = config.General.ImageName
 	containerCfg.repotag = config.General.RepoTag
+
 	containerCfg.shell = config.Container.Shell
 	containerCfg.networkMode = config.Container.Network
 	containerCfg.exposedPorts = config.Container.ExposedPorts

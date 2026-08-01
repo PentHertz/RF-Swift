@@ -14,12 +14,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/docker/docker/client"
+	"github.com/moby/moby/client"
 	common "penthertz/rfswift/common"
 )
 
 // PodmanEngine implements ContainerEngine for Podman.
-// It uses Podman's Docker-compatible API so the Docker Go SDK works as-is.
+// It uses Podman's Docker-compatible API so the moby Go client works as-is.
 type PodmanEngine struct {
 	// Cached after first detection
 	cachedSocket   string
@@ -100,7 +100,7 @@ func (e *PodmanEngine) IsServiceRunning() bool {
 	return engineIsServiceRunning(e)
 }
 
-// GetClient returns a Docker SDK client pointed at the Podman socket.
+// GetClient returns a moby API client pointed at the Podman socket.
 //
 //	out: (*client.Client, error)
 func (e *PodmanEngine) GetClient() (*client.Client, error) {
@@ -109,7 +109,7 @@ func (e *PodmanEngine) GetClient() (*client.Client, error) {
 		return nil, fmt.Errorf("podman socket not found — enable with: systemctl --user enable --now podman.socket")
 	}
 
-	return client.NewClientWithOpts(
+	return client.New(
 		client.WithHost(socketPath),
 		client.WithAPIVersionNegotiation(),
 	)

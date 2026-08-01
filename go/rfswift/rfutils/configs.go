@@ -214,7 +214,7 @@ func ReadOrCreateConfig(filename string) (*Config, error) {
 	}
 	if config.General.RepoTag == "[missing]" {
 		printOrange("Repository tag is missing in the config file.")
-		config.General.RepoTag = promptForValue("RepoTag", "penthertz/rfswift_noble")
+		config.General.RepoTag = promptForValue("RepoTag", "penthertz/rfswift_resolute")
 	}
 	if config.Container.Shell == "[missing]" {
 		printOrange("Shell is missing in the config file.")
@@ -289,7 +289,7 @@ func createDefaultConfig(filename string) error {
 
 	content := fmt.Sprintf(`[general]
 imagename = myrfswift:latest
-repotag = penthertz/rfswift_noble
+repotag = penthertz/rfswift_resolute
 
 [container]
 shell = /bin/zsh

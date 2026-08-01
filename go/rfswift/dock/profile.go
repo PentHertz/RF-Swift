@@ -43,90 +43,186 @@ type Profile struct {
 	VPN          string `yaml:"vpn,omitempty"`
 }
 
-// defaultProfiles are written to the profiles directory on `rfswift profile init`.
-// They serve as starter templates that users can edit or delete.
-var defaultProfiles = []Profile{
-	{
-		Name:        "sdr-full",
-		Description: "Full SDR suite with all tools and device support",
-		Image:       "penthertz/rfswift_noble:sdr_full",
-		Network:     "host",
-		Realtime:    true,
-	},
-	{
-		Name:        "sdr-light",
-		Description: "Lightweight SDR tools for quick analysis",
-		Image:       "penthertz/rfswift_noble:sdr_light",
-		Network:     "host",
-	},
-	{
-		Name:        "wifi",
-		Description: "WiFi pentesting and assessment tools",
-		Image:       "penthertz/rfswift_noble:wifi",
-		Network:     "host",
-		Privileged:  true,
-	},
-	{
-		Name:        "bluetooth",
-		Description: "Bluetooth pentesting and sniffing tools",
-		Image:       "penthertz/rfswift_noble:bluetooth",
-		Network:     "host",
-	},
-	{
-		Name:        "telecom",
-		Description: "Telecom (2G-5G) analysis and testing tools",
-		Image:       "penthertz/rfswift_noble:telecom_4Gto5G",
-		Network:     "host",
-		Realtime:    true,
-	},
-	{
-		Name:        "rfid",
-		Description: "RFID/NFC analysis and cloning tools",
-		Image:       "penthertz/rfswift_noble:rfid",
-		Network:     "host",
-	},
-	{
-		Name:        "automotive",
-		Description: "Automotive RF and CAN bus tools",
-		Image:       "penthertz/rfswift_noble:automotive",
-		Network:     "host",
-		Realtime:    true,
-	},
-	{
-		Name:        "hardware",
-		Description: "Hardware hacking and debugging tools (JTAG, SWD, UART)",
-		Image:       "penthertz/rfswift_noble:hardware",
-		Network:     "host",
-	},
-	{
-		Name:        "reversing",
-		Description: "Reverse engineering and firmware analysis tools",
-		Image:       "penthertz/rfswift_noble:reversing",
-		Network:     "host",
-		Desktop:     true,
-	},
-	{
-		Name:        "network",
-		Description: "Network security and analysis tools",
-		Image:       "penthertz/rfswift_noble:network",
-		Network:     "nat",
-	},
-	{
-		Name:        "pentest-full",
-		Description: "Full pentest setup: SDR + desktop + NAT isolation",
-		Image:       "penthertz/rfswift_noble:sdr_full",
-		Network:     "nat",
-		Desktop:     true,
-		Privileged:  true,
-		Realtime:    true,
-	},
-	{
-		Name:        "headless",
-		Description: "Minimal headless SDR — no GUI, isolated network",
-		Image:       "penthertz/rfswift_noble:sdr_light",
-		Network:     "nat",
-		NoX11:       true,
-	},
+// Building blocks shared by the default profiles.
+const (
+	// usbTreeBinding bind-mounts the whole USB device tree instead of mapping
+	// individual device nodes. Individual nodes are snapshots taken at creation
+	// time, so a dongle unplugged and replugged gets a new node the container
+	// cannot see; the bind mount (plus the cgroup rule injected at run time)
+	// keeps hotplug working.
+	usbTreeBinding = "/dev/bus/usb:/dev/bus/usb"
+
+	// tunDevice is needed to create tunnel interfaces inside the container
+	// (VPN clients, srsRAN/UERANSIM/Open5GS GTP tunnels, tun/tap tooling).
+	// It requires NET_ADMIN to configure the interface once created.
+	tunDevice = "/dev/net/tun:/dev/net/tun"
+
+	// captureCaps is the minimum for raw-socket capture and interface control
+	// (Wireshark, tcpdump, Kismet, Bettercap, monitor mode, tun/tap setup).
+	// NET_RAW is in Docker's default set but is listed explicitly so the intent
+	// survives a restrictive host config.
+	captureCaps = "NET_ADMIN,NET_RAW"
+
+	// serviceCaps adds the right to bind privileged ports (<1024) for services
+	// run inside the container: DNS, DHCP, HTTP, SMB, SIP, core network ...
+	serviceCaps = "NET_ADMIN,NET_RAW,NET_BIND_SERVICE"
+)
+
+// officialImage builds the reference of an official RF Swift image for the
+// current Ubuntu base, e.g. officialImage("sdr_full") ->
+// "penthertz/rfswift_resolute:sdr_full".
+//
+//	in(1): string tag image tag (image family)
+//	out: string fully qualified image reference
+func officialImage(tag string) string {
+	return fmt.Sprintf("penthertz/rfswift_%s:%s", common.CurrentImageCodename, tag)
+}
+
+// DefaultProfiles returns the profiles written to the profiles directory on
+// `rfswift profile init`. They are starter templates users can edit or delete.
+//
+// Two families are provided:
+//
+//   - Role profiles (yolo, network-host, network-nat) describe *how* the
+//     container is wired to the host rather than which toolset it ships.
+//   - Toolset profiles (sdr-full, wifi, telecom ...) pair an image family with
+//     the devices, capabilities and limits that family actually needs.
+//
+// The guiding rule is least privilege: capabilities and device mappings are
+// preferred over `privileged: true`, which is reserved for the yolo profile.
+//
+//	out: []Profile default profile set
+func DefaultProfiles() []Profile {
+	return []Profile{
+		// ── Role profiles ──────────────────────────────────────────────
+		{
+			Name:        "yolo",
+			Description: "Everything on: privileged, USB, realtime, GPU",
+			Image:       officialImage("sdr_full"),
+			Network:     "host",
+			Privileged:  true,
+			Realtime:    true,
+			GPUs:        "all",
+			Bindings:    usbTreeBinding,
+		},
+		{
+			Name:        "network-host",
+			Description: "Capture and run services on the host network",
+			Image:       officialImage("network"),
+			Network:     "host",
+			Caps:        serviceCaps,
+			Devices:     tunDevice,
+			Bindings:    usbTreeBinding,
+		},
+		{
+			Name:         "network-nat",
+			Description:  "Capture and run services inside an isolated NAT",
+			Image:        officialImage("network"),
+			Network:      "nat",
+			Caps:         serviceCaps,
+			Devices:      tunDevice,
+			Bindings:     usbTreeBinding,
+			ExposedPorts: "8080/tcp,8000/tcp,4444/tcp",
+			PortBindings: "127.0.0.1:8080:8080/tcp,127.0.0.1:8000:8000/tcp,127.0.0.1:4444:4444/tcp",
+		},
+
+		// ── Toolset profiles ───────────────────────────────────────────
+		{
+			Name:        "sdr-full",
+			Description: "Full SDR suite, realtime and USB hotplug",
+			Image:       officialImage("sdr_full"),
+			Network:     "host",
+			Realtime:    true,
+			Bindings:    usbTreeBinding,
+		},
+		{
+			Name:        "sdr-light",
+			Description: "Lightweight SDR tools, realtime and USB hotplug",
+			Image:       officialImage("sdr_light"),
+			Network:     "host",
+			Realtime:    true,
+			Bindings:    usbTreeBinding,
+		},
+		{
+			Name:        "wifi",
+			Description: "Wi-Fi monitor mode and injection, unprivileged",
+			Image:       officialImage("wifi"),
+			Network:     "host",
+			Caps:        captureCaps,
+			Devices:     "/dev/rfkill:/dev/rfkill",
+			Bindings:    usbTreeBinding,
+		},
+		{
+			Name:        "bluetooth",
+			Description: "Bluetooth sniffing and assessment (HCI, vhci)",
+			Image:       officialImage("bluetooth"),
+			Network:     "host",
+			Caps:        captureCaps,
+			Devices:     "/dev/rfkill:/dev/rfkill",
+			Bindings:    usbTreeBinding,
+		},
+		{
+			Name:        "telecom",
+			Description: "4G/5G NSA core and RAN, GTP tunnels, realtime",
+			Image:       officialImage("telecom_4G_5GNSA"),
+			Network:     "host",
+			Realtime:    true,
+			Caps:        serviceCaps,
+			Devices:     tunDevice,
+			Bindings:    usbTreeBinding,
+		},
+		{
+			Name:        "telecom-5g",
+			Description: "5G SA core and RAN, GTP tunnels, realtime",
+			Image:       officialImage("telecom_5G"),
+			Network:     "host",
+			Realtime:    true,
+			Caps:        serviceCaps,
+			Devices:     tunDevice,
+			Bindings:    usbTreeBinding,
+		},
+		{
+			Name:        "rfid",
+			Description: "RFID/NFC tools (Proxmark3, libnfc) over USB",
+			Image:       officialImage("rfid"),
+			Network:     "host",
+			Bindings:    usbTreeBinding + ",/dev/ttyACM0:/dev/ttyACM0",
+		},
+		{
+			Name:        "automotive",
+			Description: "Automotive RF and CAN bus, realtime and CAN setup",
+			Image:       officialImage("automotive"),
+			Network:     "host",
+			Realtime:    true,
+			Caps:        captureCaps,
+			Bindings:    usbTreeBinding,
+		},
+		{
+			Name:        "hardware",
+			Description: "JTAG/SWD/UART and flashing tools, raw I/O access",
+			Image:       officialImage("hardware"),
+			Network:     "host",
+			Caps:        "SYS_RAWIO",
+			Bindings:    usbTreeBinding,
+		},
+		{
+			Name:        "reversing",
+			Description: "RE desktop (Ghidra, Cutter) with ptrace, in NAT",
+			Image:       officialImage("reversing"),
+			Network:     "nat",
+			Desktop:     true,
+			Caps:        "SYS_PTRACE",
+		},
+		{
+			Name:        "headless",
+			Description: "Headless SDR, no GUI, isolated NAT network",
+			Image:       officialImage("sdr_light"),
+			Network:     "nat",
+			NoX11:       true,
+			Realtime:    true,
+			Bindings:    usbTreeBinding,
+		},
+	}
 }
 
 // ProfilesDirByPlatform returns the platform-specific profiles directory path.
@@ -293,18 +389,24 @@ func DeleteProfile(name string) error {
 // InitDefaultProfiles writes the default profile YAML files to the profiles directory.
 // Existing files are not overwritten unless force is true. If a permission error
 // occurs, the user is prompted to retry with elevated privileges.
-func InitDefaultProfiles(force bool) (created int, skipped int) {
+//
+//	in(1): bool force overwrite profiles that already exist
+//	out: int number of profiles written
+//	out: int number of profiles left untouched
+//	out: []string names of untouched profiles whose content differs from the
+//	     current default (edited locally, or shipped by an older release)
+func InitDefaultProfiles(force bool) (created int, skipped int, stale []string) {
 	dir := ProfilesDirByPlatform()
 	elevated := false
 
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		if !errors.Is(err, os.ErrPermission) {
 			common.PrintErrorMessage(fmt.Errorf("failed to create profiles directory: %w", err))
-			return 0, 0
+			return 0, 0, nil
 		}
 		if !promptProfileElevation("create profiles directory") {
 			common.PrintErrorMessage(fmt.Errorf("cannot create profiles directory %s: permission denied", dir))
-			return 0, 0
+			return 0, 0, nil
 		}
 		cmd := exec.Command("sudo", "mkdir", "-p", dir)
 		cmd.Stdin = os.Stdin
@@ -312,18 +414,21 @@ func InitDefaultProfiles(force bool) (created int, skipped int) {
 		cmd.Stderr = os.Stderr
 		if err := cmd.Run(); err != nil {
 			common.PrintErrorMessage(fmt.Errorf("failed to create directory with sudo: %w", err))
-			return 0, 0
+			return 0, 0, nil
 		}
 		elevated = true
 	}
 
-	for _, p := range defaultProfiles {
+	for _, p := range DefaultProfiles() {
 		filename := profileFilename(p.Name)
 		path := filepath.Join(dir, filename)
 
 		if !force {
 			if _, err := os.Stat(path); err == nil {
 				skipped++
+				if differsFromDefault(path, p) {
+					stale = append(stale, p.Name)
+				}
 				continue
 			}
 		}
@@ -368,7 +473,26 @@ func InitDefaultProfiles(force bool) (created int, skipped int) {
 		}
 		created++
 	}
-	return created, skipped
+	return created, skipped, stale
+}
+
+// differsFromDefault reports whether the profile stored at path no longer
+// matches the default RF Swift ships under that name. Unreadable or malformed
+// files count as different: refreshing them is the useful advice.
+//
+//	in(1): string path profile YAML file to compare
+//	in(2): Profile def the current default with the same name
+//	out: bool true when the stored profile differs from the default
+func differsFromDefault(path string, def Profile) bool {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return true
+	}
+	var stored Profile
+	if err := yaml.Unmarshal(data, &stored); err != nil {
+		return true
+	}
+	return stored != def
 }
 
 // GetProfileNames returns just the names of all available profiles.

@@ -16,10 +16,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/api/types/image"
-	"github.com/docker/docker/api/types/network"
-	"github.com/docker/docker/pkg/jsonmessage"
+	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/api/types/jsonstream"
+	"github.com/moby/moby/api/types/network"
+	"github.com/moby/moby/client"
+	"github.com/moby/moby/client/pkg/jsonmessage"
 	"github.com/moby/term"
 
 	common "penthertz/rfswift/common"
@@ -56,7 +57,7 @@ func ContainerUpgrade(containerIdentifier string, repositoriesToPreserve string,
 	}
 
 	// Get container info
-	containerJSON, err := cli.ContainerInspect(ctx, containerIdentifier)
+	containerJSON, err := inspectContainer(ctx, cli, containerIdentifier)
 	if err != nil {
 		common.PrintErrorMessage(fmt.Errorf("failed to inspect container: %v", err))
 		return err
@@ -114,7 +115,7 @@ func ContainerUpgrade(containerIdentifier string, repositoriesToPreserve string,
 			}
 		}
 
-		out, err := cli.ImagePull(ctx, actualPullRef, image.PullOptions{})
+		out, err := cli.ImagePull(ctx, actualPullRef, client.ImagePullOptions{})
 		if err != nil {
 			common.PrintErrorMessage(fmt.Errorf("failed to pull image: %v", err))
 			common.PrintInfoMessage("Old container preserved - no changes made")
@@ -126,7 +127,7 @@ func ContainerUpgrade(containerIdentifier string, repositoriesToPreserve string,
 		fd, isTerminal := term.GetFdInfo(os.Stdout)
 		jsonDecoder := json.NewDecoder(out)
 		for {
-			var msg jsonmessage.JSONMessage
+			var msg jsonstream.Message
 			if err := jsonDecoder.Decode(&msg); err == io.EOF {
 				break
 			} else if err != nil {
@@ -141,10 +142,10 @@ func ContainerUpgrade(containerIdentifier string, repositoriesToPreserve string,
 
 		// Tag if needed
 		if newImage != actualPullRef && IsOfficialImage(actualPullRef) {
-			remoteInspect, _, _ := cli.ImageInspectWithRaw(ctx, actualPullRef)
+			remoteInspect, _ := inspectImage(ctx, cli, actualPullRef)
 			if remoteInspect.ID != "" {
-				cli.ImageTag(ctx, remoteInspect.ID, newImage)
-				cli.ImageRemove(ctx, actualPullRef, image.RemoveOptions{Force: false})
+				cli.ImageTag(ctx, client.ImageTagOptions{Source: remoteInspect.ID, Target: newImage})
+				cli.ImageRemove(ctx, actualPullRef, client.ImageRemoveOptions{Force: false})
 			}
 		}
 
@@ -186,7 +187,7 @@ func ContainerUpgrade(containerIdentifier string, repositoriesToPreserve string,
 		// Ensure container is running before copying
 		if !containerJSON.State.Running {
 			common.PrintInfoMessage("Starting container to copy data...")
-			if err := cli.ContainerStart(ctx, containerIdentifier, container.StartOptions{}); err != nil {
+			if _, err := cli.ContainerStart(ctx, containerIdentifier, client.ContainerStartOptions{}); err != nil {
 				common.PrintErrorMessage(fmt.Errorf("failed to start container: %v", err))
 				return err
 			}
@@ -209,11 +210,12 @@ func ContainerUpgrade(containerIdentifier string, repositoriesToPreserve string,
 			}
 
 			// Use docker cp to copy from container to host
-			reader, _, err := cli.CopyFromContainer(ctx, containerIdentifier, repoPath)
+			copyRes, err := cli.CopyFromContainer(ctx, containerIdentifier, client.CopyFromContainerOptions{SourcePath: repoPath})
 			if err != nil {
 				common.PrintWarningMessage(fmt.Sprintf("Failed to copy %s: %v", repoPath, err))
 				continue
 			}
+			reader := copyRes.Content
 			defer reader.Close()
 
 			// Create the host directory
@@ -246,8 +248,11 @@ func ContainerUpgrade(containerIdentifier string, repositoriesToPreserve string,
 		currentTime.Second())
 
 	common.PrintInfoMessage("Creating backup of current container...")
-	_, err = cli.ContainerCommit(ctx, containerIdentifier, container.CommitOptions{
+	// NoPause preserves the old docker SDK behavior, which committed
+	// without pausing when Pause was left unset.
+	_, err = cli.ContainerCommit(ctx, containerIdentifier, client.ContainerCommitOptions{
 		Reference: backupTag,
+		NoPause:   true,
 	})
 	if err != nil {
 		common.PrintErrorMessage(fmt.Errorf("failed to create backup: %v", err))
@@ -258,7 +263,7 @@ func ContainerUpgrade(containerIdentifier string, repositoriesToPreserve string,
 	// Stop the container
 	common.PrintInfoMessage("Stopping container...")
 	timeout := 10
-	if err := cli.ContainerStop(ctx, containerIdentifier, container.StopOptions{Timeout: &timeout}); err != nil {
+	if _, err := cli.ContainerStop(ctx, containerIdentifier, client.ContainerStopOptions{Timeout: &timeout}); err != nil {
 		common.PrintErrorMessage(fmt.Errorf("failed to stop container: %v", err))
 		return err
 	}
@@ -266,7 +271,7 @@ func ContainerUpgrade(containerIdentifier string, repositoriesToPreserve string,
 
 	// Remove the old container
 	common.PrintInfoMessage("Removing old container...")
-	if err := cli.ContainerRemove(ctx, containerIdentifier, container.RemoveOptions{Force: true}); err != nil {
+	if _, err := cli.ContainerRemove(ctx, containerIdentifier, client.ContainerRemoveOptions{Force: true}); err != nil {
 		common.PrintErrorMessage(fmt.Errorf("failed to remove container: %v", err))
 		return err
 	}
@@ -347,7 +352,7 @@ func ContainerUpgrade(containerIdentifier string, repositoriesToPreserve string,
 		}
 	}
 
-	resp, err := cli.ContainerCreate(ctx, &container.Config{
+	resp, err := cli.ContainerCreate(ctx, client.ContainerCreateOptions{Config: &container.Config{
 		Image:        newImage,
 		Cmd:          []string{props["Shell"]},
 		Env:          dockerenv,
@@ -361,7 +366,7 @@ func ContainerUpgrade(containerIdentifier string, repositoriesToPreserve string,
 		Labels: map[string]string{
 			"org.container.project": "rfswift",
 		},
-	}, hostConfig, &network.NetworkingConfig{}, nil, containerName)
+	}, HostConfig: hostConfig, NetworkingConfig: &network.NetworkingConfig{}, Name: containerName})
 
 	if err != nil {
 		common.PrintErrorMessage(fmt.Errorf("failed to create new container: %v", err))
@@ -373,7 +378,7 @@ func ContainerUpgrade(containerIdentifier string, repositoriesToPreserve string,
 
 	// Start the new container
 	common.PrintInfoMessage("Starting new container...")
-	if err := cli.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
+	if _, err := cli.ContainerStart(ctx, resp.ID, client.ContainerStartOptions{}); err != nil {
 		common.PrintErrorMessage(fmt.Errorf("failed to start new container: %v", err))
 		return err
 	}
@@ -395,7 +400,10 @@ func ContainerUpgrade(containerIdentifier string, repositoriesToPreserve string,
 			}
 
 			// Copy to new container
-			err = cli.CopyToContainer(ctx, resp.ID, filepath.Dir(containerPath), tarReader, container.CopyToContainerOptions{})
+			_, err = cli.CopyToContainer(ctx, resp.ID, client.CopyToContainerOptions{
+				DestinationPath: filepath.Dir(containerPath),
+				Content:         tarReader,
+			})
 			tarReader.Close()
 
 			if err != nil {

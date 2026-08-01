@@ -19,12 +19,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/docker/docker/api/types"
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/api/types/filters"
-	"github.com/docker/docker/api/types/image"
-	"github.com/docker/docker/api/types/network"
-	"github.com/docker/docker/client"
+	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/api/types/network"
+	"github.com/moby/moby/client"
 	"github.com/moby/term"
 	"golang.org/x/crypto/ssh/terminal"
 
@@ -38,7 +35,7 @@ func startDesktopInContainer(ctx context.Context, cli *client.Client, containerI
 	// Determine the listen host inside the container: for non-host network modes,
 	// websockify must listen on 0.0.0.0 so Docker port forwarding can reach it.
 	desktopListenHost := containerCfg.desktopHost
-	containerJSON, inspectErr := cli.ContainerInspect(ctx, containerID)
+	containerJSON, inspectErr := inspectContainer(ctx, cli, containerID)
 	if inspectErr == nil {
 		netMode := string(containerJSON.HostConfig.NetworkMode)
 		if netMode != "" && netMode != "host" {
@@ -46,9 +43,8 @@ func startDesktopInContainer(ctx context.Context, cli *client.Client, containerI
 		}
 	}
 
-	execConfig := container.ExecOptions{
-		Detach: true,
-		Cmd:    []string{"/usr/sbin/desktop-start"},
+	execConfig := client.ExecCreateOptions{
+		Cmd: []string{"/usr/sbin/desktop-start"},
 		Env: func() []string {
 			sslFlag := ""
 			if containerCfg.desktopSSL {
@@ -64,12 +60,12 @@ func startDesktopInContainer(ctx context.Context, cli *client.Client, containerI
 		}(),
 	}
 
-	execID, err := cli.ContainerExecCreate(ctx, containerID, execConfig)
+	execID, err := cli.ExecCreate(ctx, containerID, execConfig)
 	if err != nil {
 		return fmt.Errorf("failed to start desktop: %v", err)
 	}
 
-	if err := cli.ContainerExecStart(ctx, execID.ID, container.ExecStartOptions{Detach: true}); err != nil {
+	if _, err := cli.ExecStart(ctx, execID.ID, client.ExecStartOptions{Detach: true}); err != nil {
 		return fmt.Errorf("failed to start desktop: %v", err)
 	}
 
@@ -115,7 +111,7 @@ func resizeTty(ctx context.Context, cli *client.Client, contid string, fd int) {
 			continue
 		}
 
-		err = cli.ContainerResize(ctx, contid, container.ResizeOptions{
+		_, err = cli.ContainerResize(ctx, contid, client.ContainerResizeOptions{
 			Height: uint(height),
 			Width:  uint(width),
 		})
@@ -142,13 +138,13 @@ func ContainerLast(ifilter string, labelKey string, labelValue string) {
 
 	// Set up container filters for labels only
 	// We'll handle image ancestor and name/ID filtering manually
-	containerFilters := filters.NewArgs()
+	containerFilters := make(client.Filters)
 	if labelKey != "" && labelValue != "" {
 		containerFilters.Add("label", fmt.Sprintf("%s=%s", labelKey, labelValue))
 	}
 
 	// Get container list
-	containers, err := cli.ContainerList(ctx, container.ListOptions{
+	containersRes, err := cli.ContainerList(ctx, client.ContainerListOptions{
 		All:     true,
 		Limit:   15,
 		Filters: containerFilters,
@@ -162,13 +158,13 @@ func ContainerLast(ifilter string, labelKey string, labelValue string) {
 	hashToNames := make(map[string][]string)
 
 	// Get all images to build a mapping of image IDs to all their tags
-	images, err := cli.ImageList(ctx, image.ListOptions{All: true})
+	imagesRes, err := cli.ImageList(ctx, client.ImageListOptions{All: true})
 	if err != nil {
 		panic(err)
 	}
 
 	// Build image ID to names mapping
-	for _, img := range images {
+	for _, img := range imagesRes.Items {
 		shortID := img.ID[7:19] // Get a shortened version of the SHA256 hash
 		fullHash := img.ID[7:]  // Remove "sha256:" prefix but keep full hash
 
@@ -184,11 +180,11 @@ func ContainerLast(ifilter string, labelKey string, labelValue string) {
 	tableData := [][]string{}
 
 	// Filter containers by image, name or ID (if ifilter is provided)
-	filteredContainers := []types.Container{}
+	filteredContainers := []container.Summary{}
 
 	if ifilter != "" {
 		lowerFilter := strings.ToLower(ifilter)
-		for _, container := range containers {
+		for _, container := range containersRes.Items {
 			// Check if image name contains the filter (original behavior)
 			if strings.Contains(strings.ToLower(container.Image), lowerFilter) {
 				filteredContainers = append(filteredContainers, container)
@@ -217,12 +213,12 @@ func ContainerLast(ifilter string, labelKey string, labelValue string) {
 			}
 		}
 	} else {
-		filteredContainers = containers
+		filteredContainers = containersRes.Items
 	}
 
 	for _, container := range filteredContainers {
 		// Skip ghost containers that can't be inspected
-		_, err := cli.ContainerInspect(ctx, container.ID)
+		_, err := inspectContainer(ctx, cli, container.ID)
 		if err != nil {
 			continue
 		}
@@ -293,12 +289,12 @@ func ContainerLast(ifilter string, labelKey string, labelValue string) {
 
 		containerName := ""
 		if len(container.Names) > 0 {
-		    containerName = container.Names[0]
-		    if len(containerName) > 0 && containerName[0] == '/' {
-		        containerName = containerName[1:]
-		    }
+			containerName = container.Names[0]
+			if len(containerName) > 0 && containerName[0] == '/' {
+				containerName = containerName[1:]
+			}
 		} else {
-		    containerName = container.ID[:12] // fallback to short ID
+			containerName = container.ID[:12] // fallback to short ID
 		}
 		containerID := container.ID[:12]
 		command := container.Command
@@ -338,10 +334,10 @@ func latestDockerID(labelKey string, labelValue string) string {
 	}
 	defer cli.Close()
 
-	containerFilters := filters.NewArgs()
+	containerFilters := make(client.Filters)
 	containerFilters.Add("label", fmt.Sprintf("%s=%s", labelKey, labelValue))
 
-	containers, err := cli.ContainerList(ctx, container.ListOptions{
+	containersRes, err := cli.ContainerList(ctx, client.ContainerListOptions{
 		All:     true,
 		Filters: containerFilters,
 	})
@@ -350,9 +346,9 @@ func latestDockerID(labelKey string, labelValue string) string {
 	}
 
 	// Sort by creation time descending, validate each candidate
-	for _, cont := range containers {
+	for _, cont := range containersRes.Items {
 		// Verify the container is actually accessible
-		_, err := cli.ContainerInspect(ctx, cont.ID)
+		_, err := inspectContainer(ctx, cli, cont.ID)
 		if err != nil {
 			continue // ghost container — skip
 		}
@@ -379,12 +375,12 @@ func ListContainers(labelKey string, labelValue string) []ContainerInfo {
 	}
 	defer cli.Close()
 
-	containerFilters := filters.NewArgs()
+	containerFilters := make(client.Filters)
 	if labelKey != "" && labelValue != "" {
 		containerFilters.Add("label", fmt.Sprintf("%s=%s", labelKey, labelValue))
 	}
 
-	containers, err := cli.ContainerList(ctx, container.ListOptions{
+	containersRes, err := cli.ContainerList(ctx, client.ContainerListOptions{
 		All:     true,
 		Limit:   15,
 		Filters: containerFilters,
@@ -394,8 +390,8 @@ func ListContainers(labelKey string, labelValue string) []ContainerInfo {
 	}
 
 	var result []ContainerInfo
-	for _, cont := range containers {
-		_, err := cli.ContainerInspect(ctx, cont.ID)
+	for _, cont := range containersRes.Items {
+		_, err := inspectContainer(ctx, cli, cont.ID)
 		if err != nil {
 			continue
 		}
@@ -412,7 +408,7 @@ func ListContainers(labelKey string, labelValue string) []ContainerInfo {
 			ID:    cont.ID[:12],
 			Name:  name,
 			Image: cont.Image,
-			State: cont.State,
+			State: string(cont.State),
 		})
 	}
 	return result
@@ -446,7 +442,7 @@ func ContainerExec(containerIdentifier string, WorkingDir string) {
 		}
 	}
 
-	if err := cli.ContainerStart(ctx, containerIdentifier, container.StartOptions{}); err != nil {
+	if _, err := cli.ContainerStart(ctx, containerIdentifier, client.ContainerStartOptions{}); err != nil {
 		common.PrintErrorMessage(err)
 		return
 	}
@@ -460,7 +456,7 @@ func ContainerExec(containerIdentifier string, WorkingDir string) {
 		return
 	}
 
-	containerJSON, err := cli.ContainerInspect(ctx, containerIdentifier)
+	containerJSON, err := inspectContainer(ctx, cli, containerIdentifier)
 	if err != nil {
 		common.PrintErrorMessage(err)
 		return
@@ -650,6 +646,24 @@ func ContainerRun(containerName string) {
 			if !covered {
 				filteredDevices = append(filteredDevices, dev)
 			}
+		}
+
+		// Drop devices the host does not have. The daemon aborts creation with
+		// "error gathering device information" on a missing device, which would
+		// make an optional mapping (/dev/net/tun without the tun module,
+		// /dev/rfkill on a machine without radios) fatal. Only checked when the
+		// engine shares this filesystem: with Lima the paths belong to the VM.
+		engine := GetEngine()
+		if runtime.GOOS == "linux" && (engine == nil || engine.Type() != EngineLima) {
+			var presentDevices []container.DeviceMapping
+			for _, dev := range filteredDevices {
+				if _, err := os.Stat(dev.PathOnHost); err != nil {
+					common.PrintWarningMessage(fmt.Sprintf("Skipping non-existent device: %s", dev.PathOnHost))
+					continue
+				}
+				presentDevices = append(presentDevices, dev)
+			}
+			filteredDevices = presentDevices
 		}
 
 		hostConfig.Devices = filteredDevices
@@ -842,7 +856,12 @@ func ContainerRun(containerName string) {
 		}
 	}
 
-	resp, err := cli.ContainerCreate(ctx, containerConfig, hostConfig, networkingConfig, nil, containerName)
+	resp, err := cli.ContainerCreate(ctx, client.ContainerCreateOptions{
+		Config:           containerConfig,
+		HostConfig:       hostConfig,
+		NetworkingConfig: networkingConfig,
+		Name:             containerName,
+	})
 	if err != nil {
 		if strings.Contains(err.Error(), "already in use") || strings.Contains(err.Error(), "already exists") {
 			common.PrintErrorMessage(fmt.Errorf("container name '%s' is already in use. Use a different name with -n, or exec into the existing container with: rfswift exec -c %s", containerName, containerName))
@@ -857,7 +876,7 @@ func ContainerRun(containerName string) {
 	// Recording mode uses exec so RFSWIFT_RECORDING is session-scoped
 	// (not baked into the container env, which would persist forever).
 	if GetEngine().Type() == EnginePodman || os.Getenv("RFSWIFT_RECORDING") == "1" {
-		if err := cli.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
+		if _, err := cli.ContainerStart(ctx, resp.ID, client.ContainerStartOptions{}); err != nil {
 			common.PrintErrorMessage(err)
 			return
 		}
@@ -887,7 +906,7 @@ func ContainerRun(containerName string) {
 		return
 	}
 
-	waiter, err := cli.ContainerAttach(ctx, resp.ID, container.AttachOptions{
+	waiter, err := cli.ContainerAttach(ctx, resp.ID, client.ContainerAttachOptions{
 		Stderr: true,
 		Stdout: true,
 		Stdin:  true,
@@ -899,7 +918,7 @@ func ContainerRun(containerName string) {
 	}
 	defer waiter.Close()
 
-	if err := cli.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
+	if _, err := cli.ContainerStart(ctx, resp.ID, client.ContainerStartOptions{}); err != nil {
 		common.PrintErrorMessage(err)
 		return
 	}
@@ -922,7 +941,7 @@ func ContainerRun(containerName string) {
 		printVPNInfo()
 	}
 
-	handleIOStreams(waiter)
+	handleIOStreams(waiter.HijackedResponse)
 	fd := int(os.Stdin.Fd())
 	if terminal.IsTerminal(fd) {
 		oldState, err := terminal.MakeRaw(fd)
@@ -932,7 +951,7 @@ func ContainerRun(containerName string) {
 		}
 		defer terminal.Restore(fd, oldState)
 		go resizeTty(ctx, cli, resp.ID, fd)
-		go readAndWriteInput(waiter)
+		go readAndWriteInput(waiter.HijackedResponse)
 	}
 
 	waitForContainer(ctx, cli, resp.ID)
@@ -948,11 +967,11 @@ func ContainerRun(containerName string) {
 //	in(5): string workingDir working directory
 //	out: error
 func execInteractiveSession(ctx context.Context, cli *client.Client, containerID string, shell string, workingDir string) error {
-	execConfig := container.ExecOptions{
+	execConfig := client.ExecCreateOptions{
 		AttachStdin:  true,
 		AttachStdout: true,
 		AttachStderr: true,
-		Tty:          true,
+		TTY:          true,
 		Cmd:          []string{shell},
 		WorkingDir:   workingDir,
 	}
@@ -962,12 +981,12 @@ func execInteractiveSession(ctx context.Context, cli *client.Client, containerID
 		execConfig.Env = []string{"RFSWIFT_RECORDING=1"}
 	}
 
-	execID, err := cli.ContainerExecCreate(ctx, containerID, execConfig)
+	execID, err := cli.ExecCreate(ctx, containerID, execConfig)
 	if err != nil {
 		return fmt.Errorf("failed to create exec instance: %v", err)
 	}
 
-	attachResp, err := cli.ContainerExecAttach(ctx, execID.ID, container.ExecStartOptions{Tty: true})
+	attachResp, err := cli.ExecAttach(ctx, execID.ID, client.ExecAttachOptions{TTY: true})
 	if err != nil {
 		return fmt.Errorf("failed to attach to exec instance: %v", err)
 	}
@@ -987,7 +1006,7 @@ func execInteractiveSession(ctx context.Context, cli *client.Client, containerID
 	// NOTE: Podman's compat API implicitly starts the exec session during Attach,
 	// so calling ExecStart again causes "exec session state improper". Skip it.
 	if GetEngine().Type() != EnginePodman {
-		if err := cli.ContainerExecStart(ctx, execID.ID, container.ExecStartOptions{Tty: true}); err != nil {
+		if _, err := cli.ExecStart(ctx, execID.ID, client.ExecStartOptions{TTY: true}); err != nil {
 			return fmt.Errorf("failed to start exec instance: %v", err)
 		}
 	}
@@ -1003,7 +1022,7 @@ func execInteractiveSession(ctx context.Context, cli *client.Client, containerID
 			for range sigchan {
 				if outIsTerminal {
 					if size, err := term.GetWinsize(outFd); err == nil {
-						cli.ContainerExecResize(ctx, execID.ID, container.ResizeOptions{
+						cli.ExecResize(ctx, execID.ID, client.ExecResizeOptions{
 							Height: uint(size.Height),
 							Width:  uint(size.Width),
 						})
@@ -1019,7 +1038,7 @@ func execInteractiveSession(ctx context.Context, cli *client.Client, containerID
 				if outIsTerminal {
 					if size, err := term.GetWinsize(outFd); err == nil {
 						if size.Height != lastHeight || size.Width != lastWidth {
-							cli.ContainerExecResize(ctx, execID.ID, container.ResizeOptions{
+							cli.ExecResize(ctx, execID.ID, client.ExecResizeOptions{
 								Height: uint(size.Height),
 								Width:  uint(size.Width),
 							})
@@ -1035,7 +1054,7 @@ func execInteractiveSession(ctx context.Context, cli *client.Client, containerID
 	// Trigger initial resize
 	if outIsTerminal {
 		if size, err := term.GetWinsize(outFd); err == nil {
-			cli.ContainerExecResize(ctx, execID.ID, container.ResizeOptions{
+			cli.ExecResize(ctx, execID.ID, client.ExecResizeOptions{
 				Height: uint(size.Height),
 				Width:  uint(size.Width),
 			})
@@ -1072,34 +1091,32 @@ func execCommandInContainer(ctx context.Context, cli *client.Client, contid, Wor
 		execShell = append(execShell, strings.Split(containerCfg.shell, " ")...)
 	}
 
-	optionsCreate := container.ExecOptions{
+	optionsCreate := client.ExecCreateOptions{
 		WorkingDir:   WorkingDir,
 		AttachStdin:  true,
 		AttachStdout: true,
 		AttachStderr: true,
-		Detach:       false,
 		Privileged:   true,
-		Tty:          true,
+		TTY:          true,
 		Cmd:          execShell,
 	}
 
-	rst, err := cli.ContainerExecCreate(ctx, contid, optionsCreate)
+	rst, err := cli.ExecCreate(ctx, contid, optionsCreate)
 	if err != nil {
 		panic(err)
 	}
 
-	optionsStartCheck := container.ExecStartOptions{
-		Detach: false,
-		Tty:    true,
+	optionsStartCheck := client.ExecAttachOptions{
+		TTY: true,
 	}
 
-	response, err := cli.ContainerExecAttach(ctx, rst.ID, optionsStartCheck)
+	response, err := cli.ExecAttach(ctx, rst.ID, optionsStartCheck)
 	if err != nil {
 		panic(err)
 	}
 	defer response.Close()
 
-	handleIOStreams(response)
+	handleIOStreams(response.HijackedResponse)
 	waitForContainer(ctx, cli, contid)
 }
 
@@ -1109,7 +1126,7 @@ func execCommandInContainer(ctx context.Context, cli *client.Client, contid, Wor
 //	in(2): *client.Client cli
 //	in(3): string contid container ID
 func attachAndInteract(ctx context.Context, cli *client.Client, contid string) {
-	response, err := cli.ContainerAttach(ctx, contid, container.AttachOptions{
+	response, err := cli.ContainerAttach(ctx, contid, client.ContainerAttachOptions{
 		Stderr: true,
 		Stdout: true,
 		Stdin:  true,
@@ -1120,7 +1137,7 @@ func attachAndInteract(ctx context.Context, cli *client.Client, contid string) {
 	}
 	defer response.Close()
 
-	handleIOStreams(response)
+	handleIOStreams(response.HijackedResponse)
 
 	fd := int(os.Stdin.Fd())
 	if terminal.IsTerminal(fd) {
@@ -1131,7 +1148,7 @@ func attachAndInteract(ctx context.Context, cli *client.Client, contid string) {
 		defer terminal.Restore(fd, oldState)
 
 		go resizeTty(ctx, cli, contid, fd)
-		go readAndWriteInput(response)
+		go readAndWriteInput(response.HijackedResponse)
 	}
 
 	waitForContainer(ctx, cli, contid)
@@ -1139,8 +1156,8 @@ func attachAndInteract(ctx context.Context, cli *client.Client, contid string) {
 
 // handleIOStreams sets up goroutines to copy stdout, stderr, and stdin between the terminal and the container.
 //
-//	in(1): types.HijackedResponse response
-func handleIOStreams(response types.HijackedResponse) {
+//	in(1): client.HijackedResponse response
+func handleIOStreams(response client.HijackedResponse) {
 	go io.Copy(os.Stdout, response.Reader)
 	go io.Copy(os.Stderr, response.Reader)
 	go io.Copy(response.Conn, os.Stdin)
@@ -1148,8 +1165,8 @@ func handleIOStreams(response types.HijackedResponse) {
 
 // readAndWriteInput reads bytes from stdin and writes them to the container connection.
 //
-//	in(1): types.HijackedResponse response
-func readAndWriteInput(response types.HijackedResponse) {
+//	in(1): client.HijackedResponse response
+func readAndWriteInput(response client.HijackedResponse) {
 	reader := bufio.NewReaderSize(os.Stdin, 4096) // Increased buffer size for larger inputs
 	for {
 		input, err := reader.ReadByte()
@@ -1166,13 +1183,13 @@ func readAndWriteInput(response types.HijackedResponse) {
 //	in(2): *client.Client cli
 //	in(3): string contid container ID
 func waitForContainer(ctx context.Context, cli *client.Client, contid string) {
-	statusCh, errCh := cli.ContainerWait(ctx, contid, container.WaitConditionNextExit)
+	waitRes := cli.ContainerWait(ctx, contid, client.ContainerWaitOptions{Condition: container.WaitConditionNextExit})
 	select {
-	case err := <-errCh:
+	case err := <-waitRes.Error:
 		if err != nil {
 			panic(err)
 		}
-	case <-statusCh:
+	case <-waitRes.Result:
 	}
 }
 
@@ -1187,11 +1204,13 @@ func ContainerCommit(contid string) {
 	}
 	defer cli.Close()
 
-	if err := cli.ContainerStart(ctx, contid, container.StartOptions{}); err != nil {
+	if _, err := cli.ContainerStart(ctx, contid, client.ContainerStartOptions{}); err != nil {
 		panic(err)
 	}
 
-	commitResp, err := cli.ContainerCommit(ctx, contid, container.CommitOptions{Reference: containerCfg.imagename})
+	// NoPause preserves the old docker SDK behavior, which committed
+	// without pausing when Pause was left unset.
+	commitResp, err := cli.ContainerCommit(ctx, contid, client.ContainerCommitOptions{Reference: containerCfg.imagename, NoPause: true})
 	if err != nil {
 		panic(err)
 	}
@@ -1203,19 +1222,19 @@ func ContainerCommit(contid string) {
 //	in(1): context.Context ctx
 //	in(2): *client.Client cli
 //	in(3): string identifier container ID or name
-//	out: types.Container, error
-func findContainerByIdentifier(ctx context.Context, cli *client.Client, identifier string) (types.Container, error) {
-	containers, err := cli.ContainerList(ctx, container.ListOptions{All: true})
+//	out: container.Summary, error
+func findContainerByIdentifier(ctx context.Context, cli *client.Client, identifier string) (container.Summary, error) {
+	containersRes, err := cli.ContainerList(ctx, client.ContainerListOptions{All: true})
 	if err != nil {
-		return types.Container{}, err
+		return container.Summary{}, err
 	}
 
-	for _, c := range containers {
+	for _, c := range containersRes.Items {
 		if c.ID == identifier || (len(c.Names) > 0 && c.Names[0] == "/"+identifier) {
 			return c, nil
 		}
 	}
-	return types.Container{}, fmt.Errorf("container with ID or name '%s' not found", identifier)
+	return container.Summary{}, fmt.Errorf("container with ID or name '%s' not found", identifier)
 }
 
 // ContainerRename renames an existing container identified by ID or name.
@@ -1236,7 +1255,7 @@ func ContainerRename(currentIdentifier string, newName string) {
 	}
 
 	// Rename the container
-	err = cli.ContainerRename(ctx, found.ID, newName)
+	_, err = cli.ContainerRename(ctx, found.ID, client.ContainerRenameOptions{NewName: newName})
 	if err != nil {
 		panic(err)
 	} else {
@@ -1265,7 +1284,7 @@ func ContainerRemove(containerIdentifier string) {
 	containerImage := found.Image
 
 	// Check for associated NAT network before removing the container
-	containerJSON, inspectErr := cli.ContainerInspect(ctx, found.ID)
+	containerJSON, inspectErr := inspectContainer(ctx, cli, found.ID)
 	hasNATNetwork := false
 	natContainerName := ""
 	if inspectErr == nil {
@@ -1282,7 +1301,7 @@ func ContainerRemove(containerIdentifier string) {
 	}
 
 	// Remove the container
-	err = cli.ContainerRemove(ctx, found.ID, container.RemoveOptions{Force: true})
+	_, err = cli.ContainerRemove(ctx, found.ID, client.ContainerRemoveOptions{Force: true})
 	if err != nil {
 		common.PrintErrorMessage(err)
 		return
@@ -1312,7 +1331,7 @@ func ContainerRemove(containerIdentifier string) {
 	// Clean up associated temp image if any
 	tempPattern := regexp.MustCompile(`_temp_\d{14}`)
 	if tempPattern.MatchString(containerImage) {
-		_, err := cli.ImageRemove(ctx, containerImage, image.RemoveOptions{Force: false})
+		_, err := cli.ImageRemove(ctx, containerImage, client.ImageRemoveOptions{Force: false})
 		if err == nil {
 			common.PrintSuccessMessage(fmt.Sprintf("Cleaned up temp image: %s", containerImage))
 		}
@@ -1334,13 +1353,13 @@ func ContainerInstallScript(containerIdentifier, scriptName, functionScript stri
 	defer cli.Close()
 
 	// Check if the container is running; if not, start it
-	containerJSON, err := cli.ContainerInspect(ctx, containerIdentifier)
+	containerJSON, err := inspectContainer(ctx, cli, containerIdentifier)
 	if err != nil {
 		return fmt.Errorf("failed to inspect container: %v", err)
 	}
 
 	if containerJSON.State.Status != "running" {
-		if err := cli.ContainerStart(ctx, containerIdentifier, container.StartOptions{}); err != nil {
+		if _, err := cli.ContainerStart(ctx, containerIdentifier, client.ContainerStartOptions{}); err != nil {
 			return fmt.Errorf("failed to start container: %v", err)
 		}
 	}
@@ -1389,7 +1408,7 @@ func ContainerInstallScript(containerIdentifier, scriptName, functionScript stri
 //	in(5): ...string workingDir optional working directory
 //	out: error
 func execCommand(ctx context.Context, cli *client.Client, containerID string, cmd []string, workingDir ...string) error {
-	execConfig := container.ExecOptions{
+	execConfig := client.ExecCreateOptions{
 		AttachStdout: true,
 		AttachStderr: true,
 		Cmd:          cmd,
@@ -1400,12 +1419,12 @@ func execCommand(ctx context.Context, cli *client.Client, containerID string, cm
 		execConfig.WorkingDir = workingDir[0]
 	}
 
-	execID, err := cli.ContainerExecCreate(ctx, containerID, execConfig)
+	execID, err := cli.ExecCreate(ctx, containerID, execConfig)
 	if err != nil {
 		return fmt.Errorf("failed to create exec instance: %v", err)
 	}
 
-	attachResp, err := cli.ContainerExecAttach(ctx, execID.ID, container.ExecStartOptions{})
+	attachResp, err := cli.ExecAttach(ctx, execID.ID, client.ExecAttachOptions{})
 	if err != nil {
 		return fmt.Errorf("failed to attach to exec instance: %v", err)
 	}
@@ -1424,18 +1443,18 @@ func execCommand(ctx context.Context, cli *client.Client, containerID string, cm
 //	in(4): []string cmd command to execute
 //	out: (string, error)
 func execCommandWithOutput(ctx context.Context, cli *client.Client, containerID string, cmd []string) (string, error) {
-	execConfig := container.ExecOptions{
+	execConfig := client.ExecCreateOptions{
 		AttachStdout: true,
 		AttachStderr: true,
 		Cmd:          cmd,
 	}
 
-	execID, err := cli.ContainerExecCreate(ctx, containerID, execConfig)
+	execID, err := cli.ExecCreate(ctx, containerID, execConfig)
 	if err != nil {
 		return "", fmt.Errorf("failed to create exec instance: %v", err)
 	}
 
-	attachResp, err := cli.ContainerExecAttach(ctx, execID.ID, container.ExecStartOptions{})
+	attachResp, err := cli.ExecAttach(ctx, execID.ID, client.ExecAttachOptions{})
 	if err != nil {
 		return "", fmt.Errorf("failed to attach to exec instance: %v", err)
 	}
@@ -1476,7 +1495,7 @@ func ContainerStop(containerIdentifier string) {
 	}
 
 	// Inspect the container to get its current state
-	containerJSON, err := cli.ContainerInspect(ctx, containerIdentifier)
+	containerJSON, err := inspectContainer(ctx, cli, containerIdentifier)
 	if err != nil {
 		common.PrintErrorMessage(fmt.Errorf("failed to inspect container: %v", err))
 		return
@@ -1490,7 +1509,7 @@ func ContainerStop(containerIdentifier string) {
 
 	// Stop the container
 	timeout := 10 // Grace period in seconds before force stop
-	if err := cli.ContainerStop(ctx, containerIdentifier, container.StopOptions{Timeout: &timeout}); err != nil {
+	if _, err := cli.ContainerStop(ctx, containerIdentifier, client.ContainerStopOptions{Timeout: &timeout}); err != nil {
 		common.PrintErrorMessage(fmt.Errorf("failed to stop container: %v", err))
 		return
 	}

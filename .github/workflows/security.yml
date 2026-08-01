@@ -1,0 +1,75 @@
+# First-party security checks: static analysis of RF-Swift's own Go code (gosec)
+# and linting of the install scripts (shellcheck). Dependency and supply-chain
+# checks live in modules-audit.yml; this workflow covers the code we write.
+#
+# Design notes:
+#   - gosec is INFORMATIONAL. RF-Swift is a CLI that legitimately shells out to
+#     docker/podman/limactl and reads/writes files at user-supplied paths, which
+#     trips gosec's subprocess (G204), file-inclusion (G304) and path-traversal
+#     (G703) taint rules with mostly false positives. Hard-failing on those would
+#     force blanket #nosec noise, so findings are uploaded to code scanning for
+#     human triage instead. The input-validation guarantees that actually matter
+#     (USB ID / device ID / size validators, shell-free QMP discovery) are
+#     enforced by unit tests that DO gate the build.
+#   - shellcheck IS a gate, but only at --severity=error: it catches genuine
+#     breakage in the curl|sh install scripts without failing on the pre-existing
+#     POSIX-vs-bash portability warnings.
+#   - Actions are pinned by full commit SHA; gosec is installed via
+#     `go install <module>@<version>` (verified against the Go checksum DB).
+
+name: Security
+
+on:
+  push:
+    branches: ["main", "v3.0.0-dev"]
+  pull_request:
+    branches: ["main", "v3.0.0-dev"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  gosec:
+    name: gosec (SAST, informational)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write # upload SARIF to code scanning
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+
+      - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+        with:
+          go-version-file: go/rfswift/go.mod
+          cache-dependency-path: go/rfswift/go.sum
+
+      - name: Install gosec (sumdb-verified)
+        run: go install github.com/securego/gosec/v2/cmd/gosec@v2.27.1
+
+      - name: Run gosec
+        working-directory: go/rfswift
+        # -no-fail reports without failing the job (findings are triaged in the
+        # Security tab). SARIF is written to the workspace root for upload.
+        run: gosec -no-fail -fmt sarif -out "$GITHUB_WORKSPACE/gosec.sarif" ./...
+
+      - name: Upload gosec SARIF
+        uses: github/codeql-action/upload-sarif@411c4c9a36b3fca4d674f06b6396b2c6d23522c6 # v3
+        # Best effort: code scanning upload needs security-events:write, which a
+        # PR from a fork does not get. Never fail the job on the upload itself.
+        continue-on-error: true
+        with:
+          sarif_file: gosec.sarif
+          category: gosec
+
+  shellcheck:
+    name: shellcheck (install scripts)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+
+      - name: Lint install scripts (fail on errors)
+        # shellcheck ships on the ubuntu-latest runner image. --severity=error
+        # gates on genuine breakage; portability warnings are pre-existing and
+        # out of scope here.
+        run: shellcheck --severity=error get_rfswift.sh scripts/*.sh

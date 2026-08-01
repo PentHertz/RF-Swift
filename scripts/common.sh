@@ -264,6 +264,52 @@ detect_audio_system() {
     fi
 }
 
+# Ensure pactl (pulseaudio-utils) is installed - required by
+# 'rfswift host audio enable' to manage the TCP module. Must run even when an
+# audio server is already up: modern Ubuntu ships PipeWire by default, but
+# pulseaudio-utils is not always installed with it.
+ensure_pactl() {
+    local distro="$1"
+
+    if command -v pactl &> /dev/null; then
+        echo -e "${GREEN}✅ pactl available ✅${NC}"
+        return 0
+    fi
+
+    echo -e "${YELLOW}⚠️ pactl not found - installing pulseaudio-utils... ⚠️${NC}"
+    case "$distro" in
+        "arch")
+            sudo pacman -S --noconfirm --needed libpulse
+            ;;
+        "fedora"|"rhel"|"centos")
+            if command -v dnf &> /dev/null; then
+                sudo dnf install -y pulseaudio-utils
+            else
+                sudo yum install -y pulseaudio-utils
+            fi
+            ;;
+        "debian"|"ubuntu")
+            sudo apt update
+            sudo apt install -y pulseaudio-utils
+            ;;
+        "opensuse")
+            sudo zypper install -y pulseaudio-utils
+            ;;
+        *)
+            echo -e "${RED}❌ Unsupported distribution - please install pulseaudio-utils (pactl) manually ❌${NC}"
+            return 1
+            ;;
+    esac
+
+    if command -v pactl &> /dev/null; then
+        echo -e "${GREEN}✅ pactl installed ✅${NC}"
+        return 0
+    fi
+
+    echo -e "${RED}❌ pactl still not found - audio TCP module may not work ❌${NC}"
+    return 1
+}
+
 # Install PipeWire packages with enhanced Arch Linux support
 # Also installs pulseaudio-utils (pactl) which is required for TCP module management
 install_pipewire() {
@@ -409,13 +455,13 @@ check_audio_system() {
 
         # Verify pactl is available (comes with Homebrew pulseaudio)
         if ! command -v pactl &> /dev/null; then
-            echo -e "${RED}❌ pactl not found — required for audio TCP module management ❌${NC}"
+            echo -e "${RED}❌ pactl not found - required for audio TCP module management ❌${NC}"
             echo -e "${YELLOW}ℹ️ Try reinstalling: brew reinstall pulseaudio ℹ️${NC}"
             return 1
         fi
         echo -e "${GREEN}✅ pactl available ✅${NC}"
 
-        echo -e "${CYAN}ℹ️ Audio chain: Container → Lima VM → port 34567 → macOS PulseAudio → CoreAudio${NC}"
+        echo -e "${CYAN}ℹ️ Audio chain: Container -> Lima VM -> port 34567 -> macOS PulseAudio -> CoreAudio${NC}"
         echo -e "${CYAN}ℹ️ Enable audio with: rfswift host audio enable${NC}"
         return
     fi
@@ -427,13 +473,17 @@ check_audio_system() {
     echo -e "${BLUE}🐧 Detected distribution: $distro 🐧${NC}"
     echo -e "${BLUE}📦 Package manager: $pkg_manager 📦${NC}"
     
+    # Even when a server is already running, pactl may still be missing
+    # (e.g. default PipeWire on Ubuntu), so verify it before returning.
     case "$current_audio" in
         "pipewire")
             echo -e "${GREEN}✅ PipeWire is already running ✅${NC}"
+            ensure_pactl "$distro" || true
             return
             ;;
         "pulseaudio")
             echo -e "${GREEN}✅ PulseAudio is already running ✅${NC}"
+            ensure_pactl "$distro" || true
             return
             ;;
         "none")
@@ -477,34 +527,7 @@ check_audio_system() {
     fi
 
     # Verify pactl is available (required for TCP module management)
-    if ! command -v pactl &> /dev/null; then
-        echo -e "${YELLOW}⚠️ pactl not found — installing pulseaudio-utils... ⚠️${NC}"
-        case "$distro" in
-            "arch")
-                sudo pacman -S --noconfirm --needed libpulse
-                ;;
-            "fedora"|"rhel"|"centos")
-                if command -v dnf &> /dev/null; then
-                    sudo dnf install -y pulseaudio-utils
-                else
-                    sudo yum install -y pulseaudio-utils
-                fi
-                ;;
-            "debian"|"ubuntu")
-                sudo apt install -y pulseaudio-utils
-                ;;
-            "opensuse")
-                sudo zypper install -y pulseaudio-utils
-                ;;
-        esac
-        if command -v pactl &> /dev/null; then
-            echo -e "${GREEN}✅ pactl installed ✅${NC}"
-        else
-            echo -e "${RED}❌ pactl still not found — audio TCP module may not work ❌${NC}"
-        fi
-    else
-        echo -e "${GREEN}✅ pactl available ✅${NC}"
-    fi
+    ensure_pactl "$distro" || true
 }
 
 # Display audio system status
@@ -513,11 +536,11 @@ show_audio_status() {
     echo "=================================="
 
     if [[ "$OSTYPE" == "darwin"* ]]; then
-        echo -e "${YELLOW}🍎 macOS: Audio via PulseAudio → CoreAudio${NC}"
+        echo -e "${YELLOW}🍎 macOS: Audio via PulseAudio -> CoreAudio${NC}"
         if command -v pulseaudio &> /dev/null; then
             echo -e "${GREEN}✅ PulseAudio installed${NC}"
         else
-            echo -e "${RED}❌ PulseAudio not installed — run: brew install pulseaudio${NC}"
+            echo -e "${RED}❌ PulseAudio not installed - run: brew install pulseaudio${NC}"
         fi
         if command -v pactl &> /dev/null; then
             echo -e "${GREEN}✅ pactl available${NC}"
@@ -527,7 +550,7 @@ show_audio_status() {
         if pgrep -x pulseaudio &>/dev/null; then
             echo -e "${GREEN}✅ PulseAudio is running${NC}"
         else
-            echo -e "${YELLOW}⚠️ PulseAudio is not running — enable with: rfswift host audio enable${NC}"
+            echo -e "${YELLOW}⚠️ PulseAudio is not running - enable with: rfswift host audio enable${NC}"
         fi
         echo "=================================="
         return
@@ -729,7 +752,7 @@ detect_container_engines() {
         HAS_PODMAN=true
     fi
 
-    # Check Docker — must distinguish real Docker from podman-docker shim
+    # Check Docker - must distinguish real Docker from podman-docker shim
     if command_exists docker; then
         local docker_ver
         docker_ver=$(docker --version 2>/dev/null || true)
@@ -787,7 +810,7 @@ offer_lima_for_usb() {
     fi
 }
 
-# Main container engine check — replaces the old check_docker()
+# Main container engine check - replaces the old check_docker()
 check_container_engine() {
     echo -e "${BLUE}🔍 Checking for container engines... 🔍${NC}"
 
@@ -843,16 +866,16 @@ check_container_engine() {
     echo ""
     echo -e "${CYAN}📝 Which container engine would you like to install?${NC}"
     echo ""
-    echo -e "${CYAN}   🐳 Docker  — Industry standard, requires daemon (root)${NC}"
+    echo -e "${CYAN}   🐳 Docker  - Industry standard, requires daemon (root)${NC}"
     echo -e "${CYAN}              Best compatibility, large ecosystem${NC}"
     echo ""
-    echo -e "${CYAN}   🦭 Podman  — Daemonless, rootless by default${NC}"
+    echo -e "${CYAN}   🦭 Podman  - Daemonless, rootless by default${NC}"
     echo -e "${CYAN}              Drop-in Docker replacement, no root needed${NC}"
     echo ""
 
     # macOS: also offer Lima
     if [[ "$(uname -s)" == "Darwin" ]]; then
-        echo -e "${CYAN}   🦙 Lima    — Lightweight VM with Docker inside (QEMU)${NC}"
+        echo -e "${CYAN}   🦙 Lima    - Lightweight VM with Docker inside (QEMU)${NC}"
         echo -e "${CYAN}              Enables USB device passthrough for SDR hardware${NC}"
         echo ""
     fi
@@ -909,7 +932,7 @@ check_container_engine() {
     esac
 }
 
-# Legacy wrapper — scripts calling check_docker() still work
+# Legacy wrapper - scripts calling check_docker() still work
 check_docker() {
     check_container_engine
 }
@@ -1172,7 +1195,7 @@ install_docker_compose_steamdeck() {
     DOCKER_CONFIG=${DOCKER_CONFIG:-$HOME/.docker}
     mkdir -p $DOCKER_CONFIG/cli-plugins
     
-    curl -SL https://github.com/docker/compose/releases/download/v5.0.2/docker-compose-linux-x86_64 -o $DOCKER_CONFIG/cli-plugins/docker-compose
+    curl -SL https://github.com/docker/compose/releases/download/v5.3.1/docker-compose-linux-x86_64 -o $DOCKER_CONFIG/cli-plugins/docker-compose
     chmod +x $DOCKER_CONFIG/cli-plugins/docker-compose
 
     echo -e "${GREEN}✅ Docker Compose v2 installed successfully for Steam Deck ✅${NC}"
@@ -1181,7 +1204,7 @@ install_docker_compose_steamdeck() {
 install_buildx() {
     arch=$(uname -m)
     os=$(uname -s | tr '[:upper:]' '[:lower:]')
-    version="v0.31.0"
+    version="v0.35.0"
 
     case "$arch" in
         x86_64|amd64)  arch="amd64";;
@@ -1264,69 +1287,73 @@ is_lima_instance_running() {
     limactl list --json 2>/dev/null | grep "\"name\":\"${instance}\"" | grep -q "\"status\":\"Running\""
 }
 
-# Lima version and release URL (PentHertz fork with USB passthrough support)
-LIMA_VERSION="2.1.1"
-LIMA_RELEASE_BASE="https://github.com/PentHertz/lima/releases/download/v${LIMA_VERSION}"
+# Detect and offer to remove the old PentHertz Lima fork installed under
+# /usr/local by earlier RF-Swift releases. It shadows the official Homebrew Lima,
+# so leaving it in place blocks the migration to official Lima.
+maybe_remove_lima_fork() {
+    [[ "$(uname -s)" == "Darwin" ]] || return 0
+    [ -x /usr/local/bin/limactl ] || return 0
 
-# Install the PentHertz fork of Lima (with usb: true support) and QEMU on macOS
+    # On Intel Macs Homebrew's prefix is /usr/local, so a brew-managed lima also
+    # lives at /usr/local/bin/limactl - don't treat that as the fork.
+    if command_exists brew && [ "$(brew --prefix 2>/dev/null)" = "/usr/local" ] \
+        && brew list lima >/dev/null 2>&1; then
+        return 0
+    fi
+
+    echo -e "${YELLOW}⚠️  A non-Homebrew Lima (the old PentHertz fork) is installed at /usr/local/bin/limactl.${NC}"
+    echo -e "${YELLOW}   RF-Swift now uses official Lima - the fork is no longer needed and can shadow it.${NC}"
+    if prompt_yes_no "Remove the old Lima fork from /usr/local?" "y"; then
+        sudo rm -f /usr/local/bin/limactl /usr/local/bin/lima
+        sudo rm -rf /usr/local/share/lima /usr/local/share/doc/lima
+        hash -r 2>/dev/null || true
+        echo -e "${GREEN}Removed the old Lima fork; official Lima will be installed via Homebrew.${NC}"
+    else
+        echo -e "${YELLOW}Keeping the fork - note it may prevent the official Lima from being used.${NC}"
+    fi
+}
+
+# Install QEMU + official Lima on macOS. USB passthrough works on stock Lima
+# because the rfswift VM template sets video.display, which makes Lima add a
+# qemu-xhci controller - the old PentHertz fork (and `usb: true`) is not needed.
 install_lima() {
     if [[ "$(uname -s)" != "Darwin" ]]; then
         echo -e "${YELLOW}Lima is only needed on macOS for USB passthrough.${NC}"
         return 0
     fi
 
-    # QEMU still comes from Homebrew
     if ! command_exists brew; then
-        echo -e "${RED}Homebrew is required to install QEMU.${NC}"
+        echo -e "${RED}Homebrew is required to install QEMU and Lima.${NC}"
         echo -e "${YELLOW}Install Homebrew: /bin/bash -c \"\$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)\"${NC}"
         return 1
     fi
+
+    # Remove the old PentHertz Lima fork first so the official one can take over.
+    maybe_remove_lima_fork
 
     if is_lima_installed && command_exists qemu-img; then
         echo -e "${GREEN}Lima and QEMU are already installed.${NC}"
         return 0
     fi
 
-    # Install QEMU via Homebrew
+    # QEMU backend is required - USB passthrough does not work with the vz backend.
     if ! command_exists qemu-img; then
         echo -e "${BLUE}Installing QEMU via Homebrew...${NC}"
         brew install qemu
     fi
 
-    # Remove Homebrew Lima if present (we use the PentHertz fork)
-    if brew list lima &>/dev/null; then
-        echo -e "${YELLOW}Removing Homebrew Lima in favor of PentHertz fork (USB support)...${NC}"
-        brew uninstall lima
+    if ! command_exists limactl; then
+        echo -e "${BLUE}Installing Lima via Homebrew...${NC}"
+        brew install lima
     fi
 
-    # Install PentHertz Lima from GitHub release
-    local arch
-    arch=$(uname -m)
-    case "$arch" in
-        arm64|aarch64) arch="arm64" ;;
-        x86_64|amd64)  arch="x86_64" ;;
-        *)
-            echo -e "${RED}Unsupported architecture: $arch${NC}"
-            return 1
-            ;;
-    esac
-
-    local tarball="lima-${LIMA_VERSION}-Darwin-${arch}.tar.gz"
-    local url="${LIMA_RELEASE_BASE}/${tarball}"
-    local tmp="/tmp/${tarball}"
-
-    echo -e "${BLUE}Installing Lima ${LIMA_VERSION} (PentHertz fork with USB support)...${NC}"
-    curl -fsSL "$url" -o "$tmp"
-    sudo tar xz -C /usr/local -f "$tmp"
-    rm -f "$tmp"
-
     if ! command_exists limactl; then
-        echo -e "${RED}Lima installation failed — limactl not found in PATH.${NC}"
-        echo -e "${YELLOW}Ensure /usr/local/bin is in your PATH.${NC}"
+        echo -e "${RED}Lima installation failed - limactl not found in PATH.${NC}"
+        echo -e "${YELLOW}Ensure Homebrew's bin directory is in your PATH.${NC}"
         return 1
     fi
 
-    echo -e "${GREEN}Lima ${LIMA_VERSION} (PentHertz fork) and QEMU installed successfully.${NC}"
+    echo -e "${GREEN}Official Lima and QEMU installed successfully.${NC}"
     limactl --version
 }
 
@@ -1334,12 +1361,31 @@ install_lima() {
 # Copies the bundled template to ~/.config/rfswift/lima.yaml so that
 # rfswift engine lima reconfig picks it up on the next reconfigure.
 update_lima_template() {
+    # Default USB/QEMU template - migrate existing configs (e.g. old `usb: true`
+    # -> `video.display`) with a prompt, matching the historical behavior.
+    _sync_lima_template "rfswift.yaml" "lima.yaml" "your Lima VM template" "prompt"
+    # Opt-in GPU (krunkit) template - seed it quietly when missing so that
+    # `rfswift --gpu` works out of the box, and prompt only if an existing one
+    # has drifted.
+    _sync_lima_template "rfswift-gpu.yaml" "lima-gpu.yaml" "your GPU Lima VM template" "seed"
+}
+
+# _sync_lima_template <bundled_basename> <user_basename> <label> <mode>
+# Copies a bundled Lima template into the user's config dir. mode "prompt" always
+# asks before creating/updating; mode "seed" creates a missing file quietly and
+# only prompts when an existing file differs.
+_sync_lima_template() {
+    local bundled_name="$1"
+    local user_name="$2"
+    local label="$3"
+    local mode="$4"
+
     local script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd 2>/dev/null || echo ".")"
     local bundled=""
     local tmp_downloaded=""
     for candidate in \
-        "${script_dir}/../lima/rfswift.yaml" \
-        "$(pwd)/lima/rfswift.yaml"; do
+        "${script_dir}/../lima/${bundled_name}" \
+        "$(pwd)/lima/${bundled_name}"; do
         if [ -f "$candidate" ]; then
             bundled="$(cd "$(dirname "$candidate")" && pwd)/$(basename "$candidate")"
             break
@@ -1348,58 +1394,58 @@ update_lima_template() {
 
     # If no local template found (e.g., running via curl|sh), download from GitHub
     if [ -z "$bundled" ]; then
-        local lima_url="https://raw.githubusercontent.com/PentHertz/RF-Swift/main/lima/rfswift.yaml"
+        local lima_url="https://raw.githubusercontent.com/PentHertz/RF-Swift/main/lima/${bundled_name}"
         tmp_downloaded=$(mktemp /tmp/rfswift-lima-XXXXXX.yaml 2>/dev/null || echo "/tmp/rfswift-lima-$$.yaml")
         if curl -fsSL "$lima_url" -o "$tmp_downloaded" 2>/dev/null || wget -qO "$tmp_downloaded" "$lima_url" 2>/dev/null; then
             bundled="$tmp_downloaded"
         else
             rm -f "$tmp_downloaded"
-            tmp_downloaded=""
+            return 0
         fi
     fi
 
-    if [ -z "$bundled" ]; then
-        return 0  # no template available (no local file and download failed)
-    fi
-
-    # Check all locations where rfswift looks for the Lima template.
-    # Update whichever one exists, or create ~/.config/rfswift/lima.yaml by default.
+    # Check all locations where rfswift looks for the template.
+    # Update whichever one exists, or default to ~/.config/rfswift/<user_name>.
     local user_template=""
     for candidate in \
-        "$HOME/.config/rfswift/lima.yaml" \
-        "$HOME/.rfswift/lima.yaml"; do
+        "$HOME/.config/rfswift/${user_name}" \
+        "$HOME/.rfswift/${user_name}"; do
         if [ -f "$candidate" ]; then
             user_template="$candidate"
             break
         fi
     done
-    # Default to ~/.config/rfswift/lima.yaml if none exists yet
-    [ -z "$user_template" ] && user_template="$HOME/.config/rfswift/lima.yaml"
+    [ -z "$user_template" ] && user_template="$HOME/.config/rfswift/${user_name}"
 
-    local needs_update=false
-
+    # Missing file: seed quietly in "seed" mode; otherwise fall through to prompt.
     if [ ! -f "$user_template" ]; then
-        needs_update=true
-    elif ! diff -q "$bundled" "$user_template" >/dev/null 2>&1; then
-        needs_update=true
-    fi
-
-    if $needs_update; then
-        echo ""
-        echo -e "${CYAN}A newer Lima VM template is available with this release.${NC}"
-        echo -e "${CYAN}It may include updated kernel modules, udev rules, or Bluetooth support.${NC}"
-        if prompt_yes_no "Would you like to update your Lima template?" "y"; then
+        if [ "$mode" = "seed" ]; then
             mkdir -p "$(dirname "$user_template")"
             cp "$bundled" "$user_template"
-            echo -e "${GREEN}Lima template updated at ${user_template}${NC}"
-            echo -e "${YELLOW}To apply changes to a running VM, run:${NC}"
-            echo -e "${CYAN}  rfswift engine lima reconfig${NC}"
-            echo -e "${YELLOW}For changes that require a full VM rebuild (e.g., disk/OS):${NC}"
-            echo -e "${CYAN}  rfswift engine lima reset${NC}"
-        else
-            echo -e "${YELLOW}Skipped. You can manually update later by copying:${NC}"
-            echo -e "${CYAN}  cp ${bundled} ${user_template}${NC}"
+            echo -e "${GREEN}Added ${label} at ${user_template}${NC}"
+            [ -n "$tmp_downloaded" ] && rm -f "$tmp_downloaded"
+            return 0
         fi
+    elif diff -q "$bundled" "$user_template" >/dev/null 2>&1; then
+        # Already up to date.
+        [ -n "$tmp_downloaded" ] && rm -f "$tmp_downloaded"
+        return 0
+    fi
+
+    echo ""
+    echo -e "${CYAN}A newer version of ${label} is available with this release.${NC}"
+    echo -e "${CYAN}It may include updated images, kernel modules, udev rules, or Bluetooth support.${NC}"
+    if prompt_yes_no "Would you like to update ${label}?" "y"; then
+        mkdir -p "$(dirname "$user_template")"
+        cp "$bundled" "$user_template"
+        echo -e "${GREEN}Updated at ${user_template}${NC}"
+        echo -e "${YELLOW}To apply changes to a running VM, run:${NC}"
+        echo -e "${CYAN}  rfswift engine lima reconfig${NC}"
+        echo -e "${YELLOW}For changes that require a full VM rebuild (e.g., disk/OS):${NC}"
+        echo -e "${CYAN}  rfswift engine lima reset${NC}"
+    else
+        echo -e "${YELLOW}Skipped. You can manually update later by copying:${NC}"
+        echo -e "${CYAN}  cp ${bundled} ${user_template}${NC}"
     fi
 
     # Clean up temp file if we downloaded one
@@ -1467,7 +1513,7 @@ setup_lima_instance() {
 
     echo -e "${BLUE}Creating Lima instance '$instance' with QEMU backend...${NC}"
 
-    # Look for the template — user config dirs first (updated by install scripts),
+    # Look for the template - user config dirs first (updated by install scripts),
     # then bundled locations relative to the script.
     local template_path=""
     local script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -1488,14 +1534,17 @@ setup_lima_instance() {
         local tmp_template=$(mktemp /tmp/rfswift-lima-XXXXXX.yaml)
         cat > "$tmp_template" << 'LIMAEOF'
 vmType: qemu
-usb: true
+# Non-"none" display makes upstream Lima add qemu-xhci,id=usb-bus for USB
+# passthrough; "vnc" is headless with no macOS QEMU perf penalty.
+video:
+  display: "vnc"
 cpus: 4
 memory: "8GiB"
 disk: "100GiB"
 images:
-  - location: "https://cloud-images.ubuntu.com/releases/24.04/release/ubuntu-24.04-server-cloudimg-amd64.img"
+  - location: "https://cloud-images.ubuntu.com/releases/26.04/release/ubuntu-26.04-server-cloudimg-amd64.img"
     arch: "x86_64"
-  - location: "https://cloud-images.ubuntu.com/releases/24.04/release/ubuntu-24.04-server-cloudimg-arm64.img"
+  - location: "https://cloud-images.ubuntu.com/releases/26.04/release/ubuntu-26.04-server-cloudimg-arm64.img"
     arch: "aarch64"
 mounts:
   - location: "~"
@@ -1653,7 +1702,7 @@ install_go() {
     arch=$(uname -m)
     os=$(uname -s | tr '[:upper:]' '[:lower:]')
     prog=""
-    version="1.26.0"
+    version="1.26.5"
 
     case "$arch" in
         x86_64|amd64)  arch="amd64";;
@@ -2133,7 +2182,7 @@ show_system_info() {
     echo ""
 }
 
-# Main execution section — if this script is run directly
+# Main execution section - if this script is run directly
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
     display_rainbow_logo_animated
     echo -e "${BLUE}🎵 RF Swift Enhanced Installer with Arch Linux Support 🎵${NC}"

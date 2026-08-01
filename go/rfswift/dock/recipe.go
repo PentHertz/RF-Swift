@@ -18,8 +18,8 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"github.com/docker/docker/api/types"
-	"github.com/docker/docker/pkg/jsonmessage"
+	"github.com/moby/moby/client"
+	"github.com/moby/moby/client/pkg/jsonmessage"
 	"github.com/moby/term"
 
 	common "penthertz/rfswift/common"
@@ -124,7 +124,7 @@ func BuildFromRecipe(recipeFile string, tagOverride string, noCache bool) error 
 	defer buildContext.Close()
 
 	// Build options
-	buildOptions := types.ImageBuildOptions{
+	buildOptions := client.ImageBuildOptions{
 		Tags:       []string{finalImage},
 		Dockerfile: "Dockerfile",
 		Remove:     true,

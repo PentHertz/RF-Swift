@@ -90,9 +90,9 @@ RF Swift supports **both Docker and Podman** as container engines, giving you th
 RF Swift **automatically detects** the available container engine at startup. If both are installed, Docker is used by default. Override with:
 
 ```bash
-rfswift --engine podman run -n mycontainer -i penthertz/rfswift_noble:sdr_light
-rfswift --engine docker run -n mycontainer -i penthertz/rfswift_noble:sdr_light
-rfswift --engine lima run -n mycontainer -i penthertz/rfswift_noble:sdr_light  # macOS USB
+rfswift --engine podman run -n mycontainer -i penthertz/rfswift_resolute:sdr_light
+rfswift --engine docker run -n mycontainer -i penthertz/rfswift_resolute:sdr_light
+rfswift --engine lima run -n mycontainer -i penthertz/rfswift_resolute:sdr_light  # macOS USB
 ```
 
 #### Podman support example
@@ -101,7 +101,7 @@ https://github.com/user-attachments/assets/14b6d50f-5250-420e-94e4-474991113372
 
 #### Podman Highlights
 
-- **Rootless containers**: No daemon, no root — ideal for locked-down environments and shared lab machines
+- **Rootless containers**: No daemon, no root - ideal for locked-down environments and shared lab machines
 - **OCI-compatible images**: All existing RF Swift images work out of the box with Podman
 - **Seamless device passthrough**: USB SDR dongles, serial adapters, and GPUs work with both engines
 
@@ -114,23 +114,37 @@ https://github.com/user-attachments/assets/14b6d50f-5250-420e-94e4-474991113372
 Docker Desktop and Podman on macOS **cannot forward USB devices** (SDR dongles, HackRF, RTL-SDR, etc.) into containers. RF Swift solves this with **Lima**, which runs a QEMU VM with USB hot-plug support:
 
 ```bash
-# Install Lima (PentHertz fork with USB passthrough support) + QEMU
-brew install qemu
-curl -fsSL https://github.com/PentHertz/lima/releases/download/v2.1.1/lima-2.1.1-Darwin-$(uname -m).tar.gz -o /tmp/lima.tar.gz
-sudo tar xz -C /usr/local -f /tmp/lima.tar.gz
+# Install QEMU + official Lima (USB passthrough works via the VM's video.display)
+brew install qemu lima
 
 # Attach your SDR dongle to the Lima VM
 rfswift macusb list                              # see host USB devices
 rfswift macusb attach --vid 0x1d50 --pid 0x604b  # forward HackRF to VM
 
 # Run container via Lima's Docker (where USB device lives)
-rfswift --engine lima run -i penthertz/rfswift_noble:sdr_light -n sdr_work
+rfswift --engine lima run -i penthertz/rfswift_resolute:sdr_light -n sdr_work
 
 # When done, detach
 rfswift macusb detach --vid 0x1d50 --pid 0x604b
 ```
 
 Lima auto-creates the VM on first use with Docker, USB libraries, kernel modules, and udev rules for all supported RF hardware pre-configured. Use `--engine lima` when you need USB devices; use Docker Desktop normally for everything else.
+
+#### 🎮 GPU acceleration on Apple Silicon (opt-in)
+
+On Apple Silicon, **USB passthrough and GPU acceleration need different VM backends and cannot coexist in one VM**. The Lima VM above uses QEMU for USB/SDR devices. For GPU compute (e.g. Vulkan-accelerated ML/DSP) there is a separate opt-in profile that uses the **krunkit** backend (libkrun), which exposes the Apple GPU to containers as a **Vulkan** device (Mesa Venus -> MoltenVK -> Metal). It is **Vulkan, not CUDA**, and provides **no** USB passthrough.
+
+```bash
+# One-time: install Lima + the krunkit backend
+brew install lima
+brew tap slp/krunkit && brew install krunkit
+
+# Run a container in the GPU VM (auto-created on first use). --gpu implies --engine lima
+# and uses a separate instance (rfswift-gpu), leaving your USB/SDR VM untouched.
+rfswift --gpu run -i penthertz/rfswift_resolute:sdr_light -n gpu_work --devices /dev/dri
+```
+
+Use `--gpu` for GPU compute; use `--engine lima` (without `--gpu`) for SDR hardware. Requires macOS ≥ 14 and a guest kernel with virtio-gpu Venus support (Linux ≥ 6.13).
 
 #### Quick Setup
 
@@ -144,6 +158,8 @@ sudo dnf install podman          # Fedora/RHEL
 sudo pacman -S podman            # Arch Linux
 brew install podman              # macOS
 ```
+
+> **Verifying downloads**: The installer offers to check each binary's Sigstore-backed **build provenance attestation** automatically. To verify manually with the [GitHub CLI](https://cli.github.com): `gh attestation verify <downloaded.tar.gz> --repo PentHertz/RF-Swift`. This proves the artifact was built by the official RF Swift release workflow from a specific commit - not swapped afterwards.
 
 > **Note**: When using Podman in rootless mode, some operations (like direct device passthrough) may require additional configuration. RF Swift handles most of this automatically, but see the [documentation](https://rfswift.io/docs/guide/) for details.
 
@@ -183,7 +199,7 @@ graph TD;
 
 | Category | Images | Key Tools |
 |----------|--------|-----------|
-| 📻 **SDR** | `sdr_light`, `sdr_full` | GNU Radio, GQRX, SDR++, SDRangel, SigDigger, CyberEther, Inspectrum, URH, rtl_433, dump1090, GNSS-SDR, SatDump, Jupyter + 50+ GNU Radio OOT modules (gr-gsm, gr-lora, gr-satellites, gr-ieee802-11, gr-droneid, gr-tempest, …) |
+| 📻 **SDR** | `sdr_light`, `sdr_full` | GNU Radio, GQRX, SDR++, SDRangel, SigDigger, CyberEther, Inspectrum, URH, rtl_433, dump1090, GNSS-SDR, SatDump, Jupyter + 50+ GNU Radio OOT modules (gr-gsm, gr-lora, gr-satellites, gr-ieee802-11, gr-droneid, gr-tempest, ...) |
 | 📡 **SDR Devices** | `sdrsa_devices` | Drivers for USRP (UHD), RTL-SDR, HackRF, BladeRF, Airspy, LimeSDR, PlutoSDR, XTRX, RFNM, HydraSDR, LiteX M2SDR, SignalHound, Harogic, LibreSDR, SoapySDR |
 | 📱 **Telecom** | `telecom_utils`, `telecom_2Gto3G`, `telecom_4G_5GNSA`, `telecom_4Gto5G`, `telecom_5G` | PySIM, pycrate, srsRAN 4G/5G, Open5GS, UERANSIM, YateBTS, OpenBTS, OsmoCom BTS Suite, SigPloit, PyHSS, SCAT, jSS7, 5Greplay |
 | 📶 **Bluetooth** | `bluetooth` | BlueZ, WHAD, Mirage, Sniffle, Bluing, bdaddr, ice9-bluetooth, esp32 BT Classic sniffer |
@@ -233,7 +249,7 @@ Full image list with detailed tool inventory available at [rfswift.io/docs/guide
 
 ### 🔒 For Security-Conscious Environments
 
-- **🦭 Rootless with Podman**: No privileged daemon required — ideal for SOC-compliant and hardened systems
+- **🦭 Rootless with Podman**: No privileged daemon required - ideal for SOC-compliant and hardened systems
 - **🏔️ Air-gapped labs**: Pre-pull images, deploy without internet using Podman's daemonless architecture
 - **🛡️ Minimal attack surface**: No long-running daemon socket to protect
 

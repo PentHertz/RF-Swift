@@ -23,6 +23,14 @@ func appendCommaSeparated(field *string, value string) {
 	}
 }
 
+// ContainerGetRepoTag returns the configured official repository
+// ([general] repotag), e.g. "penthertz/rfswift_resolute".
+//
+//	out: string configured repository name
+func ContainerGetRepoTag() string {
+	return containerCfg.repotag
+}
+
 // ContainerSetX11 sets the X11 forward path for the container.
 // Pass an empty string to explicitly disable X11 forwarding.
 //

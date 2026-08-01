@@ -114,7 +114,14 @@ var runCmd = &cobra.Command{
 				vpnConfig = prof.VPN
 			}
 			if gpus == "" && prof.GPUs != "" {
-				gpus = prof.GPUs
+				// A profile asking for a GPU must not make the run fail on a
+				// host that has none: the daemon refuses DeviceRequests it
+				// cannot satisfy. An explicit --gpus is left untouched.
+				if rfdock.GPUAvailable() {
+					gpus = prof.GPUs
+				} else {
+					common.PrintInfoMessage(fmt.Sprintf("Profile '%s' requests GPU passthrough but no usable GPU was found, continuing without it (force it with --gpus %s)", prof.Name, prof.GPUs))
+				}
 			}
 			common.PrintInfoMessage(fmt.Sprintf("Using profile: %s (%s)", prof.Name, prof.Description))
 		}
@@ -241,6 +248,10 @@ var runCmd = &cobra.Command{
 			common.PrintErrorMessage(fmt.Errorf("container name is required (use -n flag)"))
 			return
 		}
+
+		// Warn once if the resolved image is an official RF-Swift image on an
+		// older Ubuntu base than the current one.
+		rfutils.NotifyIfOutdatedImage(image)
 
 		// On macOS with Lima engine, offer to attach USB devices before container creation
 		if runtime.GOOS == "darwin" && rfdock.GetEngine().Type() == rfdock.EngineLima && tui.IsInteractive() {
@@ -707,7 +718,7 @@ func registerContainerCommands() {
 	runCmd.Flags().Bool("desktop-ssl", false, "Enable SSL/TLS for desktop connections (auto-generates self-signed certificate)")
 	runCmd.Flags().String("vpn", "", "Enable VPN inside container (wireguard:./wg0.conf, openvpn:./client.ovpn, tailscale:--auth-key=tskey-xxx, netbird:--setup-key=xxx)")
 	runCmd.Flags().String("gpus", "", "GPU devices to add ('all' for all GPUs, or comma-separated IDs: '0,1')")
-	runCmd.Flags().String("profile", "", "Use a preset profile (e.g., sdr-full, wifi, pentest-full). See 'rfswift profile list'")
+	runCmd.Flags().String("profile", "", "Use a preset profile (e.g., sdr-full, wifi, network-nat, yolo). See 'rfswift profile list'")
 	runCmd.Flags().String("workspace", "", "Workspace path on host (default: ~/rfswift-workspace/<name>/)")
 	runCmd.Flags().Bool("no-workspace", false, "Disable automatic workspace mounting")
 	runCmd.Flags().Bool("cwd", false, "Mount current working directory as workspace")

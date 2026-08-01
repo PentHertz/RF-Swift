@@ -1,0 +1,159 @@
+# Go module audit: known CVEs + supply-chain (malicious package) checks.
+#
+# Runs on every push/PR touching Go code, weekly on a schedule (so
+# advisories published AFTER a merge still surface without any code
+# change), on demand, and as a reusable gate invoked by release.yml
+# before any artifact is published.
+#
+# Supply-chain design notes:
+#   - Third-party GitHub Actions are kept to a minimum and pinned by
+#     full commit SHA (a tag like @v4 is mutable and can be repointed
+#     by a compromised maintainer account; a SHA cannot).
+#   - The scanners themselves (govulncheck, osv-scanner) are installed
+#     with `go install <module>@<version>`, which verifies every
+#     downloaded module against the Go checksum database
+#     (sum.golang.org) - the same transparency log that protects our
+#     regular dependencies. No curl-pipe-bash, no unverified release
+#     binaries.
+#   - `go mod verify` re-hashes the local module cache against go.sum,
+#     catching any module tampered with in transit or on disk.
+
+name: Modules audit
+
+on:
+  push:
+    branches: ["main", "v3.0.0-dev"]
+    paths:
+      - "go/**"
+      - ".github/workflows/modules-audit.yml"
+  pull_request:
+    branches: ["main", "v3.0.0-dev"]
+    paths:
+      - "go/**"
+      - ".github/workflows/modules-audit.yml"
+  schedule:
+    # Weekly (Monday 05:23 UTC). Catches CVEs and malicious-package
+    # advisories published against versions we already depend on.
+    - cron: "23 5 * * 1"
+  workflow_dispatch:
+  # Allows release.yml to run this workflow as a blocking gate.
+  workflow_call:
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    working-directory: go/rfswift
+
+jobs:
+  # ---- Module integrity + hygiene (fast, ~20s) ----------------------------
+  # Verifies that what we build is exactly what go.sum pins, that
+  # go.mod/go.sum have no drift, and that deprecated or unwanted
+  # modules cannot silently creep back into the dependency graph.
+  integrity:
+    name: module integrity
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+
+      - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+        with:
+          go-version-file: go/rfswift/go.mod
+          cache-dependency-path: go/rfswift/go.sum
+
+      - name: Download modules (checksum-DB verified)
+        # Every module fetched here is validated against go.sum AND the
+        # sum.golang.org transparency log (GONOSUMDB/GONOSUMCHECK are
+        # not set, so verification is on by default).
+        run: go mod download
+
+      - name: Verify module cache against go.sum
+        run: go mod verify
+
+      - name: Check go.mod/go.sum drift
+        # Fails if `go mod tidy` would change anything - i.e. someone
+        # edited dependencies without regenerating the lock state.
+        run: go mod tidy -diff
+
+      - name: Banned modules guard
+        # github.com/docker/docker is deprecated since Docker v29 and
+        # no longer receives CVE fixes - RF-Swift migrated to
+        # github.com/moby/moby/{client,api}. The bare github.com/moby/moby
+        # root module is the same dead codebase under another name (its
+        # version counter is frozen at v28.x+incompatible; v29 moved to
+        # the non-importable github.com/moby/moby/v2). Fail hard if any
+        # of them reappears in the graph, including transitively.
+        # The trailing space in each pattern keeps the supported
+        # submodules (github.com/moby/moby/client, .../api) allowed.
+        run: |
+          BANNED='^(github.com/docker/docker|github.com/moby/moby|github.com/moby/moby/v2) '
+          if go list -m all | grep -E "$BANNED"; then
+            echo "::error::Banned/deprecated module found in the dependency graph (see lines above)."
+            echo "::error::Use github.com/moby/moby/client and github.com/moby/moby/api instead."
+            exit 1
+          fi
+          echo "OK: no banned modules in the dependency graph."
+
+  # ---- Known vulnerabilities (CVEs), reachability-aware --------------------
+  # govulncheck uses the official Go vulnerability database and only
+  # reports vulnerabilities whose vulnerable symbols are actually
+  # reachable from our code - so a failure here is a real, actionable
+  # CVE exposure, not noise from an unused transitive dependency.
+  govulncheck:
+    name: govulncheck (CVEs)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+
+      - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+        with:
+          go-version-file: go/rfswift/go.mod
+          cache-dependency-path: go/rfswift/go.sum
+
+      - name: Install govulncheck (sumdb-verified)
+        run: go install golang.org/x/vuln/cmd/govulncheck@v1.3.0
+
+      - name: Scan for reachable known vulnerabilities
+        run: govulncheck ./...
+
+  # ---- OSV scan: CVEs + malicious packages (backdoor guard) ---------------
+  # osv-scanner queries OSV.dev, which aggregates the Go vuln DB,
+  # GitHub Security Advisories AND the OpenSSF malicious-packages
+  # database (MAL-* advisories). The MAL-* coverage is what catches
+  # supply-chain attacks: typosquats, hijacked maintainer releases,
+  # and packages with known backdoors - even when no CVE exists.
+  osv-scan:
+    name: osv-scanner (CVEs + malicious packages)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+
+      - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+        with:
+          go-version-file: go/rfswift/go.mod
+          cache-dependency-path: go/rfswift/go.sum
+
+      - name: Install osv-scanner (sumdb-verified)
+        run: go install github.com/google/osv-scanner/v2/cmd/osv-scanner@v2.3.8
+
+      - name: Scan dependency graph against OSV.dev
+        # Non-zero exit on any finding fails the job (and therefore
+        # blocks the release gate in release.yml).
+        run: osv-scanner scan source -L go.mod
+
+  # ---- PR-time dependency review -------------------------------------------
+  # Inspects the dependency diff of a pull request and fails if the PR
+  # *introduces* a vulnerable or known-malicious package, with the
+  # advisory shown inline. First line of defense before anything lands
+  # on main. (GitHub-owned action, SHA-pinned; PR context only.)
+  dependency-review:
+    name: dependency review (PR diff)
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+
+      - uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
+        with:
+          fail-on-severity: low

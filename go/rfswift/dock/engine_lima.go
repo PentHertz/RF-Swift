@@ -15,7 +15,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/docker/docker/client"
+	"github.com/moby/moby/client"
 	common "penthertz/rfswift/common"
 	rfutils "penthertz/rfswift/rfutils"
 )
@@ -53,13 +53,30 @@ func (e *LimaEngine) getInstance() string {
 	return e.instance
 }
 
-// IsAvailable checks if Lima and QEMU are installed.
+// isGPU reports whether this engine targets the GPU (krunkit) VM variant,
+// selected via --gpu (which sets RFSWIFT_LIMA_INSTANCE=rfswift-gpu) or any
+// instance name ending in "-gpu". The GPU variant uses the krunkit/libkrun
+// backend (Vulkan via Venus/MoltenVK) and cannot do USB passthrough.
+func (e *LimaEngine) isGPU() bool {
+	return strings.HasSuffix(e.getInstance(), "-gpu")
+}
+
+// IsAvailable checks that Lima and the backend for this variant are installed:
+// QEMU for the default USB VM, or krunkit for the GPU VM.
 func (e *LimaEngine) IsAvailable() bool {
 	if runtime.GOOS != "darwin" {
 		return false
 	}
 	if !rfutils.IsLimaInstalled() {
 		return false
+	}
+	if e.isGPU() {
+		// GPU variant runs on the krunkit (libkrun) backend, not QEMU.
+		if !rfutils.IsKrunkitInstalled() {
+			common.PrintWarningMessage("GPU Lima VM requested but krunkit is missing (install with: brew tap slp/krunkit && brew install krunkit)")
+			return false
+		}
+		return true
 	}
 	if !rfutils.IsQEMUInstalled() {
 		common.PrintWarningMessage("Lima is installed but QEMU is missing (install with: brew install qemu)")
@@ -83,14 +100,14 @@ func (e *LimaEngine) IsServiceRunning() bool {
 	return pingClient(cli)
 }
 
-// GetClient returns a Docker SDK client connected to the Docker socket inside Lima.
+// GetClient returns a moby API client connected to the Docker socket inside Lima.
 func (e *LimaEngine) GetClient() (*client.Client, error) {
 	socketPath := e.GetSocketPath()
 	if socketPath == "" {
-		return nil, fmt.Errorf("Lima Docker socket not found — is the '%s' instance running?", e.getInstance())
+		return nil, fmt.Errorf("Lima Docker socket not found - is the '%s' instance running?", e.getInstance())
 	}
 
-	return client.NewClientWithOpts(
+	return client.New(
 		client.WithHost(socketPath),
 		client.WithAPIVersionNegotiation(),
 	)
@@ -187,7 +204,7 @@ func (e *LimaEngine) GetConfigV2Path(containerID string) (string, error) {
 	return fmt.Sprintf("/var/lib/docker/containers/%s/config.v2.json", containerID), nil
 }
 
-// SupportsDirectConfigEdit returns true — files are accessed via limactl shell.
+// SupportsDirectConfigEdit returns true - files are accessed via limactl shell.
 func (e *LimaEngine) SupportsDirectConfigEdit() bool {
 	return true
 }
@@ -231,10 +248,14 @@ func (e *LimaEngine) WriteFile(path string, data []byte) error {
 // createInstance creates the Lima VM from the embedded template or a bundled YAML.
 func (e *LimaEngine) createInstance() error {
 	instance := e.getInstance()
+	gpu := e.isGPU()
 
 	// Look for the Lima template in common locations
-	templatePath := findLimaTemplate()
+	templatePath := findLimaTemplate(gpu)
 	if templatePath == "" {
+		if gpu {
+			return fmt.Errorf("GPU Lima template not found (expected rfswift-gpu.yaml next to the rfswift binary, or ~/.config/rfswift/lima-gpu.yaml)")
+		}
 		// Use a minimal inline template via stdin
 		return createLimaInstanceInline(instance)
 	}
@@ -242,16 +263,22 @@ func (e *LimaEngine) createInstance() error {
 	return rfutils.CreateLimaInstance(templatePath, instance)
 }
 
-// findLimaTemplate looks for rfswift.yaml in known locations.
-// User config directories are checked first so that an updated template
-// (e.g., from the install script) takes priority over one bundled next to the binary.
-func findLimaTemplate() string {
+// findLimaTemplate looks for the Lima template in known locations. User config
+// directories are checked first so that an updated template (e.g., from the
+// install script) takes priority over one bundled next to the binary. When gpu
+// is true it looks for the krunkit GPU template instead of the default USB one.
+func findLimaTemplate(gpu bool) string {
 	home := os.Getenv("HOME")
+
+	userName, bundledName := "lima.yaml", "rfswift.yaml"
+	if gpu {
+		userName, bundledName = "lima-gpu.yaml", "rfswift-gpu.yaml"
+	}
 
 	// 1. Check user config directories first (these are updated by install scripts)
 	userCandidates := []string{
-		filepath.Join(home, ".config", "rfswift", "lima.yaml"),
-		filepath.Join(home, ".rfswift", "lima.yaml"),
+		filepath.Join(home, ".config", "rfswift", userName),
+		filepath.Join(home, ".rfswift", userName),
 	}
 	for _, p := range userCandidates {
 		if _, err := os.Stat(p); err == nil {
@@ -263,8 +290,8 @@ func findLimaTemplate() string {
 	execPath, _ := os.Executable()
 	if execPath != "" {
 		bundledCandidates := []string{
-			filepath.Join(filepath.Dir(execPath), "lima", "rfswift.yaml"),
-			filepath.Join(filepath.Dir(execPath), "..", "lima", "rfswift.yaml"),
+			filepath.Join(filepath.Dir(execPath), "lima", bundledName),
+			filepath.Join(filepath.Dir(execPath), "..", "lima", bundledName),
 		}
 		for _, p := range bundledCandidates {
 			if _, err := os.Stat(p); err == nil {
@@ -281,15 +308,18 @@ func findLimaTemplate() string {
 func createLimaInstanceInline(instance string) error {
 	template := `# RF Swift Lima VM - auto-generated
 vmType: qemu
-usb: true
+# Non-"none" display makes upstream Lima add qemu-xhci,id=usb-bus for USB
+# passthrough; "vnc" is headless with no macOS QEMU perf penalty.
+video:
+  display: "vnc"
 cpus: 4
 memory: "8GiB"
 disk: "100GiB"
 
 images:
-  - location: "https://cloud-images.ubuntu.com/releases/24.04/release/ubuntu-24.04-server-cloudimg-amd64.img"
+  - location: "https://cloud-images.ubuntu.com/releases/26.04/release/ubuntu-26.04-server-cloudimg-amd64.img"
     arch: "x86_64"
-  - location: "https://cloud-images.ubuntu.com/releases/24.04/release/ubuntu-24.04-server-cloudimg-arm64.img"
+  - location: "https://cloud-images.ubuntu.com/releases/26.04/release/ubuntu-26.04-server-cloudimg-arm64.img"
     arch: "aarch64"
 
 mounts:
@@ -339,7 +369,7 @@ provision:
       vhci-hcd
       MODULES
       [ -e /dev/vhci ] && chmod 0666 /dev/vhci || true
-      # Udev rules — permissive vendor-ID matching for broad device support
+      # Udev rules - permissive vendor-ID matching for broad device support
       cat > /etc/udev/rules.d/99-rfswift.rules << 'UDEV'
       # HackRF, Great Scott Gadgets, BladeRF, Airspy, LimeSDR, Ubertooth
       SUBSYSTEMS=="usb", ATTRS{idVendor}=="1d50", MODE="0666"
@@ -531,7 +561,7 @@ func (e *LimaEngine) ReconfigureInstance(templatePath string, force bool) error 
 	instance := e.getInstance()
 
 	if !limaInstanceExists(instance) {
-		return fmt.Errorf("Lima instance '%s' does not exist — run a container command first to create it, or use 'reset' to create from scratch", instance)
+		return fmt.Errorf("Lima instance '%s' does not exist - run a container command first to create it, or use 'reset' to create from scratch", instance)
 	}
 
 	wasRunning := rfutils.IsLimaInstanceRunning(instance)
@@ -637,7 +667,19 @@ func (e *LimaEngine) ResetInstance(templatePath string) error {
 // FindTemplate locates the Lima YAML template using the standard search paths.
 // Returns the path if found, or empty string.
 func (e *LimaEngine) FindTemplate() string {
-	return findLimaTemplate()
+	return findLimaTemplate(e.isGPU())
+}
+
+// UserTemplatePath returns the preferred user-config path for this engine's
+// template variant: ~/.config/rfswift/lima.yaml, or lima-gpu.yaml for the GPU VM.
+// This is where `rfswift engine lima set` writes so changes persist and take
+// precedence over the bundled template.
+func (e *LimaEngine) UserTemplatePath() string {
+	name := "lima.yaml"
+	if e.isGPU() {
+		name = "lima-gpu.yaml"
+	}
+	return filepath.Join(os.Getenv("HOME"), ".config", "rfswift", name)
 }
 
 // IsLimaEngineCandidate returns true if Lima should be considered as an engine

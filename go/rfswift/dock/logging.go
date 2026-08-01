@@ -397,7 +397,7 @@ func ContainerExecWithRecording(containerIdentifier string, workingDir string, r
 	defer cli.Close()
 
 	containerName := containerIdentifier
-	containerJSON, err := cli.ContainerInspect(ctx, containerIdentifier)
+	containerJSON, err := inspectContainer(ctx, cli, containerIdentifier)
 	if err == nil {
 		containerName = strings.TrimPrefix(containerJSON.Name, "/")
 	}

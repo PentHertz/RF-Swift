@@ -131,6 +131,7 @@ func UnbindAndDetachDevice(busID string) {
 //
 //	in(1): []USBDevice devices array of USB devices to bind and attach
 //	out: error
+//
 // TODO: find a way to blacklist some buses like the keyboard...
 func BindAndAttachAllDevices(devices []USBDevice) error {
 	for _, device := range devices {
@@ -172,6 +173,7 @@ func DetachUSBDevice(busID string) error {
 //
 //	in(1): []USBDevice devices array of USB devices to unbind and detach
 //	out: error
+//
 // TODO: find a way to blacklist some buses like the keyboard...
 func UnbindAndDetachAllDevices(devices []USBDevice) error {
 	for _, device := range devices {

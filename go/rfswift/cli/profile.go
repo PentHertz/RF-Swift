@@ -187,13 +187,18 @@ var profileInitCmd = &cobra.Command{
 Existing profiles are not overwritten unless --force is used.`,
 	Run: func(cmd *cobra.Command, args []string) {
 		force, _ := cmd.Flags().GetBool("force")
-		created, skipped := rfdock.InitDefaultProfiles(force)
+		created, skipped, stale := rfdock.InitDefaultProfiles(force)
 
 		if created > 0 {
 			common.PrintSuccessMessage(fmt.Sprintf("%d profile(s) created in %s", created, rfdock.ProfilesDirByPlatform()))
 		}
 		if skipped > 0 {
 			common.PrintInfoMessage(fmt.Sprintf("%d profile(s) already exist (use --force to overwrite)", skipped))
+		}
+		if len(stale) > 0 {
+			common.PrintWarningMessage(fmt.Sprintf(
+				"%d kept profile(s) differ from the current defaults: %s\nThey may point at image tags that no longer exist, or miss the capabilities and devices the defaults now set. Refresh with 'rfswift profile init --force' (this discards local edits).",
+				len(stale), strings.Join(stale, ", ")))
 		}
 		if created == 0 && skipped == 0 {
 			common.PrintInfoMessage("No profiles to create")
@@ -269,6 +274,18 @@ func profileFeatures(p rfdock.Profile) string {
 	}
 	if p.Realtime {
 		feats = append(feats, "realtime")
+	}
+	if p.GPUs != "" {
+		feats = append(feats, "gpu")
+	}
+	if p.Caps != "" {
+		feats = append(feats, "caps")
+	}
+	if strings.Contains(p.Devices, "/dev/net/tun") {
+		feats = append(feats, "tun")
+	}
+	if p.PortBindings != "" {
+		feats = append(feats, "ports")
 	}
 	if p.NoX11 {
 		feats = append(feats, "no-x11")

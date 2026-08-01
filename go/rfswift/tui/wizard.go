@@ -58,25 +58,25 @@ type ProfileOption struct {
 
 // RunWizardDefaults holds pre-existing CLI flag values to pre-populate the wizard.
 type RunWizardDefaults struct {
-	Image          string
-	Name           string
-	Bindings       string
-	Devices        string
-	Network        string
-	ExposedPorts   string
-	PortBindings   string
-	Caps           string
-	Cgroups        string
-	Desktop        bool
-	DesktopSSL     bool
-	NoX11          bool
-	Privileged     int
-	Realtime       bool
-	VPN            string
-	GPUs           string
-	Workspace      string          // "" = auto, "none" = disabled, path = custom
-	WorkspaceRoot  string          // default workspace root (for display in wizard)
-	Profiles       []ProfileOption // available profiles for wizard selection
+	Image         string
+	Name          string
+	Bindings      string
+	Devices       string
+	Network       string
+	ExposedPorts  string
+	PortBindings  string
+	Caps          string
+	Cgroups       string
+	Desktop       bool
+	DesktopSSL    bool
+	NoX11         bool
+	Privileged    int
+	Realtime      bool
+	VPN           string
+	GPUs          string
+	Workspace     string          // "" = auto, "none" = disabled, path = custom
+	WorkspaceRoot string          // default workspace root (for display in wizard)
+	Profiles      []ProfileOption // available profiles for wizard selection
 }
 
 // RunWizard launches an interactive form to configure a new container.
@@ -1048,7 +1048,7 @@ func ProfileCreateWizard(images []string, existingNets []string) (*ProfileCreate
 	// Step 3: Image selection
 	if len(images) == 0 {
 		err = newInput().
-			Title("Image name (e.g., penthertz/rfswift_noble:sdr_full)").
+			Title("Image name (e.g., penthertz/rfswift_resolute:sdr_full)").
 			Value(&result.Image).
 			Run()
 		if err != nil {
@@ -1072,7 +1072,7 @@ func ProfileCreateWizard(images []string, existingNets []string) (*ProfileCreate
 		if result.Image == "__manual__" {
 			result.Image = ""
 			err = newInput().
-				Title("Image name (e.g., penthertz/rfswift_noble:sdr_full)").
+				Title("Image name (e.g., penthertz/rfswift_resolute:sdr_full)").
 				Value(&result.Image).
 				Run()
 			if err != nil {

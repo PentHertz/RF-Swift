@@ -11,11 +11,12 @@ import (
 	"encoding/binary"
 	"fmt"
 	"net"
+	"net/netip"
 	"os/exec"
 	"strings"
 
-	dockernetwork "github.com/docker/docker/api/types/network"
-	"github.com/docker/docker/client"
+	dockernetwork "github.com/moby/moby/api/types/network"
+	"github.com/moby/moby/client"
 
 	common "penthertz/rfswift/common"
 	"penthertz/rfswift/tui"
@@ -52,9 +53,9 @@ func createNATNetwork(ctx context.Context, cli *client.Client, containerName str
 	existing, err := findNATNetwork(ctx, cli, name)
 	if err == nil && existing != "" {
 		// Return existing network info
-		netInspect, inspErr := cli.NetworkInspect(ctx, existing, dockernetwork.InspectOptions{})
-		if inspErr == nil && len(netInspect.IPAM.Config) > 0 {
-			return name, netInspect.IPAM.Config[0].Subnet, nil
+		netInspect, inspErr := cli.NetworkInspect(ctx, existing, client.NetworkInspectOptions{})
+		if inspErr == nil && len(netInspect.Network.IPAM.Config) > 0 {
+			return name, subnetString(netInspect.Network.IPAM.Config[0].Subnet), nil
 		}
 		return name, "", nil
 	}
@@ -83,19 +84,11 @@ func createNATNetwork(ctx context.Context, cli *client.Client, containerName str
 		"org.rfswift.container": containerName,
 	}
 
-	resp, err := cli.NetworkCreate(ctx, name, dockernetwork.CreateOptions{
+	resp, err := cli.NetworkCreate(ctx, name, client.NetworkCreateOptions{
 		Driver:     "bridge",
 		EnableIPv6: boolPtr(false),
 		Labels:     labels,
-		IPAM: &dockernetwork.IPAM{
-			Driver: "default",
-			Config: []dockernetwork.IPAMConfig{
-				{
-					Subnet:  subnet,
-					Gateway: gateway,
-				},
-			},
-		},
+		IPAM:       natIPAM(subnet, gateway),
 	})
 	if err != nil {
 		// Fallback to Podman CLI if the compat API fails
@@ -126,7 +119,7 @@ func removeNATNetwork(ctx context.Context, cli *client.Client, containerName str
 		return // No NAT network for this container
 	}
 
-	if err := cli.NetworkRemove(ctx, netID); err != nil {
+	if _, err := cli.NetworkRemove(ctx, netID, client.NetworkRemoveOptions{}); err != nil {
 		// Fallback to Podman CLI
 		if GetEngine().Type() == EnginePodman {
 			if podErr := removeNATNetworkPodman(name); podErr != nil {
@@ -149,7 +142,7 @@ func removeNATNetworkByFullName(ctx context.Context, cli *client.Client, fullNam
 		return
 	}
 
-	if err := cli.NetworkRemove(ctx, netID); err != nil {
+	if _, err := cli.NetworkRemove(ctx, netID, client.NetworkRemoveOptions{}); err != nil {
 		if GetEngine().Type() == EnginePodman {
 			if podErr := removeNATNetworkPodman(fullName); podErr != nil {
 				common.PrintWarningMessage(fmt.Sprintf("Failed to remove NAT network '%s': %v", fullName, podErr))
@@ -167,14 +160,14 @@ func removeNATNetworkByFullName(ctx context.Context, cli *client.Client, fullNam
 // removeNATNetworkByLabel removes the NAT network associated with a container,
 // looking up by the org.rfswift.container label instead of name convention.
 func removeNATNetworkByLabel(ctx context.Context, cli *client.Client, containerName string) {
-	networks, err := cli.NetworkList(ctx, dockernetwork.ListOptions{})
+	networksRes, err := cli.NetworkList(ctx, client.NetworkListOptions{})
 	if err != nil {
 		return
 	}
 
-	for _, n := range networks {
+	for _, n := range networksRes.Items {
 		if n.Labels[NATLabel] == "true" && n.Labels["org.rfswift.container"] == containerName {
-			if err := cli.NetworkRemove(ctx, n.ID); err != nil {
+			if _, err := cli.NetworkRemove(ctx, n.ID, client.NetworkRemoveOptions{}); err != nil {
 				common.PrintWarningMessage(fmt.Sprintf("Failed to remove NAT network '%s': %v", n.Name, err))
 			} else {
 				common.PrintSuccessMessage(fmt.Sprintf("Removed NAT network '%s'", n.Name))
@@ -185,11 +178,11 @@ func removeNATNetworkByLabel(ctx context.Context, cli *client.Client, containerN
 
 // findNATNetwork looks up a network by name and returns its ID if found.
 func findNATNetwork(ctx context.Context, cli *client.Client, name string) (string, error) {
-	netInspect, err := cli.NetworkInspect(ctx, name, dockernetwork.InspectOptions{})
+	netInspect, err := cli.NetworkInspect(ctx, name, client.NetworkInspectOptions{})
 	if err != nil {
 		return "", err
 	}
-	return netInspect.ID, nil
+	return netInspect.Network.ID, nil
 }
 
 // allocateSubnet finds the next free /28 subnet within the RF Swift NAT range
@@ -226,16 +219,16 @@ func allocateSubnet(ctx context.Context, cli *client.Client) (subnet string, gat
 
 // collectUsedSubnets returns all CIDR strings from existing Docker networks.
 func collectUsedSubnets(ctx context.Context, cli *client.Client) ([]string, error) {
-	networks, err := cli.NetworkList(ctx, dockernetwork.ListOptions{})
+	networksRes, err := cli.NetworkList(ctx, client.NetworkListOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("failed to list networks: %v", err)
 	}
 
 	var subnets []string
-	for _, n := range networks {
+	for _, n := range networksRes.Items {
 		for _, config := range n.IPAM.Config {
-			if config.Subnet != "" {
-				subnets = append(subnets, config.Subnet)
+			if config.Subnet.IsValid() {
+				subnets = append(subnets, config.Subnet.String())
 			}
 		}
 	}
@@ -281,6 +274,32 @@ func boolPtr(b bool) *bool {
 	return &b
 }
 
+// subnetString renders a netip.Prefix as a CIDR string, mapping the zero
+// value to an empty string.
+func subnetString(p netip.Prefix) string {
+	if !p.IsValid() {
+		return ""
+	}
+	return p.String()
+}
+
+// natIPAM builds the IPAM configuration for a NAT network from string CIDR
+// and gateway values. Invalid values yield an IPAM without address config,
+// letting the engine auto-allocate.
+func natIPAM(subnet string, gateway string) *dockernetwork.IPAM {
+	ipam := &dockernetwork.IPAM{Driver: "default"}
+	prefix, err := netip.ParsePrefix(subnet)
+	if err != nil {
+		return ipam
+	}
+	cfg := dockernetwork.IPAMConfig{Subnet: prefix}
+	if gw, err := netip.ParseAddr(gateway); err == nil {
+		cfg.Gateway = gw
+	}
+	ipam.Config = []dockernetwork.IPAMConfig{cfg}
+	return ipam
+}
+
 // ---------------------------------------------------------------------------
 // Public API for CLI commands
 // ---------------------------------------------------------------------------
@@ -306,13 +325,13 @@ func ListNATNetworks() ([]NetworkInfo, error) {
 	}
 	defer cli.Close()
 
-	networks, err := cli.NetworkList(ctx, dockernetwork.ListOptions{})
+	networksRes, err := cli.NetworkList(ctx, client.NetworkListOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("failed to list networks: %v", err)
 	}
 
 	var result []NetworkInfo
-	for _, n := range networks {
+	for _, n := range networksRes.Items {
 		if n.Labels[NATLabel] != "true" {
 			continue
 		}
@@ -329,8 +348,8 @@ func ListNATNetworks() ([]NetworkInfo, error) {
 			Containers: connected,
 		}
 		if len(n.IPAM.Config) > 0 {
-			info.Subnet = n.IPAM.Config[0].Subnet
-			info.Gateway = n.IPAM.Config[0].Gateway
+			info.Subnet = subnetString(n.IPAM.Config[0].Subnet)
+			info.Gateway = hostIPString(n.IPAM.Config[0].Gateway)
 		}
 		result = append(result, info)
 	}
@@ -397,7 +416,7 @@ func RemoveNATNetworkByName(name string) {
 		return
 	}
 
-	if err := cli.NetworkRemove(ctx, netID); err != nil {
+	if _, err := cli.NetworkRemove(ctx, netID, client.NetworkRemoveOptions{}); err != nil {
 		common.PrintErrorMessage(fmt.Errorf("failed to remove network: %v", err))
 	} else {
 		common.PrintSuccessMessage(fmt.Sprintf("Removed NAT network '%s'", name))
@@ -414,14 +433,14 @@ func CleanupOrphanedNATNetworks() {
 	}
 	defer cli.Close()
 
-	networks, err := cli.NetworkList(ctx, dockernetwork.ListOptions{})
+	networksRes, err := cli.NetworkList(ctx, client.NetworkListOptions{})
 	if err != nil {
 		common.PrintErrorMessage(fmt.Errorf("failed to list networks: %v", err))
 		return
 	}
 
 	removed := 0
-	for _, n := range networks {
+	for _, n := range networksRes.Items {
 		if n.Labels[NATLabel] != "true" {
 			continue
 		}
@@ -435,7 +454,7 @@ func CleanupOrphanedNATNetworks() {
 		_, err := findContainerByName(ctx, cli, containerName)
 		if err != nil {
 			// Container gone — network is orphaned
-			if err := cli.NetworkRemove(ctx, n.ID); err != nil {
+			if _, err := cli.NetworkRemove(ctx, n.ID, client.NetworkRemoveOptions{}); err != nil {
 				common.PrintWarningMessage(fmt.Sprintf("Failed to remove orphaned network '%s': %v", n.Name, err))
 			} else {
 				common.PrintSuccessMessage(fmt.Sprintf("Removed orphaned NAT network '%s' (container '%s' no longer exists)", n.Name, containerName))
@@ -453,11 +472,11 @@ func CleanupOrphanedNATNetworks() {
 
 // findContainerByName checks if a container with the given name exists.
 func findContainerByName(ctx context.Context, cli *client.Client, name string) (string, error) {
-	containerJSON, err := cli.ContainerInspect(ctx, name)
+	containerJSON, err := inspectContainer(ctx, cli, name)
 	if err != nil {
 		// Also try with / prefix
 		if !strings.HasPrefix(name, "/") {
-			containerJSON, err = cli.ContainerInspect(ctx, "/"+name)
+			containerJSON, err = inspectContainer(ctx, cli, "/"+name)
 		}
 		if err != nil {
 			return "", err
@@ -567,10 +586,10 @@ func createOrJoinNATNetwork(ctx context.Context, cli *client.Client, containerNa
 	existing, err := findNATNetwork(ctx, cli, fullName)
 	if err == nil && existing != "" {
 		// Join existing network
-		netInspect, inspErr := cli.NetworkInspect(ctx, existing, dockernetwork.InspectOptions{})
+		netInspect, inspErr := cli.NetworkInspect(ctx, existing, client.NetworkInspectOptions{})
 		subnet := ""
-		if inspErr == nil && len(netInspect.IPAM.Config) > 0 {
-			subnet = netInspect.IPAM.Config[0].Subnet
+		if inspErr == nil && len(netInspect.Network.IPAM.Config) > 0 {
+			subnet = subnetString(netInspect.Network.IPAM.Config[0].Subnet)
 		}
 		common.PrintInfoMessage(fmt.Sprintf("Joining existing NAT network '%s' (subnet: %s)", fullName, subnet))
 		return fullName, subnet, nil
@@ -605,19 +624,11 @@ func createNamedNATNetwork(ctx context.Context, cli *client.Client, fullName str
 		"org.rfswift.shared":    "true",
 	}
 
-	resp, err := cli.NetworkCreate(ctx, fullName, dockernetwork.CreateOptions{
+	resp, err := cli.NetworkCreate(ctx, fullName, client.NetworkCreateOptions{
 		Driver:     "bridge",
 		EnableIPv6: boolPtr(false),
 		Labels:     labels,
-		IPAM: &dockernetwork.IPAM{
-			Driver: "default",
-			Config: []dockernetwork.IPAMConfig{
-				{
-					Subnet:  subnet,
-					Gateway: gateway,
-				},
-			},
-		},
+		IPAM:       natIPAM(subnet, gateway),
 	})
 	if err != nil {
 		// Fallback to Podman CLI
@@ -666,7 +677,7 @@ func CreateNATNetworkCLI(name string, subnet string) {
 			return
 		}
 
-		resp, createErr := cli.NetworkCreate(ctx, fullName, dockernetwork.CreateOptions{
+		resp, createErr := cli.NetworkCreate(ctx, fullName, client.NetworkCreateOptions{
 			Driver:     "bridge",
 			EnableIPv6: boolPtr(false),
 			Labels: map[string]string{
@@ -674,15 +685,7 @@ func CreateNATNetworkCLI(name string, subnet string) {
 				"org.container.project": "rfswift",
 				"org.rfswift.shared":    "true",
 			},
-			IPAM: &dockernetwork.IPAM{
-				Driver: "default",
-				Config: []dockernetwork.IPAMConfig{
-					{
-						Subnet:  subnet,
-						Gateway: gateway,
-					},
-				},
-			},
+			IPAM: natIPAM(subnet, gateway),
 		})
 		if createErr != nil {
 			common.PrintErrorMessage(fmt.Errorf("failed to create network: %v", createErr))
@@ -714,20 +717,20 @@ func gatewayFromSubnet(cidr string) (string, error) {
 
 // isSharedNATNetwork checks if a NAT network is shared (not auto-created per container).
 func isSharedNATNetwork(ctx context.Context, cli *client.Client, networkName string) bool {
-	netInspect, err := cli.NetworkInspect(ctx, networkName, dockernetwork.InspectOptions{})
+	netInspect, err := cli.NetworkInspect(ctx, networkName, client.NetworkInspectOptions{})
 	if err != nil {
 		return false
 	}
-	return netInspect.Labels["org.rfswift.shared"] == "true"
+	return netInspect.Network.Labels["org.rfswift.shared"] == "true"
 }
 
 // countContainersOnNetwork returns how many containers are connected to a network.
 func countContainersOnNetwork(ctx context.Context, cli *client.Client, networkName string) int {
-	netInspect, err := cli.NetworkInspect(ctx, networkName, dockernetwork.InspectOptions{})
+	netInspect, err := cli.NetworkInspect(ctx, networkName, client.NetworkInspectOptions{})
 	if err != nil {
 		return 0
 	}
-	return len(netInspect.Containers)
+	return len(netInspect.Network.Containers)
 }
 
 // ListNATNetworkNames returns the names of all NAT networks (for wizard picker).

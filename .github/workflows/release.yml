@@ -9,25 +9,58 @@ permissions:
   contents: write
 
 jobs:
+  # ---- Module audit gate ---------------------------------------------------
+  # Runs the full modules audit (go.sum integrity, banned/deprecated
+  # modules, govulncheck CVE scan, OSV malicious-package scan) before
+  # anything is built or published. A release tag cannot ship if any
+  # dependency is vulnerable, tampered with, or known-malicious.
+  audit:
+    name: Module audit gate
+    permissions:
+      contents: read
+    uses: ./.github/workflows/modules-audit.yml
+
   generate-artifacts:
     name: Generate cross-platform builds
+    needs: audit
     runs-on: ubuntu-latest
+    permissions:
+      contents: write      # create the GitHub release (goreleaser)
+      id-token: write      # Sigstore OIDC token for build provenance
+      attestations: write  # write the artifact attestation
     steps:
       - name: Checkout
-        uses: actions/checkout@v2
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           fetch-depth: 0
 
       - name: Set up Go
-        uses: actions/setup-go@v4
+        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
         with:
-          go-version: 1.26.1
+          go-version-file: go/rfswift/go.mod
+          cache-dependency-path: go/rfswift/go.sum
+
+      # Gate the release on the unit tests - a tag cannot ship if tests fail.
+      - name: Run unit tests
+        run: |
+          cd go/rfswift
+          go test -race ./...
 
       - name: Run GoReleaser
-        uses: goreleaser/goreleaser-action@v6
+        uses: goreleaser/goreleaser-action@e435ccd777264be153ace6237001ef4d979d3a7a # v6.4.0
         with:
           distribution: goreleaser
           version: "~> v2"
           args: release --clean --config .goreleaser.yml
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # Sigstore-backed build provenance for the release artifacts. Users verify
+      # with:  gh attestation verify <file> --repo PentHertz/RF-Swift
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
+        with:
+          subject-path: |
+            dist/*.tar.gz
+            dist/*.zip
+            dist/*checksums.txt
