@@ -1,6 +1,6 @@
 module penthertz/rfswift
 
-go 1.26.5
+go 1.27.0
 
 require (
 	github.com/FlUxIuS/pulseaudio_2 v0.0.0-20250608163549-43fae16119df
