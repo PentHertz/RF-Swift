@@ -1204,7 +1204,7 @@ install_docker_compose_steamdeck() {
 install_buildx() {
     arch=$(uname -m)
     os=$(uname -s | tr '[:upper:]' '[:lower:]')
-    version="v0.35.0"
+    version="v0.36.1"
 
     case "$arch" in
         x86_64|amd64)  arch="amd64";;
@@ -1238,7 +1238,7 @@ install_buildx() {
 install_docker_compose() {
     arch=$(uname -m)
     os=$(uname -s | tr '[:upper:]' '[:lower:]')
-    version="v5.0.2"
+    version="v5.5.0"
 
     case "$arch" in
         x86_64|amd64)  arch="x86_64";;
