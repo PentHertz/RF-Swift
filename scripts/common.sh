@@ -1702,7 +1702,7 @@ install_go() {
     arch=$(uname -m)
     os=$(uname -s | tr '[:upper:]' '[:lower:]')
     prog=""
-    version="1.26.5"
+    version="1.27.0"
 
     case "$arch" in
         x86_64|amd64)  arch="amd64";;
