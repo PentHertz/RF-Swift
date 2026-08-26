@@ -73,3 +73,6 @@ jobs:
         # gates on genuine breakage; portability warnings are pre-existing and
         # out of scope here.
         run: shellcheck --severity=error get_rfswift.sh scripts/*.sh
+
+      - name: Test installer archive and development-channel guards
+        run: ./scripts/test-installer.sh

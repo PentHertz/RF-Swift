@@ -5,9 +5,9 @@ name: Go
 
 on:
   push:
-    branches: [ "main", "v3.0.0-dev" ]
+    branches: [ "main", "v4.0.0-dev" ]
   pull_request:
-    branches: [ "main", "v3.0.0-dev" ]
+    branches: [ "main", "v4.0.0-dev" ]
 
 permissions:
   contents: read
@@ -31,7 +31,19 @@ jobs:
       run: |
         cd go/rfswift
         go build -v ./...
+        make all
+    - name: Upload development CLI binaries
+      uses: actions/upload-artifact@v4
+      with:
+        name: rfswift-cli-${{ github.sha }}
+        path: go/rfswift/bin/rfswift_*
+        if-no-files-found: error
     - name: Test
       run: |
+        ./scripts/test-remote.sh unit
         cd go/rfswift
         go test -v -race ./...
+    - name: Remote security fuzz smoke test
+      env:
+        RFSWIFT_FUZZ_TIME: 10s
+      run: ./scripts/test-remote.sh fuzz

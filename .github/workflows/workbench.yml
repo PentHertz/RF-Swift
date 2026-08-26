@@ -1,0 +1,179 @@
+name: Build Workbench GUI
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths: ["go/rfswift/**", "go/rfswift-workbench/**", ".github/workflows/workbench.yml"]
+  push:
+    branches: ["main", "v4.0.0-dev"]
+    tags: ["v*"]
+    paths: ["go/rfswift/**", "go/rfswift-workbench/**", ".github/workflows/workbench.yml"]
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    working-directory: go/rfswift-workbench
+
+jobs:
+  security:
+    name: Security regression + fuzz smoke
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go/rfswift-workbench/go.mod
+          cache-dependency-path: |
+            go/rfswift-workbench/go.sum
+            go/rfswift/go.sum
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Security tests and fuzz smoke corpus
+        env:
+          FUZZ_TIME: 10s
+        run: scripts/security-test.sh
+
+  linux:
+    name: Linux (amd64 native + AppImage)
+    needs: security
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go/rfswift-workbench/go.mod
+          cache-dependency-path: go/rfswift-workbench/go.sum
+      - name: System dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev imagemagick
+      - name: Install Wails
+        run: go install github.com/wailsapp/wails/v2/cmd/wails@v2.15.0
+      - name: Test linked backend and frontend
+        run: |
+          go test ./...
+          go vet ./...
+          perl -0777 -ne 'print $1 if m{<script>(.*?)</script>}s' frontend/dist/index.html | node --check
+      - name: Build and package native Linux binary
+        run: |
+          make linux_amd64
+          mkdir -p build/package
+          cp build/bin/rfswift-workbench_linux_amd64 build/package/rfswift-workbench
+          cp ../../README.md ../../LICENSE build/package/
+          tar -C build/package -czf build/bin/rfswift-workbench_Linux_x86_64.tar.gz .
+      - name: Install pinned AppImage packaging tools
+        env:
+          LINUXDEPLOY_SHA256: c20cd71e3a4e3b80c3483cef793cda3f4e990aca14014d23c544ca3ce1270b4d
+          GTK_PLUGIN_SHA256: b0f4cbc684a0103a9651f0955b635eaea0096b3a66c0f5a2c2aa337960375171
+          APPIMAGE_RUNTIME_SHA256: cb9952efc08ea5c0d9ba6f19eef53aa412027dd8cf9a297ea7a79240f189d116
+        run: |
+          mkdir -p build/appimage-tools
+          curl -fsSL --retry 3 -o build/appimage-tools/linuxdeploy https://github.com/linuxdeploy/linuxdeploy/releases/download/1-alpha-20251107-1/linuxdeploy-x86_64.AppImage
+          curl -fsSL --retry 3 -o build/appimage-tools/linuxdeploy-plugin-gtk.sh https://raw.githubusercontent.com/linuxdeploy/linuxdeploy-plugin-gtk/7a3fbc31a9e5075073ff8790f26effbac5f84453/linuxdeploy-plugin-gtk.sh
+          curl -fsSL --retry 3 -o build/appimage-tools/runtime-x86_64 https://github.com/AppImage/type2-runtime/releases/download/continuous/runtime-x86_64
+          echo "$LINUXDEPLOY_SHA256  build/appimage-tools/linuxdeploy" | sha256sum -c -
+          echo "$GTK_PLUGIN_SHA256  build/appimage-tools/linuxdeploy-plugin-gtk.sh" | sha256sum -c -
+          echo "$APPIMAGE_RUNTIME_SHA256  build/appimage-tools/runtime-x86_64" | sha256sum -c -
+          chmod 0755 build/appimage-tools/linuxdeploy build/appimage-tools/linuxdeploy-plugin-gtk.sh
+      - name: Build portable AppImage
+        env:
+          APPIMAGE_EXTRACT_AND_RUN: 1
+          LDAI_RUNTIME_FILE: build/appimage-tools/runtime-x86_64
+        run: |
+          export PATH="$PWD/build/appimage-tools:$PATH"
+          make appimage
+          appimage=$(find . -maxdepth 2 -type f -name '*.AppImage' ! -path './build/appimage-tools/*' -print -quit)
+          test -n "$appimage"
+          mv "$appimage" build/bin/rfswift-workbench_Linux_x86_64.AppImage
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rfswift-workbench-linux-amd64
+          path: |
+            go/rfswift-workbench/build/bin/rfswift-workbench_Linux_x86_64.tar.gz
+            go/rfswift-workbench/build/bin/rfswift-workbench_Linux_x86_64.AppImage
+
+  windows:
+    name: Windows (amd64, arm64)
+    needs: security
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go/rfswift-workbench/go.mod
+          cache-dependency-path: go/rfswift-workbench/go.sum
+      - name: Install Wails
+        run: go install github.com/wailsapp/wails/v2/cmd/wails@v2.15.0
+      - name: Build Windows
+        shell: bash
+        run: |
+          make windows_amd64
+          make windows_arm64
+      - name: Package Windows binaries
+        shell: pwsh
+        run: |
+          Compress-Archive build/bin/rfswift-workbench_windows_amd64.exe build/bin/rfswift-workbench_Windows_x86_64.zip
+          Compress-Archive build/bin/rfswift-workbench_windows_arm64.exe build/bin/rfswift-workbench_Windows_arm64.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rfswift-workbench-windows
+          path: go/rfswift-workbench/build/bin/rfswift-workbench_Windows_*.zip
+
+  macos:
+    name: macOS (universal app)
+    needs: security
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go/rfswift-workbench/go.mod
+          cache-dependency-path: go/rfswift-workbench/go.sum
+      - name: Install Wails
+        run: go install github.com/wailsapp/wails/v2/cmd/wails@v2.15.0
+      - name: Build and package macOS universal app
+        run: |
+          make darwin_universal
+          cd build/bin
+          ditto -c -k --sequesterRsrc --keepParent rfswift-workbench.app rfswift-workbench_Darwin_universal.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rfswift-workbench-macos
+          path: go/rfswift-workbench/build/bin/rfswift-workbench_Darwin_universal.zip
+
+  publish-release:
+    name: Publish Workbench release assets
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [linux, windows, macos]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: rfswift-workbench-*
+          path: release-assets
+          merge-multiple: true
+      - name: Generate checksums
+        run: |
+          cd release-assets
+          sha256sum rfswift-workbench_* > "RF-Swift_${GITHUB_REF_NAME#v}_workbench_checksums.txt"
+      - name: Attest Workbench provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: release-assets/rfswift-workbench_*
+      - name: Wait for core release and upload
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          for attempt in $(seq 1 40); do
+            gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 && break
+            [ "$attempt" -lt 40 ] || { echo "Core release was not created" >&2; exit 1; }
+            sleep 15
+          done
+          gh release upload "$GITHUB_REF_NAME" release-assets/* --clobber

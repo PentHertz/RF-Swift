@@ -8,6 +8,12 @@
 
 version: 2
 
+release:
+  # GoReleaser evaluates this from the semantic version: tags containing a
+  # prerelease component (for example v4.0.0-dev) become GitHub prereleases,
+  # while v4.0.0 remains a normal release.
+  prerelease: auto
+
 before:
   hooks:
     # You may remove this if you don't use go modules.
