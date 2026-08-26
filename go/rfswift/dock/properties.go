@@ -1589,7 +1589,7 @@ func recreateContainerWithProperties(ctx context.Context, cli *client.Client, co
 		shell = containerJSON.Path
 	}
 	if shell == "" {
-		shell = "/bin/bash"
+		shell = "/bin/zsh"
 	}
 
 	containerConfig := &container.Config{

@@ -54,6 +54,27 @@ func SelectOne(title string, options []string) (string, error) {
 	return result, err
 }
 
+// SelectOneFilterable presents a select with the search field focused from the
+// start. It is intended for catalogs where scrolling alone is cumbersome.
+func SelectOneFilterable(title string, options []string) (string, error) {
+	if !IsInteractive() || len(options) == 0 {
+		return "", fmt.Errorf("no interactive terminal or empty options")
+	}
+	opts := make([]huh.Option[string], len(options))
+	for i, option := range options {
+		opts[i] = huh.NewOption(option, option)
+	}
+	var result string
+	err := huh.NewSelect[string]().
+		Title(title).
+		Description("Type to filter environments").
+		Options(opts...).
+		Filtering(true).
+		Value(&result).
+		Run()
+	return result, err
+}
+
 // PromptInput prompts the user for a text value with a placeholder default.
 func PromptInput(title string, placeholder string) (string, error) {
 	if !IsInteractive() {

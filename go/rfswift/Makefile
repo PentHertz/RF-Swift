@@ -5,8 +5,10 @@ BIN := rfswift
 # Define the output directories
 OUT_DIR := bin
 
-# Define the Go build command
-GO_BUILD := go build
+# Reproducible release-oriented defaults: omit local source paths and Go's
+# symbol/debug tables. This materially reduces every distributed binary while
+# retaining module provenance (`go version -m`).
+GO_BUILD := go build -trimpath -ldflags="-s -w"
 
 # Define a static build tag to ensure static linking
 STATIC_BUILD_TAG := netgo
@@ -62,4 +64,3 @@ clean:
 
 # Create the output directory if it doesn't exist
 $(shell mkdir -p $(OUT_DIR))
-

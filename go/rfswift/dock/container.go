@@ -484,23 +484,12 @@ func ContainerExec(containerIdentifier string, WorkingDir string) {
 		printVPNInfo()
 	}
 
-	// Determine shell to use:
-	// Priority: 1) explicitly set via CLI (-e flag) if different from default
-	//           2) container's original shell (from containerJSON.Path)
-	//           3) fallback to /bin/bash
+	// Use the requested interactive shell. Do not infer it from
+	// containerJSON.Path: that is the container startup executable and may be an
+	// entrypoint wrapper rather than a shell.
 	shellToUse := containerCfg.shell
-
-	// If shell is empty or default, prefer container's configured shell
-	if shellToUse == "" || shellToUse == "/bin/bash" {
-		containerShell := containerJSON.Path
-		if containerShell != "" {
-			shellToUse = containerShell
-		}
-	}
-
-	// Final fallback
 	if shellToUse == "" {
-		shellToUse = "/bin/bash"
+		shellToUse = "/bin/zsh"
 	}
 
 	if err := execInteractiveSession(ctx, cli, containerIdentifier, shellToUse, WorkingDir); err != nil {
@@ -542,6 +531,7 @@ func ContainerRun(containerName string) {
 	bindings := combineBindings(containerCfg.x11forward, containerCfg.extrabinding)
 	extrahosts := splitAndCombine(containerCfg.extrahosts)
 	dockerenv := combineEnv(containerCfg.xdisplay, containerCfg.pulseServer, containerCfg.extraenv)
+	bindings, dockerenv = addForwardedXAuthority(containerCfg.xdisplay, bindings, dockerenv)
 
 	// Desktop mode: inject env vars and port configuration
 	if containerCfg.desktopProto != "" {
@@ -967,18 +957,34 @@ func ContainerRun(containerName string) {
 //	in(5): string workingDir working directory
 //	out: error
 func execInteractiveSession(ctx context.Context, cli *client.Client, containerID string, shell string, workingDir string) error {
+	// Use a widely available terminfo entry. Passing host-specific values such
+	// as xterm-kitty into minimal images makes Zsh themes and line editing render
+	// incorrectly even though the Docker TTY itself is functional.
+	execEnv := []string{
+		"TERM=xterm-256color",
+		"COLORTERM=truecolor",
+		"LANG=C.UTF-8",
+		"LC_ALL=C.UTF-8",
+	}
+	if os.Getenv("RFSWIFT_RECORDING") == "1" {
+		execEnv = append(execEnv, "RFSWIFT_RECORDING=1")
+	}
+	shellCmd := []string{shell}
+	if shell == "/bin/zsh" {
+		shellCmd = []string{"/bin/sh", "-c", "if [ -x /bin/zsh ]; then exec /bin/zsh -il; elif [ -x /bin/bash ]; then exec /bin/bash -il; else exec /bin/sh -i; fi"}
+	} else if shell == "/bin/bash" {
+		shellCmd = []string{shell, "-il"}
+	} else if shell == "/bin/sh" {
+		shellCmd = []string{shell, "-i"}
+	}
 	execConfig := client.ExecCreateOptions{
 		AttachStdin:  true,
 		AttachStdout: true,
 		AttachStderr: true,
 		TTY:          true,
-		Cmd:          []string{shell},
+		Cmd:          shellCmd,
 		WorkingDir:   workingDir,
-	}
-
-	// Propagate recording indicator into the container shell
-	if os.Getenv("RFSWIFT_RECORDING") == "1" {
-		execConfig.Env = []string{"RFSWIFT_RECORDING=1"}
+		Env:          execEnv,
 	}
 
 	execID, err := cli.ExecCreate(ctx, containerID, execConfig)
@@ -1001,6 +1007,17 @@ func execInteractiveSession(ctx context.Context, cli *client.Client, containerID
 			return fmt.Errorf("failed to set raw terminal: %v", err)
 		}
 		defer term.RestoreTerminal(inFd, state)
+	}
+
+	// Resize before starting so Zsh draws its first prompt at the real terminal
+	// width instead of Docker's default 80x24 dimensions.
+	if outIsTerminal {
+		if size, err := term.GetWinsize(outFd); err == nil {
+			_, _ = cli.ExecResize(ctx, execID.ID, client.ExecResizeOptions{
+				Height: uint(size.Height),
+				Width:  uint(size.Width),
+			})
+		}
 	}
 
 	// NOTE: Podman's compat API implicitly starts the exec session during Attach,
@@ -1050,16 +1067,6 @@ func execInteractiveSession(ctx context.Context, cli *client.Client, containerID
 			}
 		}
 	}()
-
-	// Trigger initial resize
-	if outIsTerminal {
-		if size, err := term.GetWinsize(outFd); err == nil {
-			cli.ExecResize(ctx, execID.ID, client.ExecResizeOptions{
-				Height: uint(size.Height),
-				Width:  uint(size.Width),
-			})
-		}
-	}
 
 	// Handle I/O
 	outputDone := make(chan error)

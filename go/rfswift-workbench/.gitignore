@@ -1,0 +1,7 @@
+/build/bin/
+/build/darwin/
+/build/windows/
+/build/linux/
+/frontend/wailsjs/
+node_modules/
+*.syso

@@ -7,6 +7,11 @@ set -e
 
 # Configuration
 GITHUB_REPO="PentHertz/RF-Swift"
+DEV_VERSION="4.0.0-dev"
+RELEASE_CHANNEL="${RFSWIFT_CHANNEL:-stable}"
+INSTALL_COMPONENTS="${RFSWIFT_INSTALL:-cli}"
+WORKBENCH_FORMAT="${RFSWIFT_WORKBENCH_FORMAT:-native}"
+FOUND_VERSION=false
 
 # Color codes for better readability
 RED='\033[0;31m'
@@ -36,7 +41,7 @@ color_echo() {
 check_xhost() {
     if ! command -v xhost >/dev/null 2>&1; then
         # On macOS, xhost may be installed but not in PATH
-        if [[ "$(uname)" == "Darwin" ]] && [[ -x /opt/X11/bin/xhost ]]; then
+        if [ "$(uname)" = "Darwin" ] && [ -x /opt/X11/bin/xhost ]; then
             color_echo "yellow" "⚠️ xhost found at /opt/X11/bin/xhost but not in PATH. Adding it."
             export PATH="/opt/X11/bin:$PATH"
             color_echo "green" "✅ xhost is now available. ✅"
@@ -45,7 +50,7 @@ check_xhost() {
 
         color_echo "red" "❌ xhost is not installed on this system. ❌"
 
-        if [[ "$(uname)" == "Darwin" ]]; then
+        if [ "$(uname)" = "Darwin" ]; then
             color_echo "cyan" "🍎 macOS detected. Installing XQuartz via Homebrew... 📦"
             if ! command -v brew >/dev/null 2>&1; then
                 color_echo "red" "❌ Homebrew is not installed. Please install it first: https://brew.sh ❌"
@@ -53,7 +58,7 @@ check_xhost() {
             fi
             brew install --cask xquartz
             export PATH="/opt/X11/bin:$PATH"
-            if [[ -x /opt/X11/bin/xhost ]]; then
+            if [ -x /opt/X11/bin/xhost ]; then
                 color_echo "green" "✅ XQuartz installed successfully. ✅"
                 color_echo "yellow" "⚠️ You may need to log out and back in for XQuartz to work properly."
                 color_echo "yellow" "⚠️ Make sure to enable 'Allow connections from network clients' in XQuartz -> Settings -> Security."
@@ -958,7 +963,8 @@ offer_lima_for_usb_get_rfswift() {
     color_echo "green" "   Lima is already installed."
     # Offer to update the Lima template if a bundled one is available
     local bundled_template=""
-    local script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    local script_dir
+    script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" 2>/dev/null && pwd)
     for candidate in \
         "${script_dir}/lima/rfswift.yaml" \
         "$(pwd)/lima/rfswift.yaml"; do
@@ -1533,8 +1539,45 @@ install_docker() {
 # ═══════════════════════════════════════════════════════════════════════════════
 
 # Function to get the latest release information
+choose_release_and_components() {
+  case "$RELEASE_CHANNEL" in
+    stable|dev) ;;
+    *) color_echo "red" "Invalid RFSWIFT_CHANNEL '$RELEASE_CHANNEL' (use stable or dev)"; exit 1 ;;
+  esac
+  case "$INSTALL_COMPONENTS" in
+    cli|workbench|both) ;;
+    *) color_echo "red" "Invalid RFSWIFT_INSTALL '$INSTALL_COMPONENTS' (use cli, workbench, or both)"; exit 1 ;;
+  esac
+
+  # Environment variables make curl|sh and automated installs deterministic.
+  # Interactive installs get a concise choice; no-TTY installs retain the
+  # backwards-compatible stable CLI default.
+  if [ -z "${RFSWIFT_CHANNEL+x}" ]; then
+    channel_choice=$(prompt_choice "Select RF Swift release channel" "Stable" "v4.0.0-dev")
+    [ "$channel_choice" = "2" ] && RELEASE_CHANNEL="dev" || RELEASE_CHANNEL="stable"
+  fi
+  if [ -z "${RFSWIFT_INSTALL+x}" ]; then
+    component_choice=$(prompt_choice "What would you like to install?" "CLI" "Workbench-GUI" "CLI-and-Workbench")
+    case "$component_choice" in
+      2) INSTALL_COMPONENTS="workbench" ;;
+      3) INSTALL_COMPONENTS="both" ;;
+      *) INSTALL_COMPONENTS="cli" ;;
+    esac
+  fi
+  color_echo "green" "📦 Channel: ${RELEASE_CHANNEL}; components: ${INSTALL_COMPONENTS}"
+}
+
 get_latest_release() {
   color_echo "blue" "🔍 Detecting the latest RF-Swift release..."
+
+  if [ "$RELEASE_CHANNEL" = "dev" ]; then
+    VERSION="$DEV_VERSION"
+    FOUND_VERSION=true
+    RELEASE_URL="https://github.com/${GITHUB_REPO}/releases/tag/v${VERSION}"
+    DOWNLOAD_BASE_URL="https://github.com/${GITHUB_REPO}/releases/download/v${VERSION}"
+    color_echo "yellow" "🧪 Using development prerelease: v${VERSION}"
+    return 0
+  fi
 
   # Default version as fallback
   DEFAULT_VERSION="3.0.1"
@@ -1586,7 +1629,7 @@ get_latest_release() {
     fi
   fi
 
-  if [ "${FOUND}" = false ]; then  
+  if [ "${FOUND_VERSION}" = false ]; then
     VERSION="${DEFAULT_VERSION}"  # Initialize with default
   fi
 
@@ -1615,70 +1658,83 @@ detect_system() {
   # Set the download filename
   FILENAME="rfswift_${OS}_${ARCH}.tar.gz"
   DOWNLOAD_URL="${DOWNLOAD_BASE_URL}/${FILENAME}"
+
+  case "${OS}_${ARCH}" in
+    Linux_x86_64) WORKBENCH_FILENAME="rfswift-workbench_Linux_x86_64.tar.gz" ;;
+    Darwin_x86_64|Darwin_arm64) WORKBENCH_FILENAME="rfswift-workbench_Darwin_universal.zip" ;;
+    *) WORKBENCH_FILENAME="" ;;
+  esac
+
+  if [ "$OS" = "Linux" ] && { [ "$INSTALL_COMPONENTS" = "workbench" ] || [ "$INSTALL_COMPONENTS" = "both" ]; }; then
+    case "$WORKBENCH_FORMAT" in native|appimage) ;; *) color_echo "red" "RFSWIFT_WORKBENCH_FORMAT must be native or appimage"; exit 1 ;; esac
+    if [ -z "${RFSWIFT_WORKBENCH_FORMAT+x}" ]; then
+      format_choice=$(prompt_choice "Choose the Linux Workbench package" "AppImage-portable" "Native-smaller")
+      [ "$format_choice" = "2" ] && WORKBENCH_FORMAT="native" || WORKBENCH_FORMAT="appimage"
+    fi
+    [ "$WORKBENCH_FORMAT" = "appimage" ] && WORKBENCH_FILENAME="rfswift-workbench_Linux_x86_64.AppImage"
+  fi
+
+  if { [ "$INSTALL_COMPONENTS" = "workbench" ] || [ "$INSTALL_COMPONENTS" = "both" ]; } && [ -z "$WORKBENCH_FILENAME" ]; then
+    color_echo "red" "RF Swift Workbench is not currently published for ${OS} ${ARCH}."
+    color_echo "yellow" "The CLI remains available; Workbench release targets are Linux x86_64 and universal macOS."
+    exit 1
+  fi
   
   color_echo "blue" "🏠 Detected system: ${OS} ${ARCH}"
   color_echo "blue" "📂 Will download: ${FILENAME}"
+  [ -n "$WORKBENCH_FILENAME" ] && { [ "$INSTALL_COMPONENTS" = "workbench" ] || [ "$INSTALL_COMPONENTS" = "both" ]; } && color_echo "blue" "🖥️  Will download: ${WORKBENCH_FILENAME}"
 }
 
 # Download the files and display checksum information
 download_files() {
   color_echo "blue" "🌟 Preparing to download RF-Swift..."
-
-  # Create temporary directory and store it in a global variable
   TMP_DIR=$(mktemp -d)
-  color_echo "blue" "🔽 Downloading RF-Swift binary from ${DOWNLOAD_URL}..."
-  
-  # Download the file
-  if command_exists curl; then
-    curl -L -o "${TMP_DIR}/${FILENAME}" "${DOWNLOAD_URL}" --progress-bar
-  elif command_exists wget; then
-    wget -q --show-progress -O "${TMP_DIR}/${FILENAME}" "${DOWNLOAD_URL}"
-  else
-    color_echo "red" "🚨 Missing curl or wget. Please install one of them."
-    exit 1
-  fi
-  
-  # Calculate and display checksum
-  color_echo "blue" "Downloaded file: ${TMP_DIR}/${FILENAME}"
-  
-  CALCULATED_CHECKSUM=""
-  if command_exists shasum; then
-    CALCULATED_CHECKSUM=$(shasum -a 256 "${TMP_DIR}/${FILENAME}" | cut -d ' ' -f 1)
-  elif command_exists sha256sum; then
-    CALCULATED_CHECKSUM=$(sha256sum "${TMP_DIR}/${FILENAME}" | cut -d ' ' -f 1)
-  fi
-  
-  if [ -n "$CALCULATED_CHECKSUM" ]; then
-    color_echo "blue" "Calculated checksum: $CALCULATED_CHECKSUM"
-  else
-    color_echo "yellow" "⚠️ Could not calculate checksum (missing shasum/sha256sum tools)"
-  fi
-  
-  # Set the exact checksums file URL format
-  CHECKSUMS_URL="https://github.com/${GITHUB_REPO}/releases/download/v${VERSION}/RF-Swift_${VERSION}_checksums.txt"
-  color_echo "blue" "GitHub checksums file: ${CHECKSUMS_URL}"
 
-  # Automatically verify the SHA-256 checksum against the published checksums
-  # file. A mismatch means the download is corrupted or tampered with - abort.
-  if [ -n "$CALCULATED_CHECKSUM" ]; then
-    CHECKSUMS_FILE="${TMP_DIR}/checksums.txt"
-    if { command_exists curl && curl -fsSL -o "$CHECKSUMS_FILE" "$CHECKSUMS_URL"; } \
-       || { command_exists wget && wget -qO "$CHECKSUMS_FILE" "$CHECKSUMS_URL"; }; then
-      EXPECTED_CHECKSUM=$(grep -E "[[:space:]][*]?${FILENAME}\$" "$CHECKSUMS_FILE" 2>/dev/null | awk '{print $1}' | head -1)
-      if [ -z "$EXPECTED_CHECKSUM" ]; then
-        color_echo "yellow" "⚠️  ${FILENAME} not found in checksums file; skipping checksum verification."
-      elif [ "$EXPECTED_CHECKSUM" = "$CALCULATED_CHECKSUM" ]; then
-        color_echo "green" "✅ Checksum verified: ${CALCULATED_CHECKSUM}"
-      else
-        color_echo "red" "🚨 CHECKSUM MISMATCH - the download may be corrupted or tampered with!"
-        color_echo "red" "   expected: ${EXPECTED_CHECKSUM}"
-        color_echo "red" "   got:      ${CALCULATED_CHECKSUM}"
-        rm -rf "${TMP_DIR}"
-        exit 1
-      fi
+  download_and_verify() {
+    asset_name="$1"
+    checksums_name="$2"
+    asset_url="${DOWNLOAD_BASE_URL}/${asset_name}"
+    asset_path="${TMP_DIR}/${asset_name}"
+    checksums_url="${DOWNLOAD_BASE_URL}/${checksums_name}"
+    checksums_path="${TMP_DIR}/${checksums_name}"
+    color_echo "blue" "🔽 Downloading ${asset_name}..."
+    if command_exists curl; then
+      curl -fL --retry 3 --progress-bar -o "$asset_path" "$asset_url"
+    elif command_exists wget; then
+      wget -q --show-progress -O "$asset_path" "$asset_url"
     else
-      color_echo "yellow" "⚠️  Could not download the checksums file; skipping checksum verification."
+      color_echo "red" "🚨 Missing curl or wget."
+      exit 1
     fi
+
+    calculated=""
+    command_exists shasum && calculated=$(shasum -a 256 "$asset_path" | awk '{print $1}')
+    [ -z "$calculated" ] && command_exists sha256sum && calculated=$(sha256sum "$asset_path" | awk '{print $1}')
+    if [ -z "$calculated" ]; then
+      color_echo "yellow" "⚠️ No SHA-256 utility is available; ${asset_name} cannot be verified."
+      return 0
+    fi
+    if [ ! -f "$checksums_path" ]; then
+      if command_exists curl; then
+        curl -fsSL --retry 3 -o "$checksums_path" "$checksums_url"
+      else
+        wget -qO "$checksums_path" "$checksums_url"
+      fi
+    fi
+    expected=$(grep -E "[[:space:]][*]?${asset_name}\$" "$checksums_path" | awk '{print $1}' | head -1)
+    if [ -z "$expected" ] || [ "$expected" != "$calculated" ]; then
+      color_echo "red" "🚨 Checksum verification failed for ${asset_name}."
+      rm -rf "$TMP_DIR"
+      exit 1
+    fi
+    color_echo "green" "✅ Verified ${asset_name}: ${calculated}"
+  }
+
+  if [ "$INSTALL_COMPONENTS" = "cli" ] || [ "$INSTALL_COMPONENTS" = "both" ]; then
+    download_and_verify "$FILENAME" "RF-Swift_${VERSION}_checksums.txt"
+  fi
+  if [ "$INSTALL_COMPONENTS" = "workbench" ] || [ "$INSTALL_COMPONENTS" = "both" ]; then
+    download_and_verify "$WORKBENCH_FILENAME" "RF-Swift_${VERSION}_workbench_checksums.txt"
   fi
   
   # GitHub release page for manual verification
@@ -1689,23 +1745,21 @@ download_files() {
   # Proves the binary was built by the official RF-Swift release workflow and not
   # swapped afterwards - same mechanism as LUKSbox.
   if command_exists gh; then
-    if prompt_yes_no "Verify the GitHub build attestation for this binary (recommended)?" "y"; then
+    if prompt_yes_no "Verify GitHub build attestations for downloaded artifacts (recommended)?" "y"; then
       color_echo "blue" "🔏 Verifying build provenance with 'gh attestation verify'..."
-      if gh attestation verify "${TMP_DIR}/${FILENAME}" --repo "${GITHUB_REPO}"; then
-        color_echo "green" "✅ Attestation verified - provenance confirmed for ${GITHUB_REPO}."
-      else
-        color_echo "red" "🚨 Attestation verification FAILED (or 'gh' is not signed in - run 'gh auth login')."
-        color_echo "yellow" "   The binary could not be cryptographically verified against ${GITHUB_REPO}."
-        if ! prompt_yes_no "Continue anyway (NOT recommended)?" "n"; then
-          color_echo "red" "🚨 Installation aborted."
-          rm -rf "${TMP_DIR}"
+      for downloaded in "${TMP_DIR}"/rfswift*.tar.gz "${TMP_DIR}"/rfswift*.zip "${TMP_DIR}"/rfswift*.AppImage; do
+        [ -f "$downloaded" ] || continue
+        gh attestation verify "$downloaded" --repo "$GITHUB_REPO" || {
+          color_echo "red" "🚨 Attestation verification failed for $(basename "$downloaded")."
+          rm -rf "$TMP_DIR"
           exit 1
-        fi
-      fi
+        }
+      done
+      color_echo "green" "✅ Build provenance verified for ${GITHUB_REPO}."
     fi
   else
     color_echo "yellow" "ℹ️  Install the GitHub CLI (gh) to cryptographically verify build attestations:"
-    color_echo "yellow" "   https://cli.github.com  -  then: gh attestation verify ${FILENAME} --repo ${GITHUB_REPO}"
+    color_echo "yellow" "   https://cli.github.com"
   fi
   
   # Ask to continue
@@ -1741,8 +1795,42 @@ choose_install_dir() {
   return 0
 }
 
+validate_tar_archive() {
+  archive_path="$1"
+  if tar -tzf "$archive_path" | awk '
+    /^\// { bad=1 }
+    { n=split($0,p,"/"); for(i=1;i<=n;i++) if(p[i]=="..") bad=1 }
+    END { exit bad ? 1 : 0 }
+  '; then :; else
+    color_echo "red" "🚨 Unsafe path found in $(basename "$archive_path")."
+    exit 1
+  fi
+  if tar -tvzf "$archive_path" | awk 'substr($0,1,1) ~ /[lh]/ { bad=1 } END { exit bad ? 1 : 0 }'; then :; else
+    color_echo "red" "🚨 Links are not allowed in installer archives."
+    exit 1
+  fi
+}
+
+validate_zip_archive() {
+  archive_path="$1"
+  command_exists unzip || { color_echo "red" "unzip is required to validate the Workbench archive."; exit 1; }
+  if unzip -Z1 "$archive_path" | awk '
+    /^\// || /^[A-Za-z]:[\\\/]/ { bad=1 }
+    { gsub(/\\/,"/"); n=split($0,p,"/"); for(i=1;i<=n;i++) if(p[i]=="..") bad=1 }
+    END { exit bad ? 1 : 0 }
+  '; then :; else
+    color_echo "red" "🚨 Unsafe path found in $(basename "$archive_path")."
+    exit 1
+  fi
+  if command_exists zipinfo && zipinfo -l "$archive_path" | awk '$1 ~ /^l/ { bad=1 } END { exit bad ? 1 : 0 }'; then :; else
+    color_echo "red" "🚨 Symbolic links are not allowed in installer ZIP archives."
+    exit 1
+  fi
+}
+
 # Install the binary
 install_binary() {
+  [ "$INSTALL_COMPONENTS" = "workbench" ] && return 0
   color_echo "blue" "🔧 Installing RF-Swift..."
   
   # Create installation directory if needed
@@ -1757,6 +1845,7 @@ install_binary() {
   fi
   
   color_echo "blue" "📦 Extracting archive..."
+  validate_tar_archive "${TMP_DIR}/${FILENAME}"
   tar -xzf "${TMP_DIR}/${FILENAME}" -C "${TMP_DIR}"
   
   RFSWIFT_BIN=$(find "${TMP_DIR}" -name "rfswift" -type f)
@@ -1774,10 +1863,74 @@ install_binary() {
     chmod +x "${INSTALL_DIR}/rfswift"
   fi
   
-  # Clean up
-  rm -rf "${TMP_DIR}"
-  
   color_echo "green" "🎉 RF-Swift has been installed successfully to ${INSTALL_DIR}/rfswift!"
+}
+
+ensure_workbench_runtime() {
+  [ "$OS" = "Linux" ] || return 0
+  if command_exists ldconfig && ldconfig -p 2>/dev/null | grep -q 'libwebkit2gtk-4.1'; then
+    return 0
+  fi
+  color_echo "yellow" "RF Swift Workbench requires GTK3 and WebKit2GTK 4.1 on Linux."
+  if ! prompt_yes_no "Install the Workbench runtime dependencies now?" "y"; then
+    color_echo "yellow" "Install GTK3 and WebKit2GTK 4.1 before launching rfswift-workbench."
+    return 0
+  fi
+  distro=$(detect_distro)
+  case "$distro" in
+    debian|ubuntu) sudo apt-get update && sudo apt-get install -y libgtk-3-0 libwebkit2gtk-4.1-0 ;;
+    fedora) sudo dnf install -y gtk3 webkit2gtk4.1 ;;
+    arch) sudo pacman -S --needed --noconfirm gtk3 webkit2gtk-4.1 ;;
+    opensuse) sudo zypper install -y libgtk-3-0 libwebkit2gtk-4_1-0 ;;
+    *) color_echo "yellow" "Unknown distro: install the GTK3 and WebKit2GTK 4.1 runtime packages manually." ;;
+  esac
+}
+
+install_workbench() {
+  [ "$INSTALL_COMPONENTS" = "cli" ] && return 0
+  color_echo "blue" "🖥️  Installing RF Swift Workbench..."
+  case "$OS" in
+    Linux)
+      if [ "$WORKBENCH_FORMAT" = "appimage" ]; then
+        if [ "$INSTALL_DIR" = "/usr/local/bin" ]; then
+          sudo cp "${TMP_DIR}/${WORKBENCH_FILENAME}" "$INSTALL_DIR/rfswift-workbench"
+          sudo chmod 0755 "$INSTALL_DIR/rfswift-workbench"
+        else
+          cp "${TMP_DIR}/${WORKBENCH_FILENAME}" "$INSTALL_DIR/rfswift-workbench"
+          chmod 0755 "$INSTALL_DIR/rfswift-workbench"
+        fi
+        color_echo "green" "✅ Portable AppImage installed as ${INSTALL_DIR}/rfswift-workbench"
+        return 0
+      fi
+      ensure_workbench_runtime
+      workbench_unpack="${TMP_DIR}/workbench"
+      mkdir -p "$workbench_unpack"
+      validate_tar_archive "${TMP_DIR}/${WORKBENCH_FILENAME}"
+      tar -xzf "${TMP_DIR}/${WORKBENCH_FILENAME}" -C "$workbench_unpack"
+      workbench_bin=$(find "$workbench_unpack" -type f -name rfswift-workbench | head -1)
+      [ -n "$workbench_bin" ] || { color_echo "red" "Workbench binary is missing from its archive."; exit 1; }
+      if [ "$INSTALL_DIR" = "/usr/local/bin" ]; then
+        sudo cp "$workbench_bin" "$INSTALL_DIR/rfswift-workbench"
+        sudo chmod 0755 "$INSTALL_DIR/rfswift-workbench"
+      else
+        cp "$workbench_bin" "$INSTALL_DIR/rfswift-workbench"
+        chmod 0755 "$INSTALL_DIR/rfswift-workbench"
+      fi
+      color_echo "green" "✅ Workbench installed as ${INSTALL_DIR}/rfswift-workbench"
+      ;;
+    Darwin)
+      validate_zip_archive "${TMP_DIR}/${WORKBENCH_FILENAME}"
+      app_root="$HOME/Applications"
+      prompt_yes_no "Install Workbench system-wide in /Applications?" "n" && app_root="/Applications"
+      mkdir -p "$app_root"
+      if [ "$app_root" = "/Applications" ]; then
+        sudo ditto -x -k "${TMP_DIR}/${WORKBENCH_FILENAME}" "$app_root"
+      else
+        ditto -x -k "${TMP_DIR}/${WORKBENCH_FILENAME}" "$app_root"
+      fi
+      color_echo "green" "✅ Workbench installed in ${app_root}/rfswift-workbench.app"
+      ;;
+  esac
 }
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -2375,10 +2528,47 @@ check_asciinema() {
 # Main
 # ═══════════════════════════════════════════════════════════════════════════════
 
+install_nix() {
+  color_echo "blue" "❄️  Installing Nix (native engine)..."
+  if command_exists nix; then
+    color_echo "green" "✅ Nix is already installed."
+    return 0
+  fi
+  color_echo "blue" "🚀 Running the Determinate Systems Nix installer (enables flakes + nix-command)..."
+  if curl --proto '=https' --tlsv1.2 -sSf -L https://install.determinate.systems/nix | sh -s -- install --no-confirm; then
+    color_echo "green" "✅ Nix installed."
+    color_echo "cyan" "   Open a new shell (or 'source /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh') so 'nix' is on PATH,"
+    color_echo "cyan" "   then:  rfswift --engine nix run <environment>"
+    color_echo "cyan" "   Tip: set 'engine = nix' under [general] in ~/.config/rfswift/config.ini to make Nix the default."
+  else
+    color_echo "red" "🚨 Nix installation failed. Install it manually from https://nixos.org/download and re-run."
+    return 1
+  fi
+}
+
+# RF Swift can run tool environments natively via Nix (rfswift --engine nix),
+# with no container. Offer to install it alongside (or instead of) a container
+# engine.
+check_nix_engine() {
+  color_echo "blue" "❄️  Native engine (Nix)"
+  if command_exists nix; then
+    color_echo "green" "✅ Nix is available - RF Swift can run tools natively with 'rfswift --engine nix' (no container)."
+    return 0
+  fi
+  color_echo "cyan" "   RF Swift can also run its tool environments natively via Nix - no container needed."
+  choice=$(prompt_choice "Install Nix for the native engine?" "Yes" "No")
+  if [ "$choice" = "1" ]; then
+    install_nix
+  else
+    color_echo "yellow" "   Skipped. Install Nix later from https://nixos.org/download to use '--engine nix'."
+  fi
+}
+
 main() {
   display_rainbow_logo_animated
 
   fun_welcome
+  choose_release_and_components
   
   # Verify system requirements first
   if ! verify_system_requirements; then
@@ -2393,7 +2583,10 @@ main() {
   
   # Check container engine (Docker / Podman) and offer to install
   check_container_engine
-  
+
+  # Offer the native Nix engine (rfswift --engine nix)
+  check_nix_engine
+
   # Check and install audio system
   check_audio_system
   
@@ -2411,6 +2604,8 @@ main() {
   
   # Install binary
   install_binary
+  install_workbench
+  rm -rf "${TMP_DIR}"
 
   # check and install agnoster deps
   check_agnoster_dependencies
@@ -2431,16 +2626,24 @@ main() {
   
   thank_you_message
   
-  # Final instructions
-  if [ "$INSTALL_DIR" != "/usr/local/bin" ]; then
-    color_echo "cyan" "🚀 To use RF-Swift, you can:"
-    color_echo "cyan" "   - Run it directly: ${INSTALL_DIR}/rfswift"
-    color_echo "cyan" "   - Add ${INSTALL_DIR} to your PATH"
-    if is_arch_linux; then
-      color_echo "cyan" "   - Or use the alias if you set it up: rfswift"
+  # Final instructions should only advertise components actually requested.
+  if [ "$INSTALL_COMPONENTS" = "cli" ] || [ "$INSTALL_COMPONENTS" = "both" ]; then
+    if [ "$INSTALL_DIR" != "/usr/local/bin" ]; then
+      color_echo "cyan" "🚀 To use RF-Swift, you can:"
+      color_echo "cyan" "   - Run it directly: ${INSTALL_DIR}/rfswift"
+      color_echo "cyan" "   - Add ${INSTALL_DIR} to your PATH"
+      if is_arch_linux; then
+        color_echo "cyan" "   - Or use the alias if you set it up: rfswift"
+      fi
+    else
+      color_echo "cyan" "🚀 You can now run RF-Swift by simply typing: rfswift"
     fi
-  else
-    color_echo "cyan" "🚀 You can now run RF-Swift by simply typing: rfswift"
+  fi
+  if [ "$INSTALL_COMPONENTS" = "workbench" ] || [ "$INSTALL_COMPONENTS" = "both" ]; then
+    case "$(uname -s)" in
+      Darwin*) color_echo "cyan" "🖥️  Open RF Swift Workbench from Applications." ;;
+      *) color_echo "cyan" "🖥️  Start the GUI with: ${INSTALL_DIR}/rfswift-workbench" ;;
+    esac
   fi
   
   # Show container engine status
@@ -2497,13 +2700,18 @@ main() {
     color_echo "cyan" "💡 Tip: You may need to reboot or log out/in for Docker group changes to take effect."
   fi
 
-  # Suggest profile initialization/update
-  echo ""
-  color_echo "cyan" "📋 Default profiles provide quick-start presets for common RF tasks."
-  color_echo "cyan" "   Initialize or update them with: rfswift profile init --force"
+  # Suggest profile initialization/update when the CLI was installed.
+  if [ "$INSTALL_COMPONENTS" = "cli" ] || [ "$INSTALL_COMPONENTS" = "both" ]; then
+    echo ""
+    color_echo "cyan" "📋 Default profiles provide quick-start presets for common RF tasks."
+    color_echo "cyan" "   Initialize or update them with: rfswift profile init --force"
+  fi
 
   color_echo "cyan" "📡 Happy RF hacking! 🚀"
 }
 
-# Run the main function
-main
+# Run normally, while allowing the installer test suite to source the validated
+# helper functions without performing network or system changes.
+if [ "${RFSWIFT_INSTALLER_LIB_ONLY:-0}" != "1" ]; then
+  main
+fi

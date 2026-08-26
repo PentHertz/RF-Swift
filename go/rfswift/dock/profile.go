@@ -186,7 +186,9 @@ func DefaultProfiles() []Profile {
 			Description: "RFID/NFC tools (Proxmark3, libnfc) over USB",
 			Image:       officialImage("rfid"),
 			Network:     "host",
-			Bindings:    usbTreeBinding + ",/dev/ttyACM0:/dev/ttyACM0",
+			Devices:     "/dev/ttyACM0:/dev/ttyACM0",
+			Bindings:    usbTreeBinding,
+			Cgroups:     "c 189:* rwm",
 		},
 		{
 			Name:        "automotive",

@@ -8,12 +8,38 @@ import (
 	"fmt"
 	"os"
 	"runtime"
+	"strings"
 
 	"github.com/spf13/cobra"
 	common "penthertz/rfswift/common"
 	rfdock "penthertz/rfswift/dock"
+	rfnix "penthertz/rfswift/nix"
 	rfutils "penthertz/rfswift/rfutils"
 )
+
+// isNixEngineRequested reports whether the Nix engine was selected via the
+// --engine flag or the RFSWIFT_ENGINE environment variable.
+func isNixEngineRequested(engineFlag string) bool {
+	if strings.EqualFold(strings.TrimSpace(engineFlag), "nix") {
+		return true
+	}
+	env := strings.TrimSpace(os.Getenv("RFSWIFT_ENGINE"))
+	if strings.EqualFold(env, "nix") && (engineFlag == "" || engineFlag == "auto") {
+		return true
+	}
+	return false
+}
+
+// isNixCommand reports whether the invoked command belongs to the `nix` group,
+// which manages native environments and never needs a container engine.
+func isNixCommand(cmd *cobra.Command) bool {
+	for c := cmd; c != nil; c = c.Parent() {
+		if c.Name() == "nix" || c.Name() == "env" {
+			return true
+		}
+	}
+	return false
+}
 
 // setupX11 configures X11 forwarding settings for container execution, applying
 // platform-specific socket bindings on Windows or enabling xhost ACLs on other systems.
@@ -106,7 +132,7 @@ func registerHostCommands() {
 func init() {
 	// Persistent flags
 	rootCmd.PersistentFlags().String("engine", "auto",
-		"Container engine to use: auto, docker, podman, lima (env: RFSWIFT_ENGINE)")
+		"Engine to use: auto, docker, podman, lima, or nix (native environments) (env: RFSWIFT_ENGINE; config: [general] engine)")
 	rootCmd.PersistentFlags().Bool("gpu", false,
 		"Use the GPU-accelerated Lima VM on macOS Apple Silicon (krunkit/Vulkan). Implies --engine lima; provides GPU compute but NOT USB passthrough")
 	rootCmd.PersistentFlags().BoolVarP(&common.Disconnected, "disconnect", "q", false, "Don't query updates (disconnected mode)")
@@ -125,6 +151,26 @@ func init() {
 				}
 				engineType = "lima"
 			}
+
+			// When neither --engine nor RFSWIFT_ENGINE picked an engine, fall back
+			// to the default set in the config file ([general] engine). Precedence:
+			// --engine flag > RFSWIFT_ENGINE > config file > auto.
+			if engineType == "auto" && strings.TrimSpace(os.Getenv("RFSWIFT_ENGINE")) == "" {
+				if e := rfutils.ConfiguredEngine(common.ConfigFileByPlatform()); e != "" && e != "auto" {
+					engineType = e
+				}
+			}
+
+			// Nix engine drives native environments, not a container daemon, so
+			// it must not run the container engine detection below (that would
+			// require Docker/Podman and print misleading messages). This covers
+			// both `--engine nix` on run/exec and the `rfswift nix` group.
+			if isNixEngineRequested(engineType) || isNixCommand(cmd) {
+				rfnix.SetSelected(true)
+				rfutils.DisplayVersion()
+				return
+			}
+
 			if engineType != "" && engineType != "auto" {
 				rfdock.SetPreferredEngine(engineType)
 			}
@@ -159,10 +205,17 @@ func init() {
 		registerMacUSBCommands()
 	}
 	registerEngineCommands()
+	registerNixCommands()
 	registerNetworkCommands()
 	registerProfileCommands()
 	registerReportCommands()
+	registerAuditCommand()
 	registerDoctorCommands()
+	registerAgentCommand()
+
+	// Organize help into sections and add the config/system/usb convenience
+	// parents. Must run last, once every command is registered.
+	organizeCommands()
 }
 
 // Execute runs the root cobra command, invoking the appropriate subcommand based on

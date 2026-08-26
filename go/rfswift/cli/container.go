@@ -13,6 +13,7 @@ import (
 	"github.com/spf13/cobra"
 	common "penthertz/rfswift/common"
 	rfdock "penthertz/rfswift/dock"
+	rfnix "penthertz/rfswift/nix"
 	rfutils "penthertz/rfswift/rfutils"
 	"penthertz/rfswift/tui"
 )
@@ -22,6 +23,15 @@ var runCmd = &cobra.Command{
 	Short: "Create and run a program",
 	Long:  `Create a container and run a program inside the docker container`,
 	Run: func(cmd *cobra.Command, args []string) {
+		// Nix engine: create/enter a native environment instead of a container.
+		if rfnix.IsSelected() {
+			if err := runNixEnvironment(cmd); err != nil {
+				common.PrintErrorMessage(err)
+				os.Exit(1)
+			}
+			return
+		}
+
 		// Retrieve all flags locally
 		image, _ := cmd.Flags().GetString("image")
 		execCommand, _ := cmd.Flags().GetString("command")
@@ -372,6 +382,15 @@ var execCmd = &cobra.Command{
 	Short: "Exec a command",
 	Long:  `Exec a program on a created docker container, even not started`,
 	Run: func(cmd *cobra.Command, args []string) {
+		// Nix engine: re-enter a native environment instead of a container.
+		if rfnix.IsSelected() {
+			if err := execNixEnvironment(cmd); err != nil {
+				common.PrintErrorMessage(err)
+				os.Exit(1)
+			}
+			return
+		}
+
 		// Retrieve all flags locally
 		contID, _ := cmd.Flags().GetString("container")
 		execCommand, _ := cmd.Flags().GetString("command")
@@ -461,11 +480,41 @@ var lastCmd = &cobra.Command{
 
 var installCmd = &cobra.Command{
 	Use:   "install",
-	Short: "Install function script",
-	Long:  `Install function script inside the container`,
+	Short: "Guided tool installation for a container or Nix environment",
+	Long: `Discover and install tools without looking up script function names.
+For containers, choose from install functions found inside /root/scripts.
+With --engine nix, use the guided Nix package installer instead.`,
 	Run: func(cmd *cobra.Command, args []string) {
 		contID, _ := cmd.Flags().GetString("container")
 		execCommand, _ := cmd.Flags().GetString("install")
+		if rfnix.IsSelected() {
+			packages := []string{}
+			if strings.TrimSpace(execCommand) != "" {
+				packages = []string{strings.TrimSpace(execCommand)}
+			}
+			if len(packages) == 0 {
+				if !tui.IsInteractive() {
+					common.PrintErrorMessage(fmt.Errorf("package name required (use -i <package>)"))
+					return
+				}
+				var err error
+				packages, contID, err = nixInstallWizard(contID, "")
+				if err != nil {
+					common.PrintErrorMessage(err)
+					return
+				}
+			}
+			if len(packages) > 0 {
+				flake := rfnix.ResolveFlakeRef("")
+				if contID != "" {
+					flake = resolveFlakeForTarget(contID)
+				}
+				if err := rfnix.InstallPackages(flake, packages, contID); err != nil {
+					common.PrintErrorMessage(err)
+				}
+			}
+			return
+		}
 
 		// Interactive container selection
 		if contID == "" && tui.IsInteractive() {
@@ -473,6 +522,42 @@ var installCmd = &cobra.Command{
 			if contID == "" {
 				return
 			}
+		}
+
+		// No function given: search the container's install functions and let the
+		// user pick one from a filterable list.
+		if execCommand == "" && tui.IsInteractive() && contID != "" {
+			fns := rfdock.ListInstallFunctions(contID)
+			if len(fns) == 0 {
+				common.PrintErrorMessage(fmt.Errorf("no install functions found in the container; pass one with -i (e.g. -i sdrpp_soft_install)"))
+				return
+			}
+			if len(fns) > 12 {
+				if term, err := tui.PromptInput("Filter tools to install (blank = all)", ""); err == nil && strings.TrimSpace(term) != "" {
+					t := strings.ToLower(strings.TrimSpace(term))
+					var f []string
+					for _, fn := range fns {
+						if strings.Contains(strings.ToLower(fn), t) {
+							f = append(f, fn)
+						}
+					}
+					if len(f) > 0 {
+						fns = f
+					} else {
+						common.PrintInfoMessage(fmt.Sprintf("No install function matches '%s'; showing all.", term))
+					}
+				}
+			}
+			sel, err := tui.SelectOne("Select a tool to install", fns)
+			if err != nil || sel == "" {
+				common.PrintInfoMessage("Installation cancelled.")
+				return
+			}
+			execCommand = sel
+		}
+		if execCommand == "" {
+			common.PrintErrorMessage(fmt.Errorf("no install function given (use -i <function>, e.g. -i sdrpp_soft_install)"))
+			return
 		}
 
 		rfdock.ContainerSetShell(execCommand)
@@ -694,7 +779,7 @@ func registerContainerCommands() {
 
 	runCmd.Flags().StringP("extrahosts", "x", "", "set extra hosts (default: 'pluto.local:192.168.1.2', and separate them with commas)")
 	runCmd.Flags().StringP("display", "d", rfutils.GetDisplayEnv(), "set X Display (duplicates hosts's env by default)")
-	runCmd.Flags().StringP("command", "e", "", "command to exec (by default: '/bin/bash')")
+	runCmd.Flags().StringP("command", "e", "", "interactive shell (default: '/bin/zsh'; use '/bin/bash' for a minimal shell)")
 	runCmd.Flags().StringP("bind", "b", "", "extra bindings (separate them with commas)")
 	runCmd.Flags().StringP("image", "i", "", "image (default: 'myrfswift:latest')")
 	runCmd.Flags().StringP("pulseserver", "p", "tcp:127.0.0.1:34567", "PULSE SERVER TCP address (by default: tcp:127.0.0.1:34567)")
@@ -725,7 +810,7 @@ func registerContainerCommands() {
 
 	execCmd.Flags().StringP("workdir", "w", "/root", "Working directory inside container")
 	execCmd.Flags().StringP("container", "c", "", "container to run")
-	execCmd.Flags().StringP("command", "e", "/bin/bash", "command to exec")
+	execCmd.Flags().StringP("command", "e", "/bin/zsh", "interactive shell (default: /bin/zsh; falls back to Bash when unavailable)")
 	execCmd.Flags().StringP("install", "i", "", "install from function script (e.g: 'sdrpp_soft_install')")
 	execCmd.Flags().Bool("no-x11", false, "Disable X11 forwarding")
 	execCmd.Flags().Bool("record", false, "Record the container session")

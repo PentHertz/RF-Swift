@@ -1,0 +1,163 @@
+/* This code is part of RF Swift by @Penthertz
+*  Author(s): Sébastien Dudek (@FlUxIuS)
+*
+*  Nix engine - search the tool universe and install packages, including ones
+*  that do not belong to any environment.
+*
+*  `rfswift nix run <target> <tool>` already runs any package on demand (the
+*  flake's legacyPackages fall back to the whole nixpkgs set). This adds:
+*    - SearchPackages: find a tool across the curated RF Swift package universe.
+*    - InstallPackages: install a package persistently into a Nix profile, either
+*      shared across environments or scoped to one, so it stays on PATH.
+ */
+
+package nix
+
+import (
+	"encoding/json"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"sort"
+	"strings"
+
+	common "penthertz/rfswift/common"
+)
+
+var cachedSystem string
+
+// currentSystem returns the Nix system double (e.g. x86_64-linux), cached.
+func currentSystem() string {
+	if cachedSystem != "" {
+		return cachedSystem
+	}
+	out, err := exec.Command(NixBinary(), append(experimentalArgs(), "eval", "--raw", "--impure", "--expr", "builtins.currentSystem")...).Output()
+	if err == nil && len(out) > 0 {
+		cachedSystem = strings.TrimSpace(string(out))
+	} else {
+		cachedSystem = "x86_64-linux"
+	}
+	return cachedSystem
+}
+
+// PkgHit is a search result: a package and the environments that bundle it.
+type PkgHit struct {
+	Name string
+	Envs []string
+}
+
+// PackageUniverse is the curated set of packages RF Swift environments bundle
+// (the union across the catalog), sorted and de-duplicated. It is the meaningful
+// search space; the full nixpkgs set is reachable too via --nixpkgs on the CLI.
+func PackageUniverse() ([]string, map[string][]string) {
+	cat, err := LoadCatalog()
+	if err != nil {
+		return nil, nil
+	}
+	inEnvs := map[string][]string{}
+	for _, e := range cat.Environments {
+		for _, p := range e.Packages {
+			inEnvs[p] = append(inEnvs[p], e.Name)
+		}
+	}
+	names := make([]string, 0, len(inEnvs))
+	for p := range inEnvs {
+		names = append(names, p)
+	}
+	sort.Strings(names)
+	return names, inEnvs
+}
+
+// SearchPackages returns curated packages whose name matches term (case-
+// insensitive substring), with the environments that include each.
+func SearchPackages(term string) []PkgHit {
+	names, inEnvs := PackageUniverse()
+	t := strings.ToLower(strings.TrimSpace(term))
+	var hits []PkgHit
+	for _, n := range names {
+		if t == "" || strings.Contains(strings.ToLower(n), t) {
+			hits = append(hits, PkgHit{Name: n, Envs: inEnvs[n]})
+		}
+	}
+	return hits
+}
+
+// SearchNixpkgs runs `nix search` over the flake's nixpkgs for a term, returning
+// the raw results as attribute-path -> one-line description.
+func SearchNixpkgs(flakeRef, term string) (map[string]string, error) {
+	// Search the flake's pinned nixpkgs via --inputs-from so results match what
+	// would actually install.
+	args := append(experimentalArgs(), "search", "--json", "--inputs-from", flakeRef, "nixpkgs", term)
+	out, err := exec.Command(NixBinary(), args...).Output()
+	if err != nil {
+		return nil, err
+	}
+	// `nix search --json` returns { "legacyPackages.<sys>.<attr>": {pname,version,description} }
+	var raw map[string]struct {
+		Version     string `json:"version"`
+		Description string `json:"description"`
+	}
+	if e := json.Unmarshal(out, &raw); e != nil {
+		return nil, e
+	}
+	res := map[string]string{}
+	for k, v := range raw {
+		// strip the "legacyPackages.<sys>." prefix
+		attr := k
+		if i := strings.Index(k, "."); i >= 0 {
+			parts := strings.SplitN(k, ".", 3)
+			if len(parts) == 3 {
+				attr = parts[2]
+			}
+		}
+		desc := v.Description
+		if v.Version != "" {
+			desc = v.Version + " - " + desc
+		}
+		res[attr] = desc
+	}
+	return res, nil
+}
+
+// InstallPackages installs one or more packages into a persistent Nix profile.
+// With envName set, they go to that environment's extras profile (on PATH when
+// entering it); otherwise to the shared extras profile (on PATH in every
+// environment). Packages resolve against the flake's legacyPackages, so any
+// nixpkgs package works, not only those in an environment.
+func InstallPackages(flakeRef string, pkgs []string, envName string) error {
+	if !IsAvailable() {
+		return fmt.Errorf("nix is not installed or not on PATH")
+	}
+	profile := SharedExtrasProfile()
+	scope := "shared (available in every environment)"
+	if envName != "" {
+		if _, err := GetEnvironment(envName); err != nil {
+			return err
+		}
+		profile = EnvExtrasProfile(envName)
+		scope = fmt.Sprintf("environment '%s'", envName)
+	}
+	if err := ensureDir(filepath.Dir(profile)); err != nil {
+		return err
+	}
+	sys := currentSystem()
+	for _, p := range pkgs {
+		installable := fmt.Sprintf("%s#legacyPackages.%s.%s", flakeRef, sys, p)
+		common.PrintInfoMessage(fmt.Sprintf("Installing %s into %s ...", p, scope))
+		args := append(experimentalArgs(), "profile", "install", "--profile", profile, installable)
+		cmd := exec.Command(NixBinary(), args...)
+		cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
+		if err := cmd.Run(); err != nil {
+			return fmt.Errorf("failed to install %s: %w\n"+
+				"  (check the name with: rfswift nix search %s)", p, err, p)
+		}
+	}
+	common.PrintSuccessMessage(fmt.Sprintf("Installed %d package(s) into %s.", len(pkgs), scope))
+	if envName != "" {
+		common.PrintInfoMessage(fmt.Sprintf("They are on PATH when you enter '%s' (rfswift exec --engine nix -c %s).", envName, envName))
+	} else {
+		common.PrintInfoMessage(fmt.Sprintf("They are on PATH in every RF Swift nix environment. Profile: %s", profile))
+	}
+	return nil
+}

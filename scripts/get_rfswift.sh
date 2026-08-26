@@ -2375,6 +2375,42 @@ check_asciinema() {
 # Main
 # ═══════════════════════════════════════════════════════════════════════════════
 
+install_nix() {
+  color_echo "blue" "❄️  Installing Nix (native engine)..."
+  if command_exists nix; then
+    color_echo "green" "✅ Nix is already installed."
+    return 0
+  fi
+  color_echo "blue" "🚀 Running the Determinate Systems Nix installer (enables flakes + nix-command)..."
+  if curl --proto '=https' --tlsv1.2 -sSf -L https://install.determinate.systems/nix | sh -s -- install --no-confirm; then
+    color_echo "green" "✅ Nix installed."
+    color_echo "cyan" "   Open a new shell (or 'source /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh') so 'nix' is on PATH,"
+    color_echo "cyan" "   then:  rfswift --engine nix run <environment>"
+    color_echo "cyan" "   Tip: set 'engine = nix' under [general] in ~/.config/rfswift/config.ini to make Nix the default."
+  else
+    color_echo "red" "🚨 Nix installation failed. Install it manually from https://nixos.org/download and re-run."
+    return 1
+  fi
+}
+
+# RF Swift can run tool environments natively via Nix (rfswift --engine nix),
+# with no container. Offer to install it alongside (or instead of) a container
+# engine.
+check_nix_engine() {
+  color_echo "blue" "❄️  Native engine (Nix)"
+  if command_exists nix; then
+    color_echo "green" "✅ Nix is available - RF Swift can run tools natively with 'rfswift --engine nix' (no container)."
+    return 0
+  fi
+  color_echo "cyan" "   RF Swift can also run its tool environments natively via Nix - no container needed."
+  choice=$(prompt_choice "Install Nix for the native engine?" "Yes" "No")
+  if [ "$choice" = "1" ]; then
+    install_nix
+  else
+    color_echo "yellow" "   Skipped. Install Nix later from https://nixos.org/download to use '--engine nix'."
+  fi
+}
+
 main() {
   display_rainbow_logo_animated
 
@@ -2393,7 +2429,10 @@ main() {
   
   # Check container engine (Docker / Podman) and offer to install
   check_container_engine
-  
+
+  # Offer the native Nix engine (rfswift --engine nix)
+  check_nix_engine
+
   # Check and install audio system
   check_audio_system
   

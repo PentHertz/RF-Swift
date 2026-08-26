@@ -122,7 +122,7 @@ Plus new tooling inside the existing images — SAST/DAST in `reversing` (Semgre
 
 ### 🐳🦭 Container Engine Support
 
-RF Swift supports **both Docker and Podman** as container engines, giving you the freedom to choose the runtime that best fits your environment:
+RF Swift supports **Docker, Podman and Lima** as container engines, and (new in v4.0.0) a **Nix** engine that installs the tools natively instead of in a container. Choose the runtime that best fits your environment:
 
 | | Docker | Podman | Lima |
 |---|---|---|---|
@@ -154,6 +154,26 @@ https://github.com/user-attachments/assets/14b6d50f-5250-420e-94e4-474991113372
 
 
 - **Automatic cgroup handling**: RF Swift detects cgroup v1/v2 and configures device access rules accordingly
+
+### ❄️ Nix engine (native environments)
+
+New in v4.0.0. Instead of a container, the Nix engine installs an RF Swift tool set straight onto the host as a reproducible, pinned environment. No daemon, no container boundary, so USB radios and audio work with zero device plumbing. The environments (`sdr_light`, `rfid`, `wifi`, ...) are defined in the companion repo [RF-Swift-nix](https://github.com/PentHertz/RF-Swift-nix).
+
+```bash
+rfswift run --engine nix                       # interactive wizard
+rfswift run --engine nix -i sdr_light -n mysdr # or the full command
+rfswift exec --engine nix -c mysdr             # re-enter it
+
+rfswift nix catalog                            # browse available environments
+rfswift nix list                               # environments you created
+rfswift env update --check mysdr               # preview pinned input updates
+rfswift env update --input nixpkgs mysdr       # update nixpkgs and safely rebuild
+rfswift env rebuild mysdr                      # rebuild without changing flake.lock
+rfswift env generations mysdr                  # list rollback points
+rfswift env rollback mysdr                     # restore the previous closure
+```
+
+Requires a [Nix](https://nixos.org/download) install with flakes (Linux and macOS; on Windows use WSL2). Full guide: [docs/nix-engine.md](docs/nix-engine.md).
 
 ### 🦙 macOS USB Passthrough (Lima)
 
@@ -317,6 +337,7 @@ Comprehensive documentation is available at [rfswift.io](https://rfswift.io/), i
 - 👨‍💻 [Development Documentation](https://rfswift.io/docs/development/)
 - 🧰 [List of Included Tools](https://rfswift.io/docs/guide/list-of-tools/)
 - 🛡️ [Security Guidelines](https://rfswift.io/docs/security/)
+- 🔐 [Remote agent setup and paranoid security model](docs/remote-agent.md)
 
 ## 🎓 Training & Workshops
 

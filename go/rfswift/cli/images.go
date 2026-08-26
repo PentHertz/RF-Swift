@@ -185,6 +185,48 @@ var DownloadCmd = &cobra.Command{
 	},
 }
 
+var ImagesAuditCmd = &cobra.Command{
+	Use:   "audit <image> [image...]",
+	Short: "Scan a container image for known vulnerabilities",
+	Long: `Audit one or more container images (Docker/Podman) for known
+vulnerabilities, so you can check an image's security posture on your own
+machine, on your own engine, without leaving RF Swift.
+
+It scans each image natively with trivy (OS packages + language dependencies).
+A host-installed trivy is used if present; otherwise trivy runs as a container
+via the active engine, so no extra install is needed. A host grype is used as a
+second opinion when available. Nothing is fatal unless you pass --fail-on.
+
+Reports are written to ./security-report in the formats given by --format
+(stdout,json,html,pdf). PDF needs a host weasyprint or wkhtmltopdf; without one
+the HTML report is still produced.
+
+Examples:
+  rfswift images audit penthertz/rfswift:sdr_full
+  rfswift images audit penthertz/rfswift:corebuild --format stdout,json,html,pdf
+  rfswift images audit myimage:latest --fail-on critical --out /tmp/audit`,
+	Args: cobra.MinimumNArgs(1),
+	Run: func(cmd *cobra.Command, args []string) {
+		format, _ := cmd.Flags().GetString("format")
+		failOn, _ := cmd.Flags().GetString("fail-on")
+		out, _ := cmd.Flags().GetString("out")
+		if format == "all" {
+			format = "stdout,json,html,pdf"
+		}
+		if failOn == "" {
+			failOn = "none"
+		}
+		if err := rfdock.AuditImage(args, rfdock.ImageAuditOptions{
+			FailOn:  failOn,
+			OutDir:  out,
+			Formats: format,
+		}); err != nil {
+			common.PrintErrorMessage(err)
+			os.Exit(1)
+		}
+	},
+}
+
 func registerImageCommands() {
 	rootCmd.AddCommand(ImagesCmd)
 	rootCmd.AddCommand(retagCmd)
@@ -195,6 +237,10 @@ func registerImageCommands() {
 	ImagesCmd.AddCommand(ImagesRemoteCmd)
 	ImagesCmd.AddCommand(ImagesLocalCmd)
 	ImagesCmd.AddCommand(ImagesVersionsCmd)
+	ImagesCmd.AddCommand(ImagesAuditCmd)
+	ImagesAuditCmd.Flags().String("format", "stdout", "report formats: stdout,json,html,pdf (or 'all')")
+	ImagesAuditCmd.Flags().String("fail-on", "none", "exit non-zero if a finding is >= none|low|medium|high|critical")
+	ImagesAuditCmd.Flags().String("out", "", "report output directory (default: ./security-report)")
 	ImagesCmd.PersistentFlags().BoolP("show-versions", "v", false, "Show version information for images")
 	ImagesCmd.PersistentFlags().StringP("filter", "f", "", "Filter images by name")
 

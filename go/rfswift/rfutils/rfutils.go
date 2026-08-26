@@ -101,9 +101,20 @@ func XHostEnable() {
 		cmd := fmt.Sprintf("xhost + %s", strings.TrimSpace(string(ip)))
 		HostCmdExec(cmd)
 	} else {
-		// Default command for other OS
-		s := "xhost local:root"
-		HostCmdExec(s)
+		display := strings.TrimPrefix(GetDisplayEnv(), "DISPLAY=")
+		// SSH-forwarded displays authenticate with an xauth cookie. Container
+		// creation mounts that cookie read-only; xhost is neither needed nor
+		// desirable for this case.
+		lower := strings.ToLower(display)
+		if strings.HasPrefix(lower, "localhost:") || strings.HasPrefix(lower, "127.0.0.1:") || strings.HasPrefix(lower, "[::1]:") {
+			return
+		}
+		cmd := exec.Command("xhost", "local:root")
+		cmd.Env = append(os.Environ(), "DISPLAY="+display)
+		cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
+		if err := cmd.Run(); err != nil {
+			fmt.Printf("Error enabling local X11 access on DISPLAY=%s: %v\n", display, err)
+		}
 	}
 }
 

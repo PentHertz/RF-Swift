@@ -15,6 +15,7 @@ type Config struct {
 	General struct {
 		ImageName string
 		RepoTag   string
+		Engine    string
 	}
 	Container struct {
 		Shell        string
@@ -82,6 +83,40 @@ func GetDefaultDevices() string {
 //	in(1): string filename path to the configuration file to read or create
 //	out: *Config pointer to the populated Config struct, or nil on error
 //	out: error non-nil if the file could not be opened, created, or parsed
+//
+// ConfiguredEngine returns the default engine set under `[general] engine` in
+// the config file, lowercased, or "" if the file is absent or the key is unset.
+// Unlike ReadOrCreateConfig it is non-interactive: it never prompts to create
+// the file, so it is safe to call from the early engine-selection path.
+func ConfiguredEngine(filename string) string {
+	file, err := os.Open(filename)
+	if err != nil {
+		return ""
+	}
+	defer file.Close()
+
+	scanner := bufio.NewScanner(file)
+	section := ""
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		if strings.HasPrefix(line, "[") && strings.HasSuffix(line, "]") {
+			section = strings.ToLower(line[1 : len(line)-1])
+			continue
+		}
+		if section != "general" {
+			continue
+		}
+		parts := strings.SplitN(line, "=", 2)
+		if len(parts) == 2 && strings.EqualFold(strings.TrimSpace(parts[0]), "engine") {
+			return strings.ToLower(strings.TrimSpace(parts[1]))
+		}
+	}
+	return ""
+}
+
 func ReadOrCreateConfig(filename string) (*Config, error) {
 	config := &Config{}
 
@@ -151,6 +186,8 @@ func ReadOrCreateConfig(filename string) (*Config, error) {
 				config.General.ImageName = value
 			case "repotag":
 				config.General.RepoTag = value
+			case "engine":
+				config.General.Engine = value
 			}
 		case "container":
 			switch key {
@@ -277,6 +314,17 @@ func ReadOrCreateConfig(filename string) (*Config, error) {
 	return config, nil
 }
 
+// EnsureDefaultConfig creates the platform configuration with RF-Swift's
+// shipped defaults when it is absent. It is non-interactive for GUI clients.
+func EnsureDefaultConfig(filename string) error {
+	if _, err := os.Stat(filename); err == nil {
+		return nil
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+	return createDefaultConfig(filename)
+}
+
 // createDefaultConfig writes a default INI-style configuration file to the given
 // path, creating any necessary parent directories. Device defaults are chosen
 // based on the current operating system.
@@ -290,6 +338,9 @@ func createDefaultConfig(filename string) error {
 	content := fmt.Sprintf(`[general]
 imagename = myrfswift:latest
 repotag = penthertz/rfswift_resolute
+# Default engine when neither --engine nor RFSWIFT_ENGINE is set:
+# auto, docker, podman, lima, or nix (native environments).
+engine = auto
 
 [container]
 shell = /bin/zsh
