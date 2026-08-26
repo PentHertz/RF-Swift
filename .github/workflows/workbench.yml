@@ -68,12 +68,12 @@ jobs:
         env:
           LINUXDEPLOY_SHA256: c20cd71e3a4e3b80c3483cef793cda3f4e990aca14014d23c544ca3ce1270b4d
           GTK_PLUGIN_SHA256: b0f4cbc684a0103a9651f0955b635eaea0096b3a66c0f5a2c2aa337960375171
-          APPIMAGE_RUNTIME_SHA256: cb9952efc08ea5c0d9ba6f19eef53aa412027dd8cf9a297ea7a79240f189d116
+          APPIMAGE_RUNTIME_SHA256: 2fca8b443c92510f1483a883f60061ad09b46b978b2631c807cd873a47ec260d
         run: |
           mkdir -p build/appimage-tools
           curl -fsSL --retry 3 -o build/appimage-tools/linuxdeploy https://github.com/linuxdeploy/linuxdeploy/releases/download/1-alpha-20251107-1/linuxdeploy-x86_64.AppImage
           curl -fsSL --retry 3 -o build/appimage-tools/linuxdeploy-plugin-gtk.sh https://raw.githubusercontent.com/linuxdeploy/linuxdeploy-plugin-gtk/7a3fbc31a9e5075073ff8790f26effbac5f84453/linuxdeploy-plugin-gtk.sh
-          curl -fsSL --retry 3 -o build/appimage-tools/runtime-x86_64 https://github.com/AppImage/type2-runtime/releases/download/continuous/runtime-x86_64
+          curl -fsSL --retry 3 -o build/appimage-tools/runtime-x86_64 https://github.com/AppImage/type2-runtime/releases/download/20251108/runtime-x86_64
           echo "$LINUXDEPLOY_SHA256  build/appimage-tools/linuxdeploy" | sha256sum -c -
           echo "$GTK_PLUGIN_SHA256  build/appimage-tools/linuxdeploy-plugin-gtk.sh" | sha256sum -c -
           echo "$APPIMAGE_RUNTIME_SHA256  build/appimage-tools/runtime-x86_64" | sha256sum -c -
