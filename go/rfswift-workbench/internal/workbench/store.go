@@ -92,6 +92,16 @@ func (s *Store) DeleteWorkspace(name string) error {
 	return os.RemoveAll(s.wsDir(name))
 }
 
+// DeleteMission removes only Workbench-owned data for one mission. External
+// bind-mounted workspaces, container volumes and images are deliberately not
+// followed or removed here.
+func (s *Store) DeleteMission(ws, id string) error {
+	if !validWorkspaceName(ws) || !validWorkspaceName(id) {
+		return errors.New("workspace and mission IDs must be single non-empty path components")
+	}
+	return os.RemoveAll(s.missionDir(ws, id))
+}
+
 // ListMissions reads the mission.json of each mission in a workspace.
 func (s *Store) ListMissions(ws string) ([]Mission, error) {
 	entries, err := os.ReadDir(s.missionsDir(ws))

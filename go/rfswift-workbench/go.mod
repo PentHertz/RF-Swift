@@ -12,6 +12,7 @@ go 1.27.0
 // then run `go mod tidy`.
 
 require (
+	filippo.io/age v1.2.1
 	github.com/creack/pty v1.1.24
 	github.com/moby/moby/client v0.5.1
 	github.com/wailsapp/wails/v2 v2.15.0

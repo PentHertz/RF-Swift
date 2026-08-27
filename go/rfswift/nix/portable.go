@@ -11,6 +11,8 @@
 package nix
 
 import (
+	"archive/tar"
+	"compress/gzip"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -20,14 +22,51 @@ import (
 	common "penthertz/rfswift/common"
 )
 
+// PortableEnvironmentName reads only the manifest from an environment archive.
+// It lets GUI callers associate companion metadata with the imported mission
+// without having to guess from a user-renamed filename.
+func PortableEnvironmentName(inFile string) (string, error) {
+	f, err := os.Open(inFile)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+	gz, err := gzip.NewReader(f)
+	if err != nil {
+		return "", fmt.Errorf("invalid portable environment compression: %w", err)
+	}
+	defer gz.Close()
+	tr := tar.NewReader(gz)
+	for {
+		h, err := tr.Next()
+		if err != nil {
+			return "", fmt.Errorf("portable environment manifest not found: %w", err)
+		}
+		if filepath.Clean(h.Name) != "manifest.json" {
+			continue
+		}
+		var m exportManifest
+		if err := json.NewDecoder(tr).Decode(&m); err != nil {
+			return "", fmt.Errorf("corrupt portable environment manifest: %w", err)
+		}
+		if m.Env.Name == "" {
+			return "", fmt.Errorf("portable environment manifest has no environment name")
+		}
+		return m.Env.Name, nil
+	}
+}
+
 // exportManifest is the metadata stored inside a .rfenv archive so import can
 // re-register the environment and pin the right closure.
 type exportManifest struct {
 	Version      int         `json:"version"`
 	StorePath    string      `json:"storePath"`
+	ExtrasPath   string      `json:"extrasPath,omitempty"`
 	HasWorkspace bool        `json:"hasWorkspace"`
 	Env          Environment `json:"env"`
 }
+
+type ExportProgress func(percent int, stage string)
 
 // envStorePath realises the environment if needed and returns the /nix/store
 // path of its buildEnv closure.
@@ -54,6 +93,19 @@ func envStorePath(env *Environment) (string, error) {
 // ExportEnvironment writes the environment's closure + workspace to outFile
 // (default <name>.rfenv) as a single gzipped tar.
 func ExportEnvironment(name, outFile string) error {
+	return ExportEnvironmentWithProgress(name, outFile, nil)
+}
+
+// ExportEnvironmentWithProgress is ExportEnvironment with coarse, truthful
+// phase updates. Nix does not expose a stable byte total for a store closure,
+// so progress represents completed phases rather than fabricated byte ratios.
+func ExportEnvironmentWithProgress(name, outFile string, progress ExportProgress) error {
+	report := func(percent int, stage string) {
+		if progress != nil {
+			progress(percent, stage)
+		}
+	}
+	report(3, "Checking Nix environment")
 	if !IsAvailable() {
 		return fmt.Errorf("nix is not installed or not on PATH")
 	}
@@ -62,10 +114,18 @@ func ExportEnvironment(name, outFile string) error {
 		return err
 	}
 
+	report(10, "Realising environment closure")
 	common.PrintInfoMessage(fmt.Sprintf("Realising environment '%s' for export...", name))
 	storePath, err := envStorePath(env)
 	if err != nil {
 		return fmt.Errorf("could not realise environment '%s' for export: %w", name, err)
+	}
+	report(35, "Environment closure ready")
+	extrasPath := ""
+	if profile := EnvExtrasProfile(name); pathExists(profile) {
+		if resolved, resolveErr := filepath.EvalSymlinks(profile); resolveErr == nil {
+			extrasPath = resolved
+		}
 	}
 
 	staging, err := os.MkdirTemp("", "rfswift-export-")
@@ -79,17 +139,25 @@ func ExportEnvironment(name, outFile string) error {
 	// 1. Copy the closure into a file:// binary cache. No inner compression - the
 	//    outer tar.gz compresses everything uniformly.
 	common.PrintInfoMessage("Exporting the Nix closure...")
+	report(40, "Exporting Nix store closure")
 	cacheURL := "file://" + storeDir + "?compression=none"
-	args := append(experimentalArgs(), "copy", "--no-check-sigs", "--to", cacheURL, storePath)
+	copyPaths := []string{storePath}
+	if extrasPath != "" {
+		copyPaths = append(copyPaths, extrasPath)
+	}
+	args := append(experimentalArgs(), "copy", "--no-check-sigs", "--to", cacheURL)
+	args = append(args, copyPaths...)
 	cp := exec.Command(NixBinary(), args...)
 	cp.Stdout, cp.Stderr = os.Stderr, os.Stderr
 	if err := cp.Run(); err != nil {
 		return fmt.Errorf("nix copy (export) failed: %w", err)
 	}
+	report(65, "Nix store closure exported")
 
 	// 2. Copy the workspace, if the environment has one.
 	hasWorkspace := false
 	if env.Workspace != "" && env.Workspace != "none" && pathExists(env.Workspace) {
+		report(68, "Copying environment workspace")
 		if err := ensureDir(wsDir); err != nil {
 			return err
 		}
@@ -100,9 +168,10 @@ func ExportEnvironment(name, outFile string) error {
 		}
 		hasWorkspace = true
 	}
+	report(76, "Writing environment manifest")
 
 	// 3. Manifest.
-	m := exportManifest{Version: 1, StorePath: storePath, HasWorkspace: hasWorkspace, Env: *env}
+	m := exportManifest{Version: 2, StorePath: storePath, ExtrasPath: extrasPath, HasWorkspace: hasWorkspace, Env: *env}
 	data, err := json.MarshalIndent(m, "", "  ")
 	if err != nil {
 		return err
@@ -119,11 +188,13 @@ func ExportEnvironment(name, outFile string) error {
 		outFile = abs
 	}
 	common.PrintInfoMessage("Compressing...")
+	report(82, "Compressing portable environment")
 	t := exec.Command("tar", "-czf", outFile, "-C", staging, ".")
 	t.Stderr = os.Stderr
 	if err := t.Run(); err != nil {
 		return fmt.Errorf("failed to create archive: %w", err)
 	}
+	report(100, "Environment export complete")
 
 	wsNote := ""
 	if hasWorkspace {
@@ -137,6 +208,18 @@ func ExportEnvironment(name, outFile string) error {
 // closure into the local store, restores its workspace, and registers it under
 // newName (or the archived name) so it can be entered directly.
 func ImportEnvironment(inFile, newName, newWorkspace string) error {
+	return ImportEnvironmentWithProgress(inFile, newName, newWorkspace, nil)
+}
+
+type ImportProgress func(percent int, stage string)
+
+func ImportEnvironmentWithProgress(inFile, newName, newWorkspace string, progress ImportProgress) error {
+	report := func(percent int, stage string) {
+		if progress != nil {
+			progress(percent, stage)
+		}
+	}
+	report(3, "Checking portable environment")
 	if !IsAvailable() {
 		return fmt.Errorf("nix is not installed or not on PATH")
 	}
@@ -151,6 +234,7 @@ func ImportEnvironment(inFile, newName, newWorkspace string) error {
 	defer os.RemoveAll(staging)
 
 	common.PrintInfoMessage("Extracting archive...")
+	report(10, "Extracting portable environment")
 	x := exec.Command("tar", "-xzf", inFile, "-C", staging)
 	x.Stderr = os.Stderr
 	if err := x.Run(); err != nil {
@@ -165,6 +249,7 @@ func ImportEnvironment(inFile, newName, newWorkspace string) error {
 	if err := json.Unmarshal(data, &m); err != nil {
 		return fmt.Errorf("corrupt manifest in archive: %w", err)
 	}
+	report(25, "Environment manifest validated")
 
 	name := newName
 	if name == "" {
@@ -179,13 +264,20 @@ func ImportEnvironment(inFile, newName, newWorkspace string) error {
 
 	// 1. Import the closure into the local store.
 	common.PrintInfoMessage("Importing the Nix closure into the store...")
+	report(30, "Importing Nix store closure")
 	cacheURL := "file://" + filepath.Join(staging, "store") + "?compression=none"
-	args := append(experimentalArgs(), "copy", "--no-check-sigs", "--from", cacheURL, m.StorePath)
+	copyPaths := []string{m.StorePath}
+	if m.ExtrasPath != "" {
+		copyPaths = append(copyPaths, m.ExtrasPath)
+	}
+	args := append(experimentalArgs(), "copy", "--no-check-sigs", "--from", cacheURL)
+	args = append(args, copyPaths...)
 	cp := exec.Command(NixBinary(), args...)
 	cp.Stdout, cp.Stderr = os.Stderr, os.Stderr
 	if err := cp.Run(); err != nil {
 		return fmt.Errorf("nix copy (import) failed: %w", err)
 	}
+	report(60, "Nix store closure imported")
 
 	// 2. Pin the imported closure with a gcroot profile symlink so it survives GC.
 	if err := ensureDir(EnvDir(name)); err != nil {
@@ -198,10 +290,22 @@ func ImportEnvironment(inFile, newName, newWorkspace string) error {
 	if err := b.Run(); err != nil {
 		return fmt.Errorf("failed to pin the imported closure: %w", err)
 	}
+	report(72, "Environment closure pinned")
+	if m.ExtrasPath != "" {
+		report(74, "Restoring installed environment tools")
+		extras := EnvExtrasProfile(name)
+		eargs := append(experimentalArgs(), "build", m.ExtrasPath, "--out-link", extras)
+		e := exec.Command(NixBinary(), eargs...)
+		e.Stderr = os.Stderr
+		if err := e.Run(); err != nil {
+			return fmt.Errorf("failed to restore installed environment tools: %w", err)
+		}
+	}
 
 	// 3. Restore the workspace.
 	ws := ""
 	if m.HasWorkspace {
+		report(76, "Restoring environment workspace")
 		ws = newWorkspace
 		if ws == "" {
 			ws = filepath.Join(homeDir(), "rfswift-workspace", name)
@@ -218,6 +322,7 @@ func ImportEnvironment(inFile, newName, newWorkspace string) error {
 			return fmt.Errorf("failed to restore workspace: %w", err)
 		}
 	}
+	report(90, "Registering environment")
 
 	// 4. Register the environment (now realised, non-lazy).
 	env := m.Env
@@ -229,6 +334,7 @@ func ImportEnvironment(inFile, newName, newWorkspace string) error {
 	if err := writeManifest(&env); err != nil {
 		return err
 	}
+	report(100, "Environment import complete")
 
 	wsNote := ""
 	if ws != "" {

@@ -141,6 +141,36 @@ func createTarArchive(srcDir string, containerPath string) (io.ReadCloser, error
 //	in(2): string outputFile path to the output .tar.gz file to create
 //	out: error non-nil if the export or compression fails
 func ExportContainer(containerID string, outputFile string) error {
+	return ExportContainerWithProgress(containerID, outputFile, nil)
+}
+
+type ContainerExportProgress func(percent int, stage string, bytes int64)
+
+type exportProgressReader struct {
+	r        io.Reader
+	written  int64
+	progress ContainerExportProgress
+}
+
+func (r *exportProgressReader) Read(p []byte) (int, error) {
+	n, err := r.r.Read(p)
+	r.written += int64(n)
+	if n > 0 && r.progress != nil {
+		r.progress(55, "Streaming and compressing container filesystem", r.written)
+	}
+	return n, err
+}
+
+// ExportContainerWithProgress reports real bytes streamed. The daemon does not
+// provide the final filesystem tar size in advance, so the byte-processing
+// phase remains indeterminate until the stream closes successfully.
+func ExportContainerWithProgress(containerID string, outputFile string, progress ContainerExportProgress) error {
+	report := func(percent int, stage string, bytes int64) {
+		if progress != nil {
+			progress(percent, stage, bytes)
+		}
+	}
+	report(5, "Connecting to container engine", 0)
 	ctx := context.Background()
 	cli, err := NewEngineClient()
 	if err != nil {
@@ -154,6 +184,7 @@ func ExportContainer(containerID string, outputFile string) error {
 		return fmt.Errorf("failed to inspect container: %v", err)
 	}
 	containerName := strings.TrimPrefix(containerJSON.Name, "/")
+	report(15, "Container inspected", 0)
 
 	common.PrintInfoMessage(fmt.Sprintf("Exporting container '%s' to %s", containerName, outputFile))
 
@@ -163,6 +194,7 @@ func ExportContainer(containerID string, outputFile string) error {
 		return fmt.Errorf("failed to export container: %v", err)
 	}
 	defer reader.Close()
+	report(25, "Container export stream opened", 0)
 
 	// Create output file
 	outFile, err := os.Create(outputFile)
@@ -177,10 +209,15 @@ func ExportContainer(containerID string, outputFile string) error {
 
 	// Copy with progress
 	common.PrintInfoMessage("Compressing container data...")
-	written, err := io.Copy(gzipWriter, reader)
+	tracked := &exportProgressReader{r: reader, progress: progress}
+	written, err := io.Copy(gzipWriter, tracked)
 	if err != nil {
 		return fmt.Errorf("failed to write compressed data: %v", err)
 	}
+	if err := gzipWriter.Close(); err != nil {
+		return fmt.Errorf("failed to finish compressed data: %v", err)
+	}
+	report(100, "Container export complete", tracked.written)
 
 	common.PrintSuccessMessage(fmt.Sprintf("Container exported successfully: %s (%.2f MB)",
 		outputFile, float64(written)/(1024*1024)))
@@ -246,6 +283,18 @@ func ExportImage(images []string, outputFile string) error {
 //	in(2): string imageName tag to assign to the resulting image
 //	out: error non-nil if opening, decompressing, or importing the file fails
 func ImportContainer(inputFile string, imageName string) error {
+	return ImportContainerWithProgress(inputFile, imageName, nil)
+}
+
+type ContainerImportProgress func(percent int, stage string, bytes int64, total int64)
+
+func ImportContainerWithProgress(inputFile string, imageName string, progress ContainerImportProgress) error {
+	report := func(percent int, stage string, bytes, total int64) {
+		if progress != nil {
+			progress(percent, stage, bytes, total)
+		}
+	}
+	report(3, "Connecting to container engine", 0, 0)
 	ctx := context.Background()
 	cli, err := NewEngineClient()
 	if err != nil {
@@ -261,10 +310,26 @@ func ImportContainer(inputFile string, imageName string) error {
 		return fmt.Errorf("failed to open input file: %v", err)
 	}
 	defer inFile.Close()
+	var total int64
+	if info, statErr := inFile.Stat(); statErr == nil {
+		total = info.Size()
+	}
+	tracked := &exportProgressReader{r: inFile}
+	tracked.progress = func(_ int, _ string, bytes int64) {
+		percent := 25
+		if total > 0 {
+			percent = 15 + int(float64(bytes)/float64(total)*65)
+			if percent > 80 {
+				percent = 80
+			}
+		}
+		report(percent, "Reading container archive", bytes, total)
+	}
+	report(10, "Opening container archive", 0, total)
 
 	// Check if file is gzipped
 	var reader io.Reader
-	gzipReader, err := gzip.NewReader(inFile)
+	gzipReader, err := gzip.NewReader(tracked)
 	if err == nil {
 		// File is gzipped
 		common.PrintInfoMessage("Decompressing tar.gz file...")
@@ -273,8 +338,9 @@ func ImportContainer(inputFile string, imageName string) error {
 	} else {
 		// File is plain tar
 		common.PrintInfoMessage("Reading tar file...")
+		tracked.written = 0
 		inFile.Seek(0, 0) // Reset file pointer
-		reader = inFile
+		reader = tracked
 	}
 
 	// Import container with label
@@ -291,10 +357,12 @@ func ImportContainer(inputFile string, imageName string) error {
 		return fmt.Errorf("failed to import container: %v", err)
 	}
 	defer importResponse.Close()
+	report(85, "Registering imported container image", tracked.written, total)
 
 	// Read response
 	buf := new(strings.Builder)
 	io.Copy(buf, importResponse)
+	report(100, "Container archive imported", tracked.written, total)
 
 	common.PrintSuccessMessage(fmt.Sprintf("Container imported successfully as image: %s", imageName))
 	return nil

@@ -197,6 +197,10 @@ func TestCreateMissionPersistsEngineTarget(t *testing.T) {
 	if _, err := a.CreateMission(MissionCreate{Name: "../escape", Engine: "nix", Image: "rfid"}); err == nil {
 		t.Fatal("unsafe mission name unexpectedly accepted")
 	}
+	if err := a.BeginMissionCreation("nfc-lab"); err != nil {
+		t.Fatalf("existing Nix mission could not be updated: %v", err)
+	}
+	a.FinishMissionCreation("nfc-lab")
 }
 
 func TestWorkspaceNameCannotEscapeRoot(t *testing.T) {

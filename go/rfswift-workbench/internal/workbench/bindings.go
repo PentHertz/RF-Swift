@@ -264,6 +264,14 @@ func (a *App) BeginMissionCreation(name string) error {
 	if !validWorkspaceName(name) {
 		return errors.New("mission name must be a single safe path component")
 	}
+	if _, err := os.Stat(a.store.missionDir(a.ws, name)); err == nil {
+		var existing Mission
+		if readErr := readJSON(filepath.Join(a.store.missionDir(a.ws, name), "mission.json"), &existing); readErr != nil || existing.Engine != "nix" {
+			return errors.New("a mission with this name already exists in the current project; choose another name or remove the preserved mission data first")
+		}
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("could not check the mission name: %w", err)
+	}
 	a.createMu.Lock()
 	defer a.createMu.Unlock()
 	if a.createCancel != nil {
@@ -303,6 +311,14 @@ func (a *App) FinishMissionCreation(name string) {
 func (a *App) CreateMission(req MissionCreate) (Mission, error) {
 	if !validWorkspaceName(req.Name) {
 		return Mission{}, errors.New("mission name must be a single safe path component")
+	}
+	if _, err := os.Stat(a.store.missionDir(a.ws, req.Name)); err == nil {
+		var existing Mission
+		if readErr := readJSON(filepath.Join(a.store.missionDir(a.ws, req.Name), "mission.json"), &existing); readErr != nil || existing.Engine != "nix" || req.Engine != "nix" {
+			return Mission{}, errors.New("a mission with this name already exists in the current project")
+		}
+	} else if !os.IsNotExist(err) {
+		return Mission{}, fmt.Errorf("could not check the mission name: %w", err)
 	}
 	a.createMu.Lock()
 	ctx := context.Context(nil)
@@ -496,6 +512,27 @@ func (a *App) DeleteNixEnvironment(id string, cleanStore bool) error {
 		return rfnix.GarbageCollect(rfnix.GCOptions{})
 	}
 	return nil
+}
+
+// DeleteMissionCompletely removes the live target and all Workbench-owned
+// mission data. Host bind mounts, named volumes and images remain outside the
+// Workbench data root and are intentionally preserved.
+func (a *App) DeleteMissionCompletely(id, engine string) error {
+	if err := a.requireMission(id); err != nil {
+		return err
+	}
+	if engine == "nix" {
+		if err := a.DeleteNixEnvironment(id, false); err != nil {
+			return err
+		}
+	} else if engine == "docker" || engine == "podman" || engine == "lima" {
+		if err := a.DeleteContainer(id); err != nil {
+			return err
+		}
+	} else {
+		return errors.New("unsupported mission engine")
+	}
+	return a.store.DeleteMission(a.ws, id)
 }
 
 // Exec runs a command inside a mission's container and returns its output.
