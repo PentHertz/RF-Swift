@@ -20,23 +20,9 @@
 
 name: Modules audit
 
+# Reusable implementation for CI and the release gate. User-facing triggers
+# belong to those two orchestrator workflows.
 on:
-  push:
-    branches: ["main", "v3.0.0-dev"]
-    paths:
-      - "go/**"
-      - ".github/workflows/modules-audit.yml"
-  pull_request:
-    branches: ["main", "v3.0.0-dev"]
-    paths:
-      - "go/**"
-      - ".github/workflows/modules-audit.yml"
-  schedule:
-    # Weekly (Monday 05:23 UTC). Catches CVEs and malicious-package
-    # advisories published against versions we already depend on.
-    - cron: "23 5 * * 1"
-  workflow_dispatch:
-  # Allows release.yml to run this workflow as a blocking gate.
   workflow_call:
 
 permissions:

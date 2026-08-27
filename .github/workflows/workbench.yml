@@ -1,13 +1,7 @@
 name: Build Workbench GUI
 
 on:
-  workflow_dispatch:
   workflow_call:
-  pull_request:
-    paths: ["go/rfswift/**", "go/rfswift-workbench/**", ".github/workflows/workbench.yml"]
-  push:
-    branches: ["main", "v4.0.0-dev"]
-    paths: ["go/rfswift/**", "go/rfswift-workbench/**", ".github/workflows/workbench.yml"]
 
 permissions:
   contents: read

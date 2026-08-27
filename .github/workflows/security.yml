@@ -19,12 +19,9 @@
 
 name: Security
 
+# Reusable implementation invoked by the unified CI workflow.
 on:
-  push:
-    branches: ["main", "v3.0.0-dev"]
-  pull_request:
-    branches: ["main", "v3.0.0-dev"]
-  workflow_dispatch:
+  workflow_call:
 
 permissions:
   contents: read

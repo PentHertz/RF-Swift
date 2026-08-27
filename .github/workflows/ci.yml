@@ -1,0 +1,67 @@
+name: CI
+
+on:
+  push:
+    branches: ["main", "v*-dev"]
+  pull_request:
+    branches: ["main", "v*-dev"]
+  workflow_dispatch:
+  schedule:
+    # Re-run dependency security checks weekly even without source changes.
+    - cron: "23 5 * * 1"
+
+permissions:
+  contents: read
+
+jobs:
+  modules:
+    name: Dependency and supply-chain audit
+    uses: ./.github/workflows/modules-audit.yml
+
+  security:
+    name: First-party security checks
+    permissions:
+      contents: read
+      security-events: write
+    uses: ./.github/workflows/security.yml
+
+  cli:
+    name: CLI/TUI build, tests and fuzzing
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go/rfswift/go.mod
+          cache-dependency-path: go/rfswift/go.sum
+
+      - name: Build CLI/TUI
+        run: |
+          cd go/rfswift
+          go build -v ./...
+          make all
+
+      - name: Unit and race tests
+        run: |
+          ./scripts/test-remote.sh unit
+          cd go/rfswift
+          go test -v -race ./...
+
+      - name: Remote security fuzz smoke test
+        env:
+          RFSWIFT_FUZZ_TIME: 10s
+        run: ./scripts/test-remote.sh fuzz
+
+      - name: Upload development CLI binaries
+        if: github.event_name != 'schedule'
+        uses: actions/upload-artifact@v4
+        with:
+          name: rfswift-cli-${{ github.sha }}
+          path: go/rfswift/bin/rfswift_*
+          if-no-files-found: error
+
+  workbench:
+    name: GUI tests and platform builds
+    uses: ./.github/workflows/workbench.yml
