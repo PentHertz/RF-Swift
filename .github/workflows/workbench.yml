@@ -14,7 +14,7 @@ permissions:
 
 defaults:
   run:
-    working-directory: go/rfswift-workbench
+    working-directory: .
 
 jobs:
   security:
