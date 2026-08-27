@@ -54,6 +54,7 @@ jobs:
           LDAI_RUNTIME_FILE: build/appimage-tools/runtime-x86_64
         run: |
           export PATH="$PWD/build/appimage-tools:$PATH"
+          rm -f ./*.AppImage
           make appimage
           appimage=$(find . -maxdepth 2 -type f -name '*.AppImage' ! -path './build/appimage-tools/*' -print -quit)
           test -n "$appimage"
@@ -94,6 +95,94 @@ jobs:
           name: rfswift-workbench-windows
           path: go/rfswift-workbench/build/bin/rfswift-workbench_Windows_*.zip
 
+  workbench-linux-arm64:
+    name: Workbench Linux ARM64
+    runs-on: ubuntu-24.04-arm
+    defaults:
+      run:
+        working-directory: go/rfswift-workbench
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go/rfswift-workbench/go.mod
+          cache-dependency-path: go/rfswift-workbench/go.sum
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev imagemagick
+      - name: Install Wails
+        run: go install github.com/wailsapp/wails/v2/cmd/wails@v2.15.0
+      - name: Build and package native Linux ARM64 binary
+        run: |
+          make linux_arm64
+          mkdir -p build/package-arm64
+          cp build/bin/rfswift-workbench_linux_arm64 build/package-arm64/rfswift-workbench
+          cp ../../README.md ../../LICENSE build/package-arm64/
+          tar -C build/package-arm64 -czf build/bin/rfswift-workbench_Linux_arm64.tar.gz .
+      - name: Install pinned ARM64 AppImage tools
+        env:
+          LINUXDEPLOY_SHA256: 620095110d693282b8ebeb244a95b5e911cf8f65f76c88b4b47d16ae6346fcff
+          GTK_PLUGIN_SHA256: b0f4cbc684a0103a9651f0955b635eaea0096b3a66c0f5a2c2aa337960375171
+          APPIMAGE_RUNTIME_SHA256: 00cbdfcf917cc6c0ff6d3347d59e0ca1f7f45a6df1a428a0d6d8a78664d87444
+        run: |
+          mkdir -p build/appimage-tools
+          curl -fsSL --retry 3 -o build/appimage-tools/linuxdeploy https://github.com/linuxdeploy/linuxdeploy/releases/download/1-alpha-20251107-1/linuxdeploy-aarch64.AppImage
+          curl -fsSL --retry 3 -o build/appimage-tools/linuxdeploy-plugin-gtk.sh https://raw.githubusercontent.com/linuxdeploy/linuxdeploy-plugin-gtk/7a3fbc31a9e5075073ff8790f26effbac5f84453/linuxdeploy-plugin-gtk.sh
+          curl -fsSL --retry 3 -o build/appimage-tools/runtime-aarch64 https://github.com/AppImage/type2-runtime/releases/download/20251108/runtime-aarch64
+          echo "$LINUXDEPLOY_SHA256  build/appimage-tools/linuxdeploy" | sha256sum -c -
+          echo "$GTK_PLUGIN_SHA256  build/appimage-tools/linuxdeploy-plugin-gtk.sh" | sha256sum -c -
+          echo "$APPIMAGE_RUNTIME_SHA256  build/appimage-tools/runtime-aarch64" | sha256sum -c -
+          chmod 0755 build/appimage-tools/linuxdeploy build/appimage-tools/linuxdeploy-plugin-gtk.sh
+      - name: Build ARM64 AppImage
+        env:
+          APPIMAGE_EXTRACT_AND_RUN: 1
+          LDAI_RUNTIME_FILE: build/appimage-tools/runtime-aarch64
+          ARCH: aarch64
+        run: |
+          export PATH="$PWD/build/appimage-tools:$PATH"
+          rm -f ./*.AppImage
+          scripts/mkappimage.sh build/bin/rfswift-workbench_linux_arm64
+          appimage=$(find . -maxdepth 2 -type f -name '*.AppImage' ! -path './build/appimage-tools/*' -print -quit)
+          test -n "$appimage"
+          mv "$appimage" build/bin/rfswift-workbench_Linux_arm64.AppImage
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rfswift-workbench-linux-arm64
+          path: |
+            go/rfswift-workbench/build/bin/rfswift-workbench_Linux_arm64.tar.gz
+            go/rfswift-workbench/build/bin/rfswift-workbench_Linux_arm64.AppImage
+
+  workbench-linux-riscv64:
+    name: Workbench Linux RISC-V64
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-qemu-action@v3
+        with:
+          platforms: riscv64
+      - name: Build and package native Linux RISC-V64 binary
+        run: |
+          docker run --rm --platform linux/riscv64 \
+            -v "$GITHUB_WORKSPACE:/src" \
+            -w /src/go/rfswift-workbench \
+            golang:1.27.0-trixie@sha256:ae28539d2ef595b9a2930dd7f031d9592376829dc0eae7cb869559f7d5812c3a \
+            bash -euc '
+              apt-get update
+              apt-get install -y --no-install-recommends gcc g++ make pkg-config libgtk-3-dev libwebkit2gtk-4.1-dev
+              go install github.com/wailsapp/wails/v2/cmd/wails@v2.15.0
+              export PATH="$(go env GOPATH)/bin:$PATH"
+              make linux_riscv64
+              mkdir -p build/package-riscv64
+              cp build/bin/rfswift-workbench_linux_riscv64 build/package-riscv64/rfswift-workbench
+              cp ../../README.md ../../LICENSE build/package-riscv64/
+              tar -C build/package-riscv64 -czf build/bin/rfswift-workbench_Linux_riscv64.tar.gz .
+            '
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rfswift-workbench-linux-riscv64
+          path: go/rfswift-workbench/build/bin/rfswift-workbench_Linux_riscv64.tar.gz
+
   workbench-macos:
     name: Workbench macOS
     runs-on: macos-14
@@ -120,7 +209,7 @@ jobs:
 
   generate-artifacts:
     name: Build CLI/TUI release archives
-    needs: [workbench-linux, workbench-windows, workbench-macos]
+    needs: [workbench-linux, workbench-linux-arm64, workbench-linux-riscv64, workbench-windows, workbench-macos]
     runs-on: ubuntu-latest
     permissions:
       contents: write      # create the GitHub release (goreleaser)
