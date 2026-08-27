@@ -2,11 +2,11 @@ name: Build Workbench GUI
 
 on:
   workflow_dispatch:
+  workflow_call:
   pull_request:
     paths: ["go/rfswift/**", "go/rfswift-workbench/**", ".github/workflows/workbench.yml"]
   push:
     branches: ["main", "v4.0.0-dev"]
-    tags: ["v*"]
     paths: ["go/rfswift/**", "go/rfswift-workbench/**", ".github/workflows/workbench.yml"]
 
 permissions:
@@ -143,40 +143,3 @@ jobs:
         with:
           name: rfswift-workbench-macos
           path: go/rfswift-workbench/build/bin/rfswift-workbench_Darwin_universal.zip
-
-  publish-release:
-    defaults:
-        run:
-          working-directory: .
-    name: Publish Workbench release assets
-    if: startsWith(github.ref, 'refs/tags/v')
-    needs: [linux, windows, macos]
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-      id-token: write
-      attestations: write
-    steps:
-      - uses: actions/download-artifact@v4
-        with:
-          pattern: rfswift-workbench-*
-          path: release-assets
-          merge-multiple: true
-      - name: Generate checksums
-        run: |
-          cd release-assets
-          sha256sum rfswift-workbench_* > "RF-Swift_${GITHUB_REF_NAME#v}_workbench_checksums.txt"
-      - name: Attest Workbench provenance
-        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
-        with:
-          subject-path: release-assets/rfswift-workbench_*
-      - name: Wait for core release and upload
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          for attempt in $(seq 1 40); do
-            gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 && break
-            [ "$attempt" -lt 40 ] || { echo "Core release was not created" >&2; exit 1; }
-            sleep 15
-          done
-          gh release upload "$GITHUB_REF_NAME" release-assets/* --clobber

@@ -20,9 +20,18 @@ jobs:
       contents: read
     uses: ./.github/workflows/modules-audit.yml
 
+  # Build and test every Workbench target in this release run. The reusable
+  # workflow still runs independently for branch and pull-request CI.
+  workbench:
+    name: Workbench builds
+    needs: audit
+    permissions:
+      contents: read
+    uses: ./.github/workflows/workbench.yml
+
   generate-artifacts:
     name: Generate cross-platform builds
-    needs: audit
+    needs: [audit, workbench]
     runs-on: ubuntu-latest
     permissions:
       contents: write      # create the GitHub release (goreleaser)
@@ -64,3 +73,35 @@ jobs:
             dist/*.tar.gz
             dist/*.zip
             dist/*checksums.txt
+
+  publish-workbench:
+    name: Attach Workbench assets
+    needs: generate-artifacts
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - name: Download Workbench artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: rfswift-workbench-*
+          path: release-assets
+          merge-multiple: true
+
+      - name: Generate Workbench checksums
+        run: |
+          cd release-assets
+          sha256sum rfswift-workbench_* > "RF-Swift_${GITHUB_REF_NAME#v}_workbench_checksums.txt"
+
+      - name: Attest Workbench provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: release-assets/rfswift-workbench_*
+
+      - name: Upload Workbench assets to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: gh release upload "$GITHUB_REF_NAME" release-assets/* --clobber
