@@ -153,36 +153,6 @@ jobs:
             go/rfswift-workbench/build/bin/rfswift-workbench_Linux_arm64.tar.gz
             go/rfswift-workbench/build/bin/rfswift-workbench_Linux_arm64.AppImage
 
-  workbench-linux-riscv64:
-    name: Workbench Linux RISC-V64
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: docker/setup-qemu-action@v3
-        with:
-          platforms: riscv64
-      - name: Build and package native Linux RISC-V64 binary
-        run: |
-          docker run --rm --platform linux/riscv64 \
-            -v "$GITHUB_WORKSPACE:/src" \
-            -w /src/go/rfswift-workbench \
-            golang:1.27.0-trixie@sha256:ae28539d2ef595b9a2930dd7f031d9592376829dc0eae7cb869559f7d5812c3a \
-            bash -euc '
-              apt-get update
-              apt-get install -y --no-install-recommends gcc g++ make pkg-config libgtk-3-dev libwebkit2gtk-4.1-dev
-              go install github.com/wailsapp/wails/v2/cmd/wails@v2.15.0
-              export PATH="$(go env GOPATH)/bin:$PATH"
-              wails build -trimpath -ldflags "-s -w" -platform linux/riscv64 -tags webkit2_41 -o rfswift-workbench_linux_riscv64
-              mkdir -p build/package-riscv64
-              cp build/bin/rfswift-workbench_linux_riscv64 build/package-riscv64/rfswift-workbench
-              cp ../../README.md ../../LICENSE build/package-riscv64/
-              tar -C build/package-riscv64 -czf build/bin/rfswift-workbench_Linux_riscv64.tar.gz .
-            '
-      - uses: actions/upload-artifact@v4
-        with:
-          name: rfswift-workbench-linux-riscv64
-          path: go/rfswift-workbench/build/bin/rfswift-workbench_Linux_riscv64.tar.gz
-
   workbench-macos:
     name: Workbench macOS
     runs-on: macos-14
@@ -209,7 +179,7 @@ jobs:
 
   generate-artifacts:
     name: Build CLI/TUI release archives
-    needs: [workbench-linux, workbench-linux-arm64, workbench-linux-riscv64, workbench-windows, workbench-macos]
+    needs: [workbench-linux, workbench-linux-arm64, workbench-windows, workbench-macos]
     runs-on: ubuntu-latest
     permissions:
       contents: write      # create the GitHub release (goreleaser)
