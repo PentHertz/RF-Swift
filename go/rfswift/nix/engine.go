@@ -81,10 +81,34 @@ func IsSelected() bool {
 	return selected
 }
 
-// NixBinary is the nix executable name; overridable for unusual installs.
+// nixBinaryPath caches the resolved nix location for the process lifetime.
+var nixBinaryPath string
+
+// NixBinary is the nix executable; overridable via RFSWIFT_NIX_BIN. Nix is
+// normally put on PATH by shell profile scripts, which GUI apps launched from
+// Finder/launchd never source — fall back to the standard install locations
+// so the Workbench finds it too.
 func NixBinary() string {
 	if v := os.Getenv("RFSWIFT_NIX_BIN"); v != "" {
 		return v
+	}
+	if nixBinaryPath != "" {
+		return nixBinaryPath
+	}
+	if p, err := exec.LookPath("nix"); err == nil {
+		nixBinaryPath = p
+		return p
+	}
+	home, _ := os.UserHomeDir()
+	for _, p := range []string{
+		"/nix/var/nix/profiles/default/bin/nix",
+		filepath.Join(home, ".nix-profile", "bin", "nix"),
+		"/run/current-system/sw/bin/nix",
+	} {
+		if st, err := os.Stat(p); err == nil && !st.IsDir() {
+			nixBinaryPath = p
+			return p
+		}
 	}
 	return "nix"
 }

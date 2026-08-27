@@ -354,6 +354,7 @@ func (a *App) pullMissionImage(ctx context.Context, engine, image string) (strin
 		}
 		return resolved, nil
 	}
+	resetEngineEnv()
 	resolved, err := rfdock.PullImageContext(ctx, engine, image, func(p rfdock.PullProgress) {
 		wruntime.EventsEmit(a.ctx, "rfswift:image-pull", map[string]any{
 			"image": p.Image, "layer": p.Layer, "status": p.Status,
@@ -383,6 +384,7 @@ func (a *App) CheckMissionImage(engine, image string) (rfdock.ImageAvailability,
 		err := remoteEngine.call("images.check", map[string]string{"engine": engine, "image": image}, &availability)
 		return availability, err
 	}
+	resetEngineEnv()
 	return rfdock.CheckImage(engine, image)
 }
 
@@ -424,6 +426,7 @@ func (a *App) ConfigureContainer(id string, change ContainerChange) error {
 	if remoteEngine, ok := a.eng.(*RemoteEngine); ok {
 		return remoteEngine.Configure(id, change)
 	}
+	a.routeLocalMission(id)
 	switch change.Kind {
 	case "volume", "device":
 		return rfdock.UpdateBinding(id, change.Kind, change.Source, change.Target, change.Add)
@@ -466,7 +469,17 @@ func (a *App) DeleteContainer(id string) error {
 	if remoteEngine, ok := a.eng.(*RemoteEngine); ok {
 		return remoteEngine.Delete(id, false, false)
 	}
+	a.routeLocalMission(id)
 	return rfdock.RemoveContainer(id)
+}
+
+// routeLocalMission points rfdock's global engine at the engine hosting this
+// mission before helpers that operate on the global engine (configure,
+// install scripts, removal) — the container may live inside the Lima VM.
+func (a *App) routeLocalMission(id string) {
+	if local, ok := a.eng.(*LocalEngine); ok {
+		local.RouteMission(id)
+	}
 }
 
 func (a *App) DeleteNixEnvironment(id string, cleanStore bool) error {
@@ -516,6 +529,7 @@ func (a *App) SearchMissionTools(mission, query string, allNixpkgs bool) ([]Tool
 	query = strings.ToLower(strings.TrimSpace(query))
 	var out []ToolCandidate
 	if m.Engine != "nix" {
+		a.routeLocalMission(mission)
 		for _, name := range rfdock.ListInstallFunctions(mission) {
 			if query == "" || strings.Contains(strings.ToLower(name), query) {
 				out = append(out, ToolCandidate{Name: name, Detail: strings.TrimSuffix(name, "_install"), Source: "container script"})
@@ -557,6 +571,7 @@ func (a *App) InstallMissionTool(mission, name string) error {
 	if env, err := rfnix.GetEnvironment(mission); err == nil {
 		return rfnix.InstallPackages(env.FlakeRef, []string{name}, mission)
 	}
+	a.routeLocalMission(mission)
 	return rfdock.ContainerInstallScript(mission, "entrypoint.sh", name)
 }
 

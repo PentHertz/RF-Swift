@@ -17,12 +17,16 @@ import (
 	"github.com/wailsapp/wails/v2"
 	"github.com/wailsapp/wails/v2/pkg/options"
 	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
+	"github.com/wailsapp/wails/v2/pkg/options/mac"
 )
 
 //go:embed all:frontend/dist
 var assets embed.FS
 
 func main() {
+	// GUI apps launched from Finder get a minimal PATH; fix it before any
+	// engine detection so limactl/qemu/docker/nix are found (see pathfix.go).
+	workbench.EnsureStandardPath()
 	mcpMode := flag.Bool("mcp", false, "run the optional RF Swift MCP server over stdio")
 	mcpWorkspace := flag.String("workspace", "default", "Workbench workspace exposed in MCP mode")
 	mcpMission := flag.String("mission", "", "restrict MCP access to one mission")
@@ -46,6 +50,11 @@ func main() {
 		},
 		OnStartup:  app.Startup,
 		OnShutdown: app.Shutdown,
+		// A non-nil Mac options value is required for Wails to enable the green
+		// zoom/maximise traffic-light button: with Mac left nil the zoomable
+		// flag defaults to false, which greys the button even though the window
+		// is resizable. DisableZoom stays false so the button works.
+		Mac: &mac.Options{},
 		Bind: []interface{}{
 			app,
 		},

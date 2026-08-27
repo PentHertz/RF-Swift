@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"strings"
 	"testing"
 	"time"
 
@@ -49,6 +50,14 @@ func TestCreateContainerCleansUpAfterStartFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer cli.Close()
+	// The failure this test relies on — starting a container whose published
+	// port is already bound on the host — only happens on daemons that reserve
+	// host ports at start (Docker Desktop, native Linux). OrbStack forwards
+	// ports lazily from its VM and starts the container regardless.
+	if info, infoErr := cli.Info(context.Background(), client.InfoOptions{}); infoErr == nil &&
+		strings.Contains(info.Info.OperatingSystem, "OrbStack") {
+		t.Skip("OrbStack does not reserve published host ports at container start")
+	}
 	defer func() {
 		_, _ = cli.ContainerRemove(context.Background(), name, client.ContainerRemoveOptions{Force: true})
 	}()

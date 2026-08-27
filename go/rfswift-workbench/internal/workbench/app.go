@@ -31,6 +31,8 @@ type App struct {
 	chefListener    net.Listener
 	chefBaseURL     string
 	assets          fs.FS
+	usbMu           sync.Mutex
+	usbAttached     map[string]bool // QMP device IDs we forwarded into the Lima VM this session
 }
 
 // GetAppVersion exposes the CLI's canonical version to the Workbench so both

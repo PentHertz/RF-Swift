@@ -72,7 +72,11 @@ func (a *App) StartTerminal(missionID, shell string, record bool, recordingDir s
 	if shell == "" {
 		shell = "/bin/zsh"
 	}
-	cli, err := rfdock.NewEngineClient()
+	local, ok := a.eng.(*LocalEngine)
+	if !ok {
+		return TerminalStartResult{}, errors.New("interactive terminals need a local engine")
+	}
+	cli, engType, err := local.clientFor(missionID)
 	if err != nil {
 		return TerminalStartResult{}, err
 	}
@@ -103,7 +107,7 @@ func (a *App) StartTerminal(missionID, shell string, record bool, recordingDir s
 		return TerminalStartResult{}, err
 	}
 	_, _ = cli.ExecResize(ctx, created.ID, client.ExecResizeOptions{Width: uint(cols), Height: uint(rows)})
-	if rfdock.GetEngine().Type() != rfdock.EnginePodman {
+	if engType != rfdock.EnginePodman {
 		if _, err = cli.ExecStart(ctx, created.ID, client.ExecStartOptions{TTY: true}); err != nil {
 			attached.Close()
 			cli.Close()

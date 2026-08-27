@@ -13,6 +13,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/moby/moby/client"
@@ -141,15 +142,159 @@ var ErrNotWired = errors.New("operation not supported for this target")
 
 const rfLabelKey, rfLabelVal = "org.container.project", "rfswift"
 
+// origDockerHost snapshots DOCKER_HOST at startup. rfdock.GetEngine() exports
+// the Lima/Podman socket into DOCKER_HOST for the CLI's benefit, but in the
+// long-lived GUI that poisons every later Docker call (Docker's client dials
+// FromEnv and would silently talk to the Lima daemon). resetEngineEnv restores
+// the user's original value before each engine-routing operation.
+var origDockerHost, origDockerHostSet = func() (string, bool) {
+	v, ok := os.LookupEnv("DOCKER_HOST")
+	return v, ok
+}()
+
+func resetEngineEnv() {
+	if origDockerHostSet {
+		os.Setenv("DOCKER_HOST", origDockerHost)
+	} else {
+		os.Unsetenv("DOCKER_HOST")
+	}
+}
+
+// containerEngines returns every distinct, installed container engine on this
+// host, active engine first. Engines whose socket resolves to one already in
+// the list are dropped (e.g. DOCKER_HOST pointing into the Lima VM would make
+// Docker and Lima list the same daemon twice).
+func containerEngines() []rfdock.ContainerEngine {
+	resetEngineEnv()
+	candidates := []rfdock.ContainerEngine{rfdock.GetEngine(), &rfdock.DockerEngine{}, &rfdock.PodmanEngine{}}
+	if rfdock.IsLimaEngineCandidate() {
+		candidates = append(candidates, &rfdock.LimaEngine{})
+	}
+	var out []rfdock.ContainerEngine
+	seenType := map[rfdock.EngineType]bool{}
+	seenSocket := map[string]bool{}
+	for _, eng := range candidates {
+		if eng == nil || seenType[eng.Type()] || !eng.IsAvailable() {
+			continue
+		}
+		seenType[eng.Type()] = true
+		if key := canonicalSocket(eng.GetSocketPath()); key != "" {
+			if seenSocket[key] {
+				continue
+			}
+			seenSocket[key] = true
+		}
+		out = append(out, eng)
+	}
+	return out
+}
+
+func canonicalSocket(socket string) string {
+	socket = strings.TrimPrefix(socket, "unix://")
+	if socket == "" {
+		return ""
+	}
+	if resolved, err := filepath.EvalSymlinks(socket); err == nil {
+		return resolved
+	}
+	return socket
+}
+
+// engineByType returns a fresh engine for a mission's recorded engine name.
+func engineByType(t rfdock.EngineType) rfdock.ContainerEngine {
+	switch t {
+	case rfdock.EngineDocker:
+		return &rfdock.DockerEngine{}
+	case rfdock.EnginePodman:
+		return &rfdock.PodmanEngine{}
+	case rfdock.EngineLima:
+		return &rfdock.LimaEngine{}
+	}
+	return nil
+}
+
 // LocalEngine drives docker/podman/lima containers and Nix environments on this
-// host via the rfswift packages.
-type LocalEngine struct{}
+// host via the rfswift packages. Containers from every running engine are
+// aggregated into one mission list; route remembers which engine hosts which
+// container so lifecycle/exec/terminal operations reach the right daemon.
+type LocalEngine struct {
+	mu    sync.Mutex
+	route map[string]rfdock.EngineType
+}
+
+// rememberRoute records which engine hosts a container.
+func (e *LocalEngine) rememberRoute(id string, t rfdock.EngineType) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.route == nil {
+		e.route = map[string]rfdock.EngineType{}
+	}
+	e.route[id] = t
+}
+
+// engineFor resolves the engine hosting a container, scanning every running
+// engine when the container was not seen by a previous ListTargets.
+func (e *LocalEngine) engineFor(id string) (rfdock.ContainerEngine, error) {
+	e.mu.Lock()
+	t, ok := e.route[id]
+	e.mu.Unlock()
+	if ok {
+		if eng := engineByType(t); eng != nil {
+			return eng, nil
+		}
+	}
+	resetEngineEnv()
+	for _, eng := range containerEngines() {
+		if !eng.IsServiceRunning() {
+			continue
+		}
+		cli, err := eng.GetClient()
+		if err != nil {
+			continue
+		}
+		_, err = cli.ContainerInspect(context.Background(), id, client.ContainerInspectOptions{})
+		cli.Close()
+		if err == nil {
+			e.rememberRoute(id, eng.Type())
+			return eng, nil
+		}
+	}
+	return nil, fmt.Errorf("container %q not found on any running engine", id)
+}
+
+// clientFor returns a moby client connected to the engine hosting a container.
+func (e *LocalEngine) clientFor(id string) (*client.Client, rfdock.EngineType, error) {
+	eng, err := e.engineFor(id)
+	if err != nil {
+		return nil, "", err
+	}
+	cli, err := eng.GetClient()
+	if err != nil {
+		return nil, "", err
+	}
+	return cli, eng.Type(), nil
+}
+
+// RouteMission points the process-wide rfdock engine at the engine hosting
+// this mission, for the rfdock helpers that still operate on the global
+// engine (audit, config rebinding, install scripts, container removal).
+func (e *LocalEngine) RouteMission(id string) {
+	eng, err := e.engineFor(id)
+	if err != nil {
+		return
+	}
+	resetEngineEnv()
+	if rfdock.GetEngine().Type() != eng.Type() {
+		rfdock.SetPreferredEngine(string(eng.Type()))
+	}
+}
 
 func (e *LocalEngine) Create(req MissionCreate) (Mission, error) {
 	req.Name = strings.TrimSpace(req.Name)
 	if req.Name == "" {
 		return Mission{}, errors.New("mission name is required")
 	}
+	resetEngineEnv()
 	switch req.Engine {
 	case "nix":
 		if err := rfnix.RunEnvironment(rfnix.RunOptions{Name: req.Name, Image: req.Image, Workspace: req.Workspace, FlakeRef: req.FlakeRef, Lazy: req.Lazy, Pure: req.Pure, CreateOnly: true}); err != nil {
@@ -181,26 +326,45 @@ func NewLocalEngine() *LocalEngine {
 		pref = "auto"
 	}
 	rfdock.SetPreferredEngine(pref)
-	return &LocalEngine{}
+	return &LocalEngine{route: map[string]rfdock.EngineType{}}
 }
 
 // Name reports the active container engine (docker/podman/lima).
 func (e *LocalEngine) Name() string { return string(rfdock.GetEngine().Type()) }
 
-// ListTargets returns RF Swift containers (from the active engine) and Nix
-// environments as one unified mission list.
+// ListTargets returns RF Swift containers from every running engine (Docker,
+// Podman, and the Docker daemon inside the Lima VM) plus Nix environments as
+// one unified mission list. Engines whose service is down are skipped rather
+// than auto-started — the Lima VM boots only on an explicit start.
 func (e *LocalEngine) ListTargets() ([]Mission, error) {
 	var out []Mission
-	eng := string(rfdock.GetEngine().Type())
-	for _, c := range rfdock.ListContainers(rfLabelKey, rfLabelVal) {
-		out = append(out, Mission{
-			ID:     strings.TrimPrefix(c.Name, "/"),
-			Title:  strings.TrimPrefix(c.Name, "/"),
-			Engine: eng,
-			Image:  c.Image,
-			Status: mapState(c.State),
-		})
+	route := map[string]rfdock.EngineType{}
+	seen := map[string]bool{}
+	for _, eng := range containerEngines() {
+		if !eng.IsServiceRunning() {
+			continue
+		}
+		for _, c := range listEngineContainers(eng) {
+			name := strings.TrimPrefix(c.Name, "/")
+			// A container of the same name on a second engine stays hidden
+			// until the first one is gone — mission IDs are names.
+			if seen[name] {
+				continue
+			}
+			seen[name] = true
+			route[name] = eng.Type()
+			out = append(out, Mission{
+				ID:     name,
+				Title:  name,
+				Engine: string(eng.Type()),
+				Image:  c.Image,
+				Status: mapState(c.State),
+			})
+		}
 	}
+	e.mu.Lock()
+	e.route = route
+	e.mu.Unlock()
 	if envs, err := rfnix.ListEnvironments(); err == nil {
 		for _, ev := range envs {
 			st := "stopped"
@@ -222,6 +386,43 @@ func (e *LocalEngine) ListTargets() ([]Mission, error) {
 	return out, nil
 }
 
+type engineContainer struct {
+	Name  string
+	Image string
+	State string
+}
+
+// listEngineContainers lists RF Swift-labelled containers on one specific
+// engine's daemon (rfdock.ListContainers only sees the global active engine).
+func listEngineContainers(eng rfdock.ContainerEngine) []engineContainer {
+	cli, err := eng.GetClient()
+	if err != nil {
+		return nil
+	}
+	defer cli.Close()
+	filters := make(client.Filters)
+	filters.Add("label", rfLabelKey+"="+rfLabelVal)
+	res, err := cli.ContainerList(context.Background(), client.ContainerListOptions{
+		All:     true,
+		Filters: filters,
+	})
+	if err != nil {
+		return nil
+	}
+	var out []engineContainer
+	for _, c := range res.Items {
+		name := c.ID
+		if len(name) > 12 {
+			name = name[:12]
+		}
+		if len(c.Names) > 0 {
+			name = c.Names[0]
+		}
+		out = append(out, engineContainer{Name: name, Image: c.Image, State: string(c.State)})
+	}
+	return out
+}
+
 // Inspect fills a mission's configuration/network from a live container (via the
 // routed moby client) or a Nix environment.
 func (e *LocalEngine) Inspect(id string) (Mission, error) {
@@ -234,7 +435,7 @@ func (e *LocalEngine) Inspect(id string) (Mission, error) {
 			FlakeRef: ev.FlakeRef,
 		}, nil
 	}
-	cli, err := rfdock.NewEngineClient()
+	cli, engType, err := e.clientFor(id)
 	if err != nil {
 		return Mission{}, err
 	}
@@ -247,7 +448,7 @@ func (e *LocalEngine) Inspect(id string) (Mission, error) {
 	m := Mission{
 		ID:     strings.TrimPrefix(info.Name, "/"),
 		Title:  strings.TrimPrefix(info.Name, "/"),
-		Engine: string(rfdock.GetEngine().Type()),
+		Engine: string(engType),
 		User:   "root",
 		Status: "stopped",
 	}
@@ -328,7 +529,7 @@ func (e *LocalEngine) Start(id string) error {
 	if isNixEnv(id) {
 		return fmt.Errorf("%w: Nix environments have no start/stop lifecycle", ErrNotWired)
 	}
-	cli, err := rfdock.NewEngineClient()
+	cli, _, err := e.clientFor(id)
 	if err != nil {
 		return err
 	}
@@ -342,7 +543,7 @@ func (e *LocalEngine) Stop(id string) error {
 	if isNixEnv(id) {
 		return fmt.Errorf("%w: Nix environments have no start/stop lifecycle", ErrNotWired)
 	}
-	cli, err := rfdock.NewEngineClient()
+	cli, _, err := e.clientFor(id)
 	if err != nil {
 		return err
 	}
@@ -380,6 +581,9 @@ func (e *LocalEngine) AuditDetailed(id string) (AuditResult, error) {
 		return AuditResult{}, err
 	}
 	defer os.RemoveAll(out)
+	// The audit helper operates on rfdock's global engine; point it at the
+	// engine hosting this container first (it may live inside the Lima VM).
+	e.RouteMission(id)
 	auditErr := rfdock.AuditContainer(id, rfdock.ContainerAuditOptions{OutDir: out, Formats: "json"})
 	report := filepath.Join(out, "report.json")
 	if _, statErr := os.Stat(report); statErr != nil {
@@ -400,8 +604,90 @@ func parseAuditFile(path string) AuditResult {
 	var root any
 	if json.Unmarshal(b, &root) == nil {
 		collectSecurityIssues(root, "", &result.Issues)
+		appendReportLevelIssues(root, &result.Issues)
+		appendImageCVESummary(root, &result.Issues)
 	}
 	return result
+}
+
+// appendImageCVESummary turns a container report's `image_cve` block — Trivy's
+// per-severity CVE totals for the container image — into one summary record per
+// non-empty severity. Those CVEs feed the posture counts (via the numeric
+// critical/high/medium/low fields) but Trivy's full per-CVE list is not inlined,
+// so without this the detail list shows only container config findings while the
+// posture reports thousands of image CVEs. One row per severity keeps the list
+// readable while explaining the numbers; the full CVE list stays in the linked
+// Trivy report.
+func appendImageCVESummary(root any, out *[]SecurityIssue) {
+	m, ok := root.(map[string]any)
+	if !ok {
+		return
+	}
+	cve, ok := m["image_cve"].(map[string]any)
+	if !ok {
+		return
+	}
+	img := strings.TrimSpace(toStr(cve["image"]))
+	if img == "" {
+		img = strings.TrimSpace(toStr(m["image"]))
+	}
+	report := strings.TrimSpace(toStr(cve["report"]))
+	for _, sev := range []string{"critical", "high", "medium", "low"} {
+		n, ok := asInt(cve[sev])
+		if !ok || n <= 0 {
+			continue
+		}
+		evidence := "Per-CVE detail is in the Trivy report."
+		if report != "" {
+			evidence = "Full CVE list: " + report
+		}
+		*out = append(*out, SecurityIssue{
+			Severity:  sev,
+			Title:     fmt.Sprintf("%d %s CVE(s) in the container image", n, sev),
+			Component: img,
+			Source:    "trivy",
+			Scope:     "image",
+			Evidence:  evidence,
+		})
+	}
+}
+
+// appendReportLevelIssues surfaces the nix audit's top-level `issues` array —
+// human summary strings like "pkgs/ contains N placeholder hashes" or
+// "env:X: could not realise closure" — as detail records. parsePostureFile
+// counts these strings toward the posture (they set the "N medium" summary), but
+// collectSecurityIssues skips them because they are strings, not structured CVE
+// objects. Without this the summary shows counts the detail list cannot explain.
+func appendReportLevelIssues(root any, out *[]SecurityIssue) {
+	m, ok := root.(map[string]any)
+	if !ok {
+		return
+	}
+	arr, ok := m["issues"].([]any)
+	if !ok {
+		return
+	}
+	// The report gives no per-string severity, only an overall worst_severity;
+	// use it so the records match the posture bucketing exactly.
+	worst := strings.ToLower(strings.TrimSpace(toStr(m["worst_severity"])))
+	if worst == "" {
+		worst = "medium"
+	}
+	for _, item := range arr {
+		s, ok := item.(string)
+		if !ok {
+			continue
+		}
+		if s = strings.TrimSpace(s); s == "" {
+			continue
+		}
+		*out = append(*out, SecurityIssue{
+			Severity: worst,
+			Title:    s,
+			Source:   "rfswift audit",
+			Scope:    "environment",
+		})
+	}
 }
 
 func collectSecurityIssues(value any, inheritedSeverity string, out *[]SecurityIssue) {
@@ -469,7 +755,7 @@ func (e *LocalEngine) ExecStream(id, cmd string, live io.Writer) (string, error)
 	if ev, err := rfnix.GetEnvironment(id); err == nil {
 		return execNixEnvironmentStream(ev, cmd, live)
 	}
-	cli, err := rfdock.NewEngineClient()
+	cli, engType, err := e.clientFor(id)
 	if err != nil {
 		return "", err
 	}
@@ -493,7 +779,7 @@ func (e *LocalEngine) ExecStream(id, cmd string, live io.Writer) (string, error)
 	// compatibility API starts it as part of Attach and rejects a second start.
 	// Without this distinction Docker returns an immediate empty stream, which
 	// made every GUI command appear as "(no output)".
-	if rfdock.GetEngine().Type() != rfdock.EnginePodman {
+	if engType != rfdock.EnginePodman {
 		if _, err := cli.ExecStart(ctx, cr.ID, client.ExecStartOptions{TTY: true}); err != nil {
 			return "", fmt.Errorf("start container command: %w", err)
 		}

@@ -214,8 +214,26 @@ func runTrivy(ref, jsonPath string, hostTrivy bool, cli, outDir string) error {
 	if err != nil {
 		return err
 	}
+	// The trivy container runs inside the engine's VM and bind-mounts the work
+	// dir. Docker Desktop/OrbStack share the whole host filesystem, so any path
+	// works — but Lima only shares the user's home and /tmp/lima. A macOS temp
+	// path like /var/folders/... is invisible inside the Lima VM, so the mounted
+	// tar would be empty and the scan would silently find nothing. Under Lima,
+	// stage the tar + report in a home-rooted dir Lima maps into the VM at the
+	// same path, then copy the report back to where the caller expects it.
+	workDir := absOut
+	relocated := false
+	if GetEngine().Type() == EngineLima {
+		if home, herr := os.UserHomeDir(); herr == nil {
+			shared := filepath.Join(home, ".cache", "rfswift", "trivy")
+			if os.MkdirAll(shared, 0o755) == nil {
+				workDir = shared
+				relocated = true
+			}
+		}
+	}
 	tarBase := sanitizeRef(ref) + ".tar"
-	tarPath := filepath.Join(absOut, tarBase)
+	tarPath := filepath.Join(workDir, tarBase)
 	save := exec.Command(cli, "save", ref, "-o", tarPath)
 	save.Stderr = os.Stderr
 	if err := save.Run(); err != nil {
@@ -234,12 +252,29 @@ func runTrivy(ref, jsonPath string, hostTrivy bool, cli, outDir string) error {
 	defer os.Remove(tarPath)
 	base := filepath.Base(jsonPath)
 	cmd := exec.Command(cli, "run", "--rm",
-		"-v", absOut+":/report",
+		"-v", workDir+":/report",
 		"aquasec/trivy:latest", "image", "--input", "/report/"+tarBase,
 		"--quiet", "--scanners", "vuln",
 		"--format", "json", "--output", "/report/"+base)
 	cmd.Stderr = os.Stderr
-	return cmd.Run()
+	if err := cmd.Run(); err != nil {
+		return err
+	}
+	// When staged in a Lima-shared dir, move the report to the caller's path.
+	if relocated {
+		produced := filepath.Join(workDir, base)
+		if produced != jsonPath {
+			defer os.Remove(produced)
+			data, rerr := os.ReadFile(produced)
+			if rerr != nil {
+				return fmt.Errorf("trivy produced no report at %s: %w", produced, rerr)
+			}
+			if werr := os.WriteFile(jsonPath, data, 0o644); werr != nil {
+				return werr
+			}
+		}
+	}
+	return nil
 }
 
 func summarizeTrivy(jsonPath, ref string) imgResult {

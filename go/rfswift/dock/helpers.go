@@ -21,6 +21,7 @@ import (
 	"github.com/moby/moby/client"
 
 	common "penthertz/rfswift/common"
+	rfutils "penthertz/rfswift/rfutils"
 	"penthertz/rfswift/tui"
 )
 
@@ -218,7 +219,7 @@ func combineEnv(xdisplay, pulseServer, extraenv string) []string {
 // which routes back to the macOS host where PulseAudio is listening.
 // Uses `limactl shell` to query the VM's routing table.
 func getLimaHostGatewayIP() string {
-	cmd := exec.Command("limactl", "shell", "rfswift", "--", "ip", "route", "show", "default")
+	cmd := exec.Command(rfutils.LimaCtl(), "shell", "rfswift", "--", "ip", "route", "show", "default")
 	output, err := cmd.Output()
 	if err != nil {
 		return "192.168.5.2" // common Lima default gateway

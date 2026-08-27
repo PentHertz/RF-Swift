@@ -18,6 +18,10 @@ func TestGenerationArchiveAndRollback(t *testing.T) {
 	if err := os.MkdirAll(newStore, 0o755); err != nil {
 		t.Fatal(err)
 	}
+	// t.TempDir() sits behind a symlink on macOS (/var -> /private/var);
+	// resolve the expectations the same way the profile code resolves paths.
+	oldStore = canonPath(t, oldStore)
+	newStore = canonPath(t, newStore)
 	if err := ensureDir(EnvDir(name)); err != nil {
 		t.Fatal(err)
 	}
@@ -107,6 +111,7 @@ func TestFailedUpdateRestoresLockAndActiveProfile(t *testing.T) {
 	if err := os.MkdirAll(store, 0o755); err != nil {
 		t.Fatal(err)
 	}
+	store = canonPath(t, store)
 	if err := os.WriteFile(filepath.Join(flake, "flake.nix"), []byte("{}"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -164,4 +169,13 @@ exit 0
 	if len(gens) != 0 {
 		t.Fatalf("failed update created generations: %+v", gens)
 	}
+}
+
+func canonPath(t *testing.T, path string) string {
+	t.Helper()
+	resolved, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return resolved
 }

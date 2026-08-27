@@ -16,6 +16,7 @@ package nix
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -24,6 +25,53 @@ import (
 
 	common "penthertz/rfswift/common"
 )
+
+// tailWriter keeps only the last max bytes written to it, so we can capture a
+// command's stderr for error reporting without buffering a whole build log.
+type tailWriter struct {
+	buf []byte
+	max int
+}
+
+func (w *tailWriter) Write(p []byte) (int, error) {
+	w.buf = append(w.buf, p...)
+	if len(w.buf) > w.max {
+		w.buf = w.buf[len(w.buf)-w.max:]
+	}
+	return len(p), nil
+}
+
+func (w *tailWriter) String() string { return string(w.buf) }
+
+// installFailureReason turns nix's stderr into a concise, user-facing reason.
+// The GUI only sees the returned error, so a bare "exit status 1" is useless;
+// this recognises the common "not available on this platform" case (Linux-only
+// SDR drivers on macOS) and otherwise surfaces nix's own final error line.
+func installFailureReason(pkg, sys, stderr string, err error) string {
+	lower := strings.ToLower(stderr)
+	switch {
+	case strings.Contains(lower, "not available on the requested hostplatform"):
+		return fmt.Sprintf("%q (or one of its dependencies) is not available on %s (likely Linux-only). "+
+			"Hardware that needs a Linux driver works through the Lima engine instead.", pkg, sys)
+	case strings.Contains(lower, "does not provide attribute") || strings.Contains(lower, "no attribute"):
+		return fmt.Sprintf("no package named %q in the flake (check the name with: rfswift nix search %s)", pkg, pkg)
+	}
+	if line := lastNixErrorLine(stderr); line != "" {
+		return line
+	}
+	return err.Error()
+}
+
+// lastNixErrorLine returns the last "error:"-prefixed line from nix stderr.
+func lastNixErrorLine(stderr string) string {
+	var last string
+	for _, ln := range strings.Split(stderr, "\n") {
+		if t := strings.TrimSpace(ln); strings.HasPrefix(t, "error:") {
+			last = t
+		}
+	}
+	return last
+}
 
 var cachedSystem string
 
@@ -147,10 +195,14 @@ func InstallPackages(flakeRef string, pkgs []string, envName string) error {
 		common.PrintInfoMessage(fmt.Sprintf("Installing %s into %s ...", p, scope))
 		args := append(experimentalArgs(), "profile", "install", "--profile", profile, installable)
 		cmd := exec.Command(NixBinary(), args...)
-		cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
+		// Tee stderr: stream it live (the CLI shows nix's progress) while
+		// capturing the tail, so the returned error carries nix's real reason
+		// instead of a bare "exit status 1" — all the GUI would otherwise see.
+		captured := &tailWriter{max: 64 << 10}
+		cmd.Stdin, cmd.Stdout = os.Stdin, os.Stdout
+		cmd.Stderr = io.MultiWriter(os.Stderr, captured)
 		if err := cmd.Run(); err != nil {
-			return fmt.Errorf("failed to install %s: %w\n"+
-				"  (check the name with: rfswift nix search %s)", p, err, p)
+			return fmt.Errorf("failed to install %s: %s", p, installFailureReason(p, sys, captured.String(), err))
 		}
 	}
 	common.PrintSuccessMessage(fmt.Sprintf("Installed %d package(s) into %s.", len(pkgs), scope))

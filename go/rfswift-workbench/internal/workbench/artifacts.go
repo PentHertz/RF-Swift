@@ -58,6 +58,12 @@ func (a *App) workspaceArtifactPath(mission, relative string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	// Canonicalize the root the same way as the candidate path below, or the
+	// prefix check rejects workspaces reached through a symlink (macOS mounts
+	// /var -> /private/var, users symlink workspace directories).
+	if resolvedRoot, rootErr := filepath.EvalSymlinks(root); rootErr == nil {
+		root = resolvedRoot
+	}
 	relative = filepath.Clean(filepath.FromSlash(relative))
 	if relative == "." || filepath.IsAbs(relative) || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
 		return "", errors.New("artifact path escapes the mission workspace")

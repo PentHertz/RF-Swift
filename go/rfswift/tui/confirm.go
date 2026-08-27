@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/charmbracelet/huh"
+	huh "charm.land/huh/v2"
 	"github.com/charmbracelet/lipgloss"
 )
 
@@ -82,7 +82,7 @@ func PromptInput(title string, placeholder string) (string, error) {
 	}
 
 	var result string
-	err := newInput().
+	err := huh.NewInput().
 		Title(title).
 		Placeholder(placeholder).
 		Value(&result).

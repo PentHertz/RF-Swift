@@ -5,9 +5,7 @@ package tui
 
 import (
 	"os"
-	"runtime"
 
-	"github.com/charmbracelet/huh"
 	"github.com/charmbracelet/lipgloss"
 	"golang.org/x/term"
 )
@@ -72,18 +70,13 @@ func TerminalWidth() int {
 	return w
 }
 
-// IsInteractive returns true if stdout is a terminal (not piped).
+// IsInteractive returns true if stdout is a terminal (not piped) with a
+// usable size. The width check matters: script/expect/CI wrappers start
+// their pty at 0x0, and huh v2.0.3 panics on zero-width terminals.
 func IsInteractive() bool {
-	return term.IsTerminal(int(os.Stdout.Fd()))
-}
-
-// newInput creates a new huh text input with accessible mode enabled on macOS.
-// This works around a charmbracelet/huh cursor rendering issue where typed text
-// appears backward on macOS terminals.
-func newInput() *huh.Input {
-	input := huh.NewInput()
-	if runtime.GOOS == "darwin" {
-		input.WithAccessible(true)
+	if !term.IsTerminal(int(os.Stdout.Fd())) {
+		return false
 	}
-	return input
+	w, _, err := term.GetSize(int(os.Stdout.Fd()))
+	return err == nil && w > 0
 }

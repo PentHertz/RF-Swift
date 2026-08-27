@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"sort"
 	"strings"
 	"time"
@@ -17,6 +18,8 @@ import (
 	"github.com/moby/moby/api/types/jsonstream"
 	"github.com/moby/moby/api/types/network"
 	"github.com/moby/moby/client"
+
+	rfutils "penthertz/rfswift/rfutils"
 )
 
 type PullProgress struct {
@@ -177,6 +180,16 @@ func CreateContainer(opts CreateOptions) (string, error) {
 	configEnv := append([]string(nil), opts.Environment...)
 	if !opts.NoX11 {
 		display := os.Getenv("DISPLAY")
+		// On macOS the raw DISPLAY is the XQuartz launchd socket path
+		// (/var/run/.../org.xquartz:0), which is meaningless inside a container.
+		// Resolve the host's en0 IP + display number (DISPLAY=<ip>:0) and open
+		// the X server to it with xhost, matching the interactive CLI path. This
+		// runs for every CreateContainer caller, so the Workbench GUI gets the
+		// same working X display as the rfswift binary.
+		if runtime.GOOS == "darwin" {
+			display = strings.TrimPrefix(rfutils.GetDisplayEnv(), "DISPLAY=")
+			rfutils.XHostEnable()
+		}
 		if display == "" {
 			display = ":0"
 		}
