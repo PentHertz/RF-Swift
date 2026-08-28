@@ -241,13 +241,34 @@ func checkContainerImages(report *DoctorReport) {
 	}
 }
 
+// wslgProbe caches the WSLg query for the checks that need it (one wsl.exe
+// round-trip per doctor run).
+var wslgProbe struct {
+	done   bool
+	status rfutils.WSLgStatus
+	err    error
+}
+
+func wslgStatus() (rfutils.WSLgStatus, error) {
+	if !wslgProbe.done {
+		wslgProbe.status, wslgProbe.err = rfutils.CheckWSLg()
+		wslgProbe.done = true
+	}
+	return wslgProbe.status, wslgProbe.err
+}
+
 func checkX11Display(report *DoctorReport) {
 	if runtime.GOOS == "windows" {
-		// Check for WSLg
-		if _, err := os.Stat("/run/desktop/mnt/host/wslg/.X11-unix"); err == nil {
-			report.add(CheckResult{"X11 display", "ok", "WSLg X11 socket found"})
-		} else {
-			report.add(CheckResult{"X11 display", "warn", "WSLg X11 socket not found (install WSLg or use --desktop)"})
+		// The sockets live inside the WSL 2 VM, so ask WSL rather than the
+		// Windows filesystem.
+		status, err := wslgStatus()
+		switch {
+		case err != nil:
+			report.add(CheckResult{"X11 display", "warn", fmt.Sprintf("WSLg not reachable: %v", err)})
+		case status.X11:
+			report.add(CheckResult{"X11 display", "ok", "WSLg X11 socket (/mnt/wslg/.X11-unix, DISPLAY=:0) mounted into containers"})
+		default:
+			report.add(CheckResult{"X11 display", "warn", "WSLg X11 socket not found in WSL (wsl --update, then wsl --shutdown; or use --desktop)"})
 		}
 		return
 	}
@@ -284,6 +305,18 @@ func checkXhost(report *DoctorReport) {
 }
 
 func checkAudioSystem(report *DoctorReport) {
+	if runtime.GOOS == "windows" {
+		status, err := wslgStatus()
+		switch {
+		case err != nil:
+			report.add(CheckResult{"Audio system", "warn", fmt.Sprintf("WSLg not reachable: %v", err)})
+		case status.Audio:
+			report.add(CheckResult{"Audio system", "ok", "WSLg PulseAudio (containers use PULSE_SERVER=" + WSLgPulseServer + ")"})
+		default:
+			report.add(CheckResult{"Audio system", "warn", "WSLg PulseAudio socket not found in WSL (wsl --update, then wsl --shutdown)"})
+		}
+		return
+	}
 	status := rfutils.GetAudioSystemStatus()
 
 	if strings.Contains(status, "No audio") {
@@ -298,6 +331,10 @@ func checkAudioSystem(report *DoctorReport) {
 }
 
 func checkAudioServer(report *DoctorReport) {
+	if UsesWSLgAudio(containerCfg.pulseServer) {
+		report.add(CheckResult{"Audio TCP server", "skip", "Not needed on Windows: audio uses the WSLg socket instead of a TCP module"})
+		return
+	}
 	parts := strings.Split(containerCfg.pulseServer, ":")
 	if len(parts) != 3 {
 		report.add(CheckResult{"Audio TCP server", "warn",
@@ -371,11 +408,43 @@ func checkLimaVM(report *DoctorReport) {
 
 func checkUSBDevices(report *DoctorReport) {
 	if runtime.GOOS == "windows" {
-		// Check usbipd availability
-		if _, err := exec.LookPath("usbipd.exe"); err != nil {
-			report.add(CheckResult{"USB devices", "warn", "usbipd not installed (needed for USB passthrough on Windows)"})
+		// Containers live in the WSL 2 VM; usbipd-win forwards host devices into
+		// it. Sharing needs administrator rights once per device, attach/detach
+		// never do - so the doctor only checks the tooling and reports counts.
+		if !rfutils.IsUsbipdInstalled() {
+			report.add(CheckResult{"USB devices", "warn", "usbipd-win not installed (winget install usbipd) - needed to forward USB devices into WSL 2 containers"})
+			return
+		}
+		version, _ := rfutils.UsbipdVersion()
+		devices, err := rfutils.ListUSBDevices()
+		if err != nil {
+			report.add(CheckResult{"USB devices", "warn", fmt.Sprintf("usbipd %s installed but not usable: %v", version, err)})
+			return
+		}
+		var connected, shared, attached int
+		for _, d := range devices {
+			if d.Connected {
+				connected++
+			}
+			if d.Shared {
+				shared++
+			}
+			if d.Attached {
+				attached++
+			}
+		}
+		report.add(CheckResult{"USB devices", "ok",
+			fmt.Sprintf("usbipd %s: %d connected, %d shared, %d attached to WSL 2 (use 'rfswift usb attach')", version, connected, shared, attached)})
+		if wsl, err := rfutils.WSLDistributions(); err != nil {
+			report.add(CheckResult{"WSL 2", "warn", fmt.Sprintf("%v", err)})
+		} else if !wsl.HasWSL2Distribution() {
+			report.add(CheckResult{"WSL 2", "warn", "no WSL 2 distribution found; usbipd attaches devices to the default one (wsl --install -d Ubuntu)"})
 		} else {
-			report.add(CheckResult{"USB devices", "ok", "usbipd available"})
+			name := wsl.DefaultDistro
+			if name == "" {
+				name = "(no default set: wsl --set-default <name>)"
+			}
+			report.add(CheckResult{"WSL 2", "ok", "default distribution: " + name})
 		}
 		return
 	}

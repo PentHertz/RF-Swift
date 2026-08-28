@@ -85,6 +85,12 @@ Thin bindings over code that already exists, plus a workspace store:
   auto-classify. Built-in types come from Go and custom types persist in the
   selected workspace.
 - Findings: read/write `findings.json`.
+- USB passthrough: `USBBackend`/`ListHostUSB`/`VMUSBInfo` plus
+  `AttachHostUSB`/`DetachHostUSB` (macOS: Lima QMP hot-plug) and
+  `AttachWinUSB`/`DetachWinUSB`/`UnshareWinUSB` (Windows: usbipd-win into the
+  WSL 2 VM). On Windows only sharing a device needs administrator rights; the
+  backend requests them once per device through a UAC prompt for `usbipd.exe`
+  and keeps attach/detach unprivileged.
 
 ## Interaction model (missions + dockable panels)
 

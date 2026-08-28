@@ -173,6 +173,23 @@ does not display a start/stop lifecycle for them. Their tools execute through
 the console in the environment's workspace and with the same profile/shim PATH
 as the CLI.
 
+USB passthrough follows the CLI too. On macOS the **USB passthrough...** dialog
+hot-plugs host devices into the Lima VM (`rfswift macusb`). On Windows it drives
+usbipd-win for Docker/Podman missions (`rfswift usb`): devices are listed from
+`usbipd state`, attach/detach run unprivileged, and a device that was never
+shared is bound through one UAC prompt for `usbipd.exe` - the GUI never runs a
+shell or asks for a blanket elevation. The manual probe
+`RFSWIFT_ENGINE_PROBE=1 go test ./internal/workbench -run TestUSBProbeManual -v`
+prints what the backend sees on the current host.
+
+Display and sound on Windows come from WSLg: `dock.CreateContainer` mounts the
+WSLg tree (`/run/desktop/mnt/host/wslg` on Docker Desktop, `/mnt/wslg` on a
+Podman machine) into the container with `DISPLAY=:0` and
+`PULSE_SERVER=unix:/mnt/wslg/PulseServer`, exactly like the CLI. The mission
+form also shows a live USB reachability line (`/dev/bus/usb` + `c 189:* rwm`,
+no privileged mode needed) and asks before creating a container that cannot
+reach forwarded devices.
+
 The remote-agent cards shown by the original prototype are no longer presented
 as real connections. Only the in-process local engine is selectable until the
 planned `rfswift agent` transport, TLS 1.3 authentication and remote `Engine`

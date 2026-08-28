@@ -15,10 +15,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/creack/pty"
 	"github.com/moby/moby/client"
 	rfdock "penthertz/rfswift/dock"
 	rfnix "penthertz/rfswift/nix"
+	"penthertz/rfswift/ptyx"
 	"penthertz/rfswift/remote"
 )
 
@@ -50,8 +50,11 @@ type agentArtifactData struct {
 	Truncated  bool
 }
 
+// remotePTY is one interactive shell served to a remote client. The terminal
+// comes from ptyx, so it is a Unix PTY on Linux/macOS agents and a ConPTY on
+// Windows agents.
 type remotePTY struct {
-	file    *os.File
+	term    ptyx.Terminal
 	cmdDone chan struct{}
 	mu      sync.Mutex
 	output  []byte
@@ -406,12 +409,12 @@ func agentTerminalStart(p agentTerminalRequest) (map[string]string, error) {
 	args := []string{"--engine", t.Engine, "exec", "-c", p.Mission, "-e", p.Shell}
 	cmd := exec.Command(exe, args...)
 	cmd.Env = append(os.Environ(), "TERM=xterm-256color", "COLORTERM=truecolor")
-	f, e := pty.StartWithSize(cmd, &pty.Winsize{Cols: uint16(p.Cols), Rows: uint16(p.Rows)})
+	f, e := ptyx.Start(cmd, p.Cols, p.Rows)
 	if e != nil {
 		return nil, e
 	}
 	id := fmt.Sprintf("remote-%d", time.Now().UnixNano())
-	s := &remotePTY{file: f, cmdDone: make(chan struct{})}
+	s := &remotePTY{term: f, cmdDone: make(chan struct{})}
 	remotePTYs.Lock()
 	remotePTYs.sessions[id] = s
 	remotePTYs.Unlock()
@@ -445,7 +448,7 @@ func agentTerminalInput(id, data string) error {
 	if s == nil {
 		return errors.New("terminal session is not active")
 	}
-	_, e := io.WriteString(s.file, data)
+	_, e := io.WriteString(s.term, data)
 	return e
 }
 func agentTerminalResize(id string, cols, rows int) error {
@@ -455,7 +458,7 @@ func agentTerminalResize(id string, cols, rows int) error {
 	if s == nil {
 		return errors.New("terminal session is not active")
 	}
-	return pty.Setsize(s.file, &pty.Winsize{Cols: uint16(cols), Rows: uint16(rows)})
+	return s.term.Resize(cols, rows)
 }
 func agentTerminalRead(id string) (map[string]any, error) {
 	remotePTYs.Lock()
@@ -479,8 +482,8 @@ func agentTerminalStop(id string) error {
 	if s == nil {
 		return nil
 	}
-	_, _ = io.WriteString(s.file, "\x03exit\r\x04")
-	return s.file.Close()
+	_, _ = io.WriteString(s.term, "\x03exit\r\x04")
+	return s.term.Close()
 }
 
 func agentWorkspace(mission string) (string, error) {

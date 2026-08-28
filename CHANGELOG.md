@@ -12,6 +12,56 @@ branch.
 
 ### Added
 
+- Windows USB passthrough rebuilt on usbipd-win with the least privilege the
+  tool allows. Containers on Windows run in the WSL 2 VM, so a host device is
+  forwarded there; only *sharing* it the first time needs administrator
+  rights, which RF Swift now requests through a single UAC prompt for
+  `usbipd.exe` itself (never a shell), while attach and detach stay
+  unprivileged.
+  - CLI/TUI: `rfswift usb list|status|attach|detach|bind|unbind|vm-devices`
+    (also under `winusb`) read the machine-readable `usbipd state` output.
+    `attach`, `detach`, `bind` and `unbind` open an interactive device picker
+    when no `--busid` is given, ask before raising the UAC prompt (`--yes`
+    skips the question for scripts), warn before forwarding keyboard/mouse-like
+    devices, and print friendly names for common RF hardware (RTL-SDR, HackRF,
+    bladeRF, Proxmark, LimeSDR, USRP, ...).
+  - `rfswift run` on Windows offers the same picker when it detects shared or
+    known RF hardware, so a device can be forwarded before the container
+    starts; plain keyboards and webcams never trigger the question.
+  - `rfswift doctor` reports the usbipd-win version, connected/shared/attached
+    counts and the default WSL 2 distribution.
+- The Workbench **USB passthrough...** dialog now also works on Windows for
+  Docker and Podman missions: it lists host devices with their usbipd state,
+  shares and attaches in one click (administrator approval requested once per
+  device), detaches, unshares, shows what WSL 2 currently sees, and can apply
+  the USB hotplug defaults to a container being created.
+- Pseudo-terminals on Windows through ConPTY (`ptyx` package, backed by
+  creack/pty on Unix and UserExistsError/conpty on Windows). The remote agent
+  can now serve interactive shells from a Windows lab machine (`terminal.start`
+  previously failed with "unsupported"), and the Workbench's coding-agent
+  terminal uses the same abstraction, so it runs on a Windows Workbench too.
+  The agent's certificate generation, mTLS serving, control methods and
+  command relay were verified on Windows with Credential Manager as the vault.
+- Sound on Windows through WSLg. Containers on Docker Desktop and Podman
+  machine now get `PULSE_SERVER=unix:/mnt/wslg/PulseServer` with WSLg's
+  `/mnt/wslg` tree mounted (also for `--no-x11` containers), which is the
+  PulseAudio server WSLg already runs for the WSL 2 VM - verified with `pactl`
+  inside an RF Swift container. No PulseAudio for Windows and no
+  `rfswift host audio enable` step: that command now just checks WSLg, and
+  `rfswift doctor` reports the WSLg X11 and audio sockets by asking WSL instead
+  of looking for Linux paths on the Windows filesystem. Workbench-created
+  containers on Windows now receive the same WSLg display and audio mounts as
+  CLI containers, and on Linux/macOS they get the CLI's `PULSE_SERVER` target.
+- A USB reachability check when a container is created, shared by the CLI and
+  the Workbench (`common.CheckUSBAccess`). Verified on Docker Desktop/WSL 2: a
+  forwarded device is reachable only when `/dev/bus/usb` is mapped **and** USB
+  device major 189 is allowed (`c 189:* rwm`); a bare bind mount lists the
+  nodes but `open()` fails with "Permission denied", and privileged mode is not
+  required. The mission form shows a live status line under **USB
+  passthrough...** and asks before creating a container that cannot reach
+  USB devices (one click applies the hotplug defaults); `rfswift run` prints
+  the same warning before creation, and both say explicitly that
+  `--privileged` is not needed.
 - Native Linux, portable AppImage, Windows amd64/arm64, and universal macOS
   Workbench release artifacts with SHA-256 manifests and GitHub build-provenance
   attestations. Tags such as `v4.0.0-dev` are explicitly published as
@@ -236,6 +286,11 @@ branch.
   / Kimi / Z.ai, or a local Ollama-compatible endpoint).
 
 ### Fixed
+
+- `rfswift winusb list` parsed the pre-4.0 `usbipd list` column layout and
+  printed nonsense for current usbipd-win releases, and `winusb detach` ran the
+  bind-and-attach routine instead of detaching. Both now use the usbipd JSON
+  state and the correct verbs.
 
 - Embedded CyberChef now runs on an ephemeral IPv4 loopback listener with a
   random 192-bit path capability and clean shutdown. This avoids blank Wails

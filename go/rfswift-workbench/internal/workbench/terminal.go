@@ -16,11 +16,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/creack/pty"
 	"github.com/moby/moby/client"
 	wruntime "github.com/wailsapp/wails/v2/pkg/runtime"
 	rfdock "penthertz/rfswift/dock"
 	rfnix "penthertz/rfswift/nix"
+	"penthertz/rfswift/ptyx"
 )
 
 // xterm.js answers OSC 10/11/12 foreground/background/cursor colour queries
@@ -43,7 +43,7 @@ type terminalSession struct {
 	inputMu             sync.Mutex
 	closeOnce           sync.Once
 	localCmd            *exec.Cmd
-	localPTY            *os.File
+	localPTY            ptyx.Terminal // Unix PTY or Windows ConPTY for Nix/agent shells
 	remote              *RemoteEngine
 	agent               bool
 }
@@ -234,7 +234,7 @@ func (a *App) startNixTerminal(missionID, shell string, record bool, recordingDi
 	if err != nil {
 		return TerminalStartResult{}, err
 	}
-	ptmx, err := pty.StartWithSize(cmd, &pty.Winsize{Cols: uint16(cols), Rows: uint16(rows)})
+	ptmx, err := ptyx.Start(cmd, cols, rows)
 	if err != nil {
 		return TerminalStartResult{}, err
 	}
@@ -365,7 +365,9 @@ func (a *App) StartAgentTerminal(missionID, clientID string, cols, rows int) (Ag
 	cmd := exec.Command(command, args...)
 	cmd.Dir = connected.Workspace
 	cmd.Env = append(os.Environ(), "TERM=xterm-256color", "COLORTERM=truecolor")
-	ptmx, err := pty.StartWithSize(cmd, &pty.Winsize{Cols: uint16(cols), Rows: uint16(rows)})
+	// ptyx gives the coding-agent TUI a real pseudo-terminal on every platform
+	// (ConPTY on Windows), so the same panel works on a Windows Workbench.
+	ptmx, err := ptyx.Start(cmd, cols, rows)
 	if err != nil {
 		return AgentTerminalResult{}, err
 	}
@@ -466,7 +468,7 @@ func (a *App) ResizeTerminal(id string, cols, rows int) error {
 		return s.remote.call("terminal.resize", map[string]any{"id": id, "cols": cols, "rows": rows}, nil)
 	}
 	if s.localPTY != nil {
-		return pty.Setsize(s.localPTY, &pty.Winsize{Cols: uint16(cols), Rows: uint16(rows)})
+		return s.localPTY.Resize(cols, rows)
 	}
 	_, err = s.cli.ExecResize(context.Background(), s.execID, client.ExecResizeOptions{Width: uint(cols), Height: uint(rows)})
 	return err
@@ -520,7 +522,9 @@ func (s *terminalSession) close() {
 		if s.cli != nil {
 			_ = s.cli.Close()
 		}
-		if s.localCmd != nil && s.localCmd.Process != nil {
+		// ptyx terminals terminate and reap their process on Close (conn is
+		// the same object); this only covers a command started another way.
+		if s.localPTY == nil && s.localCmd != nil && s.localCmd.Process != nil {
 			_ = s.localCmd.Process.Kill()
 			_, _ = s.localCmd.Process.Wait()
 		}

@@ -5,7 +5,6 @@
 package rfutils
 
 import (
-	"bufio"
 	"fmt"
 	"net"
 	"os"
@@ -29,228 +28,7 @@ const (
 	AudioSystemUnknown
 )
 
-// USBDevice represents a USB device information
-type USBDevice struct {
-	BusID       string
-	DeviceID    string
-	VendorID    string
-	ProductID   string
-	Description string
-}
-
-// ListUSBDevices executes the usbipd.exe command and lists USB devices.
-//
-//	out(1): []USBDevice array of discovered USB devices
-//	out(2): error
-func ListUSBDevices() ([]USBDevice, error) {
-	// Execute the usbipd.exe command
-	cmd := exec.Command("usbipd.exe", "list")
-	output, err := cmd.Output()
-	if err != nil {
-		return nil, fmt.Errorf("failed to execute usbipd.exe: %w", err)
-	}
-
-	// Parse the output
-	var devices []USBDevice
-	scanner := bufio.NewScanner(strings.NewReader(string(output)))
-	for scanner.Scan() {
-		line := scanner.Text()
-		if strings.Contains(line, "BusID") {
-			continue
-		}
-		fields := strings.Fields(line)
-		if len(fields) >= 5 {
-			device := USBDevice{
-				BusID:       fields[0],
-				DeviceID:    fields[1],
-				VendorID:    fields[2],
-				ProductID:   fields[3],
-				Description: strings.Join(fields[4:], " "),
-			}
-			devices = append(devices, device)
-		}
-	}
-	if err := scanner.Err(); err != nil {
-		return nil, fmt.Errorf("error reading command output: %w", err)
-	}
-
-	return devices, nil
-}
-
-// AttachUSBDevice attaches a USB device using its BusID.
-//
-//	in(1): string busID the bus identifier of the USB device to attach
-//	out: error
-func AttachUSBDevice(busID string) error {
-	cmd := exec.Command("usbipd.exe", "attach", "--wsl", "--busid", busID)
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("failed to attach device %s: %w", busID, err)
-	}
-	return nil
-}
-
-// BindUSBDevice binds a USB device using its BusID.
-//
-//	in(1): string busID the bus identifier of the USB device to bind
-//	out: error
-func BindUSBDevice(busID string) error {
-	cmd := exec.Command("usbipd.exe", "bind", "--busid", busID) // autoattach
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("failed to bind device %s: %w", busID, err)
-	}
-	return nil
-}
-
-// BindAndAttachDevice binds and then attaches a single USB device by its BusID.
-//
-//	in(1): string busID the bus identifier of the USB device to bind and attach
-func BindAndAttachDevice(busID string) {
-	if err := BindUSBDevice(busID); err != nil {
-		fmt.Println("Error binding devices:", err)
-	}
-
-	if err := AttachUSBDevice(busID); err != nil {
-		fmt.Println("Error attaching devices:", err)
-	}
-}
-
-// UnbindAndDetachDevice unbinds and detaches a specific USB device by its BusID.
-//
-//	in(1): string busID the bus identifier of the USB device to unbind and detach
-func UnbindAndDetachDevice(busID string) {
-	if err := UnbindUSBDevice(busID); err != nil {
-		fmt.Println("Error unbinding device:", err)
-	}
-
-	if err := DetachUSBDevice(busID); err != nil {
-		fmt.Println("Error detaching device:", err)
-	}
-}
-
-// BindAndAttachAllDevices binds and attaches all listed USB devices.
-//
-//	in(1): []USBDevice devices array of USB devices to bind and attach
-//	out: error
-//
-// TODO: find a way to blacklist some buses like the keyboard...
-func BindAndAttachAllDevices(devices []USBDevice) error {
-	for _, device := range devices {
-		if err := BindUSBDevice(device.BusID); err != nil {
-			return err
-		}
-		if err := AttachUSBDevice(device.BusID); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-// UnbindUSBDevice unbinds a USB device using its BusID.
-//
-//	in(1): string busID the bus identifier of the USB device to unbind
-//	out: error
-func UnbindUSBDevice(busID string) error {
-	cmd := exec.Command("usbipd.exe", "unbind", "--busid", busID)
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("failed to unbind device %s: %w", busID, err)
-	}
-	return nil
-}
-
-// DetachUSBDevice detaches a USB device using its BusID.
-//
-//	in(1): string busID the bus identifier of the USB device to detach
-//	out: error
-func DetachUSBDevice(busID string) error {
-	cmd := exec.Command("usbipd.exe", "detach", "--busid", busID)
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("failed to detach device %s: %w", busID, err)
-	}
-	return nil
-}
-
-// UnbindAndDetachAllDevices unbinds and detaches all listed USB devices.
-//
-//	in(1): []USBDevice devices array of USB devices to unbind and detach
-//	out: error
-//
-// TODO: find a way to blacklist some buses like the keyboard...
-func UnbindAndDetachAllDevices(devices []USBDevice) error {
-	for _, device := range devices {
-		if err := UnbindUSBDevice(device.BusID); err != nil {
-			return err
-		}
-		if err := DetachUSBDevice(device.BusID); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-// BindAttachUSB_Windows binds and attaches a specific USB device from the Windows host.
-//
-//	in(1): string busID the bus identifier of the USB device to bind and attach
-func BindAttachUSB_Windows(busID string) {
-	devices, err := ListUSBDevices()
-	if err != nil {
-		fmt.Println("Error:", err)
-		return
-	}
-
-	for _, device := range devices {
-		fmt.Printf("BusID: %s, DeviceID: %s, VendorID: %s, ProductID: %s, Description: %s\n",
-			device.BusID, device.DeviceID, device.VendorID, device.ProductID, device.Description)
-	}
-
-	if err := BindAndAttachAllDevices(devices); err != nil {
-		fmt.Println("Error binding and attaching devices:", err)
-	}
-}
-
-// AutoBindAttachUSB_Windows automatically lists and binds all USB devices from the Windows host.
-//
-//	out: none (errors are printed to stdout)
-func AutoBindAttachUSB_Windows() {
-	devices, err := ListUSBDevices()
-	if err != nil {
-		fmt.Println("Error:", err)
-		return
-	}
-
-	for _, device := range devices {
-		fmt.Printf("BusID: %s, DeviceID: %s, VendorID: %s, ProductID: %s, Description: %s\n",
-			device.BusID, device.DeviceID, device.VendorID, device.ProductID, device.Description)
-	}
-
-	if err := BindAndAttachAllDevices(devices); err != nil {
-		fmt.Println("Error binding and attaching devices:", err)
-	}
-}
-
-// AutoUnbindDetachUSB_Windows automatically lists, unbinds, and detaches all USB devices from the Windows host.
-//
-//	out: none (errors are printed to stdout)
-func AutoUnbindDetachUSB_Windows() {
-	devices, err := ListUSBDevices()
-	if err != nil {
-		fmt.Println("Error:", err)
-		return
-	}
-
-	fmt.Println("USB Devices:")
-	for _, device := range devices {
-		fmt.Printf("BusID: %s, DeviceID: %s, VendorID: %s, ProductID: %s, Description: %s\n",
-			device.BusID, device.DeviceID, device.VendorID, device.ProductID, device.Description)
-	}
-
-	fmt.Println("\nUnbinding and detaching all devices...")
-	if err := UnbindAndDetachAllDevices(devices); err != nil {
-		fmt.Println("Error unbinding and detaching devices:", err)
-		return
-	}
-
-	fmt.Println("Operation completed successfully.")
-}
+// Windows USB passthrough (usbipd-win) lives in winusb.go.
 
 // detectAudioSystem detects whether PulseAudio or PipeWire is running.
 //
@@ -469,9 +247,10 @@ func retInstallationInstructions() string {
 
 	switch os {
 	case "windows":
-		retstring.WriteString("\nTo install audio server on Windows, follow these steps:\n")
-		retstring.WriteString("1. Download the PulseAudio server installer from the official website.\n")
-		retstring.WriteString("2. Run the installer and follow the on-screen instructions.\n")
+		retstring.WriteString("\nOn Windows, container audio goes through WSLg's PulseAudio server (no install needed):\n")
+		retstring.WriteString("1. Make sure WSL is current: wsl --update  (WSLg ships with WSL on Windows 11 / Windows 10 21H2+)\n")
+		retstring.WriteString("2. Restart WSL: wsl --shutdown, then start a container again.\n")
+		retstring.WriteString("3. Check with: rfswift doctor  (looks for /mnt/wslg/PulseServer)\n")
 	case "darwin":
 		retstring.WriteString("To install audio server on macOS, follow these steps:\n")
 		retstring.WriteString("1. Install Homebrew if you haven't already: /bin/bash -c \"$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)\"\n")
@@ -764,6 +543,21 @@ func startRedHatPipeWireServices() {
 //	in(1): string address the connection address in "protocol:ip:port" format
 //	out: error
 func SetPulseCTL(address string) error {
+	// Windows: WSLg already runs a PulseAudio server for the WSL 2 VM the
+	// containers live in; RF Swift points PULSE_SERVER at its socket, so
+	// there is no TCP module to load. Just verify it is there.
+	if runtime.GOOS == "windows" {
+		status, err := CheckWSLg()
+		if err != nil {
+			return err
+		}
+		if !status.Audio {
+			return fmt.Errorf("WSLg PulseAudio socket not found (/mnt/wslg/PulseServer). WSLg ships with WSL on Windows 11 and Windows 10 21H2+: run 'wsl --update', then 'wsl --shutdown' and try again")
+		}
+		common.PrintSuccessMessage("WSLg PulseAudio is available: containers use PULSE_SERVER=unix:/mnt/wslg/PulseServer automatically, nothing to enable on Windows")
+		return nil
+	}
+
 	parts := strings.Split(address, ":")
 	if len(parts) != 3 {
 		return fmt.Errorf("invalid address format, expected format 'protocol:ip:port'")
@@ -982,6 +776,9 @@ func uidString() string {
 //
 //	out: error
 func UnloadPulseCTL() error {
+	if runtime.GOOS == "windows" {
+		return fmt.Errorf("nothing to unload on Windows: container audio uses WSLg's PulseAudio socket, no TCP module is loaded")
+	}
 	cmd := exec.Command("pactl", "list", "modules")
 	output, err := cmd.CombinedOutput()
 	if err != nil {

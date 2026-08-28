@@ -53,19 +53,30 @@ func TestLimaOpsProbeManual(t *testing.T) {
 	t.Log("stopped (restored to original state)")
 }
 
-// TestUSBProbeManual lists host USB devices and their Lima attach state.
-// Run with RFSWIFT_ENGINE_PROBE=1.
+// TestUSBProbeManual lists host USB devices and their attach state through the
+// active backend (Lima on macOS, usbipd on Windows). Run with
+// RFSWIFT_ENGINE_PROBE=1.
 func TestUSBProbeManual(t *testing.T) {
 	if os.Getenv("RFSWIFT_ENGINE_PROBE") == "" {
 		t.Skip("manual probe; set RFSWIFT_ENGINE_PROBE=1")
 	}
 	a := &App{eng: NewLocalEngine()}
-	t.Logf("USBSupported=%v", a.USBSupported())
+	t.Logf("USBSupported=%v backend=%q", a.USBSupported(), a.USBBackend())
+	if info, err := a.USBHostInfo(); err == nil {
+		t.Logf("host info: %+v", info)
+	} else {
+		t.Logf("host info: %v", err)
+	}
 	devs, err := a.ListHostUSB()
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, d := range devs {
-		t.Logf("usb %-32s %s:%s attached=%v serial=%s", d.Name, d.VendorID, d.ProductID, d.Attached, d.Serial)
+		t.Logf("usb %-40s %s:%s state=%-9s bus=%-5s shared=%v attached=%v serial=%s warning=%q", d.Name, d.VendorID, d.ProductID, d.State, d.BusID, d.Shared, d.Attached, d.Serial, d.Warning)
+	}
+	if view, err := a.VMUSBInfo(); err == nil {
+		t.Logf("VM view:\n%s", view)
+	} else {
+		t.Logf("VM view: %v", err)
 	}
 }

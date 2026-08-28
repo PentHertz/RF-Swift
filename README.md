@@ -128,7 +128,7 @@ RF Swift supports **Docker, Podman and Lima** as container engines, and (new in 
 |---|---|---|---|
 | **Architecture** | Client-server daemon | Daemonless, fork-exec | Docker inside QEMU VM |
 | **Root required** | Yes (daemon runs as root) | No (rootless by default) | No (VM managed by Lima) |
-| **USB passthrough** | Linux only | Linux only | macOS via QMP hot-plug |
+| **USB passthrough** | Linux; Windows via usbipd + WSL 2 | Linux; Windows via usbipd + WSL 2 | macOS via QMP hot-plug |
 | **Best for** | Broad ecosystem, Windows/macOS | Security-focused, air-gapped | macOS + USB RF hardware |
 
 #### Auto-detection
@@ -211,6 +211,27 @@ rfswift --gpu run -i penthertz/rfswift_resolute:sdr_light -n gpu_work --devices 
 ```
 
 Use `--gpu` for GPU compute; use `--engine lima` (without `--gpu`) for SDR hardware. Requires macOS ≥ 14 and a guest kernel with virtio-gpu Venus support (Linux ≥ 6.13).
+
+### 🪟 Windows USB Passthrough (usbipd + WSL 2)
+
+On Windows, Docker Desktop and Podman run their containers inside the WSL 2 VM, which cannot see the host USB bus. RF Swift forwards devices into that VM with [usbipd-win](https://github.com/dorssel/usbipd-win) (`winget install usbipd`). Only *sharing* a device for the first time needs administrator rights; RF Swift asks for them through a normal UAC prompt for `usbipd.exe`, once per device. Attaching and detaching never need elevation.
+
+```powershell
+rfswift usb status                     # usbipd-win, WSL 2 distribution, shared devices
+rfswift usb list                       # host devices with their usbipd state
+rfswift usb attach                     # picker: shares (UAC, once) then attaches to WSL 2
+rfswift usb attach --busid 2-3         # or by bus ID; --yes allows the UAC prompt in scripts
+rfswift run -i penthertz/rfswift_resolute:sdr_light -n sdr_work   # sees /dev/bus/usb
+rfswift usb detach --busid 2-3         # give the device back to Windows
+```
+
+`rfswift run` offers the same picker when it detects shared or known RF hardware, and the Workbench exposes it as **USB passthrough...** on Docker/Podman missions. A forwarded device is visible to every WSL 2 distribution, including Docker Desktop's, because they share one kernel.
+
+Inside the container, `/dev/bus/usb` must be mapped **and** USB device major 189 allowed (`c 189:* rwm`) — both are part of the RF Swift defaults. A bind mount alone lists the devices but cannot open them, and **privileged mode is not required**; `rfswift run` and the Workbench mission form check this before creating the container and tell you what is missing.
+
+#### 🔊 Sound and display on Windows (WSLg)
+
+No PulseAudio install and no `rfswift host audio enable` on Windows: WSLg already runs an X11 server and a PulseAudio server for the WSL 2 VM, and RF Swift mounts its `/mnt/wslg` tree into every container with `DISPLAY=:0` and `PULSE_SERVER=unix:/mnt/wslg/PulseServer`. GQRX, SDR++ and friends play through your Windows audio device. If `rfswift doctor` cannot find the WSLg sockets, run `wsl --update` followed by `wsl --shutdown`.
 
 #### Quick Setup
 

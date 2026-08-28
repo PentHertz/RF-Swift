@@ -13,7 +13,6 @@ go 1.27.0
 
 require (
 	filippo.io/age v1.2.1
-	github.com/creack/pty v1.1.24
 	github.com/moby/moby/client v0.5.1
 	github.com/wailsapp/wails/v2 v2.15.0
 	penthertz/rfswift v0.0.0
@@ -34,6 +33,7 @@ require (
 	github.com/Azure/go-ansiterm v0.0.0-20250102033503-faa5f7b0171c // indirect
 	github.com/FlUxIuS/pulseaudio_2 v0.0.0-20250608163549-43fae16119df // indirect
 	github.com/Microsoft/go-winio v0.6.2 // indirect
+	github.com/UserExistsError/conpty v0.1.4 // indirect
 	github.com/VividCortex/ewma v1.2.0 // indirect
 	github.com/atotto/clipboard v0.1.4 // indirect
 	github.com/aymanbagabas/go-osc52/v2 v2.0.1 // indirect
@@ -55,6 +55,7 @@ require (
 	github.com/clipperhouse/uax29/v2 v2.7.0 // indirect
 	github.com/containerd/errdefs v1.0.0 // indirect
 	github.com/containerd/errdefs/pkg v0.3.0 // indirect
+	github.com/creack/pty v1.1.24 // indirect
 	github.com/danieljoos/wincred v1.2.2 // indirect
 	github.com/distribution/reference v0.6.0 // indirect
 	github.com/docker/go-connections v0.8.1 // indirect

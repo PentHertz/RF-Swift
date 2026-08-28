@@ -189,24 +189,9 @@ func combineEnv(xdisplay, pulseServer, extraenv string) []string {
 		dockerenv = append(dockerenv, strings.Split(xdisplay, ",")...)
 	}
 
-	// When using Lima, PulseAudio runs on the macOS host. The VM has its own
-	// network (e.g., 192.168.5.x), so 127.0.0.1 inside the VM/container does NOT
-	// reach the macOS host. We must use the VM's default gateway IP which routes
-	// back to the macOS host where PulseAudio is listening.
-	if runtime.GOOS == "darwin" {
-		engine := GetEngine()
-		if engine != nil && engine.Type() == EngineLima {
-			if strings.Contains(pulseServer, "127.0.0.1") || strings.Contains(pulseServer, "localhost") {
-				gateway := getLimaHostGatewayIP()
-				if gateway != "" {
-					old := pulseServer
-					pulseServer = strings.Replace(pulseServer, "127.0.0.1", gateway, 1)
-					pulseServer = strings.Replace(pulseServer, "localhost", gateway, 1)
-					common.PrintInfoMessage(fmt.Sprintf("Lima: adjusted PULSE_SERVER from %s to %s (VM gateway → macOS host)", old, pulseServer))
-				}
-			}
-		}
-	}
+	// Host-specific audio targets: WSLg's socket on Windows, the VM gateway
+	// for Lima on macOS (see wslg.go).
+	pulseServer = resolvePulseServer(pulseServer)
 
 	dockerenv = append(dockerenv, "PULSE_SERVER="+pulseServer)
 	if extraenv != "" {

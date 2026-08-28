@@ -99,7 +99,7 @@ Each file defines a group of related commands and a `registerXxxCommands()` func
 | `logging.go` | log start/stop/replay/list | Session recording |
 | `ulimits.go` | ulimits add/rm/list, realtime enable/disable/status | Resource limits |
 | `completion.go` | completion bash/zsh/fish/powershell | Shell completion |
-| `winusb.go` | winusb list/attach/detach | Windows USB (conditional) |
+| `winusb.go` | winusb list/attach/detach/bind/unbind/status/vm-devices, run-wizard USB step | Windows USB via usbipd (conditional) |
 
 A single `init()` in `root.go` calls all `registerXxxCommands()` functions. This avoids fragile multi-file `init()` ordering.
 
@@ -147,7 +147,11 @@ Single file `common.go`:
 | `configs.go` | INI config file management, interactive first-run setup |
 | `rfutils.go` | X11 forwarding (`XHostEnable`), display env, version display |
 | `githutils.go` | GitHub release API, self-update, download with progress bar |
-| `hostcli.go` | PulseAudio/PipeWire management, Windows USB (usbipd) |
+| `hostcli.go` | PulseAudio/PipeWire management |
+| `hostcli_mac.go` | macOS USB discovery and Lima QMP hot-plug |
+| `winusb.go` | Windows USB via usbipd-win: `usbipd state` parsing, attach/detach (unprivileged), bind/unbind (UAC), WSL 2 checks |
+| `usbids.go` | Friendly names for common RF/hardware-hacking USB IDs |
+| `exec_windows.go` / `exec_other.go` | Hidden-console child processes and UAC elevation (`ShellExecuteEx` "runas") |
 | `notifications.go` | Unicode box-drawing notification panels |
 
 ## How to add a new command

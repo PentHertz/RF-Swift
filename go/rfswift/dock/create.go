@@ -201,10 +201,26 @@ func CreateContainer(opts CreateOptions) (string, error) {
 			display = ":0"
 		}
 		configEnv = append(configEnv, "DISPLAY="+display)
-		if _, err := os.Stat("/tmp/.X11-unix"); err == nil && !bindExistsByPrefix(binds, "/tmp/.X11-unix:/tmp/.X11-unix") {
+		if runtime.GOOS == "windows" {
+			// WSLg serves DISPLAY=:0 for every WSL 2 VM; mount its socket tree
+			// the way the CLI does (see cli setupX11).
+			for _, bind := range WSLgBindings() {
+				if !bindTargets(binds, parseBindDestination(bind)) {
+					binds = append(binds, bind)
+				}
+			}
+		} else if _, err := os.Stat("/tmp/.X11-unix"); err == nil && !bindExistsByPrefix(binds, "/tmp/.X11-unix:/tmp/.X11-unix") {
 			binds = append(binds, "/tmp/.X11-unix:/tmp/.X11-unix:rw")
 		}
 		binds, configEnv = addForwardedXAuthority(display, binds, configEnv)
+	}
+	// Audio: same PulseAudio target as the CLI (WSLg socket on Windows, the
+	// configured TCP server elsewhere) unless the caller set PULSE_SERVER.
+	if !envHasKey(configEnv, "PULSE_SERVER") {
+		if pulse := resolvePulseServer(containerCfg.pulseServer); pulse != "" {
+			configEnv = append(configEnv, "PULSE_SERVER="+pulse)
+		}
+		binds = ensureWSLgMount(binds, containerCfg.pulseServer)
 	}
 	if opts.Workspace != "none" {
 		workspace := opts.Workspace

@@ -168,7 +168,11 @@ func GetDisplayEnv() string {
 		// Default behavior for other OS
 		display, err := displayEnv()
 		if err != nil {
-			fmt.Println("Error (using default 'DISPLAY=:0'):", err)
+			// On Windows the container display is WSLg's :0; an unset host
+			// DISPLAY is the normal state, not an error worth printing.
+			if runtime.GOOS != "windows" {
+				fmt.Println("Error (using default 'DISPLAY=:0'):", err)
+			}
 			dispenv = "DISPLAY=:0"
 		} else {
 			dispenv = "DISPLAY=" + display

@@ -5,6 +5,7 @@ go 1.27.0
 require (
 	charm.land/huh/v2 v2.0.3
 	github.com/FlUxIuS/pulseaudio_2 v0.0.0-20250608163549-43fae16119df
+	github.com/UserExistsError/conpty v0.1.4
 	github.com/charmbracelet/lipgloss v1.1.0
 	github.com/cheggaaa/pb/v3 v3.2.0
 	github.com/creack/pty v1.1.24

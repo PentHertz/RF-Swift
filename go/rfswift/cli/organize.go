@@ -154,7 +154,7 @@ func organizeCommands() {
 	case "darwin":
 		usbCmd.AddCommand(macusbListCmd, macusbAttachCmd, macusbDetachCmd, macusbStatusCmd, macusbVMDevicesCmd)
 	case "windows":
-		usbCmd.AddCommand(winusblistCmd, winusbattachCmd, winusbdetachCmd)
+		usbCmd.AddCommand(winusblistCmd, winusbattachCmd, winusbdetachCmd, winusbbindCmd, winusbunbindCmd, winusbstatusCmd, winusbvmdevicesCmd)
 	default:
 		usbCmd.Run = func(cmd *cobra.Command, args []string) {
 			common.PrintInfoMessage("On Linux, USB devices are passed when the container is created (see the device flags on 'rfswift run'); there is no separate attach step.")

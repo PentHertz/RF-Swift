@@ -184,6 +184,28 @@ The CSR endpoint is pending. Until implemented, the initial client certificate
 is usable only by the OS account/vault that generated it. Copying
 `client-key.pem` without securely re-wrapping its vault password will not work.
 
+## Windows
+
+Both roles work on Windows (verified on Windows 11 with Docker Desktop):
+
+- **Agent host**: `rfswift agent certs init` stores the key passwords in the
+  current user's Credential Manager and `rfswift agent` serves TLS 1.3 + mTLS
+  from `rfswift.exe`. Run it in a session of the same Windows user that
+  generated the bundle (a scheduled task or service under another account has
+  no access to that vault). Interactive terminals are served through a Windows
+  pseudo console (ConPTY, Windows 10 1809+), so remote shells into Docker
+  Desktop containers behave like on Linux; the Windows-side facilities (usbipd
+  passthrough, WSLg display/audio) apply to containers created through the
+  agent as well.
+- **Workbench client**: connects to a Linux, macOS, or Windows agent with the
+  same pinned TLS 1.3 + mTLS flow; the encrypted client key password lives in
+  Credential Manager. Remote terminals, artifacts, audits, creation and
+  lifecycle are routed to the agent exactly as on other hosts.
+
+Windows ignores POSIX file modes, so the `0600` on key files documents the
+intent rather than an enforced ACL there: keep the bundle directory inside the
+user profile (its default ACL already restricts other accounts).
+
 ## Tests and fuzzing
 
 ```sh

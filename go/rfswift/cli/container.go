@@ -267,6 +267,11 @@ var runCmd = &cobra.Command{
 		if runtime.GOOS == "darwin" && rfdock.GetEngine().Type() == rfdock.EngineLima && tui.IsInteractive() {
 			MacUSBWizardStep(limaInstance)
 		}
+		// On Windows the container runs in WSL 2; offer to forward RF hardware
+		// into it (usbipd) so /dev/bus/usb is populated from the first start.
+		if runtime.GOOS == "windows" && tui.IsInteractive() {
+			WinUSBWizardStep()
+		}
 
 		if recordSession {
 			// Build extra args map for recording subprocess
@@ -372,9 +377,28 @@ var runCmd = &cobra.Command{
 			if runtime.GOOS == "linux" || runtime.GOOS == "darwin" {
 				rfutils.SetPulseCTL(pulseServer)
 			}
+			printUSBAccessNotice()
 			rfdock.ContainerRun(dockerName)
 		}
 	},
+}
+
+// printUSBAccessNotice warns before creation when the effective device
+// configuration (config.ini defaults + profile + flags/wizard) cannot reach
+// USB devices - forwarded with usbipd on Windows, hot-plugged into the Lima VM
+// on macOS, or plugged into a Linux host. The check is the verified one from
+// common.CheckUSBAccess: /dev/bus/usb plus the "c 189:* rwm" cgroup rule is
+// what is needed, not --privileged. Silent when everything is in place.
+func printUSBAccessNotice() {
+	if runtime.GOOS == "darwin" && rfdock.GetEngine().Type() != rfdock.EngineLima {
+		return // Docker Desktop / Podman on macOS never see host USB devices
+	}
+	access := rfdock.ContainerUSBAccess()
+	if access.Level == "ok" {
+		return
+	}
+	common.PrintWarningMessage("USB access: " + access.Summary)
+	common.PrintInfoMessage(access.Advice + " (flags: --devices /dev/bus/usb --cgroups \"c 189:* rwm\")")
 }
 
 var execCmd = &cobra.Command{

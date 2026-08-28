@@ -529,6 +529,8 @@ func ContainerRun(containerName string) {
 	}
 
 	bindings := combineBindings(containerCfg.x11forward, containerCfg.extrabinding)
+	// Windows: sound comes from WSLg's PulseAudio socket under /mnt/wslg.
+	bindings = ensureWSLgMount(bindings, containerCfg.pulseServer)
 	extrahosts := splitAndCombine(containerCfg.extrahosts)
 	dockerenv := combineEnv(containerCfg.xdisplay, containerCfg.pulseServer, containerCfg.extraenv)
 	bindings, dockerenv = addForwardedXAuthority(containerCfg.xdisplay, bindings, dockerenv)
