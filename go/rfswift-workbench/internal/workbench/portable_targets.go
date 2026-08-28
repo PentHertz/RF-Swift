@@ -154,24 +154,35 @@ func (a *App) ExportTarget(id, engine, password string) (string, error) {
 // ImportContainerArchive imports a filesystem archive into the explicitly
 // selected Docker-compatible daemon, including Docker inside a Lima VM. It
 // never starts that daemon: the GUI obtains consent first.
-func (a *App) ImportContainerArchive(engine, imageName, password string) (string, error) {
+type ContainerImportResult struct {
+	Path  string `json:"path"`
+	Image string `json:"image"`
+}
+
+func (a *App) ImportContainerArchive(engine, imageName, password string) (ContainerImportResult, error) {
 	if _, local := a.eng.(*LocalEngine); !local {
-		return "", errors.New("container import is currently available for local targets only")
+		return ContainerImportResult{}, errors.New("container import is currently available for local targets only")
 	}
 	engine = strings.ToLower(strings.TrimSpace(engine))
 	imageName = strings.TrimSpace(imageName)
 	if imageName == "" || strings.ContainsAny(imageName, "\r\n\t ") {
-		return "", errors.New("a valid image name and tag are required")
+		return ContainerImportResult{}, errors.New("a valid image name and tag are required")
+	}
+	if engine == "podman" {
+		first := strings.SplitN(imageName, "/", 2)[0]
+		if !strings.Contains(first, ".") && !strings.Contains(first, ":") && first != "localhost" {
+			imageName = "localhost/" + imageName
+		}
 	}
 	eng := engineByType(rfdock.EngineType(engine))
 	if eng == nil || (engine != "docker" && engine != "podman" && engine != "lima") {
-		return "", errors.New("select Docker, Podman, or Lima")
+		return ContainerImportResult{}, errors.New("select Docker, Podman, or Lima")
 	}
 	if !eng.IsAvailable() {
-		return "", errors.New(engine + " is not installed")
+		return ContainerImportResult{}, errors.New(engine + " is not installed")
 	}
 	if !eng.IsServiceRunning() {
-		return "", errors.New(engine + " is stopped")
+		return ContainerImportResult{}, errors.New(engine + " is stopped")
 	}
 	resetEngineEnv()
 	rfdock.SetPreferredEngine(engine)
@@ -180,11 +191,11 @@ func (a *App) ImportContainerArchive(engine, imageName, password string) (string
 		Filters: containerArchiveFilters(),
 	})
 	if err != nil || path == "" {
-		return "", err
+		return ContainerImportResult{}, err
 	}
 	input, cleanup, err := importWorkingPath(path, password)
 	if err != nil {
-		return path, err
+		return ContainerImportResult{Path: path, Image: imageName}, err
 	}
 	defer cleanup()
 	err = rfdock.ImportContainerWithProgress(input, imageName, func(percent int, stage string, bytes, total int64) {
@@ -193,7 +204,7 @@ func (a *App) ImportContainerArchive(engine, imageName, password string) (string
 	if err != nil {
 		a.transferProgress("import", "container", imageName, 0, "Import failed: "+err.Error(), 0, 0)
 	}
-	return path, err
+	return ContainerImportResult{Path: path, Image: imageName}, err
 }
 
 type PortableImportResult struct {

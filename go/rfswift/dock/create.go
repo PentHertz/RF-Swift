@@ -176,6 +176,13 @@ func CreateContainer(opts CreateOptions) (string, error) {
 	}
 	binds := append([]string(nil), opts.Bindings...)
 	devices, cgroupRules := normalizeCreationDevices(opts.Devices, binds, opts.CgroupRules)
+	// Directory-style device mappings infer major-number cgroup rules. After a
+	// rootless user explicitly clears the rule field, do not silently recreate
+	// those unsupported rules from /dev/bus/usb, /dev/snd, etc. Keep their bind
+	// mounts; actual access remains governed by the host user's permissions.
+	if IsRootlessPodman() && len(opts.CgroupRules) == 0 {
+		cgroupRules = nil
+	}
 	binds = devices.binds
 	configEnv := append([]string(nil), opts.Environment...)
 	if !opts.NoX11 {

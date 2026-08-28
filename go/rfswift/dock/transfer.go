@@ -9,6 +9,7 @@ import (
 	"bufio"
 	"compress/gzip"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -359,9 +360,34 @@ func ImportContainerWithProgress(inputFile string, imageName string, progress Co
 	defer importResponse.Close()
 	report(85, "Registering imported container image", tracked.written, total)
 
-	// Read response
-	buf := new(strings.Builder)
-	io.Copy(buf, importResponse)
+	// Docker and compatible daemons stream errors as JSON in an otherwise
+	// successful HTTP response. Do not claim success unless every status record
+	// is clean and the requested local tag can be inspected afterwards.
+	scanner := bufio.NewScanner(importResponse)
+	scanner.Buffer(make([]byte, 64*1024), 1024*1024)
+	for scanner.Scan() {
+		var status struct {
+			Error       string `json:"error"`
+			ErrorDetail struct {
+				Message string `json:"message"`
+			} `json:"errorDetail"`
+		}
+		if err := json.Unmarshal(scanner.Bytes(), &status); err == nil {
+			message := strings.TrimSpace(status.ErrorDetail.Message)
+			if message == "" {
+				message = strings.TrimSpace(status.Error)
+			}
+			if message != "" {
+				return fmt.Errorf("container image import failed: %s", message)
+			}
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return fmt.Errorf("failed reading container image import response: %w", err)
+	}
+	if _, err := ImageInspectCompat(ctx, cli, imageName); err != nil {
+		return fmt.Errorf("container archive was read but local image %q was not created: %w", imageName, err)
+	}
 	report(100, "Container archive imported", tracked.written, total)
 
 	common.PrintSuccessMessage(fmt.Sprintf("Container imported successfully as image: %s", imageName))

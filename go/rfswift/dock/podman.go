@@ -31,9 +31,8 @@ import (
 //	out: string the ID of the newly created container
 //	out: error  non-nil if the podman CLI invocation fails
 func podmanCreateViaCLI(name string, imageName string, cfg *container.Config, hc *container.HostConfig) (string, error) {
-	// Strip "localhost/" prefix: Podman CLI interprets it as a registry URL
-	// and tries to pull from https://localhost, whereas the Docker compat API
-	// (used for commit) stores the image locally with this prefix.
+	// Strip "localhost/" prefix for temporary images created through Podman's
+	// compatibility API; the CLI resolves the matching local short name.
 	imageName = strings.TrimPrefix(imageName, "localhost/")
 
 	args := []string{"create", "--name", name}
