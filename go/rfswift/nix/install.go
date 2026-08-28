@@ -43,6 +43,34 @@ func (w *tailWriter) Write(p []byte) (int, error) {
 
 func (w *tailWriter) String() string { return string(w.buf) }
 
+// InstallProgress reports truthful coarse phases. Nix does not expose a stable
+// total byte/build count on its CLI stream, so callers should render phases
+// below 100 as indeterminate rather than inventing a time estimate.
+type InstallProgress func(percent int, stage string)
+
+type nixInstallProgressWriter struct {
+	progress InstallProgress
+	last     string
+}
+
+func (w *nixInstallProgressWriter) Write(p []byte) (int, error) {
+	lower := strings.ToLower(string(p))
+	stage, percent := "", 0
+	switch {
+	case strings.Contains(lower, "copying path") || strings.Contains(lower, "downloading"):
+		stage, percent = "Downloading package dependencies", 30
+	case strings.Contains(lower, "building '") || strings.Contains(lower, "building path"):
+		stage, percent = "Building package dependencies", 60
+	case strings.Contains(lower, "installing '"):
+		stage, percent = "Updating the mission profile", 85
+	}
+	if stage != "" && stage != w.last && w.progress != nil {
+		w.last = stage
+		w.progress(percent, stage)
+	}
+	return len(p), nil
+}
+
 // installFailureReason turns nix's stderr into a concise, user-facing reason.
 // The GUI only sees the returned error, so a bare "exit status 1" is useless;
 // this recognises the common "not available on this platform" case (Linux-only
@@ -174,6 +202,12 @@ func SearchNixpkgs(flakeRef, term string) (map[string]string, error) {
 // environment). Packages resolve against the flake's legacyPackages, so any
 // nixpkgs package works, not only those in an environment.
 func InstallPackages(flakeRef string, pkgs []string, envName string) error {
+	return InstallPackagesWithProgress(flakeRef, pkgs, envName, nil)
+}
+
+// InstallPackagesWithProgress installs packages and reports observable Nix
+// phases for GUI clients while retaining the live stderr stream for the CLI.
+func InstallPackagesWithProgress(flakeRef string, pkgs []string, envName string, progress InstallProgress) error {
 	if !IsAvailable() {
 		return fmt.Errorf("nix is not installed or not on PATH")
 	}
@@ -190,6 +224,9 @@ func InstallPackages(flakeRef string, pkgs []string, envName string) error {
 		return err
 	}
 	sys := currentSystem()
+	if progress != nil {
+		progress(5, "Resolving package selection")
+	}
 	for _, p := range pkgs {
 		installable := fmt.Sprintf("%s#legacyPackages.%s.%s", flakeRef, sys, p)
 		common.PrintInfoMessage(fmt.Sprintf("Installing %s into %s ...", p, scope))
@@ -200,10 +237,14 @@ func InstallPackages(flakeRef string, pkgs []string, envName string) error {
 		// instead of a bare "exit status 1" — all the GUI would otherwise see.
 		captured := &tailWriter{max: 64 << 10}
 		cmd.Stdin, cmd.Stdout = os.Stdin, os.Stdout
-		cmd.Stderr = io.MultiWriter(os.Stderr, captured)
+		progressWriter := &nixInstallProgressWriter{progress: progress}
+		cmd.Stderr = io.MultiWriter(os.Stderr, captured, progressWriter)
 		if err := cmd.Run(); err != nil {
 			return fmt.Errorf("failed to install %s: %s", p, installFailureReason(p, sys, captured.String(), err))
 		}
+	}
+	if progress != nil {
+		progress(100, "Package installed")
 	}
 	common.PrintSuccessMessage(fmt.Sprintf("Installed %d package(s) into %s.", len(pkgs), scope))
 	if envName != "" {

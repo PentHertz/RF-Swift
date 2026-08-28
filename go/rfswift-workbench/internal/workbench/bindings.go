@@ -329,6 +329,7 @@ func (a *App) CreateMission(req MissionCreate) (Mission, error) {
 	if ctx != nil {
 		req.Context = ctx
 	}
+	a.emitOperationProgress("mission-create", req.Name, 55, "Creating target")
 	m, err := a.eng.Create(req)
 	if err != nil {
 		return Mission{}, err
@@ -336,6 +337,7 @@ func (a *App) CreateMission(req MissionCreate) (Mission, error) {
 	if err := a.store.SaveMission(a.ws, m); err != nil {
 		return Mission{}, err
 	}
+	a.emitOperationProgress("mission-create", req.Name, 100, "Mission ready")
 	return m, nil
 }
 
@@ -603,13 +605,34 @@ func (a *App) InstallMissionTool(mission, name string) error {
 		return errors.New("tool name is required")
 	}
 	if remoteEngine, ok := a.eng.(*RemoteEngine); ok {
-		return remoteEngine.call("tools.install", map[string]string{"mission": mission, "name": name}, nil)
+		a.emitOperationProgress("package-install", mission, 10, "Starting remote installation")
+		err := remoteEngine.call("tools.install", map[string]string{"mission": mission, "name": name}, nil)
+		if err == nil {
+			a.emitOperationProgress("package-install", mission, 100, "Package installed")
+		}
+		return err
 	}
 	if env, err := rfnix.GetEnvironment(mission); err == nil {
-		return rfnix.InstallPackages(env.FlakeRef, []string{name}, mission)
+		return rfnix.InstallPackagesWithProgress(env.FlakeRef, []string{name}, mission, func(percent int, stage string) {
+			a.emitOperationProgress("package-install", mission, percent, stage)
+		})
 	}
 	a.routeLocalMission(mission)
-	return rfdock.ContainerInstallScript(mission, "entrypoint.sh", name)
+	a.emitOperationProgress("package-install", mission, 20, "Running container installer")
+	err := rfdock.ContainerInstallScript(mission, "entrypoint.sh", name)
+	if err == nil {
+		a.emitOperationProgress("package-install", mission, 100, "Tool installed")
+	}
+	return err
+}
+
+func (a *App) emitOperationProgress(operation, target string, percent int, stage string) {
+	if a.ctx == nil {
+		return
+	}
+	wruntime.EventsEmit(a.ctx, "rfswift:operation-progress", map[string]any{
+		"operation": operation, "target": target, "percent": percent, "stage": stage,
+	})
 }
 
 // --- notebook ---
