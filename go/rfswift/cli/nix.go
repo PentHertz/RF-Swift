@@ -8,6 +8,7 @@
 package cli
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -19,6 +20,40 @@ import (
 	rfnix "penthertz/rfswift/nix"
 	"penthertz/rfswift/tui"
 )
+
+var nixVersionsCmd = &cobra.Command{
+	Use:   "versions",
+	Short: "List selectable RF-Swift-nix versions",
+	Long:  "List the latest published tag, nightly default-branch commit, and older tags available for new or existing Nix missions.",
+	Args:  cobra.NoArgs,
+	RunE: func(cmd *cobra.Command, _ []string) error {
+		flake, _ := cmd.Flags().GetString("flake")
+		versions, err := rfnix.ListRepositoryVersions(cmd.Context(), rfnix.ResolveFlakeRef(flake))
+		if err != nil {
+			return err
+		}
+		asJSON, _ := cmd.Flags().GetBool("json")
+		if asJSON {
+			return json.NewEncoder(cmd.OutOrStdout()).Encode(versions)
+		}
+		short := func(commit string) string {
+			if len(commit) > 12 {
+				return commit[:12]
+			}
+			return commit
+		}
+		rows := [][]string{}
+		if versions.Latest != nil {
+			rows = append(rows, []string{"Latest (" + versions.Latest.Name + ")", short(versions.Latest.Commit), versions.Latest.Ref})
+		}
+		rows = append(rows, []string{"Nightly (" + versions.DefaultBranch + ")", short(versions.Nightly.Commit), versions.Nightly.Ref})
+		for _, release := range versions.Releases {
+			rows = append(rows, []string{release.Name, short(release.Commit), release.Ref})
+		}
+		tui.RenderTable(tui.TableConfig{Title: "RF-Swift Nix versions · " + versions.Repository, TitleColor: tui.ColorPrimary, Headers: []string{"Version", "Commit", "Flake reference"}, Rows: rows})
+		return nil
+	},
+}
 
 // nixWizardResult holds the choices made in the interactive nix wizard.
 type nixWizardResult struct {
@@ -947,6 +982,7 @@ Examples:
 func registerNixCommands() {
 	rootCmd.AddCommand(nixCmd)
 	nixCmd.AddCommand(nixCatalogCmd)
+	nixCmd.AddCommand(nixVersionsCmd)
 	nixCmd.AddCommand(nixListCmd)
 	nixCmd.AddCommand(nixInfoCmd)
 	nixCmd.AddCommand(nixRemoveCmd)
@@ -962,6 +998,8 @@ func registerNixCommands() {
 	nixCmd.AddCommand(nixGenerationsCmd)
 	nixCmd.AddCommand(nixRollbackCmd)
 	nixRunCmd.Flags().String("flake", "", "flake reference override")
+	nixVersionsCmd.Flags().String("flake", "", "GitHub flake reference (default: RF-Swift-nix)")
+	nixVersionsCmd.Flags().Bool("json", false, "print machine-readable JSON")
 	nixInstallCmd.Flags().String("env", "", "environment receiving the package (default: shared profile)")
 	nixInstallCmd.Flags().String("flake", "", "flake reference override")
 	nixAuditCmd.Flags().String("env", "", "environment to audit")

@@ -341,6 +341,15 @@ func (a *App) CreateMission(req MissionCreate) (Mission, error) {
 	return m, nil
 }
 
+// NixRepositoryVersions returns the immutable latest revision and published
+// release tags used by the create/edit mission version picker.
+func (a *App) NixRepositoryVersions(flakeRef string) (rfnix.RepositoryVersions, error) {
+	if strings.TrimSpace(flakeRef) == "" {
+		flakeRef = rfnix.DefaultFlakeRef
+	}
+	return rfnix.ListRepositoryVersions(context.Background(), flakeRef)
+}
+
 func (a *App) PullMissionImage(engine, image string) (string, error) {
 	return a.pullMissionImage(context.Background(), engine, image)
 }
