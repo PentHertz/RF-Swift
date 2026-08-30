@@ -19,6 +19,7 @@ import (
 	"github.com/moby/moby/api/types/network"
 	"github.com/moby/moby/client"
 
+	common "penthertz/rfswift/common"
 	rfutils "penthertz/rfswift/rfutils"
 )
 
@@ -118,6 +119,10 @@ type CreateOptions struct {
 	NoX11           bool
 	Privileged      bool
 	Start           bool
+	// Warn receives one message per adjustment made to the requested
+	// configuration (for example the pieces rootless Podman cannot honour).
+	// Nil prints them to the terminal like the interactive CLI does.
+	Warn func(string)
 }
 
 // CreateContainer creates an RF-Swift-labelled container without attaching an
@@ -174,14 +179,42 @@ func CreateContainer(opts CreateOptions) (string, error) {
 			return "", fmt.Errorf("image %q resolves to %q but is not available in %s; pull it first with: rfswift --engine %s pull -i %s: %w", opts.Image, resolvedImage, opts.Engine, opts.Engine, opts.Image, err)
 		}
 	}
+	warn := opts.Warn
+	if warn == nil {
+		warn = func(msg string) { common.PrintWarningMessage(msg) }
+	}
 	binds := append([]string(nil), opts.Bindings...)
 	devices, cgroupRules := normalizeCreationDevices(opts.Devices, binds, opts.CgroupRules)
-	// Directory-style device mappings infer major-number cgroup rules. After a
-	// rootless user explicitly clears the rule field, do not silently recreate
-	// those unsupported rules from /dev/bus/usb, /dev/snd, etc. Keep their bind
-	// mounts; actual access remains governed by the host user's permissions.
-	if IsRootlessPodman() && len(opts.CgroupRules) == 0 {
+	// Rootless Podman rejects device cgroup rules outright ("device cgroup
+	// rules are not supported in rootless mode or in a user namespace"), both
+	// the explicit ones and those inferred from /dev/bus/usb, /dev/snd, etc.
+	// Drop them instead of failing: the bind mounts stay, and device access is
+	// then governed by the host user's permissions on the device nodes.
+	rootlessPodman := IsRootlessPodman()
+	if rootlessPodman {
+		if len(opts.CgroupRules) > 0 {
+			warn(fmt.Sprintf("Rootless Podman does not support device cgroup rules; dropped: %s. USB and other device access now depends on this user's permissions on the host nodes (udev rules, plugdev/dialout groups). Run RF Swift with sudo (rootful Podman) or Docker to enforce cgroup rules.", strings.Join(opts.CgroupRules, ", ")))
+		}
 		cgroupRules = nil
+	}
+	// Like the CLI, do not let a device that is not on this host abort the
+	// creation ("error gathering device information"). With Lima the paths
+	// belong to the VM, so they are left to the engine.
+	if selected := GetEngine(); runtime.GOOS == "linux" && selected != nil && selected.Type() != EngineLima {
+		var present, missing []string
+		for _, spec := range devices.nodes {
+			if host := strings.SplitN(spec, ":", 2)[0]; host != "" {
+				if _, err := os.Stat(host); err != nil {
+					missing = append(missing, host)
+					continue
+				}
+			}
+			present = append(present, spec)
+		}
+		if len(missing) > 0 {
+			warn(fmt.Sprintf("Skipped %d device(s) not present on this host: %s.", len(missing), strings.Join(missing, ", ")))
+		}
+		devices.nodes = present
 	}
 	binds = devices.binds
 	configEnv := append([]string(nil), opts.Environment...)
@@ -195,6 +228,14 @@ func CreateContainer(opts CreateOptions) (string, error) {
 		// same working X display as the rfswift binary.
 		if runtime.GOOS == "darwin" {
 			display = strings.TrimPrefix(rfutils.GetDisplayEnv(), "DISPLAY=")
+			rfutils.XHostEnable()
+		} else if runtime.GOOS != "windows" {
+			// A local Unix-socket display authenticates through the xhost ACL,
+			// exactly like the CLI does in setupX11 on every run/exec. Without
+			// it the container gets DISPLAY and the socket but no authorization
+			// ("Authorization required, but no authorization protocol
+			// specified"). SSH-forwarded displays skip xhost and get the cookie
+			// mounted by addForwardedXAuthority below instead.
 			rfutils.XHostEnable()
 		}
 		if display == "" {
@@ -258,6 +299,12 @@ func CreateContainer(opts CreateOptions) (string, error) {
 	}
 	if opts.GPUs != "" {
 		applyGPUConfig(opts.GPUs, hostConfig)
+	}
+	if rootlessPodman {
+		// Root-only device nodes, their bind mounts and ulimits above the host
+		// hard limits make the OCI runtime fail at start time, which Podman
+		// reports only as "container create failed (no logs from conmon)".
+		restrictRootlessPodmanHostConfig(hostConfig, warn)
 	}
 	var entrypoint []string
 	if opts.Desktop {

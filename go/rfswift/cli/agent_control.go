@@ -25,6 +25,7 @@ import (
 type agentTarget struct {
 	ID, Title, Engine, Env, Image, User, Net, Status, DesktopURL, FlakeRef string
 	Caps, Cgroups, Mounts                                                  []string
+	Summary                                                                *rfdock.ContainerSummary `json:",omitempty"`
 }
 type agentPort struct{ Port, Published, Service string }
 type agentCreate struct {
@@ -323,6 +324,9 @@ func agentInspect(id string) (agentTarget, error) {
 			rw = "rw"
 		}
 		t.Mounts = append(t.Mounts, m.Source+" -> "+m.Destination+" ("+rw+")")
+	}
+	if summary, err := rfdock.ContainerSummaryFor(context.Background(), c, id); err == nil {
+		t.Summary = &summary
 	}
 	return t, nil
 }

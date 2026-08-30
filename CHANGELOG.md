@@ -12,6 +12,23 @@ branch.
 
 ### Added
 
+- Workbench: the Configuration and Network cards now show the full container
+  summary the CLI prints after run/exec (image version and freshness, size on
+  disk, shell, X display, privileged mode, bind mounts, devices, extra hosts,
+  seccomp profile, ulimits, GPUs, network mode, NAT subnet, exposed ports and
+  port bindings) via the new `dock.ContainerSummaryFor`.
+- Workbench: container creation reports what the engine could not honour (for
+  example under rootless Podman) in a dialog after the mission is created,
+  through `CreateOptions.Warn` and `Mission.Warnings`.
+- Device mapping check before creation (`dock.CheckDeviceMappings`): the
+  Workbench form warns under the device fields and asks before creating when
+  the selected engine cannot map a device on this host, with a one-click
+  "Remove unsupported devices"; `rfswift run` lists the same devices with the
+  reason and asks once before dropping them. Covers rootless Podman (root-only
+  nodes such as `/dev/console`, nodes the user cannot open such as
+  `/dev/ttyACM0` without the dialout group), Docker/OrbStack/Podman machine on
+  macOS (no USB, serial, audio or GPU passthrough into the VM; points to the
+  Lima engine) and Lima (device absent from the VM).
 - macOS signed disk image: `.github/workflows/macos-dmg.yml` builds a
   universal `rfswift` CLI and the universal Workbench `.app` on every `v*`
   tag, packs them into `rfswift_Darwin_universal.dmg` and, when the Apple
@@ -296,6 +313,26 @@ branch.
 
 ### Fixed
 
+- Workbench on Linux: containers created from the GUI had `DISPLAY` and the X
+  socket but no authorization (`Authorization required, but no authorization
+  protocol specified`). The GUI/API creation path now opens the local display
+  with xhost exactly like the CLI does; SSH-forwarded displays keep the cookie
+  mount.
+- Rootless Podman from the Workbench: creation failed first on device cgroup
+  rules, then on start with `container create failed (no logs from conmon)`,
+  which is how Podman reports an OCI runtime failure. `CreateContainer` now
+  applies the same rootless handling as the CLI (shared
+  `restrictRootlessPodmanHostConfig`): cgroup rules are dropped with a
+  warning, root-only device nodes (`/dev/console`, `/dev/tty*`, `/dev/vhci`,
+  `/dev/uinput`, ...) and their mounts are left out, and ulimits above the
+  user's host hard limits (realtime `rtprio`/`memlock`/`nice`) are skipped
+  instead of aborting the start. The GUI also retries automatically after
+  removing unsupported rules instead of asking for another click.
+- Container tool installer (`rfswift exec -i`, Workbench right-click install):
+  the exit status of the install function was never checked, so a failed build
+  (for example `sdrpp_soft_fromsource_install` on a non-SDR image) was reported
+  as installed. Failures now surface with the tail of the build output; apt
+  housekeeping errors are downgraded to warnings.
 - `rfswift winusb list` parsed the pre-4.0 `usbipd list` column layout and
   printed nonsense for current usbipd-win releases, and `winusb detach` ran the
   bind-and-attach routine instead of detaching. Both now use the usbipd JSON
