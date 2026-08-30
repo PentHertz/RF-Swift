@@ -525,6 +525,148 @@ func (a *App) DeleteNixEnvironment(id string, cleanStore bool) error {
 	return nil
 }
 
+// UpdateNixEnvironment refreshes the environment's flake lock (or, for a local
+// flake, picks up its current source) and transactionally rebuilds the profile;
+// a failed build keeps the active generation and restores the lock. This is the
+// GUI counterpart of `rfswift env update`, so users can pull new package
+// definitions without dropping to a terminal.
+func (a *App) UpdateNixEnvironment(id string) error {
+	if err := a.requireMission(id); err != nil {
+		return err
+	}
+	if _, ok := a.eng.(*RemoteEngine); ok {
+		return errors.New("updating a Nix environment over a remote connection is not supported yet")
+	}
+	if _, err := rfnix.GetEnvironment(id); err != nil {
+		return fmt.Errorf("%q is not a Nix environment", id)
+	}
+	a.emitOperationProgress("nix-update", id, 10, "Updating flake lock and rebuilding")
+	if err := rfnix.UpdateEnvironment(id, rfnix.UpdateOptions{}); err != nil {
+		return err
+	}
+	a.emitOperationProgress("nix-update", id, 100, "Environment updated")
+	return nil
+}
+
+// RebuildNixEnvironment rebuilds the environment against its currently pinned
+// flake lock, without changing the lock — the GUI counterpart of
+// `rfswift env rebuild`. Use it to re-realise a profile after local package
+// definitions change (or after a `nix store gc`).
+func (a *App) RebuildNixEnvironment(id string) error {
+	if err := a.requireMission(id); err != nil {
+		return err
+	}
+	if _, ok := a.eng.(*RemoteEngine); ok {
+		return errors.New("rebuilding a Nix environment over a remote connection is not supported yet")
+	}
+	if _, err := rfnix.GetEnvironment(id); err != nil {
+		return fmt.Errorf("%q is not a Nix environment", id)
+	}
+	a.emitOperationProgress("nix-update", id, 10, "Rebuilding environment")
+	if err := rfnix.RebuildEnvironment(id); err != nil {
+		return err
+	}
+	a.emitOperationProgress("nix-update", id, 100, "Environment rebuilt")
+	return nil
+}
+
+// CheckNixEnvironmentUpdate previews what an update would change (a flake lock
+// dry-run, or refreshed remote metadata) without modifying anything — the GUI
+// counterpart of `rfswift env update --check`. Returns Nix's report as text.
+func (a *App) CheckNixEnvironmentUpdate(id string) (string, error) {
+	if err := a.requireMission(id); err != nil {
+		return "", err
+	}
+	if _, ok := a.eng.(*RemoteEngine); ok {
+		return "", errors.New("checking a Nix environment over a remote connection is not supported yet")
+	}
+	if _, err := rfnix.GetEnvironment(id); err != nil {
+		return "", fmt.Errorf("%q is not a Nix environment", id)
+	}
+	return rfnix.CheckEnvironmentUpdateOutput(id, "")
+}
+
+// ListNixGenerations lists the saved previous generations of an eager
+// environment, newest first — the rollback targets.
+func (a *App) ListNixGenerations(id string) ([]rfnix.Generation, error) {
+	if err := a.requireMission(id); err != nil {
+		return nil, err
+	}
+	if _, ok := a.eng.(*RemoteEngine); ok {
+		return nil, errors.New("listing Nix generations over a remote connection is not supported yet")
+	}
+	return rfnix.ListGenerations(id)
+}
+
+// RollbackNixEnvironment switches an eager environment back to a saved
+// generation (empty = the newest one); the displaced closure is itself kept as
+// a generation. The GUI counterpart of `rfswift env rollback`.
+func (a *App) RollbackNixEnvironment(id, generation string) error {
+	if err := a.requireMission(id); err != nil {
+		return err
+	}
+	if _, ok := a.eng.(*RemoteEngine); ok {
+		return errors.New("rolling back a Nix environment over a remote connection is not supported yet")
+	}
+	if _, err := rfnix.GetEnvironment(id); err != nil {
+		return fmt.Errorf("%q is not a Nix environment", id)
+	}
+	return rfnix.RollbackEnvironment(id, strings.TrimSpace(generation))
+}
+
+// ListMissionTools lists the tools a Nix mission provides that can be updated
+// one at a time: the on-demand tools of a lazy environment and the packages
+// installed into it. Shown by the tool installer next to the search results.
+func (a *App) ListMissionTools(mission string) ([]ToolCandidate, error) {
+	if err := a.requireMission(mission); err != nil {
+		return nil, err
+	}
+	if _, ok := a.eng.(*RemoteEngine); ok {
+		return nil, errors.New("listing tools over a remote connection is not supported yet")
+	}
+	if _, err := rfnix.GetEnvironment(mission); err != nil {
+		return nil, fmt.Errorf("%q is not a Nix environment", mission)
+	}
+	tools, err := rfnix.ListEnvironmentTools(mission)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]ToolCandidate, 0, len(tools))
+	for _, t := range tools {
+		detail := t.Attr
+		if t.Kind == "on-demand" {
+			detail = "on-demand (builds on first call) - " + t.Attr
+		}
+		out = append(out, ToolCandidate{Name: t.Name, Detail: detail, Source: t.Kind})
+	}
+	return out, nil
+}
+
+// UpdateMissionTool refreshes a single tool of a Nix mission — an installed
+// package is upgraded in place, an on-demand tool is rebuilt from the
+// environment's flake now. This is how a lazy environment, which has no
+// profile to rebuild wholesale, picks up new package definitions tool by tool.
+func (a *App) UpdateMissionTool(mission, name string) error {
+	if err := a.requireMission(mission); err != nil {
+		return err
+	}
+	if strings.TrimSpace(name) == "" {
+		return errors.New("tool name is required")
+	}
+	if _, ok := a.eng.(*RemoteEngine); ok {
+		return errors.New("updating tools over a remote connection is not supported yet")
+	}
+	if _, err := rfnix.GetEnvironment(mission); err != nil {
+		return fmt.Errorf("%q is not a Nix environment", mission)
+	}
+	a.emitOperationProgress("package-install", mission, 10, "Updating "+name)
+	if err := rfnix.UpdateEnvironmentTool(mission, name); err != nil {
+		return err
+	}
+	a.emitOperationProgress("package-install", mission, 100, name+" updated")
+	return nil
+}
+
 // DeleteMissionCompletely removes the live target and all Workbench-owned
 // mission data. Host bind mounts, named volumes and images remain outside the
 // Workbench data root and are intentionally preserved.

@@ -65,6 +65,9 @@ type Mission struct {
 	Notes            string          `json:"notes"`             // short config note
 	DesktopURL       string          `json:"desktopURL"`
 	FlakeRef         string          `json:"flakeRef"`
+	// Lazy marks an on-demand Nix environment (tools build on first call). It has
+	// no eager profile, so rebuild/rollback do not apply to it — only update.
+	Lazy bool `json:"lazy,omitempty"`
 }
 
 // MissionCreate is the engine-neutral request accepted from the Workbench UI.

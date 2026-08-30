@@ -111,11 +111,136 @@ func CheckEnvironmentUpdate(name, input string) error {
 		common.PrintInfoMessage("Remote flake: checking refreshed metadata (no local lock file is modified).")
 		return runNixStreaming("", "flake", "metadata", "--refresh", env.FlakeRef)
 	}
-	args := []string{"flake", "update", "--dry-run", "--flake", dir}
+	report, err := previewLockUpdate(dir, input)
+	if err != nil {
+		return err
+	}
+	common.PrintInfoMessage(report)
+	return nil
+}
+
+// CheckEnvironmentUpdateOutput is CheckEnvironmentUpdate for GUI clients: the
+// same dry-run, but Nix's report is returned instead of streamed to the
+// terminal, so it can be shown in a dialog before the user decides to update.
+func CheckEnvironmentUpdateOutput(name, input string) (string, error) {
+	env, err := GetEnvironment(name)
+	if err != nil {
+		return "", err
+	}
+	dir, ok := localFlakePath(env.FlakeRef)
+	if !ok {
+		if input != "" {
+			return "", fmt.Errorf("--input requires a writable local flake; environment %q uses %s", name, env.FlakeRef)
+		}
+		out, err := runNixCapture("", "flake", "metadata", "--refresh", env.FlakeRef)
+		if err != nil {
+			return out, err
+		}
+		return "Remote flake " + env.FlakeRef + " (refreshed metadata; no local lock is modified):\n" + out, nil
+	}
+	return previewLockUpdate(dir, input)
+}
+
+// runNixCapture runs nix like runNixStreaming but returns its combined output
+// (nix reports lock changes on stderr) instead of writing to the terminal.
+func runNixCapture(dir string, args ...string) (string, error) {
+	cmd := exec.Command(NixBinary(), append(experimentalArgs(), args...)...)
+	cmd.Dir = dir
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return string(out), fmt.Errorf("%w: %s", err, strings.TrimSpace(string(out)))
+	}
+	return string(out), nil
+}
+
+// previewLockUpdate reports what `nix flake update` would change for a
+// writable local flake without touching its flake.lock. `nix flake update` has
+// no --dry-run flag; instead Nix is asked to write the candidate lock to a
+// temporary file (--output-lock-file) and the two locks are compared input by
+// input. An empty input means every input.
+func previewLockUpdate(dir, input string) (string, error) {
+	tmp, err := os.CreateTemp("", "rfswift-flake-*.lock")
+	if err != nil {
+		return "", err
+	}
+	tmpPath := tmp.Name()
+	tmp.Close()
+	defer os.Remove(tmpPath)
+
+	args := []string{"flake", "update"}
 	if input != "" {
 		args = append(args, input)
 	}
-	return runNixStreaming(dir, args...)
+	args = append(args, "--flake", dir, "--output-lock-file", tmpPath)
+	if out, err := runNixCapture(dir, args...); err != nil {
+		return out, err
+	}
+	before, err := os.ReadFile(filepath.Join(dir, "flake.lock"))
+	if err != nil && !os.IsNotExist(err) {
+		return "", fmt.Errorf("read flake lock: %w", err)
+	}
+	after, err := os.ReadFile(tmpPath)
+	if err != nil {
+		return "", fmt.Errorf("read candidate flake lock: %w", err)
+	}
+	return diffFlakeLocks(before, after), nil
+}
+
+// flakeLock is the subset of flake.lock needed to compare pinned inputs.
+type flakeLock struct {
+	Nodes map[string]struct {
+		Locked *struct {
+			Rev          string `json:"rev"`
+			LastModified int64  `json:"lastModified"`
+		} `json:"locked"`
+	} `json:"nodes"`
+}
+
+// diffFlakeLocks renders the inputs whose pinned revision differs between two
+// lock files, oldest -> newest, in a form suitable for a terminal or a dialog.
+func diffFlakeLocks(before, after []byte) string {
+	var b, a flakeLock
+	_ = json.Unmarshal(before, &b) // a missing/unparseable current lock reads as "no pins yet"
+	if err := json.Unmarshal(after, &a); err != nil {
+		return "could not parse the candidate flake.lock: " + err.Error()
+	}
+	pin := func(l flakeLock, name string) string {
+		n, ok := l.Nodes[name]
+		if !ok || n.Locked == nil {
+			return "(unpinned)"
+		}
+		if n.Locked.Rev != "" {
+			if len(n.Locked.Rev) > 12 {
+				return n.Locked.Rev[:12]
+			}
+			return n.Locked.Rev
+		}
+		if n.Locked.LastModified > 0 {
+			return time.Unix(n.Locked.LastModified, 0).UTC().Format("2006-01-02")
+		}
+		return "(pinned)"
+	}
+	names := map[string]struct{}{}
+	for k := range b.Nodes {
+		names[k] = struct{}{}
+	}
+	for k := range a.Nodes {
+		names[k] = struct{}{}
+	}
+	var changed []string
+	for k := range names {
+		if k == "root" {
+			continue
+		}
+		if from, to := pin(b, k), pin(a, k); from != to {
+			changed = append(changed, fmt.Sprintf("%s: %s -> %s", k, from, to))
+		}
+	}
+	if len(changed) == 0 {
+		return "flake.lock is already up to date; nothing would change."
+	}
+	sort.Strings(changed)
+	return "Inputs that would be updated:\n  " + strings.Join(changed, "\n  ")
 }
 
 // UpdateEnvironment updates the writable flake lock (optionally one input) and
@@ -129,8 +254,14 @@ func UpdateEnvironment(name string, opts UpdateOptions) error {
 	if err != nil {
 		return err
 	}
-	if env.Lazy || env.ProfilePath == "" {
-		return fmt.Errorf("environment %q is %s; update rollback requires an eager realised environment (recreate it without --lazy/--pure)", name, map[bool]string{true: "on-demand", false: "pure"}[env.Lazy])
+	// Lazy environments have no eager profile to transactionally rebuild, but
+	// they can still be updated: refresh the flake so the on-demand shims build
+	// newer tools next call, and upgrade any explicitly-installed extras.
+	if env.Lazy {
+		return updateLazyEnvironment(env, opts.Input)
+	}
+	if env.ProfilePath == "" {
+		return fmt.Errorf("environment %q is pure; update requires an eager or lazy environment (recreate it without --pure)", name)
 	}
 	dir, ok := localFlakePath(env.FlakeRef)
 	var lockPath string
@@ -174,6 +305,42 @@ func UpdateEnvironment(name string, opts UpdateOptions) error {
 		return fmt.Errorf("updated environment did not build; active generation kept and flake.lock restored: %w", err)
 	}
 	return nil
+}
+
+// updateLazyEnvironment refreshes an on-demand environment. Lazy tools are not
+// prebuilt: each shim runs `nix run <flakeRef>#attr` on call, so what makes the
+// next invocation build a newer tool is refreshing the flake — its lock for a
+// writable local flake, or its cached metadata for a remote one. Tools the user
+// explicitly installed live in the environment's extras profile and are upgraded
+// with `nix profile upgrade`. So a lazy update covers BOTH the base on-demand
+// tools (via the flake) and the installed extras — not only the installed ones.
+func updateLazyEnvironment(env *Environment, input string) error {
+	if dir, ok := localFlakePath(env.FlakeRef); ok {
+		args := []string{"flake", "update", "--flake", dir}
+		if input != "" {
+			args = append(args, input)
+		}
+		if err := runNixStreaming(dir, args...); err != nil {
+			return fmt.Errorf("flake lock update failed: %w", err)
+		}
+	} else {
+		if input != "" {
+			return fmt.Errorf("--input requires a writable local flake; environment %q uses %s", env.Name, env.FlakeRef)
+		}
+		common.PrintInfoMessage("Refreshing the remote flake reference; each tool rebuilds from it on its next call.")
+		if err := runNixStreaming("", "flake", "metadata", "--refresh", env.FlakeRef); err != nil {
+			return err
+		}
+	}
+	// Upgrade tools the user installed into this environment, if any.
+	if extras := EnvExtrasProfile(env.Name); pathExists(extras) {
+		common.PrintInfoMessage("Upgrading tools installed into this environment ...")
+		if err := runNixStreaming("", "profile", "upgrade", "--profile", extras, "--all"); err != nil {
+			return fmt.Errorf("upgrading installed tools failed: %w", err)
+		}
+	}
+	// Keep the shims in sync with any command changes in the refreshed flake.
+	return writeShims(env)
 }
 
 // RebuildEnvironment rebuilds against the currently pinned flake without

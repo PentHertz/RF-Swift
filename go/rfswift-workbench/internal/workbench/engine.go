@@ -379,6 +379,7 @@ func (e *LocalEngine) ListTargets() ([]Mission, error) {
 				Image:    "nix env",
 				Status:   st,
 				FlakeRef: ev.FlakeRef,
+				Lazy:     ev.Lazy,
 			})
 		}
 	}
