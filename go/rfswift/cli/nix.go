@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 
@@ -63,6 +64,7 @@ type nixWizardResult struct {
 	workspace string // "", "none", "cwd", or a path
 	pure      bool
 	lazy      bool
+	isolate   bool
 	confirmed bool
 }
 
@@ -109,6 +111,7 @@ func runNixEnvironment(cmd *cobra.Command) error {
 	pure, _ := cmd.Flags().GetBool("pure")
 	rebuild, _ := cmd.Flags().GetBool("rebuild")
 	lazy, _ := cmd.Flags().GetBool("lazy")
+	isolate, _ := cmd.Flags().GetBool("isolate")
 	flakeRef, _ := cmd.Flags().GetString("flake")
 
 	// Resolve the workspace selection into the value RunEnvironment expects.
@@ -158,6 +161,7 @@ func runNixEnvironment(cmd *cobra.Command) error {
 		}
 		pure = pure || res.pure
 		lazy = lazy || res.lazy
+		isolate = isolate || res.isolate
 	} else {
 		if name == "" {
 			return fmt.Errorf("environment name is required (use -n)")
@@ -176,7 +180,68 @@ func runNixEnvironment(cmd *cobra.Command) error {
 		Rebuild:   rebuild,
 		Pure:      pure,
 		Lazy:      lazy,
+		Isolate:   isolate,
+		PreEnter:  offerUdevRules,
 	})
+}
+
+// offerUdevRules runs before the shell of `run --engine nix` is entered on
+// Linux. Native tools run as the user, so HackRF, RTL-SDR, bladeRF, Proxmark
+// and friends are only usable once the udev rules their packages ship are on
+// the host; list the ones that are not, and offer to install them (one sudo).
+func offerUdevRules(env *rfnix.Environment) {
+	if runtime.GOOS != "linux" {
+		return
+	}
+	rules := rfnix.ListUdevRules(env)
+	pending := rfnix.PendingUdevRules(rules)
+	if len(pending) == 0 {
+		return
+	}
+	common.PrintInfoMessage(fmt.Sprintf("Hardware access: %d udev rule file(s) shipped by this environment are not installed on the host, so the devices they cover need root (rfsudo) until they are.", len(pending)))
+	printUdevRules(pending)
+	if !tui.IsInteractive() {
+		common.PrintInfoMessage(fmt.Sprintf("Install them later with: rfswift nix udev %s", env.Name))
+		return
+	}
+	if !tui.Confirm(fmt.Sprintf("Install them into %s now? (sudo will ask for your password)", rfnix.UdevRulesDir)) {
+		common.PrintInfoMessage(fmt.Sprintf("Skipped. Install them any time with: rfswift nix udev %s", env.Name))
+		return
+	}
+	absent, notMember := rfnix.GroupStatus(rules)
+	if err := installUdevRules(env, pending, absent, append(absent, notMember...)); err != nil {
+		common.PrintErrorMessage(err)
+	}
+}
+
+// printUdevRules lists rules files with their package, groups and state.
+func printUdevRules(rules []rfnix.UdevRule) {
+	for _, r := range rules {
+		groups := "no group (world access)"
+		if len(r.Groups) > 0 {
+			groups = "group " + strings.Join(r.Groups, ", ")
+		}
+		fmt.Printf("  - %-28s %s, %s  [%s]\n", r.File, r.Package, groups, r.State)
+	}
+}
+
+// installUdevRules installs rules and fixes group membership, then tells the
+// user what still depends on them (re-login, re-plug).
+func installUdevRules(env *rfnix.Environment, rules []rfnix.UdevRule, createGroups, joinGroups []string) error {
+	report, err := rfnix.InstallUdevRules(env, rules, createGroups, joinGroups)
+	if err != nil {
+		return err
+	}
+	if len(report.Installed) > 0 {
+		common.PrintSuccessMessage(fmt.Sprintf("Installed %d udev rule file(s) into %s and reloaded udev. Re-plug the devices so the rules apply.", len(report.Installed), rfnix.UdevRulesDir))
+	}
+	if len(report.GroupsCreated) > 0 {
+		common.PrintInfoMessage(fmt.Sprintf("Created group(s): %s", strings.Join(report.GroupsCreated, ", ")))
+	}
+	if len(report.GroupsJoined) > 0 {
+		common.PrintWarningMessage(fmt.Sprintf("Added you to group(s) %s. Log out and back in (or run `newgrp %s` in this terminal) before using those devices.", strings.Join(report.GroupsJoined, ", "), report.GroupsJoined[0]))
+	}
+	return nil
 }
 
 // execNixEnvironment handles `rfswift exec --engine nix`.
@@ -325,6 +390,12 @@ func nixWizard(cat *rfnix.Catalog, image, name string) (*nixWizardResult, error)
 		res.lazy = true
 	}
 
+	// Isolation (Linux only): run the shell in a bubblewrap jail that hides the
+	// host filesystem/$HOME while keeping USB/serial devices and the display.
+	if rfnix.IsolateSupported() {
+		res.isolate = tui.Confirm("Isolate in a jail? (hides $HOME/host FS; keeps USB devices, display, network)")
+	}
+
 	// Recap and confirm.
 	entry := cat.Find(res.image)
 	toolCount := 0
@@ -335,15 +406,20 @@ func nixWizard(cat *rfnix.Catalog, image, name string) (*nixWizardResult, error)
 	if res.lazy {
 		mode = "on-demand (build on first call)"
 	}
+	isolation := "off (native, full host access)"
+	if res.isolate {
+		isolation = "on (bubblewrap jail)"
+	}
 	items := map[string]string{
 		"Environment": res.image,
 		"Name":        res.name,
 		"Tools":       fmt.Sprintf("~%d", toolCount),
 		"Mode":        mode,
+		"Isolation":   isolation,
 		"Workspace":   wsLabel(res.name, res.workspace),
 		"Engine":      "nix (native)",
 	}
-	tui.PrintRecap("Nix Environment", items, []string{"Environment", "Name", "Tools", "Mode", "Workspace", "Engine"})
+	tui.PrintRecap("Nix Environment", items, []string{"Environment", "Name", "Tools", "Mode", "Isolation", "Workspace", "Engine"})
 	tui.PrintCLIEquivalent(buildNixCLI(res))
 
 	res.confirmed = tui.Confirm("Create this environment?")
@@ -447,6 +523,9 @@ func buildNixCLI(res *nixWizardResult) string {
 	}
 	if res.lazy {
 		s += " --lazy"
+	}
+	if res.isolate {
+		s += " --isolate"
 	}
 	return s
 }
@@ -666,6 +745,16 @@ var nixInstallCmd = &cobra.Command{
 		}
 		if err := rfnix.InstallPackages(flake, packages, target); err != nil {
 			common.PrintErrorMessage(err)
+			return
+		}
+		// A newly installed package may ship udev rules (e.g. a device library
+		// like libhydrasdr). Offer to install any that are not on the host yet,
+		// so the hardware is usable without root right away instead of only at
+		// the next `run`.
+		if target != "" {
+			if env, err := rfnix.GetEnvironment(target); err == nil {
+				offerUdevRules(env)
+			}
 		}
 	},
 }
@@ -923,6 +1012,182 @@ Examples:
 	},
 }
 
+var nixUdevCmd = &cobra.Command{
+	Use:   "udev <name>",
+	Short: "Install the environment's hardware udev rules on the host (Linux)",
+	Long: `Native Nix tools run as your user, so SDR and RFID hardware (HackRF, RTL-SDR,
+bladeRF, Airspy, LimeSDR, USRP, Proxmark, ...) is only reachable without root
+once the udev rules shipped by their packages are installed on the host. This
+lists the rules files the environment provides, compares them with
+/etc/udev/rules.d, installs the missing or outdated ones with a header naming
+the environment, creates the groups they rely on (plugdev, bladerf, ...), adds
+you to them, and reloads udev. Everything privileged runs in one sudo call.
+
+Until the rules are installed, run a tool as root inside the environment with
+'rfsudo <tool>'.
+
+Examples:
+  rfswift nix udev mysdr            # show and install what is missing
+  rfswift nix udev mysdr --list     # only show
+  rfswift nix udev mysdr --remove   # remove what RF Swift installed for it`,
+	Args: cobra.ExactArgs(1),
+	Run: func(cmd *cobra.Command, args []string) {
+		listOnly, _ := cmd.Flags().GetBool("list")
+		remove, _ := cmd.Flags().GetBool("remove")
+		noGroups, _ := cmd.Flags().GetBool("no-groups")
+		yes, _ := cmd.Flags().GetBool("yes")
+		if runtime.GOOS != "linux" {
+			common.PrintInfoMessage("udev rules are a Linux mechanism. On macOS, USB devices are opened directly by the tools (no rules needed); on Windows, install the WinUSB driver for the device with Zadig.")
+			return
+		}
+		env, err := rfnix.GetEnvironment(args[0])
+		if err != nil {
+			common.PrintErrorMessage(err)
+			os.Exit(1)
+		}
+		if remove {
+			removed, err := rfnix.RemoveUdevRules(env.Name)
+			if err != nil {
+				common.PrintErrorMessage(err)
+				os.Exit(1)
+			}
+			if len(removed) == 0 {
+				common.PrintInfoMessage(fmt.Sprintf("No udev rules installed by RF Swift for '%s'.", env.Name))
+				return
+			}
+			common.PrintSuccessMessage(fmt.Sprintf("Removed %s from %s and reloaded udev.", strings.Join(removed, ", "), rfnix.UdevRulesDir))
+			return
+		}
+		// The device/library layer carries most rules; realise it for
+		// on-demand environments that have nothing built yet.
+		if err := rfnix.RealisePrerequisites(env); err != nil {
+			common.PrintWarningMessage(fmt.Sprintf("Could not realise the device layer: %v", err))
+		}
+		rules := rfnix.ListUdevRules(env)
+		if len(rules) == 0 {
+			common.PrintInfoMessage(fmt.Sprintf("Environment '%s' ships no udev rules (nothing realised yet, or no hardware packages).", env.Name))
+			return
+		}
+		printUdevRules(rules)
+		absent, notMember := rfnix.GroupStatus(rules)
+		if len(absent) > 0 {
+			common.PrintWarningMessage(fmt.Sprintf("Group(s) missing on this host: %s", strings.Join(absent, ", ")))
+		}
+		if len(notMember) > 0 {
+			common.PrintWarningMessage(fmt.Sprintf("You are not a member of: %s", strings.Join(notMember, ", ")))
+		}
+		if listOnly {
+			return
+		}
+		pending := rfnix.PendingUdevRules(rules)
+		joinGroups := append(append([]string{}, absent...), notMember...)
+		if noGroups {
+			absent, joinGroups = nil, nil
+		}
+		if len(pending) == 0 && len(joinGroups) == 0 {
+			common.PrintSuccessMessage("All udev rules are installed and the groups are in place.")
+			return
+		}
+		if !yes && tui.IsInteractive() && !tui.Confirm(fmt.Sprintf("Install %d rule file(s) into %s and fix %d group(s) now? (sudo will ask for your password)", len(pending), rfnix.UdevRulesDir, len(joinGroups))) {
+			return
+		}
+		if err := installUdevRules(env, pending, absent, joinGroups); err != nil {
+			common.PrintErrorMessage(err)
+			os.Exit(1)
+		}
+	},
+}
+
+var nixGLCmd = &cobra.Command{
+	Use:   "gl [name]",
+	Short: "Show the OpenGL runtime GUI tools get on this host (Linux, non-NixOS)",
+	Long: `nixpkgs programs only find GPU drivers on NixOS (/run/opengl-driver). On any
+other Linux distribution RF Swift exports the Mesa drivers of the environment's
+own nixpkgs pin (or the matching proprietary NVIDIA libraries) into every
+environment shell, so SDR++, gqrx and the other GUI tools can open a window.
+This shows what applies here and which runtime a given environment would use.
+
+Inside an environment shell, 'echo $RFSWIFT_NIX_GL_RUNTIME' tells whether the
+runtime was applied. --check creates an OpenGL context with that runtime (no
+window) and prints the driver that answered, or the EGL error a GUI tool would
+hit. Intel, AMD, VMware and other open drivers are served by Mesa from the
+environment's nixpkgs; the proprietary NVIDIA driver by user-space libraries
+matching the loaded kernel module (RFSWIFT_NIX_GL=mesa forces Mesa on hybrid
+laptops). On macOS nixpkgs programs use Apple's OpenGL/Metal directly, so
+nothing is exported there.
+
+Examples:
+  rfswift nix gl                 # what this host needs
+  rfswift nix gl mysdr --check   # create a context with mysdr's runtime`,
+	Args: cobra.MaximumNArgs(1),
+	Run: func(cmd *cobra.Command, args []string) {
+		check, _ := cmd.Flags().GetBool("check")
+		var env *rfnix.Environment
+		if len(args) > 0 {
+			e, err := rfnix.GetEnvironment(args[0])
+			if err != nil {
+				common.PrintErrorMessage(err)
+				os.Exit(1)
+			}
+			env = e
+		}
+		st := rfnix.GLStatusFor(env)
+		items := []tui.PropertyItem{
+			{Key: "Runtime needed", Value: fmt.Sprintf("%t", st.Needed)},
+			{Key: "Reason", Value: st.Reason},
+			{Key: "Mode (RFSWIFT_NIX_GL)", Value: st.Mode},
+		}
+		if st.NvidiaVersion != "" {
+			items = append(items, tui.PropertyItem{Key: "NVIDIA driver", Value: st.NvidiaVersion})
+		}
+		for _, g := range st.GPUs {
+			driver := g.Driver
+			if driver == "" {
+				driver = "no kernel driver bound"
+			}
+			items = append(items, tui.PropertyItem{Key: "GPU " + g.Card, Value: fmt.Sprintf("%s (%s), kernel driver %s", g.Vendor, g.VendorID, driver)})
+		}
+		if st.Needed {
+			items = append(items, tui.PropertyItem{Key: "Runtime", Value: st.Runtime})
+			file := st.File
+			if file == "" {
+				file = "not realised yet (built on the next run/exec, or the environment predates the runtime: re-run 'rfswift run --engine nix' on it)"
+			}
+			items = append(items, tui.PropertyItem{Key: "gl.env", Value: file})
+		}
+		tui.RenderPropertySheet("🖥️  OpenGL runtime", tui.ColorPrimary, items)
+		if len(st.Vars) > 0 {
+			fmt.Println()
+			for _, k := range []string{"LIBGL_DRIVERS_PATH", "__EGL_VENDOR_LIBRARY_FILENAMES", "__EGL_EXTERNAL_PLATFORM_CONFIG_DIRS", "LD_LIBRARY_PATH", "GBM_BACKENDS_PATH", "LIBVA_DRIVERS_PATH"} {
+				if v, ok := st.Vars[k]; ok {
+					fmt.Printf("  %s=%s\n", k, v)
+				}
+			}
+		}
+		if advice := rfnix.GPUAdvice(st); len(advice) > 0 {
+			fmt.Println()
+			for _, line := range advice {
+				common.PrintInfoMessage(line)
+			}
+		}
+		if !check {
+			return
+		}
+		fmt.Println()
+		report, err := rfnix.GLProbe(env)
+		if report != "" {
+			for _, line := range strings.Split(report, "\n") {
+				fmt.Printf("  %s\n", line)
+			}
+		}
+		if err != nil {
+			common.PrintErrorMessage(fmt.Errorf("OpenGL check failed: %w", err))
+			os.Exit(1)
+		}
+		common.PrintSuccessMessage("OpenGL context created with the RF Swift runtime: GUI tools (SDR++, gqrx, SigDigger, SatDump, ...) can open a window here.")
+	},
+}
+
 var nixShellCmd = &cobra.Command{
 	Use:     "shell [name]",
 	Aliases: []string{"enter"},
@@ -997,7 +1262,14 @@ func registerNixCommands() {
 	nixCmd.AddCommand(nixRebuildCmd)
 	nixCmd.AddCommand(nixGenerationsCmd)
 	nixCmd.AddCommand(nixRollbackCmd)
+	nixCmd.AddCommand(nixUdevCmd)
+	nixCmd.AddCommand(nixGLCmd)
+	nixUdevCmd.Flags().Bool("list", false, "only show the rules and their state")
+	nixUdevCmd.Flags().Bool("remove", false, "remove the rules RF Swift installed for this environment")
+	nixUdevCmd.Flags().Bool("no-groups", false, "install the rules only; leave groups and membership alone")
+	nixUdevCmd.Flags().BoolP("yes", "y", false, "do not ask for confirmation")
 	nixRunCmd.Flags().String("flake", "", "flake reference override")
+	nixGLCmd.Flags().Bool("check", false, "create an OpenGL context with the runtime and print the driver that answered")
 	nixVersionsCmd.Flags().String("flake", "", "GitHub flake reference (default: RF-Swift-nix)")
 	nixVersionsCmd.Flags().Bool("json", false, "print machine-readable JSON")
 	nixInstallCmd.Flags().String("env", "", "environment receiving the package (default: shared profile)")
@@ -1019,5 +1291,6 @@ func registerNixCommands() {
 	runCmd.Flags().Bool("pure", false, "Nix engine: enter a pure environment (nix develop --ignore-environment)")
 	runCmd.Flags().Bool("rebuild", false, "Nix engine: force re-realisation of the environment closure")
 	runCmd.Flags().Bool("lazy", false, "Nix engine: build each tool on first call instead of all up front")
+	runCmd.Flags().Bool("isolate", false, "Nix engine (Linux): enter inside a bubblewrap jail - hides $HOME and the host filesystem, private PID/IPC/tmp, while keeping USB/serial devices, the display and the network")
 	runCmd.Flags().String("flake", "", "Nix engine: flake reference (default: local RF-Swift-nix checkout or github:PentHertz/RF-Swift-nix)")
 }

@@ -134,6 +134,10 @@ func (s *Store) SaveMission(ws string, m Mission) error {
 			return err
 		}
 	}
+	// Creation warnings and the live property sheet describe the engine state
+	// at one moment; they are re-read from the engine, not from the record.
+	m.Warnings = nil
+	m.Summary = nil
 	return writeJSON(filepath.Join(s.missionDir(ws, m.ID), "mission.json"), m)
 }
 

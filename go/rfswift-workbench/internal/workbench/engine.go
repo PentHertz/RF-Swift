@@ -295,13 +295,29 @@ func (e *LocalEngine) Create(req MissionCreate) (Mission, error) {
 		return Mission{}, errors.New("mission name is required")
 	}
 	resetEngineEnv()
+	var warnings []string
 	switch req.Engine {
 	case "nix":
-		if err := rfnix.RunEnvironment(rfnix.RunOptions{Name: req.Name, Image: req.Image, Workspace: req.Workspace, FlakeRef: req.FlakeRef, Lazy: req.Lazy, Pure: req.Pure, CreateOnly: true}); err != nil {
+		if err := rfnix.RunEnvironment(rfnix.RunOptions{Name: req.Name, Image: req.Image, Workspace: req.Workspace, FlakeRef: req.FlakeRef, Lazy: req.Lazy, Pure: req.Pure, Isolate: req.Isolate, CreateOnly: true}); err != nil {
 			return Mission{}, err
 		}
+		// Native Nix tools run as the user, so hardware needs the environment's
+		// udev rules on the host. Flag any that are missing; the GUI's "Install
+		// device rules" action (InstallNixUdevRules) puts them in with one click.
+		if env, envErr := rfnix.GetEnvironment(req.Name); envErr == nil {
+			if pending := rfnix.PendingUdevRules(rfnix.ListUdevRules(env)); len(pending) > 0 {
+				files := make([]string, 0, len(pending))
+				for _, r := range pending {
+					files = append(files, r.File)
+				}
+				warnings = append(warnings, fmt.Sprintf(
+					"%d device udev rule(s) this environment ships are not on the host yet (%s). Use \"Install device rules\" so hardware (SDR/RFID/...) works without root.",
+					len(pending), strings.Join(files, ", ")))
+			}
+		}
 	case "docker", "podman", "lima":
-		_, err := rfdock.CreateContainer(rfdock.CreateOptions{Context: req.Context, Engine: req.Engine, Name: req.Name, Image: req.Image, Workspace: req.Workspace, Network: req.Network, Shell: req.Shell, Caps: req.Caps, Bindings: req.Bindings, Devices: req.Devices, ExposedPorts: req.ExposedPorts, PortBindings: req.PortBindings, CgroupRules: req.CgroupRules, GPUs: req.GPUs, Seccomp: req.Seccomp, ExtraHosts: req.ExtraHosts, Environment: req.Environment, Realtime: req.Realtime, Desktop: req.Desktop, DesktopProto: req.DesktopProto, DesktopHost: req.DesktopHost, DesktopPort: req.DesktopPort, DesktopPassword: req.DesktopPassword, DesktopSSL: req.DesktopSSL, NoX11: req.NoX11, Privileged: req.Privileged, Start: req.Start})
+		_, err := rfdock.CreateContainer(rfdock.CreateOptions{Context: req.Context, Engine: req.Engine, Name: req.Name, Image: req.Image, Workspace: req.Workspace, Network: req.Network, Shell: req.Shell, Caps: req.Caps, Bindings: req.Bindings, Devices: req.Devices, ExposedPorts: req.ExposedPorts, PortBindings: req.PortBindings, CgroupRules: req.CgroupRules, GPUs: req.GPUs, Seccomp: req.Seccomp, ExtraHosts: req.ExtraHosts, Environment: req.Environment, Realtime: req.Realtime, Desktop: req.Desktop, DesktopProto: req.DesktopProto, DesktopHost: req.DesktopHost, DesktopPort: req.DesktopPort, DesktopPassword: req.DesktopPassword, DesktopSSL: req.DesktopSSL, NoX11: req.NoX11, Privileged: req.Privileged, Start: req.Start,
+			Warn: func(msg string) { warnings = append(warnings, msg) }})
 		if err != nil {
 			return Mission{}, err
 		}
@@ -315,6 +331,7 @@ func (e *LocalEngine) Create(req MissionCreate) (Mission, error) {
 	if req.Title != "" {
 		m.Title = req.Title
 	}
+	m.Warnings = warnings
 	return m, nil
 }
 
@@ -380,6 +397,7 @@ func (e *LocalEngine) ListTargets() ([]Mission, error) {
 				Status:   st,
 				FlakeRef: ev.FlakeRef,
 				Lazy:     ev.Lazy,
+				Isolate:  ev.Isolate,
 			})
 		}
 	}
@@ -510,6 +528,9 @@ func (e *LocalEngine) Inspect(id string) (Mission, error) {
 			}
 			m.Ports = append(m.Ports, Port{Port: port.String(), Published: pub, Service: ""})
 		}
+	}
+	if summary, err := rfdock.ContainerSummaryFor(context.Background(), cli, id); err == nil {
+		m.Summary = &summary
 	}
 	return m, nil
 }
@@ -816,11 +837,26 @@ func execNixEnvironmentStream(ev *rfnix.Environment, command string, live io.Wri
 	if err != nil {
 		return "", err
 	}
+	// OpenGL runtime for GUI tools on non-NixOS hosts (same as the CLI shell).
+	gl := rfnix.GLEnvironment(ev, false)
+	glKeys := make([]string, 0, len(gl))
+	for k := range gl {
+		glKeys = append(glKeys, k)
+	}
+	sort.Strings(glKeys)
 	var c *exec.Cmd
 	if ev.ProfilePath == "" && !ev.Lazy {
 		args := []string{"--extra-experimental-features", "nix-command flakes", "develop",
-			ev.FlakeRef + "#" + ev.Image, "--ignore-environment", "--command", shell, "-lc", command}
+			ev.FlakeRef + "#" + ev.Image, "--ignore-environment"}
+		for _, k := range glKeys {
+			args = append(args, "--keep", k)
+		}
+		args = append(args, "--command", shell, "-lc", command)
 		c = exec.Command(rfnix.NixBinary(), args...)
+		c.Env = os.Environ()
+		for _, k := range glKeys {
+			c.Env = append(c.Env, k+"="+gl[k])
+		}
 	} else {
 		binDir := filepath.Join(ev.ProfilePath, "bin")
 		if ev.Lazy {
@@ -839,11 +875,23 @@ func execNixEnvironmentStream(ev *rfnix.Environment, command string, live io.Wri
 			"RFSWIFT_NIX_ENV="+ev.Name,
 			"RFSWIFT_ENGINE=nix",
 		)
+		for _, k := range glKeys {
+			c.Env = append(c.Env, k+"="+gl[k])
+		}
 	}
 	c.Dir = workdir
 	var captured strings.Builder
 	combined := io.MultiWriter(&captured, live)
 	c.Stdout, c.Stderr = combined, combined
+	// When the environment was created with isolation, run the command inside
+	// the same bubblewrap jail the CLI shell uses (Linux only).
+	if ev.Isolate && rfnix.IsolateSupported() {
+		jailed, jerr := rfnix.IsolateCommand(c, ev, workdir)
+		if jerr != nil {
+			return "", jerr
+		}
+		c = jailed
+	}
 	runErr := c.Run()
 	if runErr != nil {
 		return captured.String(), fmt.Errorf("command failed: %w", runErr)

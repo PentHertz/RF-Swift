@@ -74,16 +74,23 @@ func RunEnvironment(opts RunOptions) error {
 		Workspace:     workspace,
 		Command:       opts.Command,
 		Created:       time.Now(),
+		Isolate:       opts.Isolate,
 	}
 
 	// Realise the environment. Three modes:
 	switch {
 	case opts.Lazy:
-		// On-demand: nothing is prebuilt. Each tool becomes a shim that builds
-		// and runs it the first time it is called.
+		// On-demand: the application tools are not prebuilt - each becomes a shim
+		// that builds and runs it the first time it is called. The prerequisite
+		// device/driver layer (small: drivers, libraries and their udev rules) is
+		// still realised up front, so hardware works and `rfswift nix udev` /
+		// the entry-time rule offer can see the rules even in lazy mode.
 		env.Lazy = true
 		env.ProfilePath = ""
 		common.PrintInfoMessage(fmt.Sprintf("Preparing on-demand environment '%s' (%s). Tools build the first time you call them.", entry.Name, opts.Image))
+		if err := buildPrerequisites(flakeRef, entry.Name, entry.Prerequisites, prerequisitesLink(opts.Name)); err != nil {
+			return err
+		}
 		env.Commands = resolveCommands(flakeRef, entry.Packages)
 		if err := writeShims(env); err != nil {
 			return fmt.Errorf("failed to set up on-demand environment: %w", err)
@@ -92,7 +99,7 @@ func RunEnvironment(opts RunOptions) error {
 		// Pure mode does not use a prebuilt profile; it evaluates the devShell
 		// fresh each time with a clean environment.
 		env.ProfilePath = ""
-		if err := buildPrerequisites(flakeRef, entry.Name, entry.Prerequisites); err != nil {
+		if err := buildPrerequisites(flakeRef, entry.Name, entry.Prerequisites, prerequisitesLink(opts.Name)); err != nil {
 			return err
 		}
 	default:
@@ -102,7 +109,7 @@ func RunEnvironment(opts RunOptions) error {
 		// nothing changed this is a fast no-op against the Nix cache. Use `exec`
 		// to re-enter without rebuilding.
 		profile := profileLink(opts.Name)
-		if err := buildPrerequisites(flakeRef, entry.Name, entry.Prerequisites); err != nil {
+		if err := buildPrerequisites(flakeRef, entry.Name, entry.Prerequisites, prerequisitesLink(opts.Name)); err != nil {
 			return err
 		}
 		common.PrintInfoMessage(fmt.Sprintf("Realising environment '%s' (%s) from %s ...", entry.Name, opts.Image, flakeRef))
@@ -129,8 +136,11 @@ func RunEnvironment(opts RunOptions) error {
 		common.PrintSuccessMessage(fmt.Sprintf("Environment '%s' is ready.", opts.Name))
 		return nil
 	}
+	if opts.PreEnter != nil {
+		opts.PreEnter(env)
+	}
 	common.PrintSuccessMessage(fmt.Sprintf("Environment '%s' ready. Entering shell (exit to leave).", opts.Name))
-	return enter(env, opts.Command, opts.Pure)
+	return enter(env, opts.Command, opts.Pure, GLEnvironment(env, true))
 }
 
 // ExecEnvironment re-enters an existing environment, optionally running a command.
@@ -166,7 +176,7 @@ func ExecEnvironment(name, command string) error {
 	}
 	// pure only when it is neither a profile nor a lazy environment.
 	pure := env.ProfilePath == "" && !env.Lazy
-	return enter(env, command, pure)
+	return enter(env, command, pure, GLEnvironment(env, false))
 }
 
 // ListEnvironments returns all created environments, newest first.
@@ -261,13 +271,20 @@ func buildProfile(flakeRef, image, outLink string) error {
 // library layer before applications. Nix still owns dependency correctness;
 // this extra phase primarily guarantees separately packaged runtime plugins
 // (for example SoapySDR modules) are present before GUI tools start probing.
-func buildPrerequisites(flakeRef, image string, prerequisites []string) error {
+// outLink pins the layer (its udev rules are read from there); "" for no link.
+func buildPrerequisites(flakeRef, image string, prerequisites []string, outLink string) error {
 	if len(prerequisites) == 0 {
 		return nil
 	}
 	installable := fmt.Sprintf("%s#%s-prerequisites", flakeRef, image)
 	common.PrintInfoMessage(fmt.Sprintf("Realising device/library prerequisites for '%s' ...", image))
-	args := append(experimentalArgs(), "build", installable, "--no-link", "--print-build-logs")
+	link := []string{"--no-link"}
+	if outLink != "" {
+		link = []string{"--out-link", outLink}
+	}
+	args := append(experimentalArgs(), "build", installable)
+	args = append(args, link...)
+	args = append(args, "--print-build-logs")
 	cmd := exec.Command(NixBinary(), args...)
 	cmd.Stdout, cmd.Stderr, cmd.Stdin = os.Stdout, os.Stderr, os.Stdin
 	if err := cmd.Run(); err != nil {
@@ -379,7 +396,7 @@ func writeShims(env *Environment) error {
 		prereq := fmt.Sprintf("%s#%s-prerequisites", env.FlakeRef, env.Image)
 		prereqStep := ""
 		if len(env.Prerequisites) > 0 {
-			prereqStep = fmt.Sprintf("%s --extra-experimental-features \"nix-command flakes\" build --no-link %q || exit $?\n", nixbin, prereq)
+			prereqStep = fmt.Sprintf("%s --extra-experimental-features \"nix-command flakes\" build --out-link %q %q || exit $?\n", nixbin, prerequisitesLink(env.Name), prereq)
 		}
 		script := fmt.Sprintf(`#!/bin/sh
 # RF Swift lazy tool shim: builds %s on first call, then runs it.
@@ -422,8 +439,10 @@ func warnIfNoDisplay() {
 	common.PrintInfoMessage("No display detected (DISPLAY unset). For GUI tools: reconnect with 'ssh -X', set DISPLAY, or run a Qt tool headless with 'QT_QPA_PLATFORM=vnc <tool>' and connect a VNC client to port 5900.")
 }
 
-// enter launches an interactive shell (or runs a command) inside the environment.
-func enter(env *Environment, command string, pure bool) error {
+// enter launches an interactive shell (or runs a command) inside the
+// environment. gl holds the OpenGL runtime variables for non-NixOS hosts (see
+// gl.go), nil when none are needed.
+func enter(env *Environment, command string, pure bool, gl map[string]string) error {
 	setupX11()
 	warnIfNoDisplay()
 
@@ -439,14 +458,25 @@ func enter(env *Environment, command string, pure bool) error {
 			"develop", fmt.Sprintf("%s#%s", env.FlakeRef, env.Image),
 			"--ignore-environment",
 		)
+		for _, key := range glEnvKeys(gl) {
+			nixArgs = append(nixArgs, "--keep", key)
+		}
 		if command != "" {
 			nixArgs = append(nixArgs, "--command", shell, "-c", command)
 		} else {
 			nixArgs = append(nixArgs, "--command", shell)
 		}
 		cmd := exec.Command(NixBinary(), nixArgs...)
+		cmd.Env = withEnv(os.Environ(), gl)
 		cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
 		cmd.Dir = workdir
+		if env.Isolate {
+			jailed, err := IsolateCommand(cmd, env, workdir)
+			if err != nil {
+				return err
+			}
+			cmd = jailed
+		}
 		return cmd.Run()
 	}
 
@@ -466,11 +496,18 @@ func enter(env *Environment, command string, pure bool) error {
 		pathParts = append(pathParts, p)
 	}
 	pathParts = append(pathParts, os.Getenv("PATH"))
-	childEnv := withEnv(os.Environ(), map[string]string{
+	vars := map[string]string{
 		"PATH":            strings.Join(pathParts, string(os.PathListSeparator)),
 		"RFSWIFT_NIX_ENV": env.Name,
 		"RFSWIFT_ENGINE":  "nix",
-	})
+	}
+	for k, v := range gl {
+		vars[k] = v
+	}
+	for k, v := range pluginPathEnv(env) {
+		vars[k] = v
+	}
+	childEnv := withEnv(os.Environ(), vars)
 
 	shell := userShell()
 	var cmd *exec.Cmd
@@ -489,7 +526,53 @@ func enter(env *Environment, command string, pure bool) error {
 	cmd.Env = childEnv
 	cmd.Dir = workdir
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
+	if env.Isolate {
+		jailed, err := IsolateCommand(cmd, env, workdir)
+		if err != nil {
+			return err
+		}
+		cmd = jailed
+	}
 	return cmd.Run()
+}
+
+// soapyModulesGlob matches SoapySDR's per-ABI module directory (modules0.8-3, ...).
+const soapyModulesGlob = "lib/SoapySDR/modules*"
+
+// pluginPathEnv returns the search-path variables for libraries that find
+// their device modules by directory, for an environment's realised profiles.
+// SoapySDR (SOAPY_SDR_PLUGIN_PATH): every tool in the environment is linked
+// against RF Swift's own plugin set already, so this adds what that set cannot
+// know about - a Soapy module the user installed later with `rfswift nix
+// install` (the extras profiles) or one shipped by a package a tool was not
+// linked against. The profile merges every package's module directory, so a
+// single path covers them all; the host's own value stays behind it.
+func pluginPathEnv(env *Environment) map[string]string {
+	if env == nil {
+		return nil
+	}
+	var roots []string
+	if env.ProfilePath != "" {
+		roots = append(roots, env.ProfilePath)
+	}
+	roots = append(roots, EnvExtrasProfile(env.Name), SharedExtrasProfile())
+	var dirs []string
+	for _, root := range roots {
+		matches, _ := filepath.Glob(filepath.Join(root, soapyModulesGlob))
+		for _, m := range matches {
+			if fi, err := os.Stat(m); err == nil && fi.IsDir() {
+				dirs = append(dirs, m)
+			}
+		}
+	}
+	if len(dirs) == 0 {
+		return nil
+	}
+	value := strings.Join(dirs, string(os.PathListSeparator))
+	if cur := os.Getenv("SOAPY_SDR_PLUGIN_PATH"); cur != "" {
+		value += string(os.PathListSeparator) + cur
+	}
+	return map[string]string{"SOAPY_SDR_PLUGIN_PATH": value}
 }
 
 // writeBashRC creates a throwaway rcfile that sources the user's own bashrc,
@@ -507,14 +590,22 @@ if [ -f "$HOME/.bashrc" ]; then . "$HOME/.bashrc"; fi
 export PATH=%q:"$PATH"
 export RFSWIFT_NIX_ENV=%q
 PS1="(rfswift:%s) $PS1"
-# Run an environment tool as root: sudo resets PATH, so pass ours through.
-rfsudo() { sudo env "PATH=$PATH" "$@"; }
+# Run an environment tool as root: sudo resets the environment, so pass PATH,
+# the display and the OpenGL runtime (non-NixOS hosts) through.
+rfsudo() {
+  local keep=() v
+  for v in DISPLAY XAUTHORITY WAYLAND_DISPLAY LD_LIBRARY_PATH LIBGL_DRIVERS_PATH LIBVA_DRIVERS_PATH GBM_BACKENDS_PATH __EGL_VENDOR_LIBRARY_FILENAMES; do
+    [ -n "${!v:-}" ] && keep+=("$v=${!v}")
+  done
+  sudo env "PATH=$PATH" "${keep[@]}" "$@"
+}
 echo ""
 echo "  RF Swift (nix) - environment '%s' [%s]"
 echo "  %s"
 echo "  Root: run a tool with sudo via 'rfsudo <tool>' (e.g. rfsudo airmon-ng)."
+if [ -n "${RFSWIFT_NIX_GL_RUNTIME:-}" ]; then echo "  OpenGL: nix GL runtime active for GUI tools (rfswift nix gl %s)."; fi
 echo ""
-`, binDir, env.Name, env.Name, env.Name, env.Image, toolLine)
+`, binDir, env.Name, env.Name, env.Name, env.Image, toolLine, env.Name)
 
 	// Lazy environments only pre-create shims for tools that declare a main
 	// program. Add a fallback so ANY command builds the package that provides
@@ -542,7 +633,7 @@ func lazyHandler(env *Environment) string {
 	attrs := strings.Join(quoted, " ")
 	prereqStep := ""
 	if len(env.Prerequisites) > 0 {
-		prereqStep = fmt.Sprintf("  \"$__rfx_nix\" --extra-experimental-features \"nix-command flakes\" build --no-link %q || return $?\n", fmt.Sprintf("%s#%s-prerequisites", env.FlakeRef, env.Image))
+		prereqStep = fmt.Sprintf("  \"$__rfx_nix\" --extra-experimental-features \"nix-command flakes\" build --out-link %q %q || return $?\n", prerequisitesLink(env.Name), fmt.Sprintf("%s#%s-prerequisites", env.FlakeRef, env.Image))
 	}
 	return fmt.Sprintf(`
 __rfx_flake=%q

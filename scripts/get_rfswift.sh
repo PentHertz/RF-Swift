@@ -2393,6 +2393,75 @@ install_nix() {
   fi
 }
 
+# Bubblewrap powers the Nix engine's `--isolate` jail (Linux user namespaces):
+# it hides $HOME and the host filesystem while keeping USB/serial devices, the
+# display and the network. Optional - without it, `--isolate` builds bwrap from
+# nixpkgs on first use - but installing it makes the jail work out of the box.
+check_bubblewrap() {
+  # Linux only: bubblewrap relies on Linux namespaces (macOS is unsupported).
+  if [ "$(uname)" != "Linux" ]; then
+    return 0
+  fi
+  if command_exists bwrap; then
+    color_echo "green" "✅ bubblewrap present - 'rfswift run --engine nix --isolate' works out of the box."
+    return 0
+  fi
+  color_echo "cyan" "   bubblewrap enables the Nix engine's --isolate jail: hides \$HOME and the host filesystem while keeping USB devices, the display and the network."
+  choice=$(prompt_choice "Install bubblewrap for the Nix engine's --isolate jail?" "Yes" "No")
+  if [ "$choice" != "1" ]; then
+    color_echo "yellow" "   Skipped. --isolate will build bubblewrap from nixpkgs on first use, or install it later (e.g. 'sudo apt install bubblewrap')."
+    return 0
+  fi
+  pm=$(get_package_manager)
+  case "$pm" in
+    apt)    sudo apt update && sudo apt install -y bubblewrap ;;
+    dnf)    sudo dnf install -y bubblewrap ;;
+    yum)    sudo yum install -y bubblewrap ;;
+    pacman) sudo pacman -Sy --noconfirm --needed bubblewrap ;;
+    zypper) sudo zypper install -y bubblewrap ;;
+    apk)    sudo apk add bubblewrap ;;
+    emerge) sudo emerge --ask=n sys-apps/bubblewrap ;;
+    *)      color_echo "yellow" "   Unknown package manager; install 'bubblewrap' manually to use --isolate." ; return 0 ;;
+  esac
+  if command_exists bwrap; then
+    color_echo "green" "✅ bubblewrap installed."
+  else
+    color_echo "yellow" "   bubblewrap install did not complete; --isolate will fall back to building it from nixpkgs."
+  fi
+  check_userns
+}
+
+# bubblewrap needs unprivileged user namespaces unless it is setuid-root.
+# Ubuntu 24.04+/Debian restrict them by default (AppArmor), which makes
+# --isolate fail with a uid-map permission error. Detect it and offer to relax.
+check_userns() {
+  command_exists bwrap || return 0
+  if bwrap --ro-bind / / --proc /proc -- true >/dev/null 2>&1; then
+    color_echo "green" "✅ bubblewrap sandbox works - 'rfswift run --engine nix --isolate' is ready."
+    return 0
+  fi
+  # A setuid-root bwrap needs no unprivileged namespaces; nothing to do.
+  if [ -u "$(command -v bwrap)" ]; then
+    color_echo "yellow" "   bubblewrap is setuid but the sandbox test failed; check your AppArmor/seccomp policy."
+    return 0
+  fi
+  color_echo "yellow" "   bubblewrap cannot create a sandbox yet: unprivileged user namespaces look restricted (default on Ubuntu 24.04+/Debian)."
+  choice=$(prompt_choice "Enable unprivileged user namespaces for --isolate (sysctl, persisted)?" "Yes" "No")
+  if [ "$choice" != "1" ]; then
+    color_echo "yellow" "   Skipped. --isolate needs unprivileged user namespaces enabled or a setuid bubblewrap."
+    return 0
+  fi
+  sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 >/dev/null 2>&1 || true
+  sudo sysctl -w kernel.unprivileged_userns_clone=1 >/dev/null 2>&1 || true
+  printf 'kernel.apparmor_restrict_unprivileged_userns=0\nkernel.unprivileged_userns_clone=1\n' \
+    | sudo tee /etc/sysctl.d/99-rfswift-userns.conf >/dev/null 2>&1 || true
+  if bwrap --ro-bind / / --proc /proc -- true >/dev/null 2>&1; then
+    color_echo "green" "✅ Unprivileged user namespaces enabled - --isolate is ready."
+  else
+    color_echo "yellow" "   Still restricted; a reboot or an AppArmor policy change may be required."
+  fi
+}
+
 # RF Swift can run tool environments natively via Nix (rfswift --engine nix),
 # with no container. Offer to install it alongside (or instead of) a container
 # engine.
@@ -2400,12 +2469,14 @@ check_nix_engine() {
   color_echo "blue" "❄️  Native engine (Nix)"
   if command_exists nix; then
     color_echo "green" "✅ Nix is available - RF Swift can run tools natively with 'rfswift --engine nix' (no container)."
+    check_bubblewrap
     return 0
   fi
   color_echo "cyan" "   RF Swift can also run its tool environments natively via Nix - no container needed."
   choice=$(prompt_choice "Install Nix for the native engine?" "Yes" "No")
   if [ "$choice" = "1" ]; then
     install_nix
+    check_bubblewrap
   else
     color_echo "yellow" "   Skipped. Install Nix later from https://nixos.org/download to use '--engine nix'."
   fi

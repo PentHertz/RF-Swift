@@ -40,11 +40,23 @@ func InteractiveCommand(name, requestedShell string) (*exec.Cmd, error) {
 	if shell == "" || !pathExists(shell) {
 		shell = userShell()
 	}
+	// Same host-side setup as the CLI shell: X server access for local GUI
+	// tools, and the OpenGL runtime on hosts that are not NixOS (gl.go).
+	setupX11()
+	gl := GLEnvironment(env, false)
 	pure := env.ProfilePath == "" && !env.Lazy
 	if pure {
-		args := append(experimentalArgs(), "develop", fmt.Sprintf("%s#%s", env.FlakeRef, env.Image), "--ignore-environment", "--command", shell)
+		args := append(experimentalArgs(), "develop", fmt.Sprintf("%s#%s", env.FlakeRef, env.Image), "--ignore-environment")
+		for _, key := range glEnvKeys(gl) {
+			args = append(args, "--keep", key)
+		}
+		args = append(args, "--command", shell)
 		cmd := exec.Command(NixBinary(), args...)
+		cmd.Env = withEnv(os.Environ(), gl)
 		cmd.Dir = workdir
+		if env.Isolate {
+			return IsolateCommand(cmd, env, workdir)
+		}
 		return cmd, nil
 	}
 	binDir := filepath.Join(env.ProfilePath, "bin")
@@ -69,7 +81,17 @@ func InteractiveCommand(name, requestedShell string) (*exec.Cmd, error) {
 	} else {
 		cmd = exec.Command(shell, "-i")
 	}
-	cmd.Env = withEnv(os.Environ(), map[string]string{"PATH": strings.Join(pathParts, string(os.PathListSeparator)), "RFSWIFT_NIX_ENV": env.Name, "RFSWIFT_ENGINE": "nix", "TERM": "xterm-256color", "COLORTERM": "truecolor"})
+	vars := map[string]string{"PATH": strings.Join(pathParts, string(os.PathListSeparator)), "RFSWIFT_NIX_ENV": env.Name, "RFSWIFT_ENGINE": "nix", "TERM": "xterm-256color", "COLORTERM": "truecolor"}
+	for k, v := range pluginPathEnv(env) {
+		vars[k] = v
+	}
+	for k, v := range gl {
+		vars[k] = v
+	}
+	cmd.Env = withEnv(os.Environ(), vars)
 	cmd.Dir = workdir
+	if env.Isolate {
+		return IsolateCommand(cmd, env, workdir)
+	}
 	return cmd, nil
 }

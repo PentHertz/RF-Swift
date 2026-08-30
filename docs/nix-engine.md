@@ -89,8 +89,8 @@ rfswift env update --input nixpkgs mysdr
 has no local lock file to edit, so RF Swift can refresh and rebuild it but cannot
 selectively rewrite one of its inputs.
 
-To rebuild using the lock that is already pinned—without looking for newer
-nixpkgs or GitHub revisions—run:
+To rebuild using the lock that is already pinned - without looking for newer
+nixpkgs or GitHub revisions - run:
 
 ```bash
 rfswift env rebuild mysdr
@@ -200,7 +200,10 @@ those download prebuilt and no local compilation is needed.
   build fetches and compiles; later entries are instant and work offline.
 - Entering the environment starts your shell with the tools prepended to `PATH`
   and a workspace as the working directory (`~/rfswift-workspace/<name>/` by
-  default; change with `--workspace`, `--cwd`, or `--no-workspace`).
+  default; change with `--workspace`, `--cwd`, or `--no-workspace`). Natively
+  the workspace is used in place at that host path; under
+  [`--isolate`](#isolation---isolate) it is remapped to `/workspace` inside the
+  jail.
 
 ## Flags specific to the Nix engine
 
@@ -208,8 +211,103 @@ those download prebuilt and no local compilation is needed.
 |------|---------|
 | `--lazy` | On-demand: build each tool the first time it is called, not all up front |
 | `--pure` | Enter a pure environment (`nix develop --ignore-environment`), not inheriting the host environment |
+| `--isolate` | Enter inside a bubblewrap jail (Linux): hides `$HOME` and the host filesystem, keeps USB/serial devices, the display and the network. See [Isolation](#isolation---isolate). |
 | `--rebuild` | Force re-realisation during creation (eager mode); for an existing environment use `rfswift env rebuild <name>` |
 | `--flake <ref>` | Use a specific flake reference instead of the default |
+
+## Isolation (`--isolate`)
+
+By default the Nix engine runs tools **natively**, as your user, with full access
+to your home, files, network and devices. That is what makes it good at driving
+real RF hardware, but it is not a sandbox: a vulnerable or untrusted tool has the
+same reach you do. This is the opposite trade-off from the container engine
+(Docker/Podman), which isolates by default. Nix's own build sandbox only protects
+*builds*; it does nothing for a tool once it runs.
+
+`--isolate` adds an optional, usability-preserving jail on Linux, built on
+[bubblewrap](https://github.com/containers/bubblewrap) (unprivileged Linux user
+namespaces):
+
+```bash
+rfswift run --engine nix -i sdr_light -n mysdr --isolate
+```
+
+The choice is also offered in the interactive wizard and as an **Isolate (jail)**
+toggle in the Workbench create form. It is stored on the environment, so `exec`,
+re-entry and the Workbench terminal all re-enter the same jail. You can also set
+it per environment at creation time and forget about it.
+
+### What the jail hides
+
+- Your real `$HOME` and the rest of the host filesystem. Inside the jail `$HOME`
+  is a private, per-environment directory (empty apart from what the tools
+  create), so SSH keys, browser data, credentials and unrelated files are not
+  visible.
+- Host processes: the shell gets its own PID/IPC/UTS namespaces.
+- Other RF Swift environments and **other workspaces**. Only *this* environment's
+  state and *this* environment's workspace are mounted. A tool in one isolated
+  session cannot read or tamper with another workspace's files or its captured
+  **evidence** (recordings, artifacts).
+
+### What the jail keeps (so tools still work)
+
+- The `/nix` store and this environment's tools, on `PATH` as usual.
+- **USB and serial devices** (`/dev/bus/usb`, `/dev/tty{USB,ACM,S}*`) plus
+  `/sys` and `/run/udev`, so libusb and SDR/RFID tools still enumerate and open
+  hardware. Verified with a HydraSDR: visible to `lsusb` and openable inside the
+  jail.
+- The X11/Wayland display and the network.
+
+### Layout inside the jail
+
+- `$HOME` - a clean, private per-environment home.
+- `/workspace` - this environment's workspace (read-write), and the working
+  directory.
+- `/rfswift/env` - this environment's tools and state (read-only).
+- `/rfswift/shared` - tools installed with the shared `rfswift env install`
+  profile, if any (read-only).
+
+So `ls $HOME` shows only what you create, `ls /workspace` shows your work, and
+nothing from the host or from other environments leaks in.
+
+> **Workspace path differs by mode.** With `--isolate` the workspace is remapped
+> to **`/workspace`** inside the jail (its host location, `~/rfswift-workspace/<name>`
+> by default, stays hidden with the rest of your home). **Without** `--isolate`
+> (the native default) there is no remap: the workspace is used **in place** at
+> its real host path - `~/rfswift-workspace/<name>`, or whatever `--workspace`
+> / `--cwd` you chose - and your home and files are visible as usual. So scripts
+> that hard-code an absolute workspace path should use `/workspace` under
+> `--isolate` and the host path otherwise (or a relative path / `$PWD`, which
+> works in both).
+
+### Requirements and limits
+
+- **Linux only.** bubblewrap relies on Linux namespaces. On macOS `--isolate`
+  refuses to run rather than pretend; use the container engine there if you need
+  isolation.
+- bubblewrap is taken from your `PATH` (a setuid-root bwrap is preferred), or
+  built from nixpkgs on first use. The installer (`get_rfswift.sh`) offers to
+  install it alongside the Nix engine.
+- **Unprivileged user namespaces** must be available, unless bubblewrap is
+  setuid-root. Ubuntu 24.04+ and recent Debian restrict them by default
+  (AppArmor), so `--isolate` fails with a uid-map "permission denied" error. RF
+  Swift preflights the sandbox and, on failure, tells you how to fix it; the
+  installer offers to do it for you. To enable them yourself:
+
+  ```bash
+  sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+  sudo sysctl -w kernel.unprivileged_userns_clone=1   # older kernels
+  # persist:
+  echo -e 'kernel.apparmor_restrict_unprivileged_userns=0\nkernel.unprivileged_userns_clone=1' \
+    | sudo tee /etc/sysctl.d/99-rfswift-userns.conf
+  ```
+
+  Installing a setuid bubblewrap is an alternative (it needs no unprivileged
+  namespaces). You do not need `sudo` to *run* `--isolate` once either is in
+  place.
+- The network is kept by default. This is a jail for your filesystem, processes
+  and other workspaces, not a full security sandbox: treat untrusted tools with
+  the usual care, and lean on `rfswift env audit` for supply-chain posture.
 
 ## Choosing where environments come from
 
@@ -222,6 +320,158 @@ The flake reference is resolved in this order:
 
 So if you clone RF-Swift-nix next to RF-Swift and hack on `environments.nix`, RF
 Swift uses your local copy automatically.
+
+## GUI tools and hardware on hosts that are not NixOS
+
+### OpenGL for GUI tools (SDR++, gqrx, inspectrum, ...)
+
+Programs from nixpkgs use nixpkgs' own Mesa and libglvnd, which look for GPU
+drivers where NixOS installs them (`/run/opengl-driver`). On Ubuntu, Fedora,
+Arch and the like that directory does not exist, so without help every OpenGL
+tool fails the same way: `EGL: Failed to get EGL display`, `OpenGL 3.0 was not
+supported`, then a crash (SDR++ segfaults on the window it never got, and
+leaves an empty `config.json` behind that it resets on the next start).
+
+The engine handles this by itself, the way nixGL does: every Linux environment
+ships a small `rfswift-gl` runtime (Mesa's drivers from the same nixpkgs pin),
+and entering the environment (`run`, `exec`, `nix run`, Workbench commands)
+exports the variables that point the loaders at them (`LIBGL_DRIVERS_PATH`,
+`__EGL_VENDOR_LIBRARY_FILENAMES`, `LD_LIBRARY_PATH`, ...). Nothing is done on
+NixOS, on macOS, or when `RFSWIFT_NIX_GL=off`.
+
+- Intel (i915/xe), AMD (amdgpu/radeon), NVIDIA through nouveau, VMware and
+  virtio virtual GPUs, Raspberry Pi and every other open kernel driver: Mesa's
+  drivers from the environment's own nixpkgs talk to the kernel's DRM device
+  directly (llvmpipe software rendering when no hardware driver matches).
+  Installing or updating the distribution's own Mesa or GPU packages changes
+  nothing for the environment's tools, and the proprietary AMDGPU-PRO OpenGL
+  is never used.
+- Proprietary NVIDIA driver: its user-space libraries must match the loaded
+  kernel module exactly. When `/proc/driver/nvidia/version` exists, the engine
+  builds `rfswift-gl-nvidia` for that version once (it downloads the official
+  installer from download.nvidia.com and keeps only the libraries), pins it
+  under `~/.rfswift/nix/gl/nvidia-<version>`, and keeps Mesa behind it so a
+  hybrid laptop still renders on the GPU that drives the display. Installing
+  the driver later, upgrading it, or removing it is picked up at the next
+  `run`/`exec`; a version that cannot be fetched falls back to Mesa with a
+  warning. `RFSWIFT_NIX_GL=mesa` forces Mesa, `RFSWIFT_NIX_GL=off` disables the
+  runtime. Old `~/.rfswift/nix/gl/nvidia-*` links can be deleted by hand, then
+  `rfswift nix gc`.
+- Manual use: `rfswift-gl <program>` (on PATH in every environment) runs one
+  program with the runtime, and `nix run github:PentHertz/RF-Swift-nix#rfswift-gl -- sdrpp`
+  works outside RF Swift.
+- `rfsudo <tool>` keeps the display and the GL runtime when a GUI tool has to
+  run as root.
+- `rfswift nix gl [name]` shows whether the runtime applies on this host, the
+  GPUs the kernel exposes with the driver bound to each (and what that means
+  for the runtime), and which `gl.env` an environment gets; inside a shell
+  `echo $RFSWIFT_NIX_GL_RUNTIME` tells whether it was applied.
+  `rfswift nix gl [name] --check` goes one step further: it creates an OpenGL
+  context with that runtime, without a window, using the probe every runtime
+  ships (`rfswift-gl-probe`), and prints the driver that answered
+  (`renderer: SVGA3D ... Mesa 26.2.1`, `NVIDIA GeForce ...`) or the EGL error a
+  GUI tool would hit. Run it first when SDR++ or gqrx will not open a window.
+- Environments created before the runtime existed pick it up on their next
+  `rfswift run --engine nix` (the profile is refreshed). An environment whose
+  flake revision does not carry the `rfswift-gl` package at all (a published
+  revision older than it, or a fork) still gets the runtime: the engine embeds
+  the same Nix expression and builds it against that flake's nixpkgs, so the
+  drivers match the libraries the tools were built with. That copy is written
+  to `~/.rfswift/nix/gl/rfswift-gl.nix`.
+- macOS: nixpkgs programs use Apple's OpenGL/Metal directly, so the GPU works
+  with nothing exported (`rfswift nix gl` says so).
+
+### Device backends and SoapySDR modules
+
+Every SDR application in the `sdr_light`/`sdr_full` environments is built on
+the same device layer, so each of them sees the same radios:
+
+- SDR++ (HydraSDR fork) carries its native sources (RTL-SDR, HackRF, Airspy,
+  Airspy HF+, bladeRF, LimeSDR, PlutoSDR, USRP, HydraSDR, network, ...) plus
+  the vendor ones RF Swift's images ship, each built on the
+  architectures its library exists for: Harogic (x86_64 and aarch64 Linux),
+  SignalHound BB60 (x86_64/aarch64 Linux and Apple Silicon), Deepace KC908
+  (x86_64 Linux, through the FTDI D3XX library of `kc908-sdk`). Its SoapySDR
+  source, like gqrx (through the PentHertz gr-osmosdr), SigDigger, SatDump
+  (whose LimeSDR, USRP and SoapySDR plugins are enabled) and rtl_433, links RF
+  Swift's own SoapySDR plugin set: the nixpkgs modules plus SoapyHydraSDR,
+  SoapyRFNM, SoapyXTRX, LiteX M2SDR and uSDR. URH (urh-ng) compiles its native
+  backends against the same libraries, LuaRadio finds them on its library
+  path, and inspectrum works on files only.
+- On top of that, entering an environment exports `SOAPY_SDR_PLUGIN_PATH`
+  pointing at the profile's merged `lib/SoapySDR/modules*` directories (and the
+  extras profiles), so a Soapy module added later with `rfswift nix install`
+  is found by every tool as well. `SoapySDRUtil --find` inside the shell lists
+  what is reachable.
+
+### udev rules for SDR and RFID hardware
+
+In a container the tools run as root with `/dev/bus/usb` mapped in. Native
+tools run as your user, so HackRF, RTL-SDR, bladeRF, Airspy, LimeSDR, USRP,
+Proxmark and friends are only reachable without root once the udev rules their
+packages ship are installed on the host. `run --engine nix` lists the rules the
+environment provides that are not in `/etc/udev/rules.d` yet and offers to
+install them (one `sudo`). Later, or to check:
+
+    rfswift nix udev <name>            # show, then install what is missing
+    rfswift nix udev <name> --list
+    rfswift nix udev <name> --remove   # remove what RF Swift installed
+
+Installing also creates the groups the rules rely on (`plugdev`, `bladerf`,
+...) and adds you to them: log out and back in (or `newgrp plugdev`), then
+re-plug the device. Files are written with a header naming the environment and
+their Nix store source, so they can be told apart from the distribution's and
+removed again. Until then, `rfsudo <tool>` runs a tool as root inside the
+environment.
+
+## Troubleshooting
+
+### `--isolate` fails with a bubblewrap uid-map / permission error
+
+Symptoms, running `--isolate` **without** `sudo`:
+
+```
+bwrap: setting up uid map: Permission denied
+```
+
+(or `bwrap: Creating new namespace failed: Operation not permitted`, or a
+"setuid ... map" permission error.)
+
+Cause: bubblewrap builds the jail with **unprivileged user namespaces**, and
+your host restricts them. This is the default on **Ubuntu 24.04+** and recent
+Debian (an AppArmor policy), and on some hardened kernels. It is not a bug in RF
+Swift, and running with `sudo` is **not** the fix (it would run the whole
+session as root).
+
+Fix, pick one:
+
+- Enable unprivileged user namespaces (as root, once):
+
+  ```bash
+  sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+  sudo sysctl -w kernel.unprivileged_userns_clone=1   # older kernels
+  # persist across reboots:
+  echo -e 'kernel.apparmor_restrict_unprivileged_userns=0\nkernel.unprivileged_userns_clone=1' \
+    | sudo tee /etc/sysctl.d/99-rfswift-userns.conf
+  ```
+
+  The installer (`get_rfswift.sh`) offers to do this for you when you set up the
+  Nix engine.
+
+- Or install a **setuid-root** bubblewrap: it sandboxes without unprivileged
+  namespaces, so nothing else is needed. RF Swift prefers a setuid bwrap
+  automatically when one is present (including the NixOS `/run/wrappers/bin/bwrap`).
+
+- Or just drop `--isolate` and run natively.
+
+After enabling either, `--isolate` runs as your normal user, no `sudo` required.
+RF Swift preflights the sandbox and prints this guidance instead of the raw
+error if it still cannot start.
+
+### `--isolate` on macOS
+
+Not supported: bubblewrap is Linux-only. `--isolate` refuses to run rather than
+pretend to isolate. Use the container engine on macOS when you need isolation.
 
 ## Notes
 

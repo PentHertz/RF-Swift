@@ -516,7 +516,7 @@ func PullImageContext(ctx context.Context, engineName, imageName string, progres
 	}
 	stream, err := cli.ImagePull(ctx, pullRef, client.ImagePullOptions{})
 	if err != nil {
-		return "", err
+		return "", explainRegistryAuthError(err)
 	}
 	defer stream.Close()
 	dec := json.NewDecoder(stream)
@@ -529,7 +529,7 @@ func PullImageContext(ctx context.Context, engineName, imageName string, progres
 			return "", err
 		}
 		if msg.Error != nil {
-			return "", errors.New(msg.Error.Message)
+			return "", explainRegistryAuthError(errors.New(msg.Error.Message))
 		}
 		p := PullProgress{Image: cleanRef, Layer: msg.ID, Status: msg.Status}
 		if msg.Progress != nil {

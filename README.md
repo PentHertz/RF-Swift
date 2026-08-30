@@ -44,11 +44,11 @@ https://github.com/user-attachments/assets/518c5045-4380-48d0-a731-6ec0273a02c5
 
 ## 🔍 What is RF Swift?
 
-RF Swift builds you a **complete hardware and RF security lab in seconds** — on the machine you already use. 🔄 From a ham shack on a Sunday afternoon to a full James Bond-grade engagement on Monday morning: same tool, different image.
+RF Swift builds you a **complete hardware and RF security lab in seconds** - on the machine you already use. 🔄 From a ham shack on a Sunday afternoon to a full James Bond-grade engagement on Monday morning: same tool, different image.
 
-Unlike traditional approaches that force you to sacrifice your primary OS, RF Swift brings **200+ containerized RF, hardware and security tools** to your existing environment — on Linux, Windows and macOS, across x86_64, ARM64 and RISC-V64. 🏠
+Unlike traditional approaches that force you to sacrifice your primary OS, RF Swift brings **200+ containerized RF, hardware and security tools** to your existing environment - on Linux, Windows and macOS, across x86_64, ARM64 and RISC-V64. 🏠
 
-> **🆕 v3.0.0 "Resonance"** — images rebased on **Ubuntu 26.04 "Resolute"**, CLI rebuilt on the new **Moby SDK**, and new **`ad`**, **`android`** and **`osint`** images for full engagements. See [What's new in v3.0.0](#-whats-new-in-v300-resonance).
+> **🆕 v3.0.0 "Resonance"** - images rebased on **Ubuntu 26.04 "Resolute"**, CLI rebuilt on the new **Moby SDK**, and new **`ad`**, **`android`** and **`osint`** images for full engagements. See [What's new in v3.0.0](#-whats-new-in-v300-resonance).
 
 ### ⚡ Why RF Swift Outperforms Dedicated OS Solutions
 
@@ -83,7 +83,7 @@ The 5G SA stack shipped in the telecom images has moved from srsRAN Project to *
 
 ### ⚡ GNU Radio 4, testable in seconds
 
-Want to try GNU Radio 4 without building it from source or risking your working 3.10 install? There's now a dedicated image — your existing setup stays untouched:
+Want to try GNU Radio 4 without building it from source or risking your working 3.10 install? There's now a dedicated image - your existing setup stays untouched:
 
 ```bash
 rfswift run -i penthertz/rfswift_resolute:sdr_gnuradio4
@@ -105,7 +105,7 @@ rfswift run -i penthertz/rfswift_resolute:sdr_gnuradio4
 | 🕵️ `osint` | Open-source intelligence and recon |
 | ⚡ `sdr_gnuradio4` | GNU Radio 4, ready to run (see above) |
 
-Plus new tooling inside the existing images — SAST/DAST in `reversing` (Semgrep, Joern, cppcheck, honggfuzz, clang static analyzer, Trivy), `grimoire` in the shell harness, and WhisperPair (CVE-2025-36911) and `caeruleus` on the RF/Bluetooth side.
+Plus new tooling inside the existing images - SAST/DAST in `reversing` (Semgrep, Joern, cppcheck, honggfuzz, clang static analyzer, Trivy), `grimoire` in the shell harness, and WhisperPair (CVE-2025-36911) and `caeruleus` on the RF/Bluetooth side.
 
 ## ✨ Key Features
 
@@ -227,7 +227,7 @@ rfswift usb detach --busid 2-3         # give the device back to Windows
 
 `rfswift run` offers the same picker when it detects shared or known RF hardware, and the Workbench exposes it as **USB passthrough...** on Docker/Podman missions. A forwarded device is visible to every WSL 2 distribution, including Docker Desktop's, because they share one kernel.
 
-Inside the container, `/dev/bus/usb` must be mapped **and** USB device major 189 allowed (`c 189:* rwm`) — both are part of the RF Swift defaults. A bind mount alone lists the devices but cannot open them, and **privileged mode is not required**; `rfswift run` and the Workbench mission form check this before creating the container and tell you what is missing.
+Inside the container, `/dev/bus/usb` must be mapped **and** USB device major 189 allowed (`c 189:* rwm`) - both are part of the RF Swift defaults. A bind mount alone lists the devices but cannot open them, and **privileged mode is not required**; `rfswift run` and the Workbench mission form check this before creating the container and tell you what is missing.
 
 #### 🔊 Sound and display on Windows (WSLg)
 

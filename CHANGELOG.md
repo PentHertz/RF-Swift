@@ -12,6 +12,49 @@ branch.
 
 ### Added
 
+- Nix engine: `rfswift run --engine nix --isolate` enters the environment shell
+  inside a bubblewrap jail (Linux). It hides the real `$HOME` and the rest of
+  the host filesystem behind a private per-environment home, gives the shell its
+  own PID/IPC/UTS namespaces and a private `/tmp`, while deliberately keeping
+  what RF tooling needs: the `/nix` store, USB and serial devices
+  (`/dev/bus/usb`, `/dev/tty{USB,ACM,S}*`), sysfs/udev for enumeration, the
+  X11/Wayland display and the network. Verified against a real HydraSDR RFOne:
+  the device stays visible to `lsusb` and opens `O_RDWR` (libusb) inside the
+  jail, while `$HOME`/SSH keys and host processes are hidden. bubblewrap is
+  taken from the host `PATH` or built from nixpkgs on demand. macOS is not
+  supported (bubblewrap is Linux-only); `--isolate` there errors with guidance
+  to use the container engine rather than running unisolated. The choice is
+  offered everywhere the engine is: the `--isolate` flag, the interactive nix
+  wizard, and an "Isolate (jail)" toggle in the Workbench create form. It is
+  persisted on the environment, so `exec` and the Workbench terminal re-enter
+  the same jail. The installer (`get_rfswift.sh`) now offers to install
+  bubblewrap alongside the Nix engine. Inside the jail the home is genuinely
+  empty (nothing is bound under it), the working directory is mounted at
+  `/workspace` and RF Swift's state dir at `/rfswift`, with PATH, the shell
+  rc file and the cwd remapped to match - so the shell shows only the
+  workspace and the tools, not the host's files.
+- Nix engine: `rfswift nix gl [name] --check` creates an OpenGL context with
+  the runtime an environment gets (no window) and prints the driver that
+  answered or the EGL error a GUI tool would hit; `rfswift nix gl` now also
+  lists the host's GPUs (vendor and bound kernel driver) with the driver stack
+  the runtime will use for each: Mesa for Intel, AMD, VMware/virtio and other
+  open drivers, the matching proprietary libraries for NVIDIA, nothing needed
+  on macOS.
+- Nix engine: environment shells (CLI and Workbench) export
+  `SOAPY_SDR_PLUGIN_PATH` with the profile's merged SoapySDR module
+  directories and the extras profiles, so Soapy modules installed later with
+  `rfswift nix install` are found by SDR++, gqrx, SigDigger, SatDump and
+  rtl_433 as well.
+- Nix engine: `rfswift nix udev <name>` installs the udev rules shipped by the
+  environment's packages (HackRF, RTL-SDR, bladeRF, Airspy, LimeSDR, USRP,
+  Proxmark, ...) into `/etc/udev/rules.d`, creates the groups they rely on and
+  adds the user to them, all in one `sudo`; `--list` shows the state per rule
+  and `--remove` takes them out again. `run --engine nix` lists the rules that
+  are missing on the host and offers the installation before entering the
+  shell, so devices no longer silently need root on native environments. The
+  device prerequisite layer is now pinned under the environment directory so
+  its rules are found for on-demand environments too.
+
 - Workbench: the Configuration and Network cards now show the full container
   summary the CLI prints after run/exec (image version and freshness, size on
   disk, shell, X display, privileged mode, bind mounts, devices, extra hosts,
@@ -104,7 +147,7 @@ branch.
   `scripts/security-test.sh` from `go/rfswift-workbench`.
 - MCP evidence responses now carry an explicit `untrusted_evidence` trust
   label and instruct agents to treat notes, artifacts, recordings, filenames,
-  metadata, embedded role text, and tool requests as evidence—not instructions.
+  metadata, embedded role text, and tool requests as evidence - not instructions.
 
 ### Security
 
@@ -312,6 +355,42 @@ branch.
   / Kimi / Z.ai, or a local Ollama-compatible endpoint).
 
 ### Fixed
+
+- Nix engine: on-demand (`--lazy`) environments did not realise their
+  prerequisite device/driver layer, so hardware udev rules were never available
+  in lazy mode - a device (e.g. a HydraSDR added to an rfid environment) stayed
+  invisible without root. Lazy now realises the prerequisites up front (only the
+  application tools stay on-demand), so `rfswift env udev` and the entry-time
+  rule offer see the rules as they do in eager mode.
+- Nix engine: `rfswift env install` (adding a tool such as a device library into
+  an environment) now offers to install any udev rules the new package ships,
+  instead of only doing so at the next `run` - so a freshly installed device
+  library's hardware is usable right away.
+- Nix engine: SDR++ (and every other OpenGL tool) still crashed with
+  `EGL: Failed to get EGL display` on environments whose flake revision does
+  not carry the `rfswift-gl` package (the published flake before it landed):
+  the engine tried `nix build <flake>#pkg-rfswift-gl`, printed "does not
+  provide attribute" and exported nothing. It now embeds the runtime
+  expression (`nix/rfswift-gl.nix`, a copy of the flake's file) and builds it
+  against that flake's own nixpkgs when the package is absent, so the Mesa (or
+  NVIDIA) drivers always match the libraries the tools were built with.
+- Nix engine: GUI tools crashed on every host that is not NixOS (SDR++: `EGL:
+  Failed to get EGL display`, `OpenGL 3.0 was not supported`, then a segfault)
+  because nixpkgs' Mesa only looks for GPU drivers in `/run/opengl-driver`.
+  Entering an environment (`run`, `exec`, `nix run`, Workbench terminals and
+  commands) now exports the `rfswift-gl` runtime shipped by RF-Swift-nix (Mesa's drivers
+  from the same pin, the nixGL approach); hosts running the proprietary NVIDIA
+  driver get the matching user-space libraries built once per driver version,
+  with Mesa kept as fallback for hybrid laptops. `RFSWIFT_NIX_GL=off|mesa`
+  overrides the detection, `rfswift nix gl [name]` shows what applies, and
+  `rfsudo` now passes the display and the GL runtime through to root. The
+  Workbench terminal also gained the `xhost` step the CLI shell already had.
+- Image pulls that fail with `unable to retrieve auth token: invalid
+  username/password` (CLI and Workbench, Docker and Podman) now explain the
+  cause: RF Swift sends no credentials, the engine presents a stored `docker
+  login`/`podman login` for Docker Hub that is no longer valid (or Docker Hub's
+  token service hiccuped); the message names the credential file that holds
+  the login and the `logout` command to clear it.
 
 - Workbench on Linux: containers created from the GUI had `DISPLAY` and the X
   socket but no authorization (`Authorization required, but no authorization

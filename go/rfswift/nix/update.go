@@ -357,7 +357,7 @@ func RebuildEnvironment(name string) error {
 }
 
 func rebuildEnvironment(env *Environment, input string) error {
-	if err := buildPrerequisites(env.FlakeRef, env.Image, env.Prerequisites); err != nil {
+	if err := buildPrerequisites(env.FlakeRef, env.Image, env.Prerequisites, prerequisitesLink(env.Name)); err != nil {
 		return err
 	}
 	tmpDir, err := os.MkdirTemp(EnvDir(env.Name), ".update-")

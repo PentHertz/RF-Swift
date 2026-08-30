@@ -3,6 +3,8 @@ package workbench
 import (
 	"context"
 	"encoding/json"
+
+	rfdock "penthertz/rfswift/dock"
 )
 
 // Data types shared by the store, the engine and the bound API. They are
@@ -68,6 +70,14 @@ type Mission struct {
 	// Lazy marks an on-demand Nix environment (tools build on first call). It has
 	// no eager profile, so rebuild/rollback do not apply to it — only update.
 	Lazy bool `json:"lazy,omitempty"`
+	Isolate bool `json:"isolate,omitempty"`
+	// Warnings lists the adjustments made while creating the target (for
+	// example what rootless Podman could not honour). Returned to the caller
+	// of CreateMission only; never persisted in mission.json.
+	Warnings []string `json:"warnings,omitempty"`
+	// Summary is the full container property sheet (what the CLI prints after
+	// run/exec). Filled by Inspect for container engines; never persisted.
+	Summary *rfdock.ContainerSummary `json:"summary,omitempty"`
 }
 
 // MissionCreate is the engine-neutral request accepted from the Workbench UI.
@@ -103,6 +113,7 @@ type MissionCreate struct {
 	Start           bool            `json:"start"`
 	Lazy            bool            `json:"lazy"`
 	Pure            bool            `json:"pure"`
+	Isolate         bool            `json:"isolate"`
 }
 
 type ContainerDefaults struct {

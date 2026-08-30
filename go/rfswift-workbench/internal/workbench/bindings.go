@@ -334,9 +334,14 @@ func (a *App) CreateMission(req MissionCreate) (Mission, error) {
 	if err != nil {
 		return Mission{}, err
 	}
+	// Creation warnings are for the person creating the mission, not for the
+	// stored record.
+	warnings := m.Warnings
+	m.Warnings = nil
 	if err := a.store.SaveMission(a.ws, m); err != nil {
 		return Mission{}, err
 	}
+	m.Warnings = warnings
 	a.emitOperationProgress("mission-create", req.Name, 100, "Mission ready")
 	return m, nil
 }
@@ -775,6 +780,46 @@ func (a *App) InstallMissionTool(mission, name string) error {
 		a.emitOperationProgress("package-install", mission, 100, "Tool installed")
 	}
 	return err
+}
+
+// NixUdevRules lists the udev rules a Nix mission's packages ship and whether
+// each is installed on the host (missing / outdated / installed), so the GUI
+// can show what a device needs. Empty on non-Linux or non-Nix missions.
+func (a *App) NixUdevRules(mission string) ([]rfnix.UdevRule, error) {
+	if runtime.GOOS != "linux" {
+		return []rfnix.UdevRule{}, nil
+	}
+	env, err := rfnix.GetEnvironment(mission)
+	if err != nil {
+		return nil, err
+	}
+	rules := rfnix.ListUdevRules(env)
+	if rules == nil {
+		rules = []rfnix.UdevRule{}
+	}
+	return rules, nil
+}
+
+// InstallNixUdevRules installs the rules that are not on the host yet, creates
+// the groups they need and adds the user to them, then reloads udev. It elevates
+// through a graphical polkit prompt (pkexec) since the GUI has no terminal. A
+// no-op (nil report) when nothing is pending.
+func (a *App) InstallNixUdevRules(mission string) (rfnix.UdevInstallReport, error) {
+	var report rfnix.UdevInstallReport
+	if runtime.GOOS != "linux" {
+		return report, errors.New("udev rules only apply on Linux")
+	}
+	env, err := rfnix.GetEnvironment(mission)
+	if err != nil {
+		return report, err
+	}
+	rules := rfnix.ListUdevRules(env)
+	pending := rfnix.PendingUdevRules(rules)
+	if len(pending) == 0 {
+		return report, nil
+	}
+	absent, notMember := rfnix.GroupStatus(rules)
+	return rfnix.InstallUdevRules(env, pending, absent, append(absent, notMember...))
 }
 
 func (a *App) emitOperationProgress(operation, target string, percent int, stage string) {

@@ -61,6 +61,12 @@ func profileLink(name string) string {
 	return filepath.Join(EnvDir(name), "profile")
 }
 
+// prerequisitesLink is the gcroot symlink to the realised device/library
+// layer of an environment (its udev rules are read from there).
+func prerequisitesLink(name string) string {
+	return filepath.Join(EnvDir(name), "prerequisites")
+}
+
 func generationsDir(name string) string {
 	return filepath.Join(EnvDir(name), "generations")
 }

@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"penthertz/rfswift/common"
+	rfdock "penthertz/rfswift/dock"
 	rfutils "penthertz/rfswift/rfutils"
 )
 
@@ -17,6 +18,19 @@ import (
 // notice (common.CheckUSBAccess).
 func (a *App) USBAccessCheck(devices, bindings, cgroupRules []string, privileged bool) common.USBAccess {
 	return common.CheckUSBAccess(devices, bindings, cgroupRules, privileged)
+}
+
+// DeviceMappingCheck tells the mission form which device mappings and /dev
+// bind mounts the selected engine cannot use on this machine (root-only or
+// inaccessible nodes under rootless Podman, no passthrough into the Docker
+// Desktop/OrbStack/Podman machine VM on macOS, devices absent from the Lima
+// VM). Advisory only: the form offers to remove them. Remote agents are not
+// checked (scope "none").
+func (a *App) DeviceMappingCheck(engine string, devices, bindings []string) rfdock.DeviceCheck {
+	if _, remote := a.eng.(*RemoteEngine); remote || engine == "nix" {
+		return rfdock.DeviceCheck{Engine: engine, Scope: "none", Issues: []rfdock.DeviceIssue{}}
+	}
+	return rfdock.CheckDeviceMappings(engine, devices, bindings)
 }
 
 // USBDevice is a host USB device the Workbench can forward into the VM that

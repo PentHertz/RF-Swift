@@ -34,6 +34,8 @@ func RunTool(flakeRef, tool string, args []string) error {
 		full = append(full, args...)
 	}
 	cmd := exec.Command(NixBinary(), full...)
+	// GUI tools need the OpenGL runtime on non-NixOS hosts (gl.go).
+	cmd.Env = withEnv(os.Environ(), GLEnvironmentForFlake(flakeRef))
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
 	return cmd.Run()
 }

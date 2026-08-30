@@ -81,6 +81,10 @@ type Environment struct {
 	// it (for lazy environments). Populated at creation from each package's
 	// meta.mainProgram.
 	Commands map[string]string `json:"commands,omitempty"`
+	// Isolate records that this environment should be entered inside a
+	// bubblewrap jail (Linux). Set at creation from --isolate / the TUI / GUI,
+	// and honoured on every subsequent entry (run, exec, GUI terminal).
+	Isolate bool `json:"isolate,omitempty"`
 }
 
 // Generation is a previous, GC-rooted eager environment closure available for
@@ -102,4 +106,11 @@ type RunOptions struct {
 	Pure       bool   // enter a pure environment (nix develop --ignore-environment)
 	Lazy       bool   // on-demand: build each tool the first time it is called, not all up front
 	CreateOnly bool   // create/realise and persist without entering an interactive shell
+	Isolate    bool   // enter inside a bubblewrap jail (Linux): hide $HOME/host FS and give
+	// the shell private PID/IPC/tmp, while keeping USB/serial devices, sysfs/udev,
+	// the display and the network. No effect (errors) on macOS.
+	// PreEnter runs once the environment is realised, right before the shell
+	// is entered (not for CreateOnly). The CLI uses it to offer the host-side
+	// setup that needs a terminal, such as installing udev rules.
+	PreEnter func(env *Environment)
 }
