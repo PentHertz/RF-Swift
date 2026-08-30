@@ -1,6 +1,8 @@
 import { readFileSync } from "node:fs";
 
-const html = readFileSync(new URL("../frontend/dist/index.html", import.meta.url), "utf8");
+const html = ["../frontend/dist/index.html", "../frontend/dist/app.js"]
+  .map((f) => readFileSync(new URL(f, import.meta.url), "utf8"))
+  .join("\n");
 const forbidden = [
   ['raw mission ID in HTML', 'class="nm">${m.id}</span>'],
   ['raw report mission ID in HTML', '<b>${rm.id}</b>'],

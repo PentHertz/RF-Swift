@@ -19,7 +19,7 @@ go test ./...
 go vet ./...
 
 if command -v node >/dev/null 2>&1; then
-  perl -0777 -ne 'print $1 if m{<script>(.*?)</script>}s' frontend/dist/index.html | node --check
+  node --check frontend/dist/app.js
   node scripts/frontend-security-test.mjs
 fi
 
