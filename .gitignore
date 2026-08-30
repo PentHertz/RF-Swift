@@ -3,3 +3,6 @@
 # pattern silently ignored every new file added under go/rfswift/).
 /rfswift
 /go/rfswift/rfswift
+
+# macOS Finder metadata, in any directory.
+.DS_Store

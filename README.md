@@ -359,6 +359,7 @@ Comprehensive documentation is available at [rfswift.io](https://rfswift.io/), i
 - 🧰 [List of Included Tools](https://rfswift.io/docs/guide/list-of-tools/)
 - 🛡️ [Security Guidelines](https://rfswift.io/docs/security/)
 - 🔐 [Remote agent setup and paranoid security model](docs/remote-agent.md)
+- 🍎 [macOS signed DMG: Developer ID signing and notarization](docs/macos-signing.md)
 
 ## 🎓 Training & Workshops
 

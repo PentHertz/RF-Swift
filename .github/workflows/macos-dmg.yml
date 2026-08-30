@@ -1,0 +1,463 @@
+name: macOS signed DMG
+
+# Builds the two macOS deliverables on a macOS runner, packs them into one
+# .dmg and - when the Apple signing secrets are present - codesigns
+# everything with the PentHertz "Developer ID Application" certificate,
+# notarizes with Apple's notary service and staples the tickets so
+# Gatekeeper accepts the image offline:
+#
+#   rfswift                 universal (arm64 + x86_64) CLI/TUI binary
+#   rfswift-workbench.app   universal Wails GUI bundle (go/rfswift-workbench)
+#
+# Secrets (same names as PentHertz/LUKSbox so the values can be shared;
+# full setup walkthrough in docs/macos-signing.md):
+#   APPLE_DEVELOPER_ID_CERT_P12_B64   single-line base64 of the .p12
+#   APPLE_DEVELOPER_ID_CERT_PASSWORD  password protecting the .p12
+#   MACOS_CI_KEYCHAIN_PASSWORD        throwaway password for the CI keychain
+#   APPLE_NOTARY_USER                 Apple ID email used for notarization
+#   APPLE_NOTARY_PASSWORD             app-specific password for that Apple ID
+#   APPLE_NOTARY_TEAM_ID              10-character Apple team ID
+#
+# Without the secrets (forks, dry runs) the workflow still produces an
+# UNSIGNED .dmg; the signing, notarization and Gatekeeper-verify steps
+# are skipped. The GitHub release upload only happens on tag builds,
+# after release.yml has created the release.
+
+on:
+  push:
+    tags: ["v*"]
+  # Dry run from the Actions tab: builds (and signs/notarizes if the
+  # secrets are configured) and uploads the .dmg as a workflow artifact,
+  # but does not touch any GitHub release.
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  # Same module-audit gate as CI: a signed DMG must not ship with a
+  # vulnerable or tampered dependency tree either.
+  audit:
+    name: Module audit gate
+    permissions:
+      contents: read
+    uses: ./.github/workflows/modules-audit.yml
+
+  macos-dmg:
+    name: Build, sign and notarize macOS DMG
+    needs: audit
+    runs-on: macos-14
+    permissions:
+      contents: write      # upload the .dmg to the GitHub release
+      id-token: write      # Sigstore OIDC token for build provenance
+      attestations: write  # write the artifact attestation
+    env:
+      # Keep in sync with go/rfswift-workbench/Makefile and release.yml.
+      WAILS_VERSION: v2.15.0
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go/rfswift/go.mod
+          cache-dependency-path: |
+            go/rfswift/go.sum
+            go/rfswift-workbench/go.sum
+
+      - name: Derive version
+        run: |
+          set -euo pipefail
+          if [ "${GITHUB_REF_TYPE:-}" = "tag" ]; then
+            VERSION="${GITHUB_REF_NAME#v}"
+          else
+            # workflow_dispatch dry run: take the hardcoded version from
+            # common.go and mark it as a dev build.
+            VERSION="$(grep -m1 'var Version' go/rfswift/common/common.go \
+                       | sed 's/.*"\(.*\)".*/\1/')-dev"
+          fi
+          echo "RFSWIFT_VERSION=$VERSION" >> "$GITHUB_ENV"
+          # CFBundleShortVersionString must look like x.y.z; the full
+          # string (with any -dev/-rc suffix) goes into CFBundleVersion.
+          echo "RFSWIFT_SHORT_VERSION=${VERSION%%-*}" >> "$GITHUB_ENV"
+          echo "DMG_NAME=rfswift_Darwin_universal.dmg" >> "$GITHUB_ENV"
+          echo "APP_PATH=go/rfswift-workbench/build/bin/rfswift-workbench.app" >> "$GITHUB_ENV"
+          echo "==> building RF Swift v$VERSION"
+
+      - name: Build universal rfswift binary
+        run: |
+          set -euo pipefail
+          # Same build recipe as the Makefile / goreleaser lanes:
+          # CGO disabled + netgo tag for a fully static Go binary, then
+          # lipo merges both slices so one file runs on Intel and Apple
+          # Silicon alike.
+          mkdir -p build
+          ( cd go/rfswift
+            GOOS=darwin GOARCH=amd64 CGO_ENABLED=0 \
+              go build -tags netgo -trimpath -ldflags "-s -w" \
+              -o ../../build/rfswift_amd64 .
+            GOOS=darwin GOARCH=arm64 CGO_ENABLED=0 \
+              go build -tags netgo -trimpath -ldflags "-s -w" \
+              -o ../../build/rfswift_arm64 . )
+          lipo -create -output build/rfswift \
+            build/rfswift_amd64 build/rfswift_arm64
+          lipo -info build/rfswift
+          # Smoke test: the universal binary must at least execute on
+          # the runner. rc >= 126 means exec failure / signal, anything
+          # below is cobra doing its thing.
+          ./build/rfswift --help >/dev/null 2>&1 || {
+            rc=$?
+            if [ "$rc" -ge 126 ]; then
+              echo "::error::universal binary failed to execute (rc=$rc)"
+              exit 1
+            fi
+          }
+
+      - name: Install Wails CLI
+        # go install verifies the module against the Go checksum database,
+        # same trust model as every other dependency of the project.
+        run: go install "github.com/wailsapp/wails/v2/cmd/wails@${WAILS_VERSION}"
+
+      - name: Build universal Workbench app
+        run: |
+          set -euo pipefail
+          # Same target release.yml uses; produces build/bin/rfswift-workbench.app
+          # (Wails builds both slices and lipo-merges them). The bundle
+          # identifier and the other Info.plist keys come from
+          # go/rfswift-workbench/build/darwin/Info.plist.
+          ( cd go/rfswift-workbench && make darwin_universal )
+          MAIN_EXE="$APP_PATH/Contents/MacOS/rfswift-workbench"
+          test -x "$MAIN_EXE"
+          lipo -info "$MAIN_EXE"
+          # Stamp the release version into the bundle (Wails has no build
+          # flag for it and the repo keeps one version source: common.go).
+          PLIST="$APP_PATH/Contents/Info.plist"
+          /usr/libexec/PlistBuddy \
+            -c "Set :CFBundleShortVersionString $RFSWIFT_SHORT_VERSION" \
+            -c "Set :CFBundleVersion $RFSWIFT_VERSION" \
+            "$PLIST"
+          plutil -lint "$PLIST"
+          echo "==> bundle: $(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$PLIST") \
+          v$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$PLIST")"
+          # No GUI smoke test: launching a Wails app on the runner would
+          # open a window and never return. Structure + lipo checks above
+          # are what codesign/notarytool will validate anyway.
+
+      - name: Import Developer ID certificate
+        # Only fires when the .p12 secret is present. Forks and dry runs
+        # without the secret fall through to an unsigned .dmg (the
+        # codesign steps below gate on MACOS_KEYCHAIN_PATH, which only
+        # this step sets).
+        if: env.APPLE_DEVELOPER_ID_CERT_P12_B64 != ''
+        env:
+          APPLE_DEVELOPER_ID_CERT_P12_B64:  ${{ secrets.APPLE_DEVELOPER_ID_CERT_P12_B64 }}
+          APPLE_DEVELOPER_ID_CERT_PASSWORD: ${{ secrets.APPLE_DEVELOPER_ID_CERT_PASSWORD }}
+          MACOS_CI_KEYCHAIN_PASSWORD:       ${{ secrets.MACOS_CI_KEYCHAIN_PASSWORD }}
+        run: |
+          set -euo pipefail
+          # Decode the base64-armored .p12 (Developer ID Application
+          # certificate + private key). tr strips any line-wrapping that
+          # survived the GitHub-secrets round-trip; single-line base64
+          # is universally accepted by the BSD base64 on the runner.
+          P12_PATH="$RUNNER_TEMP/devid.p12"
+          printf '%s' "$APPLE_DEVELOPER_ID_CERT_P12_B64" \
+            | tr -d '\n\r ' \
+            | base64 --decode > "$P12_PATH"
+
+          # Cheap sanity check: PKCS12 starts with an ASN.1 SEQUENCE
+          # (0x30). Catches a truncated / line-wrapped secret here with
+          # a clear message instead of a cryptic "MAC verification
+          # failed" from security import later.
+          DECODED_HEAD=$(xxd -l 8 "$P12_PATH" | head -1 | awk '{print $2$3$4$5}')
+          if ! [[ "$DECODED_HEAD" =~ ^30[0-9a-f]{2,4} ]]; then
+            echo "::error::APPLE_DEVELOPER_ID_CERT_P12_B64 decoded to non-PKCS12 bytes."
+            echo "         Re-encode locally with a single-line form:"
+            echo "             openssl base64 -A -in devid.p12 | pbcopy"
+            exit 1
+          fi
+
+          # Dedicated keychain for this build; never touch the runner's
+          # login keychain (concurrency, ownership, and partition-list
+          # prompts are all avoided this way).
+          KEYCHAIN_PATH="$RUNNER_TEMP/rfswift-build.keychain-db"
+          security create-keychain -p "$MACOS_CI_KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$MACOS_CI_KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+
+          # Pre-verify with OpenSSL BEFORE handing to security import.
+          # security only accepts PKCS12 encrypted with the legacy PBES1
+          # ciphers; OpenSSL 3 defaults to PBES2 (AES) which security
+          # rejects with the same generic error as a wrong password.
+          # A pass here + an import failure below means "re-export with
+          # openssl pkcs12 -export -legacy" (see docs/macos-signing.md).
+          if openssl pkcs12 -in "$P12_PATH" \
+              -password "pass:$APPLE_DEVELOPER_ID_CERT_PASSWORD" \
+              -nokeys -noout 2>/dev/null; then
+            echo "==> OpenSSL pre-verify: .p12 + password OK"
+          else
+            echo "::error::OpenSSL pre-verify FAILED: the password does not"
+            echo "         match the .p12 (hidden newline/quotes in the secret,"
+            echo "         or the .p12 was re-exported with another password)."
+            exit 1
+          fi
+
+          if ! security import "$P12_PATH" \
+              -P "$APPLE_DEVELOPER_ID_CERT_PASSWORD" \
+              -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"; then
+            echo "::error::OpenSSL accepted the .p12 but 'security import'"
+            echo "         rejected it: classic PBES2 symptom. Re-export with:"
+            echo "             openssl pkcs12 -export -legacy -out devid.p12 \\"
+            echo "                 -inkey devid.key -in devid-cert.pem"
+            echo "         then re-encode + replace the secret."
+            exit 1
+          fi
+
+          # Allow codesign to use the imported key non-interactively.
+          security set-key-partition-list \
+            -S apple-tool:,apple:,codesign: \
+            -s -k "$MACOS_CI_KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+
+          # Append (not replace) the keychain in the search list so
+          # codesign and notarytool can find the identity.
+          security list-keychains -d user -s "$KEYCHAIN_PATH" \
+            $(security list-keychains -d user | tr -d '" ' | tr '\n' ' ')
+
+          # Should print: Developer ID Application: <name> (<TEAMID>)
+          security find-identity -v -p codesigning "$KEYCHAIN_PATH"
+
+          echo "MACOS_KEYCHAIN_PATH=$KEYCHAIN_PATH" >> "$GITHUB_ENV"
+          rm -f "$P12_PATH"
+
+      - name: Resolve signing identity
+        if: env.MACOS_KEYCHAIN_PATH != ''
+        run: |
+          set -euo pipefail
+          # Resolve the identity dynamically out of the imported
+          # keychain; hardcoding the team-ID form in a secret would mean
+          # rotating that secret on every certificate renewal.
+          IDENTITY=$(security find-identity -v -p codesigning "$MACOS_KEYCHAIN_PATH" \
+              | awk -F '"' '/Developer ID Application/ { print $2; exit }')
+          if [ -z "$IDENTITY" ]; then
+            echo "::error::No 'Developer ID Application' identity found"
+            exit 1
+          fi
+          echo "==> signing identity: $IDENTITY"
+          echo "MACOS_SIGN_IDENTITY=$IDENTITY" >> "$GITHUB_ENV"
+
+      - name: Code-sign rfswift binary
+        if: env.MACOS_KEYCHAIN_PATH != ''
+        run: |
+          set -euo pipefail
+          # --options runtime (hardened runtime) + --timestamp are both
+          # REQUIRED for notarization. A pure-Go CGO-free binary needs
+          # no entitlements.
+          codesign --force --timestamp --options runtime \
+            --keychain "$MACOS_KEYCHAIN_PATH" \
+            --sign "$MACOS_SIGN_IDENTITY" \
+            build/rfswift
+          codesign --verify --strict --verbose=2 build/rfswift
+          codesign -dv --verbose=4 build/rfswift 2>&1 | head -12
+
+      - name: Code-sign Workbench app
+        if: env.MACOS_KEYCHAIN_PATH != ''
+        run: |
+          set -euo pipefail
+          # Sign inside-out, never `codesign --deep`: first every nested
+          # Mach-O (helpers, dylibs, frameworks - a Wails app normally has
+          # none, the loop is there so a future one is not missed), then
+          # the bundle itself, which signs Contents/MacOS/rfswift-workbench
+          # and seals Contents/Resources. Hardened runtime + timestamp on
+          # every object, no entitlements: WKWebView, the Keychain, PTYs
+          # and the docker/podman/nix subprocesses all work without any.
+          MAIN_EXE="$APP_PATH/Contents/MacOS/rfswift-workbench"
+          find "$APP_PATH/Contents" -type f ! -path "$MAIN_EXE" -print0 \
+            | while IFS= read -r -d '' f; do
+                if file -b "$f" | grep -q 'Mach-O'; then
+                  echo "==> signing nested Mach-O: ${f#"$APP_PATH"/}"
+                  codesign --force --timestamp --options runtime \
+                    --keychain "$MACOS_KEYCHAIN_PATH" \
+                    --sign "$MACOS_SIGN_IDENTITY" "$f"
+                fi
+              done
+          codesign --force --timestamp --options runtime \
+            --keychain "$MACOS_KEYCHAIN_PATH" \
+            --sign "$MACOS_SIGN_IDENTITY" \
+            "$APP_PATH"
+          codesign --verify --deep --strict --verbose=2 "$APP_PATH"
+          codesign -dv --verbose=4 "$APP_PATH" 2>&1 | head -12
+
+      - name: Notarize and staple Workbench app
+        # The .app gets its own ticket BEFORE it goes into the image, so
+        # it still validates offline once dragged out of the DMG into
+        # /Applications. notarytool takes a zip for bundles; ditto keeps
+        # the resource forks and symlinks codesign sealed.
+        if: env.MACOS_KEYCHAIN_PATH != '' && env.APPLE_NOTARY_USER != ''
+        env:
+          APPLE_NOTARY_USER:     ${{ secrets.APPLE_NOTARY_USER }}
+          APPLE_NOTARY_PASSWORD: ${{ secrets.APPLE_NOTARY_PASSWORD }}
+          APPLE_NOTARY_TEAM_ID:  ${{ secrets.APPLE_NOTARY_TEAM_ID }}
+        run: |
+          set -euo pipefail
+          ZIP="$RUNNER_TEMP/rfswift-workbench-notarize.zip"
+          ditto -c -k --sequesterRsrc --keepParent "$APP_PATH" "$ZIP"
+          # On "Invalid", fetch the submission log for the real reason:
+          #   xcrun notarytool log <submission-id> --apple-id ... log.json
+          xcrun notarytool submit "$ZIP" \
+            --apple-id "$APPLE_NOTARY_USER" \
+            --password "$APPLE_NOTARY_PASSWORD" \
+            --team-id "$APPLE_NOTARY_TEAM_ID" \
+            --wait --timeout 30m
+          xcrun stapler staple "$APP_PATH"
+          xcrun stapler validate "$APP_PATH"
+          # Same assessment Gatekeeper runs on first launch. Expected:
+          # "accepted ... source=Notarized Developer ID".
+          spctl -a -t exec -vv "$APP_PATH"
+
+      - name: Stage DMG contents
+        run: |
+          set -euo pipefail
+          rm -rf dmg-root
+          mkdir -p dmg-root
+          cp build/rfswift dmg-root/
+          # ditto (not cp) so the sealed bundle arrives byte-identical:
+          # resource forks, xattrs and the stapled ticket included.
+          ditto "$APP_PATH" dmg-root/rfswift-workbench.app
+          # Classic drag-to-install: an Applications link next to the app.
+          ln -s /Applications dmg-root/Applications
+          cp LICENSE dmg-root/LICENSE.txt
+
+          # Double-clickable installer for the CLI: Terminal opens and
+          # sudo-copies the binary into /usr/local/bin. Shell scripts
+          # cannot be Mach-O signed, but notarization of the whole .dmg
+          # covers them.
+          cat > "dmg-root/Install RF Swift CLI.command" <<'EOF'
+          #!/bin/bash
+          set -e
+          DIR="$(cd "$(dirname "$0")" && pwd)"
+          DEST="/usr/local/bin"
+          echo "Installing rfswift to $DEST (sudo password may be asked)..."
+          sudo mkdir -p "$DEST"
+          sudo install -m 0755 "$DIR/rfswift" "$DEST/rfswift"
+          echo ""
+          echo "Done. Open a new terminal and run: rfswift --help"
+          echo "For the GUI, drag rfswift-workbench.app onto Applications."
+          echo "Docs: https://rfswift.io/docs/getting-started/"
+          EOF
+          chmod +x "dmg-root/Install RF Swift CLI.command"
+
+          cat > dmg-root/README.txt <<EOF
+          RF Swift v${RFSWIFT_VERSION} - macOS universal build
+          ====================================================
+
+          Contents:
+            rfswift-workbench.app         RF Swift Workbench GUI (arm64 + x86_64)
+                                          drag it onto the Applications link
+            rfswift                       the RF Swift CLI/TUI (arm64 + x86_64)
+            Install RF Swift CLI.command  double-click to install the CLI to
+                                          /usr/local/bin
+            LICENSE.txt
+
+          RF Swift drives containers or native Nix environments, so one of
+          these must be available: Docker Desktop, OrbStack, Podman, the
+          bundled Lima setup (USB passthrough), or Nix. See
+          https://rfswift.io/docs/getting-started/ for the macOS guide.
+
+          This disk image, the app and the CLI are signed and notarized
+          by PentHertz when downloaded from an official release, so macOS
+          Gatekeeper accepts them without any right-click workaround.
+          EOF
+
+          ls -la dmg-root/
+
+      - name: Build DMG
+        run: |
+          set -euo pipefail
+          hdiutil create \
+            -volname "RF Swift v${RFSWIFT_VERSION}" \
+            -srcfolder dmg-root \
+            -ov -format UDZO \
+            "$DMG_NAME"
+          ls -lh "$DMG_NAME"
+          shasum -a 256 "$DMG_NAME"
+
+      - name: Code-sign DMG
+        # The .dmg itself must carry a signature with a secure timestamp
+        # or notarytool rejects the submission.
+        if: env.MACOS_KEYCHAIN_PATH != ''
+        run: |
+          set -euo pipefail
+          # No --options runtime here: hardened runtime applies to
+          # executables, not container files.
+          codesign --force --timestamp \
+            --keychain "$MACOS_KEYCHAIN_PATH" \
+            --sign "$MACOS_SIGN_IDENTITY" \
+            "$DMG_NAME"
+          codesign --verify --verbose=2 "$DMG_NAME"
+
+      - name: Notarize and staple DMG
+        if: env.MACOS_KEYCHAIN_PATH != '' && env.APPLE_NOTARY_USER != ''
+        env:
+          APPLE_NOTARY_USER:     ${{ secrets.APPLE_NOTARY_USER }}
+          APPLE_NOTARY_PASSWORD: ${{ secrets.APPLE_NOTARY_PASSWORD }}
+          APPLE_NOTARY_TEAM_ID:  ${{ secrets.APPLE_NOTARY_TEAM_ID }}
+        run: |
+          set -euo pipefail
+          # Submit and wait for Apple's verdict (usually under 5 min).
+          # On success, staple the ticket so Gatekeeper passes offline.
+          xcrun notarytool submit "$DMG_NAME" \
+            --apple-id "$APPLE_NOTARY_USER" \
+            --password "$APPLE_NOTARY_PASSWORD" \
+            --team-id "$APPLE_NOTARY_TEAM_ID" \
+            --wait --timeout 30m
+          xcrun stapler staple "$DMG_NAME"
+          xcrun stapler validate "$DMG_NAME"
+
+      - name: Verify Gatekeeper acceptance
+        if: env.MACOS_KEYCHAIN_PATH != '' && env.APPLE_NOTARY_USER != ''
+        env:
+          APPLE_NOTARY_USER: ${{ secrets.APPLE_NOTARY_USER }}
+        run: |
+          # The same assessment Gatekeeper runs when a user opens the
+          # downloaded image. "accepted ... source=Notarized Developer ID"
+          # is the expected verdict; anything else fails the build.
+          spctl -a -t open --context context:primary-signature -v "$DMG_NAME"
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: ${{ env.DMG_NAME }}
+
+      - name: Upload DMG as workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: rfswift-macos-dmg
+          path: ${{ env.DMG_NAME }}
+          if-no-files-found: error
+
+      - name: Upload DMG to the GitHub release
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          # release.yml (goreleaser) creates the release for this tag in
+          # a parallel workflow run; wait for it rather than racing it.
+          # 40 x 30s = 20 min, far beyond a normal goreleaser run.
+          found=0
+          for i in $(seq 1 40); do
+            if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+              found=1
+              break
+            fi
+            echo "==> release $GITHUB_REF_NAME not created yet, waiting (attempt $i/40)"
+            sleep 30
+          done
+          if [ "$found" -ne 1 ]; then
+            echo "::error::Release $GITHUB_REF_NAME never appeared. Either"
+            echo "         release.yml failed (check its run) or the tag was"
+            echo "         pushed without triggering it. Not uploading the DMG."
+            exit 1
+          fi
+          gh release upload "$GITHUB_REF_NAME" "$DMG_NAME" --clobber
+          echo "==> uploaded $DMG_NAME to release $GITHUB_REF_NAME"

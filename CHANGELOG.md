@@ -12,6 +12,15 @@ branch.
 
 ### Added
 
+- macOS signed disk image: `.github/workflows/macos-dmg.yml` builds a
+  universal `rfswift` CLI and the universal Workbench `.app` on every `v*`
+  tag, packs them into `rfswift_Darwin_universal.dmg` and, when the Apple
+  secrets are configured, Developer ID signs, notarizes and staples the app
+  and the image (hardened runtime, inside-out bundle signing, Sigstore
+  provenance). Forks and dry runs get an unsigned image. The Workbench
+  bundle now carries the `com.penthertz.rfswift-workbench` identifier via
+  `go/rfswift-workbench/build/darwin/Info.plist`. Setup and troubleshooting
+  in [docs/macos-signing.md](docs/macos-signing.md).
 - Windows USB passthrough rebuilt on usbipd-win with the least privilege the
   tool allows. Containers on Windows run in the WSL 2 VM, so a host device is
   forwarded there; only *sharing* it the first time needs administrator

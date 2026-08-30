@@ -1,5 +1,9 @@
 /build/bin/
-/build/darwin/
+# Wails regenerates build/darwin on the fly; only the Info.plist template is
+# ours (PentHertz bundle identifier for the signed .app, see
+# docs/macos-signing.md). A "/build/darwin/" rule would hide it for good.
+/build/darwin/*
+!/build/darwin/Info.plist
 /build/windows/
 /build/linux/
 /frontend/wailsjs/
