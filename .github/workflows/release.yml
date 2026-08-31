@@ -247,3 +247,19 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: gh release upload "$GITHUB_REF_NAME" release-assets/* --clobber
+
+  # Build, sign and notarize the macOS .dmg as part of the release flowgraph.
+  # Gated on generate-artifacts so the GitHub release already exists when the
+  # .dmg is attached (no cross-workflow race to poll around). The reusable
+  # workflow skips the module-audit gate that CI already runs.
+  macos-dmg:
+    name: macOS signed DMG
+    needs: generate-artifacts
+    permissions:
+      contents: write      # attach the .dmg to the release
+      id-token: write      # Sigstore OIDC token for build provenance
+      attestations: write  # write the artifact attestation
+    uses: ./.github/workflows/macos-dmg.yml
+    with:
+      upload_to_release: true
+    secrets: inherit

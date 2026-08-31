@@ -9,6 +9,13 @@ name: macOS signed DMG
 #   rfswift                 universal (arm64 + x86_64) CLI/TUI binary
 #   rfswift-workbench.app   universal Wails GUI bundle (go/rfswift-workbench)
 #
+# This is a reusable workflow. release.yml calls it as part of the release
+# flowgraph (after generate-artifacts has created the GitHub release), passing
+# upload_to_release: true so the finished .dmg is attached to the tag's release.
+# The module-audit gate is intentionally not repeated here: it already runs in
+# CI (ci.yml) on the code a release is cut from, exactly like the rest of
+# release.yml, which carries no separate audit either.
+#
 # Secrets (same names as PentHertz/LUKSbox so the values can be shared;
 # full setup walkthrough in docs/macos-signing.md):
 #   APPLE_DEVELOPER_ID_CERT_P12_B64   single-line base64 of the .p12
@@ -20,32 +27,33 @@ name: macOS signed DMG
 #
 # Without the secrets (forks, dry runs) the workflow still produces an
 # UNSIGNED .dmg; the signing, notarization and Gatekeeper-verify steps
-# are skipped. The GitHub release upload only happens on tag builds,
-# after release.yml has created the release.
+# are skipped. The GitHub release upload only happens when upload_to_release
+# is true (release.yml sets it) on a tag build.
 
 on:
-  push:
-    tags: ["v*"]
-  # Dry run from the Actions tab: builds (and signs/notarizes if the
-  # secrets are configured) and uploads the .dmg as a workflow artifact,
-  # but does not touch any GitHub release.
+  # Invoked by release.yml as a job in the release flowgraph.
+  workflow_call:
+    inputs:
+      upload_to_release:
+        description: "Attach the signed .dmg to the tag's GitHub release."
+        type: boolean
+        default: false
+  # Dry run from the Actions tab: builds (and signs/notarizes if the secrets
+  # are configured) and uploads the .dmg as a workflow artifact only; leave
+  # upload_to_release off (dispatch runs from a branch, not a tag's release).
   workflow_dispatch:
+    inputs:
+      upload_to_release:
+        description: "Attach the signed .dmg to the tag's GitHub release (leave off for dry runs)."
+        type: boolean
+        default: false
 
 permissions:
   contents: read
 
 jobs:
-  # Same module-audit gate as CI: a signed DMG must not ship with a
-  # vulnerable or tampered dependency tree either.
-  audit:
-    name: Module audit gate
-    permissions:
-      contents: read
-    uses: ./.github/workflows/modules-audit.yml
-
   macos-dmg:
     name: Build, sign and notarize macOS DMG
-    needs: audit
     runs-on: macos-14
     permissions:
       contents: write      # upload the .dmg to the GitHub release
@@ -436,28 +444,13 @@ jobs:
           if-no-files-found: error
 
       - name: Upload DMG to the GitHub release
-        if: github.ref_type == 'tag'
+        # release.yml calls this job with upload_to_release: true, gated on
+        # generate-artifacts, so the release for this tag already exists - no
+        # need to poll for it. Dry-run dispatches leave the input off.
+        if: inputs.upload_to_release && github.ref_type == 'tag'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          # release.yml (goreleaser) creates the release for this tag in
-          # a parallel workflow run; wait for it rather than racing it.
-          # 40 x 30s = 20 min, far beyond a normal goreleaser run.
-          found=0
-          for i in $(seq 1 40); do
-            if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
-              found=1
-              break
-            fi
-            echo "==> release $GITHUB_REF_NAME not created yet, waiting (attempt $i/40)"
-            sleep 30
-          done
-          if [ "$found" -ne 1 ]; then
-            echo "::error::Release $GITHUB_REF_NAME never appeared. Either"
-            echo "         release.yml failed (check its run) or the tag was"
-            echo "         pushed without triggering it. Not uploading the DMG."
-            exit 1
-          fi
           gh release upload "$GITHUB_REF_NAME" "$DMG_NAME" --clobber
           echo "==> uploaded $DMG_NAME to release $GITHUB_REF_NAME"
