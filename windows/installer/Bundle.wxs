@@ -1,0 +1,158 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  RF Swift dependency bundle (WiX v5 Burn). One elevation installs the
+  prerequisites the user selects on the Options page, then the RF Swift MSI:
+
+    1. Enable WSL 2 + WSLg      (RunPrereqs.ps1; may schedule a reboot-and-resume)
+    2. usbipd-win               (USB / SDR passthrough into WSL 2)
+    3. a container engine       (Docker Desktop | Podman Desktop | none)
+    4. RF Swift itself          (the MSI from Package.wxs, embedded)
+
+  The theme (theme/RFSwiftTheme.xml) binds three Burn variables:
+    EnableWsl / EnableUsbipd  checkboxes (1/0)
+    ContainerEngine           radio group ("docker" | "podman" | "none")
+
+  Dependency versions/URLs are pinned here and hash-verified by Burn: CI
+  downloads each into deps/ so WiX computes the SHA-512 at build time, and the
+  DownloadUrl points at the SAME immutable, per-version file (Docker uses a
+  build-numbered permalink, not the rolling "latest"). Bump these together with
+  the pinned copy in .github/workflows/windows-installer.yml.
+
+  Build inputs (see build.ps1): -d RFSwiftVersion, -d BundleVersion, -d MsiFile,
+  -d DepsDir, the per-arch dependency -d overrides, and -arch x64|arm64. The
+  arm64 bundle must be built on an arm64 runner so the powershell.exe entry
+  payload of the WSL/Nix steps is arm64-native.
+-->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
+     xmlns:bal="http://wixtoolset.org/schemas/v4/wxs/bal"
+     xmlns:util="http://wixtoolset.org/schemas/v4/wxs/util">
+
+  <?ifndef RFSwiftVersion ?><?define RFSwiftVersion = "4.0.1" ?><?endif?>
+  <?ifndef BundleVersion ?><?define BundleVersion = "$(RFSwiftVersion).0" ?><?endif?>
+  <?ifndef MsiFile ?><?define MsiFile = "build\RFSwift-x64.msi" ?><?endif?>
+  <?ifndef DepsDir ?><?define DepsDir = "deps" ?><?endif?>
+  <?ifndef AssetsDir ?><?define AssetsDir = "assets" ?><?endif?>
+  <?ifndef ThemeDir ?><?define ThemeDir = "theme" ?><?endif?>
+
+  <!-- Pinned dependency versions (x64 fallback defaults; build.ps1 overrides
+       these per-arch via -d). Keep versions in sync with build.ps1. -->
+  <?ifndef UsbipdMsi ?><?define UsbipdMsi = "usbipd-win_5.3.0_x64.msi" ?><?endif?>
+  <?ifndef UsbipdUrl ?><?define UsbipdUrl = "https://github.com/dorssel/usbipd-win/releases/download/v5.3.0/usbipd-win_5.3.0_x64.msi" ?><?endif?>
+
+  <!-- Docker Desktop: build-numbered permalink (immutable => hash-stable). The
+       plain .../amd64/Docker%20Desktop%20Installer.exe is the rolling "latest"
+       and would break Burn's install-time hash check. Build numbers are listed
+       in the Docker Desktop release notes. -->
+  <?ifndef DockerExe ?><?define DockerExe = "Docker Desktop Installer.exe" ?><?endif?>
+  <?ifndef DockerBuild ?><?define DockerBuild = "237512" ?><?endif?>
+  <?ifndef DockerUrl ?><?define DockerUrl = "https://desktop.docker.com/win/main/amd64/$(DockerBuild)/Docker%20Desktop%20Installer.exe" ?><?endif?>
+
+  <?ifndef PodmanVersion ?><?define PodmanVersion = "1.29.1" ?><?endif?>
+  <?ifndef PodmanExe ?><?define PodmanExe = "podman-desktop-$(PodmanVersion)-setup-x64.exe" ?><?endif?>
+  <?ifndef PodmanUrl ?><?define PodmanUrl = "https://github.com/podman-desktop/podman-desktop/releases/download/v$(PodmanVersion)/podman-desktop-$(PodmanVersion)-setup-x64.exe" ?><?endif?>
+
+  <Bundle Name="RF Swift"
+          Manufacturer="Penthertz"
+          Version="$(BundleVersion)"
+          UpgradeCode="3F1A6B2C-8D4E-4A7B-9C1F-5E2D7A9B0C44"
+          IconSourceFile="$(AssetsDir)\rfswift.ico"
+          AboutUrl="https://rfswift.io"
+          HelpUrl="https://rfswift.io/docs/">
+
+    <BootstrapperApplication>
+      <bal:WixStandardBootstrapperApplication
+          Theme="hyperlinkLicense"
+          LicenseUrl="https://www.gnu.org/licenses/gpl-3.0.html"
+          ThemeFile="$(ThemeDir)\RFSwiftTheme.xml"
+          LocalizationFile="$(ThemeDir)\RFSwiftTheme.wxl" />
+      <!-- Logo referenced by the theme's ImageControl (ImageFile="rfswift-logo.png"). -->
+      <Payload Name="rfswift-logo.png" SourceFile="$(AssetsDir)\rfswift-logo.png" />
+    </BootstrapperApplication>
+
+    <!-- Options-page selections. The theme controls read/write these. -->
+    <Variable Name="EnableWsl"       Value="1"      Type="numeric" bal:Overridable="yes" />
+    <Variable Name="EnableUsbipd"    Value="1"      Type="numeric" bal:Overridable="yes" />
+    <Variable Name="SetupNix"        Value="0"      Type="numeric" bal:Overridable="yes" />
+    <Variable Name="ContainerEngine" Value="docker" Type="string"  bal:Overridable="yes" />
+
+    <!-- Skip-if-present detection for the engine installers. -->
+    <util:RegistrySearch Id="SearchDockerDesktop" Variable="DockerDesktopVersion"
+        Root="HKLM" Key="SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\Docker Desktop"
+        Value="DisplayVersion" Result="value" />
+    <util:FileSearch Id="SearchPodmanDesktop" Variable="PodmanDesktopExe"
+        Path="[LocalAppDataFolder]Programs\podman-desktop\Podman Desktop.exe" Result="exists" />
+
+    <Chain>
+      <!-- 1) Enable WSL 2 + WSLg. Idempotent; no DetectCondition so it always
+              runs when checked (re-enabling an enabled feature is a no-op). A
+              pending restart surfaces as DISM 3010 -> Burn reboots and resumes. -->
+      <ExePackage Id="EnableWsl"
+                  DisplayName="Enable WSL 2 and WSLg"
+                  PerMachine="yes" Permanent="yes" Vital="yes"
+                  InstallCondition="EnableWsl = 1"
+                  InstallArguments="-ExecutionPolicy Bypass -NoProfile -File &quot;RunPrereqs.ps1&quot;">
+        <ExePackagePayload SourceFile="$(env.SystemRoot)\System32\WindowsPowerShell\v1.0\powershell.exe" Name="powershell.exe" />
+        <Payload SourceFile="RunPrereqs.ps1" Name="RunPrereqs.ps1" />
+        <ExitCode Value="0" Behavior="success" />
+        <ExitCode Value="3010" Behavior="scheduleReboot" />
+        <ExitCode Behavior="error" />
+      </ExePackage>
+
+      <!-- 2) usbipd-win. Burn auto-detects it via ProductCode/UpgradeCode, so
+              re-running the bundle skips it when the pinned version is present. -->
+      <MsiPackage Id="Usbipd"
+                  SourceFile="$(DepsDir)\$(UsbipdMsi)"
+                  DownloadUrl="$(UsbipdUrl)"
+                  Compressed="no" Vital="yes"
+                  InstallCondition="EnableUsbipd = 1" />
+
+      <!-- 3a) Docker Desktop (default engine). Per-machine, silent. -->
+      <ExePackage Id="DockerDesktop"
+                  DisplayName="Docker Desktop"
+                  SourceFile="$(DepsDir)\$(DockerExe)"
+                  DownloadUrl="$(DockerUrl)"
+                  Compressed="no" PerMachine="yes" Permanent="yes" Vital="yes"
+                  InstallArguments="install --quiet --accept-license --backend=wsl-2"
+                  DetectCondition="DockerDesktopVersion"
+                  InstallCondition="ContainerEngine = &quot;docker&quot;">
+        <ExitCode Value="0" Behavior="success" />
+        <ExitCode Value="3" Behavior="success" />
+        <ExitCode Value="3010" Behavior="scheduleReboot" />
+      </ExePackage>
+
+      <!-- 3b) Podman Desktop (open-source engine). Per-user NSIS installer, so
+              PerMachine="no" runs it as the invoking user (no extra elevation). -->
+      <ExePackage Id="PodmanDesktop"
+                  DisplayName="Podman Desktop"
+                  SourceFile="$(DepsDir)\$(PodmanExe)"
+                  DownloadUrl="$(PodmanUrl)"
+                  Compressed="no" PerMachine="no" Permanent="yes" Vital="yes"
+                  InstallArguments="/S"
+                  DetectCondition="PodmanDesktopExe"
+                  InstallCondition="ContainerEngine = &quot;podman&quot;" />
+
+      <!-- 3c) Optional: Nix in WSL 2 (native environments, no container engine).
+               Best-effort (Vital="no"): provisions a WSL 2 distro with Nix
+               (Determinate, flakes) + the Linux rfswift CLI. A failure here is
+               logged but never rolls back the container install. -->
+      <ExePackage Id="SetupNixWsl"
+                  DisplayName="Set up Nix in WSL 2"
+                  PerMachine="yes" Permanent="yes" Vital="no"
+                  InstallCondition="SetupNix = 1"
+                  InstallArguments="-ExecutionPolicy Bypass -NoProfile -File &quot;SetupNixWSL.ps1&quot;">
+        <ExePackagePayload SourceFile="$(env.SystemRoot)\System32\WindowsPowerShell\v1.0\powershell.exe" Name="powershell.exe" />
+        <Payload SourceFile="SetupNixWSL.ps1" Name="SetupNixWSL.ps1" />
+        <ExitCode Value="0" Behavior="success" />
+        <ExitCode Value="3010" Behavior="scheduleReboot" />
+        <ExitCode Behavior="success" />
+      </ExePackage>
+
+      <!-- 4) RF Swift itself: the MSI, embedded in the bundle. Hidden in ARP
+              (Visible="no") so only the bundle's "RF Swift" entry shows and
+              uninstall flows through the bundle. -->
+      <MsiPackage Id="RFSwift"
+                  SourceFile="$(MsiFile)"
+                  Compressed="yes" Vital="yes" Visible="no" />
+    </Chain>
+  </Bundle>
+</Wix>

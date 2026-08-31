@@ -6,3 +6,13 @@
 
 # macOS Finder metadata, in any directory.
 .DS_Store
+
+# Windows installer build outputs (WiX MSI + Burn bundle). The .wxs/.wxl/theme
+# sources and build.ps1 are tracked; everything generated at build time is not.
+/windows/installer/build/
+/windows/installer/obj/
+/windows/installer/**/*.wixobj
+/windows/installer/**/*.wixpdb
+/windows/installer/License.rtf
+/windows/installer/**/*.msi
+/windows/installer/**/*.exe

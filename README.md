@@ -212,6 +212,15 @@ rfswift --gpu run -i penthertz/rfswift_resolute:sdr_light -n gpu_work --devices 
 
 Use `--gpu` for GPU compute; use `--engine lima` (without `--gpu`) for SDR hardware. Requires macOS ≥ 14 and a guest kernel with virtio-gpu Venus support (Linux ≥ 6.13).
 
+### 🪟 Windows install (one-click MSI + dependency bundle)
+
+Two Windows deliverables ship with each release:
+
+- **`RFSwift-Setup-<version>-<arch>.exe`** (x64 + arm64) — a bundle that installs, under a **single** UAC prompt, the prerequisites you pick on one screen: **WSL 2 + WSLg**, **usbipd-win** (USB/SDR passthrough), a **container engine** (Docker Desktop by default, or Podman Desktop, or "I already have one"), an optional **Nix in WSL 2** for native environments, and RF Swift itself. Everything already present is skipped.
+- **`RFSwift-<version>-<arch>.msi`** (x64 + arm64) — RF Swift on its own (CLI on `PATH`, an "RF Swift Console" and "RF Swift Workbench" in the Start Menu), for enterprise deployment (Intune/GPO) or machines that already have the prerequisites.
+
+After it runs, `rfswift` works from any console and the Workbench opens from the Start Menu. Details, silent-install switches and the trust model: [docs/windows-installer.md](docs/windows-installer.md).
+
 ### 🪟 Windows USB Passthrough (usbipd + WSL 2)
 
 On Windows, Docker Desktop and Podman run their containers inside the WSL 2 VM, which cannot see the host USB bus. RF Swift forwards devices into that VM with [usbipd-win](https://github.com/dorssel/usbipd-win) (`winget install usbipd`). Only *sharing* a device for the first time needs administrator rights; RF Swift asks for them through a normal UAC prompt for `usbipd.exe`, once per device. Attaching and detaching never need elevation.

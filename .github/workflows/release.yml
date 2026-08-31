@@ -263,3 +263,19 @@ jobs:
     with:
       upload_to_release: true
     secrets: inherit
+
+  # Windows MSI + dependency bundle, mirroring the macOS DMG flow. Gated on
+  # generate-artifacts so the GitHub release exists (for upload) and the Windows
+  # Workbench artifact from workbench-windows is available to download. Signing
+  # is secret-gated inside the reusable workflow.
+  windows-installer:
+    name: Windows installer
+    needs: generate-artifacts
+    permissions:
+      contents: write      # attach the .msi/.exe to the release
+      id-token: write      # Sigstore OIDC token for build provenance
+      attestations: write  # write the artifact attestation
+    uses: ./.github/workflows/windows-installer.yml
+    with:
+      upload_to_release: true
+    secrets: inherit

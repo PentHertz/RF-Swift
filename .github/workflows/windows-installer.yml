@@ -1,0 +1,174 @@
+name: Windows installer (MSI + bundle)
+
+# Builds the Windows deliverables on native x64 and arm64 runners and - when the
+# Authenticode signing secrets are present - code-signs them:
+#
+#   RFSwift-<version>-<arch>.msi        RF Swift itself (CLI + Workbench)
+#   RFSwift-Setup-<version>-<arch>.exe  Burn bundle: WSL 2 + usbipd + engine + MSI
+#
+# One matrix leg per architecture. arm64 builds on windows-11-arm so the
+# powershell.exe stub the bundle carries for its WSL/Nix prerequisite steps is
+# arm64-native (an x64 stub cross-built on windows-latest would be wrong).
+#
+# Reusable, like macos-dmg.yml: release.yml calls it after generate-artifacts
+# (so the GitHub release already exists) with upload_to_release: true. A
+# workflow_dispatch runs a dry build that only uploads workflow artifacts.
+#
+# Signing secrets (optional; without them the artifacts are produced UNSIGNED):
+#   WINDOWS_CERT_BASE64     base64 of the code-signing .pfx
+#   WINDOWS_CERT_PASSWORD   password protecting the .pfx
+# Full setup: docs/windows-installer.md.
+
+on:
+  workflow_call:
+    inputs:
+      upload_to_release:
+        description: "Attach the installers to the tag's GitHub release."
+        type: boolean
+        default: false
+  workflow_dispatch:
+    inputs:
+      upload_to_release:
+        description: "Attach to the tag's GitHub release (leave off for dry runs)."
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  windows-installer:
+    name: ${{ matrix.arch }} installer
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            goarch: amd64
+            runner: windows-latest
+            wbzip: rfswift-workbench_Windows_x86_64.zip
+          - arch: arm64
+            goarch: arm64
+            runner: windows-11-arm
+            wbzip: rfswift-workbench_Windows_arm64.zip
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: write      # upload to the GitHub release
+      id-token: write      # Sigstore OIDC token for build provenance
+      attestations: write  # write the artifact attestation
+    env:
+      # Job-level so the signing steps' `if:` conditions can read them. Empty on
+      # forks / when the secrets are unset -> unsigned artifacts.
+      WINDOWS_CERT_BASE64: ${{ secrets.WINDOWS_CERT_BASE64 }}
+      WINDOWS_CERT_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go/rfswift/go.mod
+          cache-dependency-path: go/rfswift/go.sum
+
+      - name: Set up .NET (for the WiX dotnet tool)
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      - name: Derive version
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          if ($env:GITHUB_REF_TYPE -eq "tag") {
+            $version = $env:GITHUB_REF_NAME -replace '^v', ''
+          } else {
+            $line = (Select-String -Path go/rfswift/common/common.go -Pattern 'var Version' | Select-Object -First 1).Line
+            $version = [regex]::Match($line, '"([^"]+)"').Groups[1].Value + "-dev"
+          }
+          "RFSWIFT_VERSION=$version" >> $env:GITHUB_ENV
+          Write-Host "==> building RF Swift installer v$version (${{ matrix.arch }})"
+
+      - name: Build rfswift CLI (${{ matrix.arch }})
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $env:GOOS = "windows"; $env:GOARCH = "${{ matrix.goarch }}"; $env:CGO_ENABLED = "0"
+          Push-Location go/rfswift
+          go build -trimpath -ldflags "-s -w" -tags netgo -o "bin/rfswift_windows_${{ matrix.goarch }}.exe" main.go
+          Pop-Location
+
+      - name: Download Workbench Windows binaries
+        uses: actions/download-artifact@v4
+        with:
+          name: rfswift-workbench-windows
+          path: workbench-zips
+
+      - name: Assemble payload directory
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $bin = "windows\installer\bin-${{ matrix.arch }}"
+          New-Item -ItemType Directory -Force $bin | Out-Null
+          Copy-Item "go\rfswift\bin\rfswift_windows_${{ matrix.goarch }}.exe" "$bin\rfswift.exe"
+          Expand-Archive "workbench-zips\${{ matrix.wbzip }}" -DestinationPath wb -Force
+          Copy-Item (Get-ChildItem wb\*.exe | Select-Object -First 1).FullName "$bin\rfswift-workbench.exe"
+          Get-ChildItem $bin
+
+      - name: Prepare signing certificate
+        id: cert
+        if: env.WINDOWS_CERT_BASE64 != ''
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $pfx = Join-Path $env:RUNNER_TEMP "rfswift-codesign.pfx"
+          [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:WINDOWS_CERT_BASE64))
+          "pfx=$pfx" >> $env:GITHUB_OUTPUT
+          Write-Host "==> code-signing certificate staged"
+
+      - name: Build MSI + dependency bundle (${{ matrix.arch }})
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $sign = @{}
+          if ("${{ steps.cert.outputs.pfx }}") { $sign = @{ CertFile = "${{ steps.cert.outputs.pfx }}"; CertPassword = $env:WINDOWS_CERT_PASSWORD } }
+          & windows\installer\build.ps1 -Version $env:RFSWIFT_VERSION -Arch ${{ matrix.arch }} `
+              -BinDir "windows\installer\bin-${{ matrix.arch }}" -Bundle @sign
+
+      - name: Collect and checksum artifacts
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          New-Item -ItemType Directory -Force release-assets | Out-Null
+          Copy-Item windows\installer\build\RFSwift-*.msi release-assets\ -ErrorAction SilentlyContinue
+          Copy-Item windows\installer\build\RFSwift-Setup-*.exe release-assets\ -ErrorAction SilentlyContinue
+          $ver = $env:RFSWIFT_VERSION
+          Get-ChildItem release-assets | Get-FileHash -Algorithm SHA256 |
+            ForEach-Object { "{0}  {1}" -f $_.Hash.ToLower(), [IO.Path]::GetFileName($_.Path) } |
+            Set-Content -Encoding ascii "release-assets\RF-Swift_${ver}_windows_${{ matrix.arch }}_checksums.txt"
+          Get-ChildItem release-assets
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: |
+            release-assets/RFSwift-*.msi
+            release-assets/RFSwift-Setup-*.exe
+
+      - name: Upload installer as workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: rfswift-windows-installer-${{ matrix.arch }}
+          path: release-assets/*
+          if-no-files-found: error
+
+      - name: Upload installers to the GitHub release
+        if: inputs.upload_to_release && github.ref_type == 'tag'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          gh release upload "$GITHUB_REF_NAME" release-assets/* --clobber
+          echo "==> uploaded ${{ matrix.arch }} Windows installers to release $GITHUB_REF_NAME"

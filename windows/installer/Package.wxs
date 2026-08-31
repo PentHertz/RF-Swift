@@ -1,0 +1,145 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  RF Swift MSI (RF Swift itself only: the CLI/TUI and the Workbench GUI).
+
+  This package deliberately installs nothing but RF Swift: dependencies (WSL 2,
+  usbipd-win, a container engine) are chained by the Burn bundle in Bundle.wxs,
+  which runs this MSI silently after them under a single elevation. The MSI is
+  also useful on its own for enterprise deployment (Intune/GPO), where the
+  dependencies are managed separately.
+
+  Build inputs are passed as preprocessor variables (see build.ps1):
+    -d RFSwiftVersion=4.0.1   numeric x.y.z ProductVersion (no -dev suffix)
+    -d BinDir=...\bin         directory holding rfswift.exe + rfswift-workbench.exe
+    -d LicenseRtf=...         RTF rendered from the repo LICENSE
+    -arch x64|arm64           sets ProgramFiles64Folder + component bitness
+-->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
+     xmlns:ui="http://wixtoolset.org/schemas/v4/wxs/ui">
+
+  <?ifndef RFSwiftVersion ?><?define RFSwiftVersion = "4.0.1" ?><?endif?>
+  <?ifndef BinDir ?><?define BinDir = "bin" ?><?endif?>
+  <?ifndef AssetsDir ?><?define AssetsDir = "assets" ?><?endif?>
+  <?ifndef LicenseRtf ?><?define LicenseRtf = "License.rtf" ?><?endif?>
+  <?ifndef IconFile ?><?define IconFile = "$(AssetsDir)\rfswift.ico" ?><?endif?>
+
+  <Package
+      Name="RF Swift"
+      Manufacturer="Penthertz"
+      Version="$(RFSwiftVersion)"
+      UpgradeCode="7B3D9F2A-1C4E-4B8A-9E5D-2F6A8C1B0D33"
+      Scope="perMachine"
+      InstallerVersion="500"
+      Compressed="yes">
+
+    <SummaryInformation
+        Description="RF Swift - containerized RF, hardware and security toolbox"
+        Manufacturer="Penthertz" />
+
+    <!-- Block downgrades; allow re-running the same version as a repair. -->
+    <MajorUpgrade
+        AllowSameVersionUpgrades="yes"
+        DowngradeErrorMessage="A newer version of [ProductName] is already installed. Setup will now exit." />
+
+    <MediaTemplate EmbedCab="yes" />
+
+    <!-- Add/Remove Programs metadata. ARPNOMODIFY hides the "Change" button:
+         features are chosen at install time, there is nothing to reconfigure.
+         The icon is the official RF Swift icon from rfswift.io. -->
+    <Icon Id="rfswift.ico" SourceFile="$(IconFile)" />
+    <Property Id="ARPPRODUCTICON" Value="rfswift.ico" />
+    <Property Id="ARPURLINFOABOUT" Value="https://rfswift.io" />
+    <Property Id="ARPHELPLINK" Value="https://rfswift.io/docs/" />
+    <Property Id="ARPNOMODIFY" Value="1" />
+
+    <!-- Feature tree. When the MSI is run on its own, WixUI_FeatureTree lets the
+         user pick CLI and/or Workbench; the bundle installs everything with /qn. -->
+    <Feature Id="ProductFeature" Title="RF Swift" Level="1" Display="expand"
+             Description="RF Swift CLI/TUI and Workbench GUI.">
+      <Feature Id="CliFeature" Title="RF Swift CLI / TUI" Level="1" AllowAbsent="no"
+               Description="The 'rfswift' command-line driver on the system PATH, plus an 'RF Swift Console' Start Menu entry.">
+        <ComponentGroupRef Id="CliComponents" />
+        <ComponentGroupRef Id="ProgramMenuComponents" />
+      </Feature>
+      <Feature Id="WorkbenchFeature" Title="RF Swift Workbench (GUI)" Level="1"
+               Description="The RF Swift Workbench desktop GUI and its Start Menu shortcut.">
+        <ComponentGroupRef Id="WorkbenchComponents" />
+        <ComponentGroupRef Id="ProgramMenuComponents" />
+      </Feature>
+    </Feature>
+
+    <ui:WixUI Id="WixUI_FeatureTree" />
+    <WixVariable Id="WixUILicenseRtf" Value="$(LicenseRtf)" />
+  </Package>
+
+  <!-- Directory layout: %ProgramFiles%\RF Swift and a Start Menu folder. -->
+  <Fragment>
+    <StandardDirectory Id="ProgramFiles64Folder">
+      <Directory Id="INSTALLFOLDER" Name="RF Swift" />
+    </StandardDirectory>
+    <StandardDirectory Id="ProgramMenuFolder">
+      <Directory Id="AppProgramMenuDir" Name="RF Swift" />
+    </StandardDirectory>
+  </Fragment>
+
+  <!-- CLI: the rfswift.exe binary plus a per-machine PATH entry so `rfswift`
+       works from any terminal. The PATH entry lives in its own component with a
+       stable registry keypath, so its auto-generated component GUID stays put
+       across upgrades and the PATH is not duplicated or dropped. -->
+  <Fragment>
+    <ComponentGroup Id="CliComponents" Directory="INSTALLFOLDER">
+      <Component Id="CmpRfswiftExe">
+        <File Id="FileRfswiftExe" Source="$(BinDir)\rfswift.exe" KeyPath="yes" />
+      </Component>
+      <!-- "RF Swift Console" Start Menu entry: opens a prompt with rfswift on
+           PATH. The shortcut is nested under the launcher .cmd (its keypath),
+           so the CLI is reachable from the menu as well as any console. -->
+      <Component Id="CmpConsoleLauncher">
+        <File Id="FileConsoleCmd" Name="rfswift-console.cmd"
+              Source="$(AssetsDir)\rfswift-console.cmd" KeyPath="yes">
+          <Shortcut Id="ConsoleStartMenuShortcut"
+                    Directory="AppProgramMenuDir"
+                    Name="RF Swift Console"
+                    Description="Open a console with the rfswift CLI on PATH"
+                    Icon="rfswift.ico"
+                    WorkingDirectory="INSTALLFOLDER" />
+        </File>
+      </Component>
+      <Component Id="CmpPathEntry">
+        <Environment Id="RfswiftPath" Name="PATH" Value="[INSTALLFOLDER]"
+                     Part="last" Action="set" System="yes" Permanent="no" />
+        <RegistryValue Root="HKLM" Key="Software\Penthertz\RF Swift"
+                       Name="Installed" Type="integer" Value="1" KeyPath="yes" />
+      </Component>
+    </ComponentGroup>
+  </Fragment>
+
+  <!-- Workbench: the GUI binary with a non-advertised Start Menu shortcut
+       (keypath is the exe, so no per-user data lands in a per-machine
+       component). -->
+  <Fragment>
+    <ComponentGroup Id="WorkbenchComponents" Directory="INSTALLFOLDER">
+      <Component Id="CmpWorkbenchExe">
+        <File Id="FileWorkbenchExe" Source="$(BinDir)\rfswift-workbench.exe" KeyPath="yes">
+          <Shortcut Id="WorkbenchStartMenuShortcut"
+                    Directory="AppProgramMenuDir"
+                    Name="RF Swift Workbench"
+                    Description="RF Swift Workbench GUI"
+                    Icon="rfswift.ico"
+                    WorkingDirectory="INSTALLFOLDER" />
+        </File>
+      </Component>
+    </ComponentGroup>
+  </Fragment>
+
+  <!-- Start Menu folder cleanup on uninstall. -->
+  <Fragment>
+    <ComponentGroup Id="ProgramMenuComponents" Directory="AppProgramMenuDir">
+      <Component Id="CmpProgramMenuDir">
+        <RemoveFolder Id="RemoveAppProgramMenuDir" On="uninstall" />
+        <RegistryValue Root="HKLM" Key="Software\Penthertz\RF Swift"
+                       Name="MenuFolder" Type="integer" Value="1" KeyPath="yes" />
+      </Component>
+    </ComponentGroup>
+  </Fragment>
+</Wix>
