@@ -335,6 +335,12 @@ jobs:
           ln -s /Applications dmg-root/Applications
           cp LICENSE dmg-root/LICENSE.txt
 
+          # Interactive dependency setup (engine chooser + XQuartz + audio),
+          # the macOS counterpart of the Windows installer's dependency
+          # bundle. Covered by the .dmg notarization like the other scripts.
+          cp scripts/setup-macos.sh "dmg-root/RF Swift Setup.command"
+          chmod +x "dmg-root/RF Swift Setup.command"
+
           # Double-clickable installer for the CLI: Terminal opens and
           # sudo-copies the binary into /usr/local/bin. Shell scripts
           # cannot be Mach-O signed, but notarization of the whole .dmg
@@ -364,12 +370,17 @@ jobs:
             rfswift                       the RF Swift CLI/TUI (arm64 + x86_64)
             Install RF Swift CLI.command  double-click to install the CLI to
                                           /usr/local/bin
+            RF Swift Setup.command        double-click to pick and install an
+                                          engine (Docker Desktop, OrbStack,
+                                          Podman, Lima with USB passthrough,
+                                          or native Nix) plus XQuartz/audio
             LICENSE.txt
 
           RF Swift drives containers or native Nix environments, so one of
           these must be available: Docker Desktop, OrbStack, Podman, the
-          bundled Lima setup (USB passthrough), or Nix. See
-          https://rfswift.io/docs/getting-started/ for the macOS guide.
+          bundled Lima setup (USB passthrough), or Nix. "RF Swift
+          Setup.command" installs your pick; the macOS guide is at
+          https://rfswift.io/docs/getting-started/.
 
           This disk image, the app and the CLI are signed and notarized
           by PentHertz when downloaded from an official release, so macOS
@@ -454,3 +465,54 @@ jobs:
           set -euo pipefail
           gh release upload "$GITHUB_REF_NAME" "$DMG_NAME" --clobber
           echo "==> uploaded $DMG_NAME to release $GITHUB_REF_NAME"
+
+      # Homebrew delivery:  brew install --cask penthertz/rfswift/rfswift
+      # One cask, sourced from THIS signed + notarized .dmg, installs both the
+      # CLI (binary stanza) and the Workbench .app - Homebrew quarantines cask
+      # downloads, so only the notarized artifact gives a clean Gatekeeper
+      # pass (the goreleaser tar.gz binaries are unsigned; see .goreleaser.yml).
+      # Gated on: real tag release, notarization done, tap token present,
+      # stable version (no prerelease suffix). Skipped silently otherwise.
+      - name: Publish Homebrew cask
+        if: >-
+          inputs.upload_to_release && github.ref_type == 'tag' &&
+          env.MACOS_KEYCHAIN_PATH != '' && env.APPLE_NOTARY_USER != '' &&
+          env.HOMEBREW_TAP_GITHUB_TOKEN != '' && !contains(github.ref_name, '-')
+        env:
+          APPLE_NOTARY_USER: ${{ secrets.APPLE_NOTARY_USER }}
+          HOMEBREW_TAP_GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          SHA=$(shasum -a 256 "$DMG_NAME" | cut -d' ' -f1)
+          git clone --depth 1 "https://x-access-token:${HOMEBREW_TAP_GITHUB_TOKEN}@github.com/PentHertz/homebrew-rfswift.git" tap
+          mkdir -p tap/Casks
+          cat > tap/Casks/rfswift.rb <<EOF
+          cask "rfswift" do
+            version "${RFSWIFT_VERSION}"
+            sha256 "${SHA}"
+
+            url "https://github.com/PentHertz/RF-Swift/releases/download/v#{version}/rfswift_Darwin_universal.dmg"
+            name "RF Swift"
+            desc "RF and hardware security toolbox (CLI/TUI and Workbench GUI)"
+            homepage "https://rfswift.io"
+
+            binary "rfswift"
+            app "rfswift-workbench.app"
+
+            caveats <<~EOS
+              RF Swift drives containers or native Nix environments. Pick and
+              install an engine (Docker Desktop, OrbStack, Podman, Lima with
+              USB passthrough, or Nix) with the interactive chooser:
+                curl -fsSL https://raw.githubusercontent.com/PentHertz/RF-Swift/main/scripts/setup-macos.sh | bash
+              Shell completions: rfswift completion zsh --install
+              Verify the setup:  rfswift system doctor
+            EOS
+          end
+          EOF
+          cd tap
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Casks/rfswift.rb
+          git commit -m "rfswift ${RFSWIFT_VERSION}" || { echo "cask unchanged"; exit 0; }
+          git push
+          echo "==> published cask rfswift ${RFSWIFT_VERSION} to PentHertz/homebrew-rfswift"

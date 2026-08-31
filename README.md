@@ -255,6 +255,21 @@ sudo pacman -S podman            # Arch Linux
 brew install podman              # macOS
 ```
 
+The installer prefers the native packages automatically (deb/rpm/pacman on Linux, the signed Homebrew cask on macOS) and falls back to a tarball install; set `RFSWIFT_PKG_FORMAT=native|tarball` to pick non-interactively. The same packages - `rfswift` (CLI/TUI, with man pages and bash/zsh/fish completions) and `rfswift-workbench` (desktop GUI) - can also be installed manually from the [releases page](https://github.com/PentHertz/RF-Swift/releases):
+
+```bash
+sudo apt install ./rfswift_<version>_amd64.deb            # Debian/Ubuntu
+sudo dnf install ./rfswift-<version>-1.x86_64.rpm         # Fedora/RHEL
+sudo pacman -U rfswift-<version>-1-x86_64.pkg.tar.zst     # Arch Linux
+```
+
+On macOS, Homebrew installs the CLI and the Workbench GUI together from the signed release, and the bundled setup command picks your engine:
+
+```bash
+brew install --cask penthertz/rfswift/rfswift
+curl -fsSL "https://raw.githubusercontent.com/PentHertz/RF-Swift/main/scripts/setup-macos.sh" | bash
+```
+
 > **Verifying downloads**: The installer offers to check each binary's Sigstore-backed **build provenance attestation** automatically. To verify manually with the [GitHub CLI](https://cli.github.com): `gh attestation verify <downloaded.tar.gz> --repo PentHertz/RF-Swift`. This proves the artifact was built by the official RF Swift release workflow from a specific commit - not swapped afterwards.
 
 > **Note**: When using Podman in rootless mode, some operations (like direct device passthrough) may require additional configuration. RF Swift handles most of this automatically, but see the [documentation](https://rfswift.io/docs/guide/) for details.

@@ -1,0 +1,70 @@
+# nfpm configuration for the RF Swift Workbench Linux packages: .deb
+# (Debian/Ubuntu), .rpm (Fedora) and .pkg.tar.zst (Arch). Built by
+# scripts/mkpackages.sh, which exports the NFPM_* variables referenced here.
+#
+# The GUI dynamically links gtk3 + webkit2gtk-4.1 (see the Makefile header)
+# and nfpm does not compute shared-library dependencies, so the runtime
+# dependencies are spelled out per package format below. openSUSE names the
+# WebKit package differently (libwebkit2gtk-4_1-0); its users are served by
+# the AppImage until an OBS spec exists.
+name: rfswift-workbench
+arch: ${NFPM_GOARCH}
+platform: linux
+# No explicit release: matches the CLI package naming from goreleaser
+# (deb: name_version_arch, rpm/pacman default to release 1), which
+# get_rfswift.sh's native-package flow predicts.
+version: ${NFPM_VERSION}
+section: utils
+priority: optional
+maintainer: PentHertz <contact@penthertz.com>
+vendor: PentHertz
+homepage: https://rfswift.io
+license: GPL-3.0-only
+description: |-
+  Desktop GUI for RF Swift, the RF and hardware security toolbox.
+  Research and assessment workspace that deploys and drives RF Swift's
+  radio and hardware security environments (containers or native Nix)
+  from a desktop application.
+recommends:
+  - rfswift
+overrides:
+  deb:
+    depends:
+      # The t64 names cover Debian 13+/Ubuntu 24.04+ (the time_t transition
+      # renamed the runtime libs); the alternatives cover Debian 12 and
+      # Ubuntu 22.04.
+      - libgtk-3-0t64 | libgtk-3-0
+      - libwebkit2gtk-4.1-0t64 | libwebkit2gtk-4.1-0
+  rpm:
+    depends:
+      - gtk3
+      - webkit2gtk4.1
+  archlinux:
+    depends:
+      - gtk3
+      - webkit2gtk-4.1
+contents:
+  # `expand: true` opts a contents entry into ${...} env expansion (nfpm only
+  # expands version/arch/etc. unconditionally).
+  - src: ${NFPM_BINARY}
+    dst: /usr/bin/rfswift-workbench
+    expand: true
+  - src: packaging/linux/rfswift-workbench.desktop
+    dst: /usr/share/applications/rfswift-workbench.desktop
+  - src: ${NFPM_ICON_DIR}/256x256.png
+    dst: /usr/share/icons/hicolor/256x256/apps/rfswift-workbench.png
+    expand: true
+  - src: ${NFPM_ICON_DIR}/512x512.png
+    dst: /usr/share/icons/hicolor/512x512/apps/rfswift-workbench.png
+    expand: true
+  - src: packaging/linux/com.penthertz.rfswift.workbench.metainfo.xml
+    dst: /usr/share/metainfo/com.penthertz.rfswift.workbench.metainfo.xml
+  - src: ../../LICENSE
+    dst: /usr/share/doc/rfswift-workbench/copyright
+    packager: deb
+  - src: ../../LICENSE
+    dst: /usr/share/licenses/rfswift-workbench/LICENSE
+    packager: rpm
+  - src: ../../LICENSE
+    dst: /usr/share/licenses/rfswift-workbench/LICENSE
+    packager: archlinux

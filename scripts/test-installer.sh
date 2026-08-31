@@ -25,4 +25,51 @@ RELEASE_CHANNEL=dev
 get_latest_release
 [ "$VERSION" = "4.0.0-dev" ]
 [ "$DOWNLOAD_BASE_URL" = "https://github.com/PentHertz/RF-Swift/releases/download/v4.0.0-dev" ]
-echo "installer security and development-channel tests: ok"
+
+# --- Native package flow guards and package naming ---------------------------
+# The dev channel must never take the native-package path (prerelease versions
+# are tilde-mangled in package filenames).
+OS=Linux ARCH=x86_64 VERSION=9.9.9 INSTALL_COMPONENTS=cli PKG_FORMAT=""
+if try_native_package_install >/dev/null 2>&1; then
+  echo "native path accepted the dev channel" >&2
+  exit 1
+fi
+
+# An explicit tarball choice must short-circuit before any network probe.
+RELEASE_CHANNEL=stable PKG_FORMAT=tarball
+release_asset_exists() { echo "unexpected network probe" >&2; exit 1; }
+get_package_manager() { echo apt; }
+if try_native_package_install >/dev/null 2>&1; then
+  echo "native path ignored PKG_FORMAT=tarball" >&2
+  exit 1
+fi
+
+# Package names must match the release artifacts (goreleaser nfpms for the
+# CLI, mkpackages.sh for the Workbench). Stub sudo away so the function
+# returns after constructing the names without touching the system.
+have_sudo_access() { return 1; }
+PKG_FORMAT="" INSTALL_COMPONENTS=both
+try_native_package_install >/dev/null 2>&1 || true
+[ "$cli_pkg" = "rfswift_9.9.9_amd64.deb" ] || { echo "bad deb CLI name: $cli_pkg" >&2; exit 1; }
+[ "$wb_pkg" = "rfswift-workbench_9.9.9_amd64.deb" ] || { echo "bad deb Workbench name: $wb_pkg" >&2; exit 1; }
+
+get_package_manager() { echo dnf; }
+ARCH=arm64 PKG_FORMAT=""
+try_native_package_install >/dev/null 2>&1 || true
+[ "$cli_pkg" = "rfswift-9.9.9-1.aarch64.rpm" ] || { echo "bad rpm CLI name: $cli_pkg" >&2; exit 1; }
+[ "$wb_pkg" = "rfswift-workbench-9.9.9-1.aarch64.rpm" ] || { echo "bad rpm Workbench name: $wb_pkg" >&2; exit 1; }
+
+get_package_manager() { echo pacman; }
+PKG_FORMAT=""
+try_native_package_install >/dev/null 2>&1 || true
+[ "$cli_pkg" = "rfswift-9.9.9-1-aarch64.pkg.tar.zst" ] || { echo "bad pacman CLI name: $cli_pkg" >&2; exit 1; }
+
+# riscv64 has no Workbench package; a workbench request must fall back whole.
+get_package_manager() { echo apt; }
+ARCH=riscv64 PKG_FORMAT="" INSTALL_COMPONENTS=both
+if try_native_package_install >/dev/null 2>&1; then
+  echo "native path accepted riscv64 workbench" >&2
+  exit 1
+fi
+
+echo "installer security, development-channel and native-package tests: ok"

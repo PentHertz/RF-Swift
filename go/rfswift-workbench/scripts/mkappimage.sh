@@ -29,15 +29,9 @@ rm -rf "$APPDIR"
 mkdir -p "$APPDIR/usr/bin" "$APPDIR/usr/share/applications" "$APPDIR/usr/share/icons/hicolor/256x256/apps"
 cp "$BIN" "$APPDIR/usr/bin/$APP"
 
-cat > "$APPDIR/usr/share/applications/$APP.desktop" <<EOF
-[Desktop Entry]
-Type=Application
-Name=RF Swift Workbench
-Exec=$APP
-Icon=$APP
-Categories=Development;Security;
-Terminal=false
-EOF
+# Same desktop entry as the distro packages (packaging/nfpm.yaml) - one
+# canonical file for both delivery paths.
+cp "packaging/linux/$APP.desktop" "$APPDIR/usr/share/applications/$APP.desktop"
 
 # linuxdeploy validates that the pixel dimensions match the icon theme path.
 if [ -f "build/appicon.png" ]; then

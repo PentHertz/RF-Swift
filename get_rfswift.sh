@@ -11,6 +11,11 @@ DEV_VERSION="4.0.0-dev"
 RELEASE_CHANNEL="${RFSWIFT_CHANNEL:-stable}"
 INSTALL_COMPONENTS="${RFSWIFT_INSTALL:-cli}"
 WORKBENCH_FORMAT="${RFSWIFT_WORKBENCH_FORMAT:-native}"
+# native = distro package (deb/rpm/pacman, with man pages, completions and
+# clean uninstall) on Linux, Homebrew cask on macOS; tarball = the classic
+# archive install to a directory. Empty = offer the choice (native first).
+PKG_FORMAT="${RFSWIFT_PKG_FORMAT:-}"
+NATIVE_INSTALLED=false
 FOUND_VERSION=false
 
 # Color codes for better readability
@@ -1683,36 +1688,194 @@ detect_system() {
 
   case "${OS}_${ARCH}" in
     Linux_x86_64) WORKBENCH_FILENAME="rfswift-workbench_Linux_x86_64.tar.gz" ;;
+    Linux_arm64) WORKBENCH_FILENAME="rfswift-workbench_Linux_arm64.tar.gz" ;;
     Darwin_x86_64|Darwin_arm64) WORKBENCH_FILENAME="rfswift-workbench_Darwin_universal.zip" ;;
     *) WORKBENCH_FILENAME="" ;;
   esac
 
-  if [ "$OS" = "Linux" ] && { [ "$INSTALL_COMPONENTS" = "workbench" ] || [ "$INSTALL_COMPONENTS" = "both" ]; }; then
-    case "$WORKBENCH_FORMAT" in native|appimage) ;; *) color_echo "red" "RFSWIFT_WORKBENCH_FORMAT must be native or appimage"; exit 1 ;; esac
-    if [ -z "${RFSWIFT_WORKBENCH_FORMAT+x}" ]; then
-      format_choice=$(prompt_choice "Choose the Linux Workbench package" "AppImage-portable" "Native-smaller")
-      [ "$format_choice" = "2" ] && WORKBENCH_FORMAT="native" || WORKBENCH_FORMAT="appimage"
-    fi
-    [ "$WORKBENCH_FORMAT" = "appimage" ] && WORKBENCH_FILENAME="rfswift-workbench_Linux_x86_64.AppImage"
-  fi
-
   if { [ "$INSTALL_COMPONENTS" = "workbench" ] || [ "$INSTALL_COMPONENTS" = "both" ]; } && [ -z "$WORKBENCH_FILENAME" ]; then
     color_echo "red" "RF Swift Workbench is not currently published for ${OS} ${ARCH}."
-    color_echo "yellow" "The CLI remains available; Workbench release targets are Linux x86_64 and universal macOS."
+    color_echo "yellow" "The CLI remains available; Workbench release targets are Linux x86_64/arm64 and universal macOS."
     exit 1
   fi
-  
+
   color_echo "blue" "🏠 Detected system: ${OS} ${ARCH}"
-  color_echo "blue" "📂 Will download: ${FILENAME}"
-  [ -n "$WORKBENCH_FILENAME" ] && { [ "$INSTALL_COMPONENTS" = "workbench" ] || [ "$INSTALL_COMPONENTS" = "both" ]; } && color_echo "blue" "🖥️  Will download: ${WORKBENCH_FILENAME}"
 }
 
-# Download the files and display checksum information
-download_files() {
-  color_echo "blue" "🌟 Preparing to download RF-Swift..."
-  TMP_DIR=$(mktemp -d)
+# Ask which Linux Workbench artifact to use. Only relevant for the tarball
+# flow - the native-package flow ships the Workbench as a distro package - so
+# it is asked right before downloading, not during system detection.
+choose_workbench_format() {
+  [ "$OS" = "Linux" ] || return 0
+  { [ "$INSTALL_COMPONENTS" = "workbench" ] || [ "$INSTALL_COMPONENTS" = "both" ]; } || return 0
+  case "$WORKBENCH_FORMAT" in native|appimage) ;; *) color_echo "red" "RFSWIFT_WORKBENCH_FORMAT must be native or appimage"; exit 1 ;; esac
+  if [ -z "${RFSWIFT_WORKBENCH_FORMAT+x}" ]; then
+    format_choice=$(prompt_choice "Choose the Linux Workbench package" "AppImage-portable" "Native-smaller")
+    [ "$format_choice" = "2" ] && WORKBENCH_FORMAT="native" || WORKBENCH_FORMAT="appimage"
+  fi
+  if [ "$WORKBENCH_FORMAT" = "appimage" ]; then
+    case "$ARCH" in
+      x86_64) WORKBENCH_FILENAME="rfswift-workbench_Linux_x86_64.AppImage" ;;
+      arm64)  WORKBENCH_FILENAME="rfswift-workbench_Linux_arm64.AppImage" ;;
+    esac
+  fi
+  color_echo "blue" "🖥️  Will download: ${WORKBENCH_FILENAME}"
+}
 
-  download_and_verify() {
+# ═══════════════════════════════════════════════════════════════════════════════
+# Native packages: deb/rpm/pacman on Linux, Homebrew cask on macOS
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# Quick existence probe so a release without native packages (or a wrong name)
+# falls back to the tarball flow instead of aborting mid-install.
+release_asset_exists() {
+  if command_exists curl; then
+    curl -fsIL -H "User-Agent: RF-Swift-Installer" "${DOWNLOAD_BASE_URL}/$1" >/dev/null 2>&1
+  else
+    wget -q --spider "${DOWNLOAD_BASE_URL}/$1" >/dev/null 2>&1
+  fi
+}
+
+# Install one downloaded package file with the distro package manager (which
+# also resolves the Workbench's GTK/WebKit dependencies).
+install_pkg_file() {
+  case "$NATIVE_PM" in
+    apt)    sudo apt-get install -y "$1" ;;
+    dnf)    sudo dnf install -y "$1" ;;
+    yum)    sudo yum install -y "$1" ;;
+    zypper) sudo zypper --non-interactive install --allow-unsigned-rpm "$1" ;;
+    pacman) sudo pacman -U --noconfirm "$1" ;;
+    *) return 1 ;;
+  esac
+}
+
+# Download (with checksum verification), attestation-check and install one
+# native package. Returns non-zero so the caller can fall back to tarballs.
+native_install_one() {
+  pkg_name="$1"
+  checksums_name="$2"
+  release_asset_exists "$pkg_name" || { color_echo "yellow" "⚠️ ${pkg_name} is not published for this release."; return 1; }
+  download_and_verify "$pkg_name" "$checksums_name" || return 1
+  [ -f "${TMP_DIR}/${pkg_name}" ] || return 1
+  if command_exists gh; then
+    gh attestation verify "${TMP_DIR}/${pkg_name}" --repo "$GITHUB_REPO" >/dev/null 2>&1 \
+      && color_echo "green" "✅ Build provenance verified for ${pkg_name}" \
+      || color_echo "yellow" "⚠️ Could not verify build attestation for ${pkg_name}."
+  fi
+  install_pkg_file "${TMP_DIR}/${pkg_name}"
+}
+
+# Prefer native packages (man pages, shell completions, dependency handling,
+# clean uninstall) over the tarball when a supported package manager and sudo
+# are available. Any failure returns non-zero and the classic tarball flow
+# takes over. Stable channel only: prerelease package filenames mangle the
+# version (4.0.0-dev -> 4.0.0~dev) and are not worth predicting here.
+try_native_package_install() {
+  [ "$RELEASE_CHANNEL" = "stable" ] || return 1
+  case "$OS" in
+    Darwin) try_native_install_macos ;;
+    Linux)  try_native_install_linux ;;
+    *) return 1 ;;
+  esac
+}
+
+try_native_install_macos() {
+  command_exists brew || return 1
+  if [ -z "$PKG_FORMAT" ]; then
+    color_echo "cyan" "🍺 Homebrew can install RF Swift from the signed, notarized release (CLI + Workbench, auto-updates with brew upgrade)."
+    choice=$(prompt_choice "How would you like to install RF Swift?" "Homebrew-cask-recommended" "Direct-download")
+    [ "$choice" = "1" ] && PKG_FORMAT="native" || PKG_FORMAT="tarball"
+  fi
+  [ "$PKG_FORMAT" = "native" ] || return 1
+  color_echo "blue" "🍺 Installing the rfswift cask..."
+  if brew install --cask penthertz/rfswift/rfswift; then
+    NATIVE_INSTALLED=true
+    INSTALL_DIR="$(brew --prefix)/bin"
+    color_echo "green" "✅ Installed via Homebrew. Upgrade later with: brew upgrade --cask rfswift"
+    return 0
+  fi
+  color_echo "yellow" "⚠️ Homebrew install failed (tap unreachable?). Falling back to direct download."
+  return 1
+}
+
+try_native_install_linux() {
+  [ "$PKG_FORMAT" = "tarball" ] && return 1
+  NATIVE_PM=$(get_package_manager)
+  case "$NATIVE_PM" in apt|dnf|yum|zypper|pacman) ;; *) return 1 ;; esac
+
+  # Map this system onto each ecosystem's package naming.
+  case "$NATIVE_PM" in
+    apt)
+      case "$ARCH" in x86_64) pkg_arch="amd64" ;; arm64) pkg_arch="arm64" ;; riscv64) pkg_arch="riscv64" ;; *) return 1 ;; esac
+      cli_pkg="rfswift_${VERSION}_${pkg_arch}.deb"
+      wb_pkg="rfswift-workbench_${VERSION}_${pkg_arch}.deb"
+      ;;
+    dnf|yum|zypper)
+      case "$ARCH" in x86_64) pkg_arch="x86_64" ;; arm64) pkg_arch="aarch64" ;; riscv64) pkg_arch="riscv64" ;; *) return 1 ;; esac
+      cli_pkg="rfswift-${VERSION}-1.${pkg_arch}.rpm"
+      wb_pkg="rfswift-workbench-${VERSION}-1.${pkg_arch}.rpm"
+      ;;
+    pacman)
+      case "$ARCH" in x86_64) pkg_arch="x86_64" ;; arm64) pkg_arch="aarch64" ;; *) return 1 ;; esac
+      cli_pkg="rfswift-${VERSION}-1-${pkg_arch}.pkg.tar.zst"
+      wb_pkg="rfswift-workbench-${VERSION}-1-${pkg_arch}.pkg.tar.zst"
+      ;;
+  esac
+
+  # The Workbench package declares Debian/Fedora/Arch dependency names and
+  # exists for amd64/arm64 only; anywhere else its tarball/AppImage flow
+  # handles dependencies (see ensure_workbench_runtime). All-or-nothing per
+  # run so the fallback never half-duplicates an install.
+  if [ "$INSTALL_COMPONENTS" = "workbench" ] || [ "$INSTALL_COMPONENTS" = "both" ]; then
+    { [ "$NATIVE_PM" = "zypper" ] || [ "$ARCH" = "riscv64" ]; } && return 1
+  fi
+
+  if ! have_sudo_access; then
+    color_echo "yellow" "⚠️ Native packages need sudo; using the tarball install instead."
+    return 1
+  fi
+
+  # Probe every requested package upfront (older releases predate them) so a
+  # missing one can never leave a half-native install behind.
+  if [ "$INSTALL_COMPONENTS" = "cli" ] || [ "$INSTALL_COMPONENTS" = "both" ]; then
+    release_asset_exists "$cli_pkg" || return 1
+  fi
+  if [ "$INSTALL_COMPONENTS" = "workbench" ] || [ "$INSTALL_COMPONENTS" = "both" ]; then
+    release_asset_exists "$wb_pkg" || return 1
+  fi
+
+  if [ -z "$PKG_FORMAT" ]; then
+    color_echo "cyan" "📦 A native package is available for your system (man pages, shell completions, clean uninstall)."
+    choice=$(prompt_choice "How would you like to install RF Swift?" "Native-package-recommended" "Tarball-to-a-directory")
+    [ "$choice" = "1" ] && PKG_FORMAT="native" || PKG_FORMAT="tarball"
+  fi
+  [ "$PKG_FORMAT" = "native" ] || return 1
+
+  TMP_DIR=$(mktemp -d)
+  if [ "$INSTALL_COMPONENTS" = "cli" ] || [ "$INSTALL_COMPONENTS" = "both" ]; then
+    if ! native_install_one "$cli_pkg" "RF-Swift_${VERSION}_checksums.txt"; then
+      rm -rf "$TMP_DIR"
+      color_echo "yellow" "⚠️ Native package install failed; falling back to the tarball flow."
+      return 1
+    fi
+  fi
+  if [ "$INSTALL_COMPONENTS" = "workbench" ] || [ "$INSTALL_COMPONENTS" = "both" ]; then
+    if ! native_install_one "$wb_pkg" "RF-Swift_${VERSION}_workbench_checksums.txt"; then
+      rm -rf "$TMP_DIR"
+      color_echo "yellow" "⚠️ Workbench package install failed; falling back to the tarball flow."
+      return 1
+    fi
+  fi
+  rm -rf "$TMP_DIR"
+  NATIVE_INSTALLED=true
+  INSTALL_DIR="/usr/bin"
+  color_echo "green" "🎉 RF Swift installed via ${NATIVE_PM} packages - man pages and completions included."
+  return 0
+}
+
+# Download one release asset into TMP_DIR and verify it against the release's
+# checksums file. Used by both the tarball flow and the native-package flow.
+download_and_verify() {
     asset_name="$1"
     checksums_name="$2"
     asset_url="${DOWNLOAD_BASE_URL}/${asset_name}"
@@ -1750,7 +1913,12 @@ download_files() {
       exit 1
     fi
     color_echo "green" "✅ Verified ${asset_name}: ${calculated}"
-  }
+}
+
+# Download the files and display checksum information
+download_files() {
+  color_echo "blue" "🌟 Preparing to download RF-Swift..."
+  TMP_DIR=$(mktemp -d)
 
   if [ "$INSTALL_COMPONENTS" = "cli" ] || [ "$INSTALL_COMPONENTS" = "both" ]; then
     download_and_verify "$FILENAME" "RF-Swift_${VERSION}_checksums.txt"
@@ -2691,20 +2859,26 @@ main() {
 
   # Get latest release info
   get_latest_release
-  
+
   # Detect system architecture
   detect_system
-  
-  # Download files
-  download_files
-  
-  # Choose installation directory
-  choose_install_dir
-  
-  # Install binary
-  install_binary
-  install_workbench
-  rm -rf "${TMP_DIR}"
+
+  # Prefer native packages (deb/rpm/pacman, or the Homebrew cask on macOS);
+  # any miss falls back to the classic tarball flow below.
+  if ! try_native_package_install; then
+    choose_workbench_format
+
+    # Download files
+    download_files
+
+    # Choose installation directory
+    choose_install_dir
+
+    # Install binary
+    install_binary
+    install_workbench
+    rm -rf "${TMP_DIR}"
+  fi
 
   # check and install agnoster deps
   check_agnoster_dependencies
@@ -2712,8 +2886,9 @@ main() {
   # Check and optionally install asciinema
   check_asciinema
 
-  # Set up alias if requested
-  if prompt_yes_no "Would you like to set up an alias for RF-Swift?" "y"; then
+  # Set up alias if requested. Native packages land on PATH with completions
+  # already installed, so the alias only matters for tarball installs.
+  if [ "$NATIVE_INSTALLED" != true ] && prompt_yes_no "Would you like to set up an alias for RF-Swift?" "y"; then
     create_alias "$INSTALL_DIR"
   fi
   
@@ -2724,7 +2899,7 @@ main() {
   
   # Final instructions should only advertise components actually requested.
   if [ "$INSTALL_COMPONENTS" = "cli" ] || [ "$INSTALL_COMPONENTS" = "both" ]; then
-    if [ "$INSTALL_DIR" != "/usr/local/bin" ]; then
+    if [ "$NATIVE_INSTALLED" != true ] && [ "$INSTALL_DIR" != "/usr/local/bin" ]; then
       color_echo "cyan" "🚀 To use RF-Swift, you can:"
       color_echo "cyan" "   - Run it directly: ${INSTALL_DIR}/rfswift"
       color_echo "cyan" "   - Add ${INSTALL_DIR} to your PATH"

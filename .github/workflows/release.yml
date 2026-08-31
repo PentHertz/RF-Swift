@@ -34,6 +34,11 @@ jobs:
           cp build/bin/rfswift-workbench_linux_amd64 build/package/rfswift-workbench
           cp ../../README.md ../../LICENSE build/package/
           tar -C build/package -czf build/bin/rfswift-workbench_Linux_x86_64.tar.gz .
+      - name: Build Linux packages (deb, rpm, pacman)
+        run: |
+          go install github.com/goreleaser/nfpm/v2/cmd/nfpm@v2.47.0
+          PATH="$(go env GOPATH)/bin:$PATH" VERSION="${GITHUB_REF_NAME#v}" \
+            scripts/mkpackages.sh build/bin/rfswift-workbench_linux_amd64 amd64
       - name: Install pinned AppImage tools
         env:
           LINUXDEPLOY_SHA256: c20cd71e3a4e3b80c3483cef793cda3f4e990aca14014d23c544ca3ce1270b4d
@@ -65,6 +70,9 @@ jobs:
           path: |
             go/rfswift-workbench/build/bin/rfswift-workbench_Linux_x86_64.tar.gz
             go/rfswift-workbench/build/bin/rfswift-workbench_Linux_x86_64.AppImage
+            go/rfswift-workbench/build/bin/*.deb
+            go/rfswift-workbench/build/bin/*.rpm
+            go/rfswift-workbench/build/bin/*.pkg.tar.zst
 
   workbench-windows:
     name: Workbench Windows
@@ -120,6 +128,11 @@ jobs:
           cp build/bin/rfswift-workbench_linux_arm64 build/package-arm64/rfswift-workbench
           cp ../../README.md ../../LICENSE build/package-arm64/
           tar -C build/package-arm64 -czf build/bin/rfswift-workbench_Linux_arm64.tar.gz .
+      - name: Build Linux packages (deb, rpm, pacman)
+        run: |
+          go install github.com/goreleaser/nfpm/v2/cmd/nfpm@v2.47.0
+          PATH="$(go env GOPATH)/bin:$PATH" VERSION="${GITHUB_REF_NAME#v}" \
+            scripts/mkpackages.sh build/bin/rfswift-workbench_linux_arm64 arm64
       - name: Install pinned ARM64 AppImage tools
         env:
           LINUXDEPLOY_SHA256: 620095110d693282b8ebeb244a95b5e911cf8f65f76c88b4b47d16ae6346fcff
@@ -152,6 +165,9 @@ jobs:
           path: |
             go/rfswift-workbench/build/bin/rfswift-workbench_Linux_arm64.tar.gz
             go/rfswift-workbench/build/bin/rfswift-workbench_Linux_arm64.AppImage
+            go/rfswift-workbench/build/bin/*.deb
+            go/rfswift-workbench/build/bin/*.rpm
+            go/rfswift-workbench/build/bin/*.pkg.tar.zst
 
   workbench-macos:
     name: Workbench macOS
@@ -214,6 +230,9 @@ jobs:
           subject-path: |
             dist/*.tar.gz
             dist/*.zip
+            dist/*.deb
+            dist/*.rpm
+            dist/*.pkg.tar.zst
             dist/*checksums.txt
 
   publish-workbench:
@@ -233,14 +252,16 @@ jobs:
           merge-multiple: true
 
       - name: Generate Workbench checksums
+        # No underscore in the glob: the .rpm and .pkg.tar.zst names use
+        # dashes (rfswift-workbench-<ver>-1.<arch>.*).
         run: |
           cd release-assets
-          sha256sum rfswift-workbench_* > "RF-Swift_${GITHUB_REF_NAME#v}_workbench_checksums.txt"
+          sha256sum rfswift-workbench* > "RF-Swift_${GITHUB_REF_NAME#v}_workbench_checksums.txt"
 
       - name: Attest Workbench provenance
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
-          subject-path: release-assets/rfswift-workbench_*
+          subject-path: release-assets/rfswift-workbench*
 
       - name: Upload Workbench assets to the release
         env:

@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- AppStream metadata: with this installed alongside the .desktop file, the
+     Workbench shows up properly in GNOME Software, KDE Discover and other
+     software centers when installed from a distro package. -->
+<component type="desktop-application">
+  <id>com.penthertz.rfswift.workbench</id>
+  <name>RF Swift Workbench</name>
+  <summary>Research and assessment workspace for RF Swift</summary>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>GPL-3.0-only</project_license>
+  <description>
+    <p>
+      RF Swift Workbench is the desktop companion to the rfswift CLI/TUI. It
+      deploys and drives ready-to-use radio and hardware security
+      environments (containers or native Nix) with working USB, audio and
+      display passthrough, from a graphical workspace.
+    </p>
+  </description>
+  <launchable type="desktop-id">rfswift-workbench.desktop</launchable>
+  <provides>
+    <binary>rfswift-workbench</binary>
+  </provides>
+  <url type="homepage">https://rfswift.io</url>
+  <url type="bugtracker">https://github.com/PentHertz/RF-Swift/issues</url>
+  <developer id="com.penthertz">
+    <name>PentHertz</name>
+  </developer>
+  <content_rating type="oars-1.1" />
+</component>
