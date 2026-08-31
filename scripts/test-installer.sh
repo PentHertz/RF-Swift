@@ -26,6 +26,16 @@ get_latest_release
 [ "$VERSION" = "4.0.0-dev" ]
 [ "$DOWNLOAD_BASE_URL" = "https://github.com/PentHertz/RF-Swift/releases/download/v4.0.0-dev" ]
 
+# --- Version string validation (network-derived, flows into paths/URLs) ------
+validate_version_string "4.0.1"
+validate_version_string "4.1.0-rc.2"
+for bad in "" "4.0.1/../evil" '$(reboot)' "4.0.1 rm" "v4;id"; do
+  if validate_version_string "$bad"; then
+    echo "accepted malicious version string: $bad" >&2
+    exit 1
+  fi
+done
+
 # --- Native package flow guards and package naming ---------------------------
 # The dev channel must never take the native-package path (prerelease versions
 # are tilde-mangled in package filenames).

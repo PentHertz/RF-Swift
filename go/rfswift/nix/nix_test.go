@@ -109,6 +109,62 @@ func TestManifestRoundTrip(t *testing.T) {
 	}
 }
 
+func TestValidateEnvironmentNameRejectsUnsafeNames(t *testing.T) {
+	// Names flow unquoted into the sourced bashrc and into filesystem paths.
+	for _, ok := range []string{"rt", "sdr_light", "lab-1", "env.2"} {
+		if err := ValidateEnvironmentName(ok); err != nil {
+			t.Errorf("valid name %q rejected: %v", ok, err)
+		}
+	}
+	for _, bad := range []string{
+		"", ".", "..", "../evil", "a/b", "a b",
+		"pwn$(id)", "x`reboot`", "a;rm -rf ~", "a\nrm", "-flag", ".hidden",
+	} {
+		if err := ValidateEnvironmentName(bad); err == nil {
+			t.Errorf("unsafe name %q was accepted", bad)
+		}
+	}
+}
+
+func TestGetEnvironmentRejectsUnsafeManifestName(t *testing.T) {
+	// An imported/hand-crafted manifest must not smuggle a shell-injecting
+	// name past the loader (the name is later sourced into bash on entry).
+	dir := t.TempDir()
+	t.Setenv("RFSWIFT_NIX_HOME", dir)
+	env := &Environment{Name: "rt", Image: "sdr_light", FlakeRef: "path:/x"}
+	if err := writeManifest(env); err != nil {
+		t.Fatalf("writeManifest: %v", err)
+	}
+	// Rewrite the on-disk manifest with a malicious Name, as an attacker
+	// shipping an environment directory would.
+	evil := []byte(`{"name":"pwn$(touch /tmp/pwned)","image":"sdr_light","flakeRef":"path:/x"}`)
+	if err := os.WriteFile(manifestPath("rt"), evil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := GetEnvironment("rt"); err == nil {
+		t.Fatal("GetEnvironment accepted a manifest with an unsafe name")
+	}
+}
+
+func TestWriteShimsSkipsNewlineInjectingAttr(t *testing.T) {
+	t.Setenv("RFSWIFT_NIX_HOME", t.TempDir())
+	t.Setenv("RFSWIFT_NIX_BIN", "/opt/nix/bin/nix")
+	env := &Environment{
+		Name:     "lazy",
+		Image:    "sdr_light",
+		FlakeRef: "path:/rf-swift-nix",
+		Commands: map[string]string{"evil": "attr\necho pwned"},
+	}
+	if err := writeShims(env); err != nil {
+		t.Fatal(err)
+	}
+	if data, err := os.ReadFile(filepath.Join(shimsDir(env.Name), "evil")); err == nil {
+		if strings.Contains(string(data), "echo pwned") {
+			t.Fatalf("shim contains injected line:\n%s", data)
+		}
+	}
+}
+
 func TestWriteShimsUsesResolvedMainProgram(t *testing.T) {
 	t.Setenv("RFSWIFT_NIX_HOME", t.TempDir())
 	t.Setenv("RFSWIFT_NIX_BIN", "/opt/nix/bin/nix")

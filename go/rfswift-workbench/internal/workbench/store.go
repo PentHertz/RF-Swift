@@ -104,6 +104,9 @@ func (s *Store) DeleteMission(ws, id string) error {
 
 // ListMissions reads the mission.json of each mission in a workspace.
 func (s *Store) ListMissions(ws string) ([]Mission, error) {
+	if !validWorkspaceName(ws) {
+		return nil, errors.New("workspace name must be a single non-empty path component")
+	}
 	entries, err := os.ReadDir(s.missionsDir(ws))
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -143,6 +146,9 @@ func (s *Store) SaveMission(ws string, m Mission) error {
 
 // GetNote returns a note's markdown body ("" if it does not exist yet).
 func (s *Store) GetNote(ws, id, name string) (string, error) {
+	if err := validateMissionPath(ws, id); err != nil {
+		return "", err
+	}
 	b, err := os.ReadFile(filepath.Join(s.notesDir(ws, id), safeName(name)))
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -155,6 +161,9 @@ func (s *Store) GetNote(ws, id, name string) (string, error) {
 
 // SaveNote writes a note's markdown body.
 func (s *Store) SaveNote(ws, id, name, body string) error {
+	if err := validateMissionPath(ws, id); err != nil {
+		return err
+	}
 	if err := os.MkdirAll(s.notesDir(ws, id), 0o700); err != nil {
 		return err
 	}
@@ -163,6 +172,9 @@ func (s *Store) SaveNote(ws, id, name, body string) error {
 
 // ListNotes returns the note file names in a mission's notebook.
 func (s *Store) ListNotes(ws, id string) ([]string, error) {
+	if err := validateMissionPath(ws, id); err != nil {
+		return nil, err
+	}
 	entries, err := os.ReadDir(s.notesDir(ws, id))
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -182,6 +194,9 @@ func (s *Store) ListNotes(ws, id string) ([]string, error) {
 
 // LoadFindings reads a mission's findings.json.
 func (s *Store) LoadFindings(ws, id string) ([]Finding, error) {
+	if err := validateMissionPath(ws, id); err != nil {
+		return nil, err
+	}
 	var fs []Finding
 	err := readJSON(s.findingsPath(ws, id), &fs)
 	if err != nil {
@@ -195,6 +210,9 @@ func (s *Store) LoadFindings(ws, id string) ([]Finding, error) {
 
 // SaveFindings writes a mission's findings.json.
 func (s *Store) SaveFindings(ws, id string, fs []Finding) error {
+	if err := validateMissionPath(ws, id); err != nil {
+		return err
+	}
 	if err := os.MkdirAll(s.missionDir(ws, id), 0o700); err != nil {
 		return err
 	}
@@ -203,6 +221,9 @@ func (s *Store) SaveFindings(ws, id string, fs []Finding) error {
 
 // ListCaptures reads the *.meta.json sidecars in a mission's captures/.
 func (s *Store) ListCaptures(ws, id string) ([]Capture, error) {
+	if err := validateMissionPath(ws, id); err != nil {
+		return nil, err
+	}
 	entries, err := os.ReadDir(s.capturesDir(ws, id))
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -225,6 +246,9 @@ func (s *Store) ListCaptures(ws, id string) ([]Capture, error) {
 // AddCapture writes a capture's metadata sidecar (the file itself is expected to
 // already sit in captures/, or be copied there by the caller).
 func (s *Store) AddCapture(ws, id string, c Capture) error {
+	if err := validateMissionPath(ws, id); err != nil {
+		return err
+	}
 	if err := os.MkdirAll(s.capturesDir(ws, id), 0o700); err != nil {
 		return err
 	}
@@ -234,6 +258,9 @@ func (s *Store) AddCapture(ws, id string, c Capture) error {
 // ImportCapture copies an existing artifact into the workspace and updates c.Path
 // to the resulting workspace-relative path before saving its metadata.
 func (s *Store) ImportCapture(ws, id string, c *Capture) error {
+	if err := validateMissionPath(ws, id); err != nil {
+		return err
+	}
 	if c == nil || c.Path == "" {
 		return nil
 	}
@@ -267,6 +294,9 @@ func (s *Store) ImportCapture(ws, id string, c *Capture) error {
 // SaveReport writes a generated report into a mission's reports/ and returns the
 // absolute path.
 func (s *Store) SaveReport(ws, id, filename string, data []byte) (string, error) {
+	if err := validateMissionPath(ws, id); err != nil {
+		return "", err
+	}
 	if err := os.MkdirAll(s.reportsDir(ws, id), 0o700); err != nil {
 		return "", err
 	}
@@ -291,6 +321,13 @@ func safeName(name string) string {
 
 func validWorkspaceName(name string) bool {
 	return name != "" && name != "." && name != ".." && filepath.Base(name) == name
+}
+
+func validateMissionPath(ws, id string) error {
+	if !validWorkspaceName(ws) || !validWorkspaceName(id) {
+		return errors.New("workspace and mission IDs must be single non-empty path components")
+	}
+	return nil
 }
 
 func writeJSON(path string, v any) error {

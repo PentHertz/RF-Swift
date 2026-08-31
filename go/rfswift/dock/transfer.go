@@ -38,7 +38,16 @@ func extractTarArchive(reader io.Reader, destDir string) error {
 			return err
 		}
 
+		// Defense in depth against tar path traversal. Today this archive is
+		// produced by the container engine archiving a real filesystem (no ".."
+		// components), but validate anyway so a future or compromised source
+		// cannot write outside destDir. Reject absolute paths and any entry
+		// whose cleaned path escapes the destination; ignore link entries,
+		// which this extractor does not create.
 		target := filepath.Join(destDir, header.Name)
+		if rel, err := filepath.Rel(destDir, target); err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
+			return fmt.Errorf("refusing tar entry outside destination: %q", header.Name)
+		}
 
 		switch header.Typeflag {
 		case tar.TypeDir:

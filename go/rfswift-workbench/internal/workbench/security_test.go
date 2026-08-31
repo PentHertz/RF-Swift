@@ -30,6 +30,21 @@ func TestStoreRejectsMissionPathTraversal(t *testing.T) {
 		if err := store.SaveMission("default", Mission{ID: id}); err == nil {
 			t.Fatalf("unsafe mission ID %q was accepted", id)
 		}
+		if err := store.SaveNote("default", id, "note.md", "escape"); err == nil {
+			t.Fatalf("notebook accepted unsafe mission ID %q", id)
+		}
+		if _, err := store.GetNote("default", id, "note.md"); err == nil {
+			t.Fatalf("notebook reader accepted unsafe mission ID %q", id)
+		}
+		if _, err := store.ListNotes("default", id); err == nil {
+			t.Fatalf("notebook listing accepted unsafe mission ID %q", id)
+		}
+		if _, err := store.LoadSecrets("default", id); err == nil {
+			t.Fatalf("secret metadata reader accepted unsafe mission ID %q", id)
+		}
+		if err := store.SaveSecrets("default", id, nil); err == nil {
+			t.Fatalf("secret metadata writer accepted unsafe mission ID %q", id)
+		}
 	}
 }
 

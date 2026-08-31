@@ -1,5 +1,9 @@
 # RF Swift Workbench security audit
 
+> Historical focused audit. See the
+> [current security ground truth](security-ground-truth-2026-08-31.md) for the
+> consolidated baseline, later fixes, and residual risks.
+
 Date: 2026-08-26  
 Scope: Workbench project import/export, rendered notes and reports, Wails IPC,
 mission-scoped MCP, secrets metadata, and the RF Swift remote-agent transport.

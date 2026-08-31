@@ -45,26 +45,44 @@ overrides:
       - webkit2gtk-4.1
 contents:
   # `expand: true` opts a contents entry into ${...} env expansion (nfpm only
-  # expands version/arch/etc. unconditionally).
+  # expands version/arch/etc. unconditionally). Every entry pins file_info
+  # mode: nfpm otherwise copies the build tree's umask-dependent modes into
+  # the package (group-writable files, or a non-executable binary).
   - src: ${NFPM_BINARY}
     dst: /usr/bin/rfswift-workbench
     expand: true
+    file_info:
+      mode: 0755
   - src: packaging/linux/rfswift-workbench.desktop
     dst: /usr/share/applications/rfswift-workbench.desktop
+    file_info:
+      mode: 0644
   - src: ${NFPM_ICON_DIR}/256x256.png
     dst: /usr/share/icons/hicolor/256x256/apps/rfswift-workbench.png
     expand: true
+    file_info:
+      mode: 0644
   - src: ${NFPM_ICON_DIR}/512x512.png
     dst: /usr/share/icons/hicolor/512x512/apps/rfswift-workbench.png
     expand: true
+    file_info:
+      mode: 0644
   - src: packaging/linux/com.penthertz.rfswift.workbench.metainfo.xml
     dst: /usr/share/metainfo/com.penthertz.rfswift.workbench.metainfo.xml
+    file_info:
+      mode: 0644
   - src: ../../LICENSE
     dst: /usr/share/doc/rfswift-workbench/copyright
     packager: deb
+    file_info:
+      mode: 0644
   - src: ../../LICENSE
     dst: /usr/share/licenses/rfswift-workbench/LICENSE
     packager: rpm
+    file_info:
+      mode: 0644
   - src: ../../LICENSE
     dst: /usr/share/licenses/rfswift-workbench/LICENSE
     packager: archlinux
+    file_info:
+      mode: 0644

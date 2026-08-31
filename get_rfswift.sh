@@ -851,7 +851,24 @@ create_alias() {
   
   # Get the real user even when run with sudo
   REAL_USER=$(get_real_user)
-  USER_HOME=$(eval echo ~${REAL_USER})
+  case "$REAL_USER" in
+    ""|*[!A-Za-z0-9._-]*)
+      color_echo "red" "Invalid local user name; refusing to edit a shell profile."
+      return 1
+      ;;
+  esac
+  USER_HOME=$(getent passwd "$REAL_USER" 2>/dev/null | cut -d: -f6)
+  if [ -z "$USER_HOME" ] && command_exists dscl; then
+    USER_HOME=$(dscl . -read "/Users/$REAL_USER" NFSHomeDirectory 2>/dev/null | awk '{print $2}')
+  fi
+  if [ -z "$USER_HOME" ]; then
+    if [ "$REAL_USER" = "$(id -un 2>/dev/null)" ]; then
+      USER_HOME=$HOME
+    else
+      color_echo "red" "Could not determine the home directory for $REAL_USER."
+      return 1
+    fi
+  fi
   
   # Determine shell from the user's default shell
   USER_SHELL=$(getent passwd "${REAL_USER}" 2>/dev/null | cut -d: -f7 | xargs basename 2>/dev/null)
@@ -1575,6 +1592,10 @@ choose_release_and_components() {
     cli|workbench|both) ;;
     *) color_echo "red" "Invalid RFSWIFT_INSTALL '$INSTALL_COMPONENTS' (use cli, workbench, or both)"; exit 1 ;;
   esac
+  case "$PKG_FORMAT" in
+    ""|native|tarball) ;;
+    *) color_echo "red" "Invalid RFSWIFT_PKG_FORMAT '$PKG_FORMAT' (use native or tarball)"; exit 1 ;;
+  esac
 
   # Environment variables make curl|sh and automated installs deterministic.
   # Interactive installs get a concise choice; no-TTY installs retain the
@@ -1592,6 +1613,15 @@ choose_release_and_components() {
     esac
   fi
   color_echo "green" "📦 Channel: ${RELEASE_CHANNEL}; components: ${INSTALL_COMPONENTS}"
+}
+
+# A release version may only contain [0-9A-Za-z.-]: enough for semver plus
+# prerelease tags, and safe to embed in URLs, filenames and package names.
+validate_version_string() {
+  case "$1" in
+    ""|*[!0-9A-Za-z.-]*) return 1 ;;
+    *) return 0 ;;
+  esac
 }
 
 get_latest_release() {
@@ -1660,10 +1690,18 @@ get_latest_release() {
     VERSION="${DEFAULT_VERSION}"  # Initialize with default
   fi
 
+  # The version came off the network (GitHub API or HTML scraping) and flows
+  # into URLs and filesystem paths - constrain it to a safe charset before
+  # using it anywhere.
+  if ! validate_version_string "$VERSION"; then
+    color_echo "red" "🚨 Refusing suspicious version string: '${VERSION}'"
+    exit 1
+  fi
+
   # Set URLs based on the version
   RELEASE_URL="https://github.com/${GITHUB_REPO}/releases/tag/v${VERSION}"
   DOWNLOAD_BASE_URL="https://github.com/${GITHUB_REPO}/releases/download/v${VERSION}"
-  
+
   color_echo "green" "📦 Using version: ${VERSION}"
 }
 
@@ -1749,20 +1787,33 @@ install_pkg_file() {
   esac
 }
 
-# Download (with checksum verification), attestation-check and install one
-# native package. Returns non-zero so the caller can fall back to tarballs.
-native_install_one() {
-  pkg_name="$1"
-  checksums_name="$2"
-  release_asset_exists "$pkg_name" || { color_echo "yellow" "⚠️ ${pkg_name} is not published for this release."; return 1; }
-  download_and_verify "$pkg_name" "$checksums_name" || return 1
-  [ -f "${TMP_DIR}/${pkg_name}" ] || return 1
-  if command_exists gh; then
-    gh attestation verify "${TMP_DIR}/${pkg_name}" --repo "$GITHUB_REPO" >/dev/null 2>&1 \
-      && color_echo "green" "✅ Build provenance verified for ${pkg_name}" \
-      || color_echo "yellow" "⚠️ Could not verify build attestation for ${pkg_name}."
+# Download one native package with checksum verification. Returns non-zero so
+# the caller can fall back to tarballs; a checksum MISMATCH still hard-aborts
+# inside download_and_verify (fail closed, never fall back on tampering).
+native_fetch_one() {
+  download_and_verify "$1" "$2" || return 1
+  [ -f "${TMP_DIR}/$1" ] || return 1
+}
+
+# Same opt-in, fail-closed attestation gate as the tarball flow: skipping is a
+# user choice, a failed verification is fatal. Packages install as root, so
+# they get the identical provenance treatment the tarballs get.
+native_verify_attestations() {
+  if ! command_exists gh; then
+    color_echo "yellow" "ℹ️  Install the GitHub CLI (gh) to cryptographically verify build attestations."
+    return 0
   fi
-  install_pkg_file "${TMP_DIR}/${pkg_name}"
+  prompt_yes_no "Verify GitHub build attestations for downloaded packages (recommended)?" "y" || return 0
+  color_echo "blue" "🔏 Verifying build provenance with 'gh attestation verify'..."
+  for pkg in "${TMP_DIR}"/rfswift*; do
+    [ -f "$pkg" ] || continue
+    gh attestation verify "$pkg" --repo "$GITHUB_REPO" || {
+      color_echo "red" "🚨 Attestation verification failed for $(basename "$pkg")."
+      rm -rf "$TMP_DIR"
+      exit 1
+    }
+  done
+  color_echo "green" "✅ Build provenance verified for ${GITHUB_REPO}."
 }
 
 # Prefer native packages (man pages, shell completions, dependency handling,
@@ -1835,6 +1886,14 @@ try_native_install_linux() {
     return 1
   fi
 
+  # Packages install as root, so checksum verification is not optional on this
+  # path: without a SHA-256 tool, the tarball flow (which at least warns) is
+  # the only acceptable fallback.
+  if ! command_exists sha256sum && ! command_exists shasum; then
+    color_echo "yellow" "⚠️ No SHA-256 tool found to verify packages; using the tarball install."
+    return 1
+  fi
+
   # Probe every requested package upfront (older releases predate them) so a
   # missing one can never leave a half-native install behind.
   if [ "$INSTALL_COMPONENTS" = "cli" ] || [ "$INSTALL_COMPONENTS" = "both" ]; then
@@ -1851,16 +1910,33 @@ try_native_install_linux() {
   fi
   [ "$PKG_FORMAT" = "native" ] || return 1
 
+  # Fetch and verify everything first, then attest, then install - so nothing
+  # is installed before every download has passed verification.
   TMP_DIR=$(mktemp -d)
   if [ "$INSTALL_COMPONENTS" = "cli" ] || [ "$INSTALL_COMPONENTS" = "both" ]; then
-    if ! native_install_one "$cli_pkg" "RF-Swift_${VERSION}_checksums.txt"; then
+    if ! native_fetch_one "$cli_pkg" "RF-Swift_${VERSION}_checksums.txt"; then
+      rm -rf "$TMP_DIR"
+      color_echo "yellow" "⚠️ Native package download failed; falling back to the tarball flow."
+      return 1
+    fi
+  fi
+  if [ "$INSTALL_COMPONENTS" = "workbench" ] || [ "$INSTALL_COMPONENTS" = "both" ]; then
+    if ! native_fetch_one "$wb_pkg" "RF-Swift_${VERSION}_workbench_checksums.txt"; then
+      rm -rf "$TMP_DIR"
+      color_echo "yellow" "⚠️ Workbench package download failed; falling back to the tarball flow."
+      return 1
+    fi
+  fi
+  native_verify_attestations
+  if [ "$INSTALL_COMPONENTS" = "cli" ] || [ "$INSTALL_COMPONENTS" = "both" ]; then
+    if ! install_pkg_file "${TMP_DIR}/${cli_pkg}"; then
       rm -rf "$TMP_DIR"
       color_echo "yellow" "⚠️ Native package install failed; falling back to the tarball flow."
       return 1
     fi
   fi
   if [ "$INSTALL_COMPONENTS" = "workbench" ] || [ "$INSTALL_COMPONENTS" = "both" ]; then
-    if ! native_install_one "$wb_pkg" "RF-Swift_${VERSION}_workbench_checksums.txt"; then
+    if ! install_pkg_file "${TMP_DIR}/${wb_pkg}"; then
       rm -rf "$TMP_DIR"
       color_echo "yellow" "⚠️ Workbench package install failed; falling back to the tarball flow."
       return 1

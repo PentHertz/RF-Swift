@@ -85,14 +85,37 @@ func NewClient(c ClientConfig, allowUnpinned bool) (*http.Client, error) {
 	return &http.Client{Timeout: 8 * time.Second, Transport: &http.Transport{TLSClientConfig: tc}}, nil
 }
 
-func newTLSConfig(c ClientConfig, allowUnpinned bool) (*tls.Config, error) {
-	rawEndpoint := strings.Replace(c.Endpoint, "rfswifts://", "https://", 1)
-	if !strings.Contains(rawEndpoint, "://") {
-		rawEndpoint = "https://" + rawEndpoint
+// normalizeEndpoint canonicalizes an agent endpoint to an https:// URL and
+// hard-fails anything that is not https. Without this a caller-supplied
+// "http://host" endpoint would parse fine and be used verbatim by
+// http.Transport as PLAINTEXT HTTP, silently bypassing the pinned, mutually
+// authenticated TLS config assembled below (the transport only applies
+// TLSClientConfig to https:// URLs). The control channel must never fall back
+// to cleartext, so an explicit non-https scheme is rejected rather than
+// upgraded. The rfswifts:// alias rewrites to https://; a bare host without a
+// scheme defaults to https://.
+func normalizeEndpoint(endpoint string) (*url.URL, error) {
+	raw := strings.Replace(endpoint, "rfswifts://", "https://", 1)
+	if !strings.Contains(raw, "://") {
+		raw = "https://" + raw
 	}
-	u, err := url.Parse(rawEndpoint)
+	u, err := url.Parse(raw)
 	if err != nil || u.Hostname() == "" {
 		return nil, errors.New("invalid agent endpoint")
+	}
+	if u.Scheme != "https" {
+		return nil, fmt.Errorf("agent endpoint must use https (got %q); cleartext transport is not allowed", u.Scheme)
+	}
+	if u.User != nil || (u.Path != "" && u.Path != "/") || u.RawQuery != "" || u.Fragment != "" {
+		return nil, errors.New("agent endpoint must be an https origin without credentials, path, query, or fragment")
+	}
+	return u, nil
+}
+
+func newTLSConfig(c ClientConfig, allowUnpinned bool) (*tls.Config, error) {
+	u, err := normalizeEndpoint(c.Endpoint)
+	if err != nil {
+		return nil, err
 	}
 	host := u.Hostname()
 	tc := &tls.Config{MinVersion: tls.VersionTLS13, MaxVersion: tls.VersionTLS13, ServerName: host}
@@ -154,11 +177,7 @@ func ProbeAgent(ctx context.Context, c ClientConfig, allowUnpinned bool) (Probe,
 	if e != nil {
 		return Probe{}, e
 	}
-	raw := strings.Replace(c.Endpoint, "rfswifts://", "https://", 1)
-	if !strings.Contains(raw, "://") {
-		raw = "https://" + raw
-	}
-	u, e := url.Parse(raw)
+	u, e := normalizeEndpoint(c.Endpoint)
 	if e != nil {
 		return Probe{}, e
 	}
@@ -179,10 +198,7 @@ func ProbeAgent(ctx context.Context, c ClientConfig, allowUnpinned bool) (Probe,
 	if e != nil {
 		return Probe{}, e
 	}
-	endpoint := strings.TrimSuffix(strings.Replace(c.Endpoint, "rfswifts://", "https://", 1), "/")
-	if !strings.Contains(endpoint, "://") {
-		endpoint = "https://" + endpoint
-	}
+	endpoint := strings.TrimSuffix(u.String(), "/")
 	req, e := http.NewRequestWithContext(ctx, http.MethodGet, endpoint+"/v1/info", nil)
 	if e != nil {
 		return Probe{}, e
@@ -248,7 +264,16 @@ func Serve(c ServerConfig) error {
 	mux := authenticatedHandler(c)
 	// Disable HTTP/2 before authentication so the handler can always hijack and
 	// close without emitting an HTTP response or protocol metadata.
-	server := &http.Server{Addr: c.Bind, Handler: mux, TLSConfig: tc, TLSNextProto: make(map[string]func(*http.Server, *tls.Conn, http.Handler)), ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 30 * time.Second}
+	server := &http.Server{
+		Addr:              c.Bind,
+		Handler:           mux,
+		TLSConfig:         tc,
+		TLSNextProto:      make(map[string]func(*http.Server, *tls.Conn, http.Handler)),
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       15 * time.Second,
+		IdleTimeout:       30 * time.Second,
+		MaxHeaderBytes:    16 << 10,
+	}
 	ln, e := tls.Listen("tcp", c.Bind, tc)
 	if e != nil {
 		return e
@@ -340,10 +365,11 @@ func Control(ctx context.Context, c ClientConfig, method string, params, result 
 	if err != nil {
 		return err
 	}
-	endpoint := strings.TrimSuffix(strings.Replace(c.Endpoint, "rfswifts://", "https://", 1), "/")
-	if !strings.Contains(endpoint, "://") {
-		endpoint = "https://" + endpoint
+	u, err := normalizeEndpoint(c.Endpoint)
+	if err != nil {
+		return err
 	}
+	endpoint := strings.TrimSuffix(u.String(), "/")
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint+"/v1/control", strings.NewReader(string(body)))
 	if err != nil {
 		return err
@@ -379,10 +405,11 @@ func RunCommand(ctx context.Context, c ClientConfig, args []string) (CommandResu
 	if err != nil {
 		return CommandResult{}, err
 	}
-	endpoint := strings.TrimSuffix(strings.Replace(c.Endpoint, "rfswifts://", "https://", 1), "/")
-	if !strings.Contains(endpoint, "://") {
-		endpoint = "https://" + endpoint
+	u, err := normalizeEndpoint(c.Endpoint)
+	if err != nil {
+		return CommandResult{}, err
 	}
+	endpoint := strings.TrimSuffix(u.String(), "/")
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint+"/v1/command", strings.NewReader(string(body)))
 	if err != nil {
 		return CommandResult{}, err

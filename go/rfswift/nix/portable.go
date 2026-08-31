@@ -14,12 +14,20 @@ import (
 	"archive/tar"
 	"compress/gzip"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 
 	common "penthertz/rfswift/common"
+)
+
+const (
+	maxPortableManifestSize = 1 << 20
+	maxPortableArchiveFiles = 1_000_000
 )
 
 // PortableEnvironmentName reads only the manifest from an environment archive.
@@ -37,20 +45,28 @@ func PortableEnvironmentName(inFile string) (string, error) {
 	}
 	defer gz.Close()
 	tr := tar.NewReader(gz)
+	entries := 0
 	for {
 		h, err := tr.Next()
 		if err != nil {
 			return "", fmt.Errorf("portable environment manifest not found: %w", err)
 		}
+		entries++
+		if entries > maxPortableArchiveFiles {
+			return "", errors.New("portable environment archive contains too many entries")
+		}
 		if filepath.Clean(h.Name) != "manifest.json" {
 			continue
+		}
+		if h.Size < 0 || h.Size > maxPortableManifestSize {
+			return "", errors.New("portable environment manifest is too large")
 		}
 		var m exportManifest
 		if err := json.NewDecoder(tr).Decode(&m); err != nil {
 			return "", fmt.Errorf("corrupt portable environment manifest: %w", err)
 		}
-		if m.Env.Name == "" {
-			return "", fmt.Errorf("portable environment manifest has no environment name")
+		if err := ValidateEnvironmentName(m.Env.Name); err != nil {
+			return "", fmt.Errorf("portable environment manifest has invalid environment name: %w", err)
 		}
 		return m.Env.Name, nil
 	}
@@ -235,9 +251,7 @@ func ImportEnvironmentWithProgress(inFile, newName, newWorkspace string, progres
 
 	common.PrintInfoMessage("Extracting archive...")
 	report(10, "Extracting portable environment")
-	x := exec.Command("tar", "-xzf", inFile, "-C", staging)
-	x.Stderr = os.Stderr
-	if err := x.Run(); err != nil {
+	if err := extractPortableArchive(inFile, staging); err != nil {
 		return fmt.Errorf("failed to extract archive: %w", err)
 	}
 
@@ -257,6 +271,20 @@ func ImportEnvironmentWithProgress(inFile, newName, newWorkspace string, progres
 	}
 	if name == "" {
 		return fmt.Errorf("could not determine environment name from the archive; pass --name")
+	}
+	if err := ValidateEnvironmentName(name); err != nil {
+		return err
+	}
+	if m.Version < 1 || m.Version > 2 {
+		return fmt.Errorf("unsupported portable environment format version %d", m.Version)
+	}
+	if err := validateImportedStorePath(m.StorePath); err != nil {
+		return fmt.Errorf("invalid imported store path: %w", err)
+	}
+	if m.ExtrasPath != "" {
+		if err := validateImportedStorePath(m.ExtrasPath); err != nil {
+			return fmt.Errorf("invalid imported extras path: %w", err)
+		}
 	}
 	if pathExists(EnvDir(name)) {
 		return fmt.Errorf("environment '%s' already exists; pass --name <other> or remove it first (rfswift nix remove %s)", name, name)
@@ -341,5 +369,144 @@ func ImportEnvironmentWithProgress(inFile, newName, newWorkspace string, progres
 		wsNote = fmt.Sprintf(" (workspace restored to %s)", ws)
 	}
 	common.PrintSuccessMessage(fmt.Sprintf("Imported environment '%s'%s. Enter it with: rfswift exec %s", name, wsNote, name))
+	return nil
+}
+
+type portableLink struct {
+	path, target string
+	typeflag     byte
+}
+
+// extractPortableArchive extracts a user-supplied .rfenv without allowing tar
+// traversal, device nodes, or an early symlink to redirect later file writes.
+func extractPortableArchive(source, destination string) error {
+	f, err := os.Open(source)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	gz, err := gzip.NewReader(f)
+	if err != nil {
+		return err
+	}
+	defer gz.Close()
+	root, err := filepath.Abs(destination)
+	if err != nil {
+		return err
+	}
+	withinRoot := func(name string) (string, error) {
+		clean := filepath.Clean(filepath.FromSlash(name))
+		for clean == "." || strings.HasPrefix(clean, "."+string(filepath.Separator)) {
+			if clean == "." {
+				return root, nil
+			}
+			clean = strings.TrimPrefix(clean, "."+string(filepath.Separator))
+		}
+		if filepath.IsAbs(clean) || clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
+			return "", fmt.Errorf("unsafe archive path %q", name)
+		}
+		path := filepath.Join(root, clean)
+		rel, relErr := filepath.Rel(root, path)
+		if relErr != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			return "", fmt.Errorf("unsafe archive path %q", name)
+		}
+		return path, nil
+	}
+	tr := tar.NewReader(gz)
+	links := make([]portableLink, 0)
+	entries := 0
+	for {
+		h, nextErr := tr.Next()
+		if errors.Is(nextErr, io.EOF) {
+			break
+		}
+		if nextErr != nil {
+			return nextErr
+		}
+		entries++
+		if entries > maxPortableArchiveFiles {
+			return errors.New("portable environment archive contains too many entries")
+		}
+		if filepath.Clean(h.Name) == "manifest.json" && (h.Size < 0 || h.Size > maxPortableManifestSize) {
+			return errors.New("portable environment manifest is too large")
+		}
+		path, pathErr := withinRoot(h.Name)
+		if pathErr != nil {
+			return pathErr
+		}
+		switch h.Typeflag {
+		case tar.TypeDir:
+			if err := os.MkdirAll(path, 0o700); err != nil {
+				return err
+			}
+		case tar.TypeReg, tar.TypeRegA:
+			if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+				return err
+			}
+			out, openErr := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+			if openErr != nil {
+				return openErr
+			}
+			_, copyErr := io.Copy(out, tr)
+			closeErr := out.Close()
+			if copyErr != nil {
+				return copyErr
+			}
+			if closeErr != nil {
+				return closeErr
+			}
+		case tar.TypeSymlink, tar.TypeLink:
+			links = append(links, portableLink{path: path, target: h.Linkname, typeflag: h.Typeflag})
+		case tar.TypeXGlobalHeader, tar.TypeXHeader:
+			continue
+		default:
+			return fmt.Errorf("unsupported archive entry type %d for %q", h.Typeflag, h.Name)
+		}
+	}
+	// Create links only after regular files, so no archive entry can write
+	// through a link planted by an earlier header.
+	for _, link := range links {
+		if err := os.MkdirAll(filepath.Dir(link.path), 0o700); err != nil {
+			return err
+		}
+		if link.typeflag == tar.TypeLink {
+			target, targetErr := withinRoot(link.target)
+			if targetErr != nil {
+				return targetErr
+			}
+			if err := os.Link(target, link.path); err != nil {
+				return err
+			}
+			continue
+		}
+		if filepath.IsAbs(link.target) {
+			return fmt.Errorf("absolute symlink target is not allowed: %q", link.target)
+		}
+		resolved := filepath.Clean(filepath.Join(filepath.Dir(link.path), filepath.FromSlash(link.target)))
+		rel, relErr := filepath.Rel(root, resolved)
+		if relErr != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			return fmt.Errorf("symlink escapes archive root: %q", link.target)
+		}
+		if err := os.Symlink(link.target, link.path); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validateImportedStorePath(path string) error {
+	clean := filepath.Clean(path)
+	if clean != path || !strings.HasPrefix(clean, "/nix/store/") || strings.Contains(strings.TrimPrefix(clean, "/nix/store/"), string(filepath.Separator)) {
+		return fmt.Errorf("expected a direct /nix/store path, got %q", path)
+	}
+	base := strings.TrimPrefix(clean, "/nix/store/")
+	if len(base) < 34 || base[32] != '-' {
+		return fmt.Errorf("malformed Nix store path %q", path)
+	}
+	for _, c := range base[:32] {
+		if !strings.ContainsRune("0123456789abcdfghijklmnpqrsvwxyz", c) {
+			return fmt.Errorf("malformed Nix store hash in %q", path)
+		}
+	}
 	return nil
 }

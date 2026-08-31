@@ -32,7 +32,15 @@ if [[ ! -t 0 && -r /dev/tty ]]; then
     exec < /dev/tty
 fi
 
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# Companion files (the rfswift binary in the .dmg, setup-xquartz-macos.sh in a
+# repo checkout) are only trusted when this script actually runs from a file.
+# In a piped run (curl ... | bash) $0 is the shell's name, dirname "$0" is the
+# caller's CWD, and files found there could have been planted by another local
+# user in a shared writable directory - never sudo-install or execute those.
+SCRIPT_DIR=""
+case "$0" in
+  */*) [[ -f "$0" ]] && SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)" ;;
+esac
 have() { command -v "$1" >/dev/null 2>&1; }
 
 # --- Homebrew (the one bootstrap everything else hangs off) ------------------
@@ -66,7 +74,7 @@ for probe in "Docker Desktop:has_docker" "OrbStack:has_orbstack" "Podman:has_pod
 done
 
 # --- rfswift CLI itself (when run from the .dmg, the binary sits alongside) --
-if ! have rfswift && [[ -x "$SCRIPT_DIR/rfswift" ]]; then
+if ! have rfswift && [[ -n "$SCRIPT_DIR" && -x "$SCRIPT_DIR/rfswift" ]]; then
     read -r -p "Install the rfswift CLI to /usr/local/bin? (sudo password may be asked) [Y/n] " answer
     if [[ "${answer:-y}" != [nN]* ]]; then
         sudo mkdir -p /usr/local/bin
@@ -158,7 +166,7 @@ if [[ -z "$xq" ]]; then
     [[ "${answer:-y}" == [nN]* ]] && xq=0 || xq=1
 fi
 if [[ "$xq" == 1 ]]; then
-    if [[ -x "$SCRIPT_DIR/setup-xquartz-macos.sh" ]]; then
+    if [[ -n "$SCRIPT_DIR" && -x "$SCRIPT_DIR/setup-xquartz-macos.sh" ]]; then
         # Repo checkout: the dedicated script does the full job (install,
         # network-clients toggle, xhost refresh).
         "$SCRIPT_DIR/setup-xquartz-macos.sh" || true
@@ -170,6 +178,7 @@ if [[ "$xq" == 1 ]]; then
         fi
         # Containers reach the X server over TCP; XQuartz blocks that by default.
         defaults write org.xquartz.X11 nolisten_tcp -bool false || true
+        say "$YELLOW" "⚠️ XQuartz will listen on TCP: only clients you authorize with xhost can connect (rfswift manages this per run)."
         say "$YELLOW" "⚠️ Log out and back in (or reboot) before the first GUI use."
     fi
 fi

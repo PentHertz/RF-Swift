@@ -35,6 +35,9 @@ func (s *Store) secretsPath(ws, mission string) string {
 }
 
 func (s *Store) LoadSecrets(ws, mission string) ([]MissionSecret, error) {
+	if err := validateMissionPath(ws, mission); err != nil {
+		return nil, err
+	}
 	var values []MissionSecret
 	err := readJSON(s.secretsPath(ws, mission), &values)
 	if errors.Is(err, os.ErrNotExist) {
@@ -45,6 +48,9 @@ func (s *Store) LoadSecrets(ws, mission string) ([]MissionSecret, error) {
 }
 
 func (s *Store) SaveSecrets(ws, mission string, values []MissionSecret) error {
+	if err := validateMissionPath(ws, mission); err != nil {
+		return err
+	}
 	if err := os.MkdirAll(s.missionDir(ws, mission), 0o700); err != nil {
 		return err
 	}

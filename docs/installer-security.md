@@ -43,6 +43,24 @@ Accepted values are `stable|dev`, `cli|workbench|both`, and
 `native|appimage`. AppImage is currently offered for Linux x86-64; native
 Workbench archives are offered for Linux x86-64 and macOS universal builds.
 
+## Native package path
+
+On the stable channel the installer prefers native packages (deb/rpm/pacman on
+Linux, the signed Homebrew cask on macOS) and falls back to the tarball flow
+when a package manager or sudo is unavailable. `RFSWIFT_PKG_FORMAT=native|tarball`
+selects the path non-interactively. The native path applies the same trust
+controls as the tarball path, plus two that root installs require:
+
+1. It refuses to run without a SHA-256 tool rather than installing unverified
+   packages as root (fail closed).
+2. It downloads and checksum-verifies every requested package, runs the same
+   opt-in-but-fatal attestation check, and only then installs, so nothing is
+   installed before all downloads pass verification.
+
+The predicted package filenames are pinned to the release pipeline's output by
+`scripts/test-installer.sh`, and the network-derived version string is
+constrained to `[0-9A-Za-z.-]` before it is used in any URL or path.
+
 ## Residual trust
 
 SHA-256 manifests hosted beside a release protect against corruption but do

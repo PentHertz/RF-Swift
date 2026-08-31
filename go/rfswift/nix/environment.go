@@ -18,7 +18,9 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"os/user"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"sort"
 	"strings"
@@ -26,6 +28,30 @@ import (
 
 	common "penthertz/rfswift/common"
 )
+
+// environmentNamePattern constrains environment names to a shell- and
+// filesystem-safe charset. A name flows unquoted into the generated bash
+// rcfile that is sourced on interactive entry (writeBashRC) and into
+// filesystem paths (EnvDir), so a name containing shell metacharacters would
+// execute as the operator on `nix shell`/`enter`, and one containing path
+// separators or ".." would traverse. The name is chosen by callers that are
+// not always the operator - the remote-agent create handler passes a
+// network-peer-supplied name, the Workbench passes a GUI value, and
+// GetEnvironment reads it from an on-disk manifest that the import/export
+// feature copies between machines - so it must be validated at every trust
+// boundary, not assumed safe. The pattern requires a leading alphanumeric
+// (rejecting "", ".", ".." and hidden names) and otherwise allows only
+// letters, digits, '.', '_' and '-'.
+var environmentNamePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
+
+// ValidateEnvironmentName returns an error if name is not shell- and
+// filesystem-safe. See environmentNamePattern.
+func ValidateEnvironmentName(name string) error {
+	if !environmentNamePattern.MatchString(name) {
+		return fmt.Errorf("invalid environment name %q: use only letters, digits, '.', '_' and '-', starting with a letter or digit", name)
+	}
+	return nil
+}
 
 // RunEnvironment creates (if needed), realises, and enters an environment.
 func RunEnvironment(opts RunOptions) error {
@@ -37,6 +63,9 @@ func RunEnvironment(opts RunOptions) error {
 	}
 	if strings.TrimSpace(opts.Name) == "" {
 		return fmt.Errorf("environment name is required (use -n)")
+	}
+	if err := ValidateEnvironmentName(opts.Name); err != nil {
+		return err
 	}
 	if strings.TrimSpace(opts.Image) == "" {
 		return fmt.Errorf("an environment image is required (use -i, e.g. -i sdr_light)")
@@ -227,6 +256,14 @@ func GetEnvironment(name string) (*Environment, error) {
 	if env.Name == "" {
 		env.Name = name
 	}
+	// The manifest is on-disk state that the import/export feature copies
+	// between machines, so its Name is untrusted here even though it was
+	// validated at creation on the origin host. Re-check before it reaches
+	// writeBashRC / path construction, so a hand-crafted manifest cannot
+	// smuggle a shell-injecting or traversing name through import.
+	if err := ValidateEnvironmentName(env.Name); err != nil {
+		return nil, fmt.Errorf("environment '%s' has an unsafe manifest name: %w", name, err)
+	}
 	return &env, nil
 }
 
@@ -392,6 +429,13 @@ func writeShims(env *Environment) error {
 		if command == "" || strings.ContainsAny(command, "/ ") {
 			continue
 		}
+		// attr comes from the manifest (untrusted after import) and is written
+		// into a comment line of the generated shim; a newline would close the
+		// comment and inject a shell line that runs on first tool use. Nix
+		// attribute names never contain newlines, so skip anything that does.
+		if strings.ContainsAny(attr, "\n\r") {
+			continue
+		}
 		installable := fmt.Sprintf("%s#%s", env.FlakeRef, attr)
 		prereq := fmt.Sprintf("%s#%s-prerequisites", env.FlakeRef, env.Image)
 		prereqStep := ""
@@ -421,10 +465,23 @@ func setupX11() {
 	if os.Getenv("DISPLAY") == "" {
 		return
 	}
-	if _, err := exec.LookPath("xhost"); err != nil {
+	xhostBin, err := exec.LookPath("xhost")
+	if err != nil {
 		return
 	}
-	_ = exec.Command("xhost", "+local:").Run()
+	// Grant X access narrowly, not to every local user. The old "+local:"
+	// authorized ANY local client, so a different user on a shared host could
+	// connect to this X server and keylog or screenshot the RF GUI tools
+	// (gqrx, wireshark, ...). Nix tools run under the operator's own uid, and
+	// via rfsudo as root, so a server-interpreted grant for exactly those two
+	// principals is sufficient - matching the scoped "local:root" the
+	// container path already uses (rfutils.SetXHostForContainer) instead of a
+	// blanket grant. If the current user cannot be resolved, grant nothing
+	// rather than fall back to a broad grant.
+	if u, e := user.Current(); e == nil && u.Username != "" {
+		_ = exec.Command(xhostBin, "+si:localuser:"+u.Username).Run()
+		_ = exec.Command(xhostBin, "+si:localuser:root").Run()
+	}
 }
 
 // warnIfNoDisplay nudges the user when a GUI tool has nowhere to draw, with the

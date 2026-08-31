@@ -1,15 +1,52 @@
 package cli
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
+	"sync"
 
 	"github.com/spf13/cobra"
 	"penthertz/rfswift/remote"
 )
+
+const maxAgentCommandOutput = 16 << 20
+
+type cappedAgentOutput struct {
+	mu        sync.Mutex
+	buf       bytes.Buffer
+	truncated bool
+}
+
+func (w *cappedAgentOutput) Write(p []byte) (int, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	remaining := maxAgentCommandOutput - w.buf.Len()
+	if remaining > 0 {
+		chunk := p
+		if len(chunk) > remaining {
+			chunk = chunk[:remaining]
+		}
+		_, _ = w.buf.Write(chunk)
+	}
+	if len(p) > remaining {
+		w.truncated = true
+	}
+	return len(p), nil
+}
+
+func (w *cappedAgentOutput) String() string {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	out := w.buf.String()
+	if w.truncated {
+		out += "\n[RF Swift: remote command output truncated at 16 MiB]\n"
+	}
+	return out
+}
 
 var agentCmd = &cobra.Command{
 	Use:   "agent",
@@ -36,8 +73,10 @@ func runAgentCommand(ctx context.Context, args []string) (string, error) {
 		return "", err
 	}
 	cmd := exec.CommandContext(ctx, exe, args...)
-	out, err := cmd.CombinedOutput()
-	return string(out), err
+	out := &cappedAgentOutput{}
+	cmd.Stdout, cmd.Stderr = out, out
+	err = cmd.Run()
+	return out.String(), err
 }
 
 var agentCertsInitCmd = &cobra.Command{

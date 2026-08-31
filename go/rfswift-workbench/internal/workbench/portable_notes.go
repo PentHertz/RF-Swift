@@ -10,6 +10,11 @@ import (
 	"strings"
 )
 
+const (
+	maxMissionCompanionExpandedSize int64 = 20 << 30
+	maxMissionCompanionEntries            = 100_000
+)
+
 // exportMissionNotes writes all portable Workbench-owned mission data next to
 // the target archive. Credential values remain in the OS vault, and secrets
 // metadata is excluded because its vault references are machine-local.
@@ -188,6 +193,10 @@ func extractNotesZip(source, destination string) error {
 		return fmt.Errorf("invalid notes companion: %w", err)
 	}
 	defer zr.Close()
+	if len(zr.File) > maxMissionCompanionEntries {
+		return errors.New("mission companion contains too many entries")
+	}
+	var expanded int64
 	for _, entry := range zr.File {
 		name := filepath.Clean(filepath.FromSlash(entry.Name))
 		portable := strings.HasPrefix(name, "notes"+string(filepath.Separator)) || strings.HasPrefix(name, "mission"+string(filepath.Separator))
@@ -196,6 +205,9 @@ func extractNotesZip(source, destination string) error {
 		}
 		if entry.Mode()&os.ModeSymlink != 0 {
 			return fmt.Errorf("notes archive contains a symlink: %q", entry.Name)
+		}
+		if int64(entry.UncompressedSize64) > maxMissionCompanionExpandedSize-expanded {
+			return errors.New("mission companion expands beyond the 20 GiB safety limit")
 		}
 		target := filepath.Join(destination, name)
 		if entry.FileInfo().IsDir() {
@@ -216,7 +228,12 @@ func extractNotesZip(source, destination string) error {
 			in.Close()
 			return err
 		}
-		_, copyErr := io.Copy(out, io.LimitReader(in, 256<<20))
+		remaining := maxMissionCompanionExpandedSize - expanded
+		written, copyErr := io.Copy(out, io.LimitReader(in, remaining+1))
+		expanded += written
+		if copyErr == nil && written > remaining {
+			copyErr = errors.New("mission companion expands beyond the 20 GiB safety limit")
+		}
 		closeInErr, closeOutErr := in.Close(), out.Close()
 		if copyErr != nil {
 			return copyErr
