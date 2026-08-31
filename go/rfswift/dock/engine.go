@@ -163,26 +163,70 @@ func NewEngineClient() (*client.Client, error) {
 //
 //	in(1): ContainerEngine engine
 //	out: error
+// EngineStatusReporter receives human-readable container-engine lifecycle
+// updates, such as starting a stopped Lima VM. running is false while the engine
+// is being started and true once it is reachable.
+type EngineStatusReporter func(stage string, running bool)
+
+var (
+	engineStatusMu       sync.Mutex
+	engineStatusReporter EngineStatusReporter = defaultEngineStatusReporter
+)
+
+// defaultEngineStatusReporter surfaces engine-lifecycle state on the terminal so
+// the CLI/TUI show what is happening (starting the Lima VM, etc.).
+func defaultEngineStatusReporter(stage string, running bool) {
+	if running {
+		common.PrintSuccessMessage(stage)
+	} else {
+		common.PrintWarningMessage(stage)
+	}
+}
+
+// SetEngineStatusReporter overrides how engine-lifecycle updates are surfaced.
+// The Workbench uses it to forward the state to the GUI, which cannot see the
+// process's stdout. Passing nil restores the default terminal reporter.
+func SetEngineStatusReporter(f EngineStatusReporter) {
+	engineStatusMu.Lock()
+	defer engineStatusMu.Unlock()
+	if f == nil {
+		engineStatusReporter = defaultEngineStatusReporter
+		return
+	}
+	engineStatusReporter = f
+}
+
+func reportEngineStatus(stage string, running bool) {
+	engineStatusMu.Lock()
+	f := engineStatusReporter
+	engineStatusMu.Unlock()
+	f(stage, running)
+}
+
 func EnsureEngineRunning(engine ContainerEngine) error {
 	if engine.IsServiceRunning() {
 		return nil
 	}
 
-	common.PrintWarningMessage(fmt.Sprintf("%s service is not running. Attempting to start it...", engine.Name()))
+	name := engine.Name()
+	// Starting a stopped Lima VM can take up to ~30s (longer on first boot).
+	// Report it so neither the CLI nor the GUI look frozen while it happens —
+	// the image pull only begins once the engine is reachable.
+	reportEngineStatus(fmt.Sprintf("%s is not running — starting it now; this can take up to ~30s...", name), false)
 	if err := engine.StartService(); err != nil {
-		return fmt.Errorf("failed to start %s: %v", engine.Name(), err)
+		return fmt.Errorf("failed to start %s: %v", name, err)
 	}
 
 	// Wait for the service to become reachable
 	for i := 0; i < 15; i++ {
 		time.Sleep(2 * time.Second)
 		if engine.IsServiceRunning() {
-			common.PrintSuccessMessage(fmt.Sprintf("%s is now running", engine.Name()))
+			reportEngineStatus(fmt.Sprintf("%s is now running", name), true)
 			return nil
 		}
 	}
 
-	return fmt.Errorf("%s was started but is not reachable after 30 seconds", engine.Name())
+	return fmt.Errorf("%s was started but is not reachable after 30 seconds", name)
 }
 
 // ---------------------------------------------------------------------------

@@ -287,6 +287,21 @@ func (e *LocalEngine) RouteMission(id string) {
 	if rfdock.GetEngine().Type() != eng.Type() {
 		rfdock.SetPreferredEngine(string(eng.Type()))
 	}
+	// Lima and Podman route the docker/podman CLI through their own socket via
+	// DOCKER_HOST. resetEngineEnv above cleared it, and a cached GetEngine() only
+	// re-exports the socket during first-time detection — so when the mission's
+	// engine already matches the active engine (the common case: Lima on macOS),
+	// DOCKER_HOST was left empty and every mission-scoped `docker exec` (tool
+	// search, install) silently hit the default Docker daemon instead of the Lima
+	// VM, returning nothing. Selecting Docker first then Lima happened to work
+	// because the type then differed and GetEngine re-detected with DOCKER_HOST
+	// empty, re-exporting the socket. Restore it explicitly so routing is
+	// order-independent.
+	if eng.Type() == rfdock.EngineLima || eng.Type() == rfdock.EnginePodman {
+		if sock := eng.GetSocketPath(); sock != "" {
+			os.Setenv("DOCKER_HOST", sock)
+		}
+	}
 }
 
 func (e *LocalEngine) Create(req MissionCreate) (Mission, error) {

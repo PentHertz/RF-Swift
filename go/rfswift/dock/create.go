@@ -219,6 +219,14 @@ func CreateContainer(opts CreateOptions) (string, error) {
 	binds = devices.binds
 	configEnv := append([]string(nil), opts.Environment...)
 	if !opts.NoX11 {
+		// Surface a missing X server / xhost through warn so it reaches the
+		// Workbench GUI (mission warnings) as well as the CLI. XHostEnable below
+		// only prints to stdout, which the GUI never shows — that is why a
+		// missing XQuartz previously produced no hint in the GUI, only a bare
+		// "could not connect to display" once a GUI tool started.
+		if hint := rfutils.X11DisplayHint(); hint != "" {
+			warn(hint)
+		}
 		display := os.Getenv("DISPLAY")
 		// On macOS the raw DISPLAY is the XQuartz launchd socket path
 		// (/var/run/.../org.xquartz:0), which is meaningless inside a container.

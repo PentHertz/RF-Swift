@@ -390,8 +390,9 @@ func nixWizard(cat *rfnix.Catalog, image, name string) (*nixWizardResult, error)
 		res.lazy = true
 	}
 
-	// Isolation (Linux only): run the shell in a bubblewrap jail that hides the
-	// host filesystem/$HOME while keeping USB/serial devices and the display.
+	// Isolation: run the shell in a jail that hides the host filesystem/$HOME
+	// while keeping USB devices, the display and the network - bubblewrap on
+	// Linux, the Seatbelt sandbox on macOS.
 	if rfnix.IsolateSupported() {
 		res.isolate = tui.Confirm("Isolate in a jail? (hides $HOME/host FS; keeps USB devices, display, network)")
 	}

@@ -37,6 +37,24 @@ color_echo() {
   esac
 }
 
+# configure_xquartz_tcp enables XQuartz "Allow connections from network clients"
+# (nolisten_tcp=false) so the container can reach the host X server over TCP
+# (DISPLAY=<host-ip>:0). Without it XQuartz binds no TCP port and GUI tools fail
+# with "could not connect to display". macOS-only; safe to call repeatedly.
+configure_xquartz_tcp() {
+    [ "$(uname)" = "Darwin" ] || return 0
+    if [ "$(defaults read org.xquartz.X11 nolisten_tcp 2>/dev/null || echo unset)" = "0" ]; then
+        return 0
+    fi
+    color_echo "cyan" "🔧 Enabling XQuartz 'Allow connections from network clients'... 🔧"
+    defaults write org.xquartz.X11 nolisten_tcp -bool false
+    if pgrep -qx Xquartz 2>/dev/null; then
+        osascript -e 'quit app "XQuartz"' >/dev/null 2>&1 || true
+        sleep 1
+        open -a XQuartz >/dev/null 2>&1 || true
+    fi
+}
+
 # Enhanced xhost check with Arch Linux support
 check_xhost() {
     if ! command -v xhost >/dev/null 2>&1; then
@@ -45,6 +63,7 @@ check_xhost() {
             color_echo "yellow" "⚠️ xhost found at /opt/X11/bin/xhost but not in PATH. Adding it."
             export PATH="/opt/X11/bin:$PATH"
             color_echo "green" "✅ xhost is now available. ✅"
+            configure_xquartz_tcp
             return
         fi
 
@@ -60,8 +79,8 @@ check_xhost() {
             export PATH="/opt/X11/bin:$PATH"
             if [ -x /opt/X11/bin/xhost ]; then
                 color_echo "green" "✅ XQuartz installed successfully. ✅"
-                color_echo "yellow" "⚠️ You may need to log out and back in for XQuartz to work properly."
-                color_echo "yellow" "⚠️ Make sure to enable 'Allow connections from network clients' in XQuartz -> Settings -> Security."
+                configure_xquartz_tcp
+                color_echo "yellow" "⚠️ Log out and back in once for XQuartz to register the display and apply the setting."
             else
                 color_echo "red" "❌ XQuartz installed but xhost not found. Please reboot and try again. ❌"
                 exit 1
@@ -105,6 +124,9 @@ check_xhost() {
         fi
     else
         color_echo "green" "✅ xhost is already installed. Moving on. ✅"
+        # xhost present, but on macOS the network-clients toggle may still be off
+        # from a hand-installed XQuartz — ensure it so GUI forwarding works.
+        configure_xquartz_tcp
     fi
 }
 
@@ -2659,7 +2681,14 @@ main() {
 
   # Check and install audio system
   check_audio_system
-  
+
+  # Check X11 display forwarding (installs XQuartz on macOS). This is a host
+  # dependency like the container engine and audio above, so it runs here —
+  # before the binary download — so a failed/skipped download or a dev channel
+  # without a published asset never leaves GUI tools (gqrx, ...) without a
+  # display to connect to.
+  check_xhost
+
   # Get latest release info
   get_latest_release
   
@@ -2679,9 +2708,6 @@ main() {
 
   # check and install agnoster deps
   check_agnoster_dependencies
-  
-  # Checking xhost
-  check_xhost
 
   # Check and optionally install asciinema
   check_asciinema

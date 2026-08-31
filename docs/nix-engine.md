@@ -224,12 +224,28 @@ same reach you do. This is the opposite trade-off from the container engine
 (Docker/Podman), which isolates by default. Nix's own build sandbox only protects
 *builds*; it does nothing for a tool once it runs.
 
-`--isolate` adds an optional, usability-preserving jail on Linux, built on
-[bubblewrap](https://github.com/containers/bubblewrap) (unprivileged Linux user
-namespaces):
+`--isolate` adds an optional, usability-preserving jail. The mechanism depends on
+the OS — [bubblewrap](https://github.com/containers/bubblewrap) (unprivileged
+Linux user namespaces) on Linux, the **Seatbelt sandbox** (`sandbox-exec`) on
+macOS — but the guarantee is the same: your real `$HOME`, the rest of the host
+filesystem, sibling environments and other workspaces are hidden, while `/nix`,
+USB hardware, the display and the network stay reachable.
 
 ```bash
 rfswift run --engine nix -i sdr_light -n mysdr --isolate
+```
+
+`IsolateCommand` picks the backend for the host it runs on; on an unsupported OS
+it refuses rather than silently running unisolated:
+
+```mermaid
+flowchart TD
+    A["rfswift run --engine nix … --isolate<br/>(also: the wizard, the Workbench toggle,<br/>and every later exec / re-entry)"] --> B{"IsolateCommand:<br/>which OS?"}
+    B -->|Linux| C["bubblewrap jail<br/>mount namespaces:<br/>private $HOME, bind only what's needed"]
+    B -->|macOS| D["Seatbelt sandbox<br/>sandbox-exec policy:<br/>deny host paths in place"]
+    B -->|other| E["refuses to run<br/>(not supported)"]
+    C --> F["environment shell &<br/>tools run isolated"]
+    D --> F
 ```
 
 The choice is also offered in the interactive wizard and as an **Isolate (jail)**
@@ -243,9 +259,11 @@ it per environment at creation time and forget about it.
   is a private, per-environment directory (empty apart from what the tools
   create), so SSH keys, browser data, credentials and unrelated files are not
   visible.
-- Host processes: the shell gets its own PID/IPC/UTS namespaces.
+- Host processes (**Linux only**): the shell gets its own PID/IPC/UTS namespaces.
+  macOS's Seatbelt is a filesystem/capability policy, not a namespace, so process
+  isolation is Linux-only — the data-hiding guarantee below is the same on both.
 - Other RF Swift environments and **other workspaces**. Only *this* environment's
-  state and *this* environment's workspace are mounted. A tool in one isolated
+  state and *this* environment's workspace are exposed. A tool in one isolated
   session cannot read or tamper with another workspace's files or its captured
   **evidence** (recordings, artifacts).
 
@@ -260,6 +278,39 @@ it per environment at creation time and forget about it.
 
 ### Layout inside the jail
 
+**Linux (bubblewrap)** binds only what the environment needs onto clean paths,
+over an otherwise hidden host filesystem:
+
+```mermaid
+flowchart LR
+    subgraph host[Host — hidden]
+        H1["your home + dotfiles<br/>SSH keys, creds, browser"]
+        H2["~/.rfswift/nix/environments/*<br/>sibling environments"]
+        H3["~/rfswift-workspace/other-*<br/>other workspaces + evidence"]
+        E1["this env's state dir"]
+        E2["shared-extras profile"]
+        W1["this env's workspace"]
+        S1["/nix store + system runtime"]
+        D1["USB / serial / sysfs / udev"]
+    end
+    subgraph jail[Inside the jail]
+        J0["$HOME<br/>(clean private home)"]
+        J1["/rfswift/env  (ro)"]
+        J2["/rfswift/shared  (ro)"]
+        J3["/workspace  (rw, cwd)"]
+        J4["/nix, /usr, /etc … (ro)"]
+        J5["/dev/bus/usb, /dev/tty*, /sys"]
+    end
+    E1 --> J1
+    E2 --> J2
+    W1 --> J3
+    S1 --> J4
+    D1 --> J5
+    H1 -.->|not mounted| X["✗"]
+    H2 -.->|not mounted| X
+    H3 -.->|not mounted| X
+```
+
 - `$HOME` - a clean, private per-environment home.
 - `/workspace` - this environment's workspace (read-write), and the working
   directory.
@@ -270,25 +321,31 @@ it per environment at creation time and forget about it.
 So `ls $HOME` shows only what you create, `ls /workspace` shows your work, and
 nothing from the host or from other environments leaks in.
 
-> **Workspace path differs by mode.** With `--isolate` the workspace is remapped
-> to **`/workspace`** inside the jail (its host location, `~/rfswift-workspace/<name>`
-> by default, stays hidden with the rest of your home). **Without** `--isolate`
-> (the native default) there is no remap: the workspace is used **in place** at
-> its real host path - `~/rfswift-workspace/<name>`, or whatever `--workspace`
-> / `--cwd` you chose - and your home and files are visible as usual. So scripts
-> that hard-code an absolute workspace path should use `/workspace` under
-> `--isolate` and the host path otherwise (or a relative path / `$PWD`, which
-> works in both).
+**macOS (Seatbelt)** cannot bind-mount, so it does **not** remap paths: files
+keep their real host locations and the sandbox simply denies access to
+everything outside the allow-list. `$HOME` is redirected to the same private
+per-environment directory, but the workspace, the env state and the shared
+profile are reached at their **real paths**, not under `/workspace` or
+`/rfswift/*`.
+
+> **Workspace path differs by mode/OS.** On **Linux with `--isolate`** the
+> workspace is remapped to **`/workspace`** inside the jail (its host location,
+> `~/rfswift-workspace/<name>` by default, stays hidden). On **macOS with
+> `--isolate`**, and **without** `--isolate` on either OS, there is no remap: the
+> workspace is used **in place** at its real host path. So scripts that hard-code
+> an absolute workspace path should use `/workspace` only under Linux `--isolate`
+> (or, portably, a relative path / `$PWD`, which works everywhere).
 
 ### Requirements and limits
 
-- **Linux only.** bubblewrap relies on Linux namespaces. On macOS `--isolate`
-  refuses to run rather than pretend; use the container engine there if you need
-  isolation.
-- bubblewrap is taken from your `PATH` (a setuid-root bwrap is preferred), or
+- **Linux and macOS.** Linux uses bubblewrap; macOS uses the built-in Seatbelt
+  sandbox via `/usr/bin/sandbox-exec` (present on every macOS — nothing to
+  install). On any other OS `--isolate` refuses to run rather than pretend to
+  isolate.
+- bubblewrap (**Linux**) is taken from your `PATH` (a setuid-root bwrap is preferred), or
   built from nixpkgs on first use. The installer (`get_rfswift.sh`) offers to
   install it alongside the Nix engine.
-- **Unprivileged user namespaces** must be available, unless bubblewrap is
+- **Unprivileged user namespaces** (**Linux**) must be available, unless bubblewrap is
   setuid-root. Ubuntu 24.04+ and recent Debian restrict them by default
   (AppArmor), so `--isolate` fails with a uid-map "permission denied" error. RF
   Swift preflights the sandbox and, on failure, tells you how to fix it; the
@@ -308,6 +365,29 @@ nothing from the host or from other environments leaks in.
 - The network is kept by default. This is a jail for your filesystem, processes
   and other workspaces, not a full security sandbox: treat untrusted tools with
   the usual care, and lean on `rfswift env audit` for supply-chain posture.
+
+### The macOS Seatbelt policy
+
+macOS builds the jail as a Seatbelt (SBPL) profile handed to `sandbox-exec`.
+SBPL is **last-match-wins**, so RF Swift starts from a working system, revokes
+access to every user home, then re-grants exactly what the environment needs —
+the private HOME rule comes last so it stays writable even though it lives under
+the denied state dir:
+
+```mermaid
+flowchart TD
+    R1["1 · allow default<br/>system runtime, /nix, network,<br/>USB (IOKit), the display"] --> R2
+    R2["2 · deny /Users<br/>deny /private/var/root<br/>→ every home, sibling env,<br/>other workspace hidden"] --> R3
+    R3["3 · allow read-only<br/>this env's state dir<br/>+ shared-extras profile"] --> R4
+    R4["4 · allow read-write<br/>this env's workspace"] --> R5
+    R5["5 · allow read-write<br/>private per-env HOME<br/>(last → stays writable)"]
+```
+
+Verified on macOS: a tool in the jail reading the real `$HOME` gets *Operation
+not permitted*, while the private HOME, the workspace, `/nix` and the network
+work normally. Because Seatbelt is a capability policy rather than a set of
+namespaces, the process/PID isolation and the private `/tmp` that Linux provides
+are not part of the macOS jail — the filesystem-hiding guarantee is identical.
 
 ## Choosing where environments come from
 
@@ -470,8 +550,14 @@ error if it still cannot start.
 
 ### `--isolate` on macOS
 
-Not supported: bubblewrap is Linux-only. `--isolate` refuses to run rather than
-pretend to isolate. Use the container engine on macOS when you need isolation.
+Supported via the built-in Seatbelt sandbox (`/usr/bin/sandbox-exec`) — see
+[The macOS Seatbelt policy](#the-macos-seatbelt-policy). Nothing to install. Two
+differences from Linux to keep in mind: paths are **not** remapped (the workspace
+stays at its real host location, not `/workspace`), and there is **no** separate
+PID/IPC namespace or private `/tmp` (Seatbelt is a filesystem/capability policy,
+not namespaces). The filesystem-hiding guarantee — real `$HOME`, host files,
+sibling environments and other workspaces all hidden — is the same. If you need
+full process/network containment on macOS, use the container engine instead.
 
 ## Notes
 

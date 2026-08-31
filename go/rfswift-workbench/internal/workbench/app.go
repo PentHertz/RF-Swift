@@ -9,6 +9,7 @@ import (
 	"sync"
 
 	"penthertz/rfswift/common"
+	rfdock "penthertz/rfswift/dock"
 	"penthertz/rfswift/remote"
 )
 
@@ -77,6 +78,26 @@ func (a *App) Startup(ctx context.Context) {
 	// Ensure the default workspace exists so the UI has somewhere to write.
 	_ = a.store.CreateWorkspace(a.ws)
 	_ = a.store.SecurePermissions()
+	// Surface container-engine lifecycle state (e.g. a Lima VM booting) in the
+	// GUI. Without this, starting a stopped Lima VM during mission creation is
+	// invisible — the dialog sits still for up to ~30s before any image pull
+	// progress appears, and the user cannot tell whether anything is happening.
+	rfdock.SetEngineStatusReporter(a.emitEngineStatus)
+}
+
+// emitEngineStatus forwards a container-engine lifecycle update to the GUI. When
+// a mission is being created it rides that mission's progress channel so the
+// state (e.g. "starting the Lima VM") shows on the creation dialog; otherwise it
+// is emitted untargeted for any engine strip listening for it.
+func (a *App) emitEngineStatus(stage string, running bool) {
+	a.createMu.Lock()
+	target := a.createName
+	a.createMu.Unlock()
+	percent := 12
+	if running {
+		percent = 25
+	}
+	a.emitOperationProgress("mission-create", target, percent, stage)
 }
 
 // Shutdown releases background services created by the Workbench.

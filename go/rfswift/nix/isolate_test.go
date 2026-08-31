@@ -84,8 +84,40 @@ func TestIsolateArgsKeepsDevicesAndStoreButHidesHome(t *testing.T) {
 }
 
 func TestIsolateSupportedMatchesPlatform(t *testing.T) {
-	if got, want := IsolateSupported(), runtime.GOOS == "linux"; got != want {
+	// Linux (bubblewrap) always supports it; macOS supports it when sandbox-exec
+	// is present; nothing else does.
+	var want bool
+	switch runtime.GOOS {
+	case "linux":
+		want = true
+	case "darwin":
+		want = sandboxExecPath() != ""
+	}
+	if got := IsolateSupported(); got != want {
 		t.Errorf("IsolateSupported()=%v, want %v on %s", got, want, runtime.GOOS)
+	}
+}
+
+func TestDarwinSandboxProfileHidesHomeKeepsEnv(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("darwin-only sandbox profile")
+	}
+	env := &Environment{Name: "rfid"}
+	jail := jailHomeDir(env.Name)
+	profile := darwinSandboxProfile(env, "", jail)
+	// The real user home is denied...
+	if !strings.Contains(profile, "(deny file-read* file-write* (subpath \"/Users\"))") {
+		t.Errorf("profile does not deny /Users:\n%s", profile)
+	}
+	// ...but the private jail HOME and the env state are allowed back, with the
+	// writable jail rule after the read-only env rule (last match wins).
+	envIdx := strings.Index(profile, sbplString(EnvDir(env.Name)))
+	jailIdx := strings.LastIndex(profile, sbplString(jail))
+	if envIdx < 0 || jailIdx < 0 {
+		t.Fatalf("profile missing env or jail allow rule:\n%s", profile)
+	}
+	if jailIdx < envIdx {
+		t.Errorf("writable jail rule must come after the env rule (last match wins):\n%s", profile)
 	}
 }
 

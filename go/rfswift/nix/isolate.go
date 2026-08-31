@@ -2,19 +2,26 @@
 *  Author(s): Sébastien Dudek (@FlUxIuS)
 *
 *  Nix engine - optional lightweight isolation ("jail") for an environment
-*  shell, via bubblewrap (Linux user namespaces).
+*  shell: bubblewrap on Linux, the Seatbelt sandbox (sandbox-exec) on macOS.
 *
 *  The Nix engine normally runs tools natively as the user with full access to
 *  the host (see types.go / the --engine nix docs): great for driving real RF
 *  hardware, but no containment. `--isolate` wraps the environment shell in a
-*  bubblewrap sandbox that hides the real $HOME and the rest of the host
-*  filesystem, gives the shell its own PID/IPC/UTS namespaces and a private
-*  /tmp, while DELIBERATELY keeping what RF tools need: the /nix store, USB and
-*  serial devices, sysfs/udev for enumeration, the X11/Wayland display, and the
-*  network. It is a usability-preserving jail, not a maximum-security sandbox.
+*  sandbox that hides the real $HOME and the rest of the host filesystem, while
+*  DELIBERATELY keeping what RF tools need: the /nix store, USB (and serial
+*  devices on Linux), the display, and the network. It is a usability-preserving
+*  jail, not a maximum-security sandbox.
 *
-*  Linux only: bubblewrap relies on Linux namespaces. On macOS the caller is
-*  told isolation is unavailable rather than running unisolated silently.
+*  Linux: bubblewrap bind-mounts a private $HOME and the environment's state,
+*  gives the shell its own PID/IPC/UTS namespaces and a private /tmp, and binds
+*  USB/serial/sysfs back in.
+*
+*  macOS: bubblewrap and mount namespaces do not exist, so the jail is a
+*  Seatbelt policy applied with sandbox-exec. It cannot mount an empty $HOME, so
+*  it denies the real one (and every other user home - personal files, sibling
+*  environments, other workspaces) and points HOME at a private per-environment
+*  directory; USB (IOKit), the display and the network stay reachable. See the
+*  macOS section at the bottom of this file.
  */
 
 package nix
@@ -29,8 +36,18 @@ import (
 	"strings"
 )
 
-// IsolateSupported reports whether --isolate can be honoured on this OS.
-func IsolateSupported() bool { return runtime.GOOS == "linux" }
+// IsolateSupported reports whether --isolate can be honoured on this OS. Linux
+// uses bubblewrap; macOS uses the Seatbelt sandbox (sandbox-exec).
+func IsolateSupported() bool {
+	switch runtime.GOOS {
+	case "linux":
+		return true
+	case "darwin":
+		return sandboxExecPath() != ""
+	default:
+		return false
+	}
+}
 
 // jailHomeDir is the per-environment private HOME the jail exposes in place of
 // the real one. It persists (so a tool's config/state survive re-entry) but is
@@ -246,14 +263,25 @@ func jailRemapList(v string, mounts []jailMount) string {
 	return strings.Join(parts, ":")
 }
 
-// IsolateCommand wraps inner in a bubblewrap jail for env. It returns a new
-// *exec.Cmd that runs the same program with the same environment and stdio
-// inside the sandbox, with paths under RF Swift's state dir and the working
-// directory remapped to their clean in-jail locations.
+// IsolateCommand wraps inner in a jail for env. It returns a new *exec.Cmd that
+// runs the same program with the same environment and stdio inside a sandbox
+// that hides the real $HOME and the rest of the host filesystem while keeping
+// what RF tools need. Linux uses bubblewrap (mount namespaces); macOS uses the
+// Seatbelt sandbox (sandbox-exec).
 func IsolateCommand(inner *exec.Cmd, env *Environment, workdir string) (*exec.Cmd, error) {
-	if !IsolateSupported() {
-		return nil, fmt.Errorf("--isolate is only available on Linux (bubblewrap); on macOS use the container engine for isolation, or drop --isolate")
+	switch runtime.GOOS {
+	case "linux":
+		return isolateCommandLinux(inner, env, workdir)
+	case "darwin":
+		return isolateCommandDarwin(inner, env, workdir)
+	default:
+		return nil, fmt.Errorf("--isolate is not supported on %s; use the container engine for isolation, or drop --isolate", runtime.GOOS)
 	}
+}
+
+// isolateCommandLinux wraps inner in a bubblewrap jail, remapping paths under RF
+// Swift's state dir and the working directory to their clean in-jail locations.
+func isolateCommandLinux(inner *exec.Cmd, env *Environment, workdir string) (*exec.Cmd, error) {
 	bwrap, err := resolveBwrap()
 	if err != nil {
 		return nil, err
@@ -290,4 +318,125 @@ func IsolateCommand(inner *exec.Cmd, env *Environment, workdir string) (*exec.Cm
 	cmd.Dir = "/"
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = inner.Stdin, inner.Stdout, inner.Stderr
 	return cmd, nil
+}
+
+// ---------------------------------------------------------------------------
+// macOS isolation (Seatbelt / sandbox-exec)
+//
+// macOS has no bubblewrap and no mount namespaces, so the jail is expressed as a
+// Seatbelt policy applied with sandbox-exec instead. It cannot swap an empty
+// HOME in by mounting; it denies the real one (and every other user home) and
+// HOME is pointed at a private per-environment directory. The security goal is
+// the same as the Linux jail: an isolated tool cannot read the user's personal
+// files, sibling environments or other workspaces, while USB (IOKit), the
+// display, the network and the /nix closure stay reachable.
+// ---------------------------------------------------------------------------
+
+// sandboxExecPath returns the path to macOS's sandbox-exec, or "" when absent.
+func sandboxExecPath() string {
+	if runtime.GOOS != "darwin" {
+		return ""
+	}
+	const p = "/usr/bin/sandbox-exec"
+	if pathExists(p) {
+		return p
+	}
+	if q, err := exec.LookPath("sandbox-exec"); err == nil {
+		return q
+	}
+	return ""
+}
+
+// sbplString quotes s as a Seatbelt (SBPL) string literal. SBPL uses
+// double-quoted, backslash-escaped strings, which Go's quoted form matches
+// closely enough for filesystem paths.
+func sbplString(s string) string { return strconv.Quote(s) }
+
+// darwinSandboxProfile builds the Seatbelt policy for env's jail. It starts from
+// a working system (allow default) and takes away access to personal data,
+// rather than deny-all and re-allow the whole of macOS's runtime - the same
+// usability-preserving trade-off the Linux jail makes. Every user home is
+// denied, then only this environment's state and shared profile (read-only) and
+// its workspace and private HOME (read-write) are allowed back. Rules are
+// emitted in order of increasing specificity because SBPL is last-match-wins,
+// and the private HOME lives under the state dir so it must come last to stay
+// writable.
+func darwinSandboxProfile(env *Environment, workdir, jail string) string {
+	var b strings.Builder
+	b.WriteString("(version 1)\n")
+	b.WriteString("(allow default)\n")
+	// Personal files, keys, browser data, sibling RF Swift environments and
+	// other workspaces all live under a user home; hide them all, plus root's.
+	b.WriteString("(deny file-read* file-write* (subpath \"/Users\"))\n")
+	b.WriteString("(deny file-read* file-write* (subpath \"/private/var/root\"))\n")
+
+	writeAllow := func(mode, p string) {
+		if p != "" {
+			fmt.Fprintf(&b, "(allow %s (subpath %s))\n", mode, sbplString(p))
+		}
+	}
+	writeAllow("file-read*", EnvDir(env.Name))
+	if sh := SharedExtrasProfile(); pathExists(sh) {
+		writeAllow("file-read*", sh)
+	}
+	if workdir != "" && workdir != homeDir() && pathExists(workdir) {
+		writeAllow("file-read* file-write*", workdir)
+	}
+	writeAllow("file-read* file-write*", jail)
+	return b.String()
+}
+
+// isolateCommandDarwin wraps inner in a Seatbelt sandbox. Unlike the Linux jail
+// there is no path remapping: the sandbox restricts access to the real host
+// paths in place, so PATH, the rcfile argument and the workspace keep their
+// on-host locations. HOME is redirected to the private per-environment jail.
+func isolateCommandDarwin(inner *exec.Cmd, env *Environment, workdir string) (*exec.Cmd, error) {
+	sb := sandboxExecPath()
+	if sb == "" {
+		return nil, fmt.Errorf("--isolate needs macOS's sandbox-exec, which was not found at /usr/bin/sandbox-exec")
+	}
+	jail := jailHomeDir(env.Name)
+	if err := os.MkdirAll(jail, 0o700); err != nil {
+		return nil, fmt.Errorf("could not create the isolated HOME %q: %w", jail, err)
+	}
+	profile := darwinSandboxProfile(env, workdir, jail)
+
+	// sandbox-exec -p <profile> <program> [args...]. The profile is a single
+	// argument (exec runs no shell), so its newlines and quotes are literal.
+	args := append([]string{"-p", profile}, inner.Args...)
+	cmd := exec.Command(sb, args...)
+
+	// Point HOME at the private jail (the real one is denied), leaving every
+	// other inherited variable - PATH into the /nix profile, DISPLAY, the GL
+	// vars - untouched: macOS keeps the on-host paths.
+	cmd.Env = replaceEnv(inner.Env, "HOME", jail)
+
+	// Start in the workspace if there is one, else in the private home, so the
+	// shell never opens in a directory the sandbox denies.
+	chdir := jail
+	if workdir != "" && workdir != homeDir() && pathExists(workdir) {
+		chdir = workdir
+	}
+	cmd.Dir = chdir
+	cmd.Stdin, cmd.Stdout, cmd.Stderr = inner.Stdin, inner.Stdout, inner.Stderr
+	return cmd, nil
+}
+
+// replaceEnv returns env with key set to val, replacing any existing entry.
+func replaceEnv(env []string, key, val string) []string {
+	out := make([]string, 0, len(env)+1)
+	prefix := key + "="
+	found := false
+	for _, kv := range env {
+		if strings.HasPrefix(kv, prefix) {
+			out = append(out, prefix+val)
+			found = true
+			continue
+		}
+		out = append(out, kv)
+	}
+	if !found {
+		out = append(out, prefix+val)
+	}
+	return out
 }

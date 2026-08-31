@@ -633,11 +633,62 @@ check_agnoster_dependencies() {
   fi
 }
 
+# configure_xquartz_tcp enables "Allow connections from network clients" in
+# XQuartz (nolisten_tcp=false) so the container can reach the host X server over
+# TCP (DISPLAY=<host-ip>:0). Without it XQuartz binds no TCP port and GUI tools
+# fail with "could not connect to display". Restarts a running XQuartz so the
+# setting takes effect. macOS-only; safe to call repeatedly.
+configure_xquartz_tcp() {
+    [[ "$(uname)" == "Darwin" ]] || return 0
+    local current
+    current="$(defaults read org.xquartz.X11 nolisten_tcp 2>/dev/null || echo unset)"
+    if [[ "$current" == "0" ]]; then
+        echo -e "${GREEN}✅ XQuartz 'Allow connections from network clients' already enabled. ✅${NC}"
+        return 0
+    fi
+    echo -e "${CYAN}🔧 Enabling XQuartz 'Allow connections from network clients'... 🔧${NC}"
+    defaults write org.xquartz.X11 nolisten_tcp -bool false
+    if pgrep -qx Xquartz 2>/dev/null; then
+        osascript -e 'quit app "XQuartz"' >/dev/null 2>&1 || true
+        sleep 1
+        open -a XQuartz >/dev/null 2>&1 || true
+    fi
+}
+
 # Enhanced xhost check with Arch Linux support
 check_xhost() {
     if ! command -v xhost &> /dev/null; then
+        # On macOS, XQuartz provides xhost under /opt/X11/bin, which is not on
+        # the default PATH. Pick it up before deciding anything is missing.
+        if [[ "$(uname)" == "Darwin" ]] && [[ -x /opt/X11/bin/xhost ]]; then
+            echo -e "${YELLOW}⚠️ xhost found at /opt/X11/bin/xhost but not in PATH. Adding it.${NC}"
+            export PATH="/opt/X11/bin:$PATH"
+            echo -e "${GREEN}✅ xhost is now available. ✅${NC}"
+            configure_xquartz_tcp
+            return
+        fi
+
         echo -e "${RED}❌ xhost is not installed on this system. ❌${NC}"
-        
+
+        if [[ "$(uname)" == "Darwin" ]]; then
+            echo -e "${CYAN}🍎 macOS detected. Installing XQuartz via Homebrew... 📦${NC}"
+            if ! command -v brew >/dev/null 2>&1; then
+                echo -e "${RED}❌ Homebrew is not installed. Please install it first: https://brew.sh ❌${NC}"
+                exit 1
+            fi
+            brew install --cask xquartz
+            export PATH="/opt/X11/bin:$PATH"
+            if [[ -x /opt/X11/bin/xhost ]]; then
+                echo -e "${GREEN}✅ XQuartz installed successfully. ✅${NC}"
+                configure_xquartz_tcp
+                echo -e "${YELLOW}⚠️ Fresh install: log out and back in once for XQuartz to register the display. ⚠️${NC}"
+            else
+                echo -e "${RED}❌ XQuartz installed but xhost not found. Please reboot and try again. ❌${NC}"
+                exit 1
+            fi
+            return
+        fi
+
         local distro=$(detect_distro)
         case "$distro" in
             "arch")
@@ -675,6 +726,9 @@ check_xhost() {
         echo -e "${GREEN}✅ xhost installed successfully. ✅${NC}"
     else
         echo -e "${GREEN}✅ xhost is already installed. Moving on. ✅${NC}"
+        # xhost present, but on macOS the network-clients toggle may still be off
+        # from a hand-installed XQuartz — ensure it so GUI forwarding works.
+        configure_xquartz_tcp
     fi
 }
 
