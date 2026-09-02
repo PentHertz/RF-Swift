@@ -58,6 +58,9 @@ func (a *App) NixGarbageCollect() (string, error) {
 	if out == "" {
 		out = "Nothing to collect; the store is already minimal."
 	}
+	if note := wslDiskNote(); note != "" {
+		out += "\n" + note
+	}
 	return out, nil
 }
 

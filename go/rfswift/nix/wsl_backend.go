@@ -153,7 +153,7 @@ func wslInstallPackages(flakeRef string, pkgs []string, envName string, progress
 // symlinks live there; deleting through the share would not be reliable).
 func wslRemoveEnvironment(name string) error {
 	if !pathExists(EnvDir(name)) {
-		return fmt.Errorf("environment '%s' not found", name)
+		return &NotFoundError{Name: name}
 	}
 	return runInteractive(rfswiftCommand("nix", "remove", name))
 }

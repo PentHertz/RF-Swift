@@ -89,6 +89,11 @@ func bridgeNixCommandToWSL(cmd *cobra.Command) {
 			code = 1
 		}
 	}
+	if cmd.Name() == "gc" && code == 0 {
+		// The Linux side freed space inside the distribution; the Windows
+		// drive only sees it once the virtual disk is sparse or compacted.
+		common.PrintInfoMessage(fmt.Sprintf("Space freed inside WSL is not returned to the Windows drive by itself: once, run 'wsl --shutdown' then 'wsl --manage %s --set-sparse true' (or compact its ext4.vhdx with Optimize-VHD).", st.Distro))
+	}
 	os.Exit(code)
 }
 

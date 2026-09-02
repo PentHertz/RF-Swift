@@ -123,6 +123,24 @@ rm -f /tmp/rfswift-nix-installer.sh
 $code = Invoke-WslScript -Distro $distro -Script $nixScript -LocalName 'rfswift-wsl-nix.sh'
 if ($code -ne 0) { Write-Output "Nix installation did not complete (exit $code); run 'rfswift nix wsl setup' later." }
 
+# 3b) Store hygiene: let collections drop derivation files (.drv) and the
+#     patches/tarballs they reference, which Nix otherwise keeps for every live
+#     path (same step as go/rfswift/nix/wsl_setup.go).
+$tuneScript = @'
+set -e
+f=/etc/nix/nix.custom.conf
+if [ -f /etc/nix/nix.conf ] && ! grep -q 'nix.custom.conf' /etc/nix/nix.conf; then f=/etc/nix/nix.conf; fi
+if grep -qE '^[[:space:]]*keep-derivations[[:space:]]*=' "$f" 2>/dev/null; then
+  sed -i -E 's/^[[:space:]]*keep-derivations[[:space:]]*=.*/keep-derivations = false/' "$f"
+else
+  printf '\n# RF Swift: do not keep the recipes (.drv) of live paths; they clutter the store and are regenerated on evaluation.\nkeep-derivations = false\n' >> "$f"
+fi
+if command -v systemctl >/dev/null 2>&1 && systemctl is-active --quiet nix-daemon 2>/dev/null; then systemctl restart nix-daemon; fi
+echo "keep-derivations = false set in $f"
+'@
+$code = Invoke-WslScript -Distro $distro -Script $tuneScript -LocalName 'rfswift-wsl-nix-tune.sh'
+if ($code -ne 0) { Write-Output "Could not set keep-derivations=false (exit $code); 'rfswift nix gc' will keep .drv files." }
+
 # 4) The Linux rfswift CLI: the release matching this installer, else the latest.
 $rfswiftScript = @'
 set -e

@@ -98,11 +98,12 @@ func EnvironmentUsesLocalFlake(name string) bool {
 	return ok
 }
 
+// runNixStreaming runs nix on the console, or with its output captured when
+// the process has none (the Workbench on Windows; see runInteractive).
 func runNixStreaming(dir string, args ...string) error {
 	cmd := nixCommand(append(experimentalArgs(), args...)...)
 	cmd.Dir = hostPath(dir)
-	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
-	return cmd.Run()
+	return runInteractive(cmd)
 }
 
 // CheckEnvironmentUpdate asks Nix for lock changes without modifying the lock.
@@ -118,6 +119,14 @@ func CheckEnvironmentUpdate(name, input string) error {
 	if !ok {
 		if input != "" {
 			return fmt.Errorf("--input requires a writable local flake; environment %q uses %s", name, env.FlakeRef)
+		}
+		if env.Lazy && env.FlakeOrigin != "" {
+			report, err := lazyPinReport(env)
+			if err != nil {
+				return err
+			}
+			common.PrintInfoMessage(report)
+			return nil
 		}
 		common.PrintInfoMessage("Remote flake: checking refreshed metadata (no local lock file is modified).")
 		return runNixStreaming("", "flake", "metadata", "--refresh", env.FlakeRef)
@@ -145,6 +154,9 @@ func CheckEnvironmentUpdateOutput(name, input string) (string, error) {
 	if !ok {
 		if input != "" {
 			return "", fmt.Errorf("--input requires a writable local flake; environment %q uses %s", name, env.FlakeRef)
+		}
+		if env.Lazy && env.FlakeOrigin != "" {
+			return lazyPinReport(env)
 		}
 		out, err := runNixCapture("", "flake", "metadata", "--refresh", env.FlakeRef)
 		if err != nil {
@@ -324,14 +336,17 @@ func UpdateEnvironment(name string, opts UpdateOptions) error {
 	return nil
 }
 
-// updateLazyEnvironment refreshes an on-demand environment. Lazy tools are not
-// prebuilt: each shim runs `nix run <flakeRef>#attr` on call, so what makes the
-// next invocation build a newer tool is refreshing the flake — its lock for a
-// writable local flake, or its cached metadata for a remote one. Tools the user
-// explicitly installed live in the environment's extras profile and are upgraded
-// with `nix profile upgrade`. So a lazy update covers BOTH the base on-demand
-// tools (via the flake) and the installed extras — not only the installed ones.
+// updateLazyEnvironment refreshes an on-demand environment. Its tools are
+// built on first call and pinned under tools/ (see pin.go), so an update is:
+// move what the shims build from - the lock of a writable local flake, or the
+// pin of a remote one to the current tip of the reference it came from - then
+// rebuild the tools already built against it, so their next call runs the new
+// version instead of the pinned old one. Tools the user explicitly installed
+// live in the environment's extras profile and are upgraded with `nix profile
+// upgrade`. So a lazy update covers BOTH the base on-demand tools and the
+// installed extras.
 func updateLazyEnvironment(env *Environment, input string) error {
+	changed := false
 	if dir, ok := localFlakePath(env.FlakeRef); ok {
 		args := []string{"flake", "update", "--flake", dir}
 		if input != "" {
@@ -340,12 +355,46 @@ func updateLazyEnvironment(env *Environment, input string) error {
 		if err := runNixStreaming(dir, args...); err != nil {
 			return fmt.Errorf("flake lock update failed: %w", err)
 		}
+		changed = true
 	} else {
 		if input != "" {
 			return fmt.Errorf("--input requires a writable local flake; environment %q uses %s", env.Name, env.FlakeRef)
 		}
-		common.PrintInfoMessage("Refreshing the remote flake reference; each tool rebuilds from it on its next call.")
-		if err := runNixStreaming("", "flake", "metadata", "--refresh", env.FlakeRef); err != nil {
+		origin := env.FlakeOrigin
+		if origin == "" {
+			// Created before pins existed: it followed this reference; pin it
+			// now, as creation does, so the update is the last silent rebuild.
+			origin = env.FlakeRef
+		}
+		current, ok, err := lockedFlakeRef(origin, true)
+		if err != nil {
+			return err
+		}
+		switch {
+		case !ok:
+			common.PrintInfoMessage(fmt.Sprintf("%s resolves to no revision; the tools rebuild from it on their next call.", origin))
+		case current == env.FlakeRef:
+			common.PrintInfoMessage(fmt.Sprintf("'%s' is already pinned at the tip of %s (%s).", env.Name, origin, shortRev(current)))
+		default:
+			common.PrintInfoMessage(fmt.Sprintf("Moving the pin of '%s' from %s to %s.", env.Name, shortRev(env.FlakeRef), shortRev(current)))
+			env.FlakeRef, env.FlakeOrigin = current, origin
+			changed = true
+		}
+	}
+	env.Updated = time.Now()
+	env.LastUpdateInput = input
+	if changed {
+		// The pin is the source of truth: record it before rebuilding, so a
+		// tool that fails to rebuild (its link is dropped) is retried from the
+		// new pin on its next call rather than the environment staying behind.
+		env.Commands = resolveCommands(env.FlakeRef, env.Packages)
+		if err := writeManifest(env); err != nil {
+			return err
+		}
+		if err := writeShims(env); err != nil {
+			return err
+		}
+		if err := rebuildLinkedTools(env); err != nil {
 			return err
 		}
 	}
@@ -357,7 +406,10 @@ func updateLazyEnvironment(env *Environment, input string) error {
 		}
 	}
 	// Keep the shims in sync with any command changes in the refreshed flake.
-	return writeShims(env)
+	if err := writeShims(env); err != nil {
+		return err
+	}
+	return writeManifest(env)
 }
 
 // RebuildEnvironment rebuilds against the currently pinned flake without

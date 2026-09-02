@@ -86,6 +86,18 @@ func shimsDir(name string) string {
 	return filepath.Join(EnvDir(name), "bin")
 }
 
+// toolsDir holds one out-link per tool a lazy environment has built
+// (tools/<attr>): the gcroot that keeps it through `nix store gc`, and what
+// its shim runs after the first call.
+func toolsDir(name string) string {
+	return filepath.Join(EnvDir(name), "tools")
+}
+
+// toolLink is the pinned out-link of one on-demand tool.
+func toolLink(name, attr string) string {
+	return filepath.Join(toolsDir(name), attr)
+}
+
 // EnvExtrasProfile is the per-environment Nix profile holding packages the user
 // added with `rfswift nix install --env <name>`, kept separate from the
 // flake-defined closure so it survives env rebuilds. Its bin is added to PATH

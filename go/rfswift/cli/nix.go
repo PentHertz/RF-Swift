@@ -340,8 +340,11 @@ func renderNixSummary(env *rfnix.Environment) {
 		{Key: "Mode", Value: mode},
 		{Key: "Workspace", Value: wsShort(env.Workspace)},
 		{Key: "Flake", Value: env.FlakeRef, ValueColor: tui.ColorCyan},
-		{Key: "Engine", Value: "nix (native host user)"},
 	}
+	if env.FlakeOrigin != "" {
+		items = append(items, tui.PropertyItem{Key: "Pinned from", Value: env.FlakeOrigin + " (move with: rfswift env update " + env.Name + ")"})
+	}
+	items = append(items, tui.PropertyItem{Key: "Engine", Value: "nix (native host user)"})
 	tui.RenderPropertySheet("🧪 Nix Environment Summary", tui.ColorPrimary, items)
 }
 
@@ -671,10 +674,15 @@ var nixInfoCmd = &cobra.Command{
 			{Key: "Image", Value: env.Image, ValueColor: tui.ColorWarning},
 			{Key: "Created", Value: env.Created.Format("2006-01-02 15:04:05")},
 			{Key: "Flake", Value: env.FlakeRef, ValueColor: tui.ColorCyan},
-			{Key: "State", Value: realisedLabel(env)},
-			{Key: "Workspace", Value: wsShort(env.Workspace)},
-			{Key: "Tools", Value: fmt.Sprintf("%d packages", len(env.Packages))},
 		}
+		if env.FlakeOrigin != "" {
+			items = append(items, tui.PropertyItem{Key: "Pinned from", Value: env.FlakeOrigin + " (move with: rfswift env update " + env.Name + ")"})
+		}
+		items = append(items,
+			tui.PropertyItem{Key: "State", Value: realisedLabel(env)},
+			tui.PropertyItem{Key: "Workspace", Value: wsShort(env.Workspace)},
+			tui.PropertyItem{Key: "Tools", Value: fmt.Sprintf("%d packages", len(env.Packages))},
+		)
 		tui.RenderPropertySheet("🧪 Nix Environment", tui.ColorPrimary, items)
 		if len(env.Packages) > 0 {
 			fmt.Println()
@@ -1074,13 +1082,50 @@ Examples:
 
 		flakeRef := flakeOverride
 		if flakeRef == "" {
-			flakeRef = resolveFlakeForTarget(target)
+			// An environment runs the tool as its own shell would (shim or
+			// profile, pinned flake, GL runtime); a catalog image maps the
+			// command name to the attribute that provides it.
+			if env, err := rfnix.GetEnvironment(target); err == nil {
+				if err := rfnix.RunEnvironmentTool(env, tool, toolArgs); err != nil {
+					common.PrintErrorMessage(err)
+					os.Exit(1)
+				}
+				return
+			}
+			flakeRef = rfnix.ResolveFlakeRef("")
+			tool = resolveCatalogToolAttr(flakeRef, target, tool)
 		}
 		if err := rfnix.RunTool(flakeRef, tool, toolArgs); err != nil {
 			common.PrintErrorMessage(err)
 			os.Exit(1)
 		}
 	},
+}
+
+// resolveCatalogToolAttr maps a command name to the flake attribute that
+// provides it in a catalog image: `rfswift nix run sdr_light sdrpp` means the
+// image's SDR++ (sdrpp-hydrasdr), not the nixpkgs attribute of the same name.
+// A name that already is one of the image's packages, or an unknown image,
+// passes through unchanged.
+func resolveCatalogToolAttr(flakeRef, image, tool string) string {
+	cat, err := rfnix.LoadCatalog()
+	if err != nil {
+		return tool
+	}
+	entry := cat.Find(image)
+	if entry == nil {
+		return tool
+	}
+	for _, p := range entry.Packages {
+		if p == tool {
+			return tool
+		}
+	}
+	if attr := rfnix.ToolAttribute(flakeRef, entry.Packages, tool); attr != "" && attr != tool {
+		common.PrintInfoMessage(fmt.Sprintf("%s is provided by %s in %s.", tool, attr, entry.Name))
+		return attr
+	}
+	return tool
 }
 
 var nixUdevCmd = &cobra.Command{

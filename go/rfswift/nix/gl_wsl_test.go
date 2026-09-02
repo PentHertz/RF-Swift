@@ -57,14 +57,37 @@ func TestGLWSLAppendsGPULibsBehindNixLibraries(t *testing.T) {
 
 func TestGLAdviceMentionsWSL(t *testing.T) {
 	lines := GPUAdvice(GLStatus{WSL: true, WSLGPULibs: wslGPULibDir})
-	if len(lines) != 1 || !strings.Contains(lines[0], "WSLg") || !strings.Contains(lines[0], wslGPULibDir) {
+	if len(lines) != 2 || !strings.Contains(lines[0], "X11") || !strings.Contains(lines[0], WSLWaylandVar) || !strings.Contains(lines[1], wslGPULibDir) {
 		t.Fatalf("advice = %q", lines)
 	}
 	lines = GPUAdvice(GLStatus{WSL: true})
-	if len(lines) != 1 || !strings.Contains(lines[0], "wsl --update") {
+	if len(lines) != 2 || !strings.Contains(lines[1], "wsl --update") {
 		t.Fatalf("missing libraries advice = %q", lines)
 	}
 	if lines := GPUAdvice(GLStatus{}); len(lines) != 0 {
 		t.Fatalf("no GPUs, no WSL, no advice: %q", lines)
+	}
+}
+
+// Under WSLg GLFW prefers Wayland and stalls at window creation; the engine
+// steers GUI tools to Xwayland unless asked not to.
+func TestWSLDisplayEnvPrefersX11(t *testing.T) {
+	wsl := map[string]string{"WSL_DISTRO_NAME": "Ubuntu-24.04", "DISPLAY": ":0", "WAYLAND_DISPLAY": "wayland-0"}
+	got := wslDisplayEnv(testGLHost("linux", nil, wsl, nil))
+	if got["WAYLAND_DISPLAY"] != wslX11Marker || len(got) != 1 {
+		t.Fatalf("WSL with an X display must steer to X11: %v", got)
+	}
+	if got := wslDisplayEnv(testGLHost("linux", nil, map[string]string{"WSL_DISTRO_NAME": "u", "WAYLAND_DISPLAY": "wayland-0"}, nil)); got != nil {
+		t.Fatalf("without an X display there is nothing to fall back to: %v", got)
+	}
+	optOut := map[string]string{"WSL_DISTRO_NAME": "u", "DISPLAY": ":0", WSLWaylandVar: "1"}
+	if got := wslDisplayEnv(testGLHost("linux", nil, optOut, nil)); got != nil {
+		t.Fatalf("%s=1 keeps Wayland: %v", WSLWaylandVar, got)
+	}
+	if got := wslDisplayEnv(testGLHost("linux", nil, map[string]string{"DISPLAY": ":0", "WAYLAND_DISPLAY": "wayland-0"}, nil)); got != nil {
+		t.Fatalf("a regular Linux desktop is left alone: %v", got)
+	}
+	if got := wslDisplayEnv(testGLHost("windows", nil, wsl, nil)); got != nil {
+		t.Fatalf("the Windows side runs no GUI tool itself: %v", got)
 	}
 }

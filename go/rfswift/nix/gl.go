@@ -125,6 +125,34 @@ func (h glHost) wslGPULibs() string {
 	return ""
 }
 
+// wslX11Marker is the WAYLAND_DISPLAY value that makes libwayland fail to
+// connect (no such socket under XDG_RUNTIME_DIR), so a toolkit that prefers
+// Wayland whenever it can connect - GLFW 3.4, hence SDR++ - falls back to
+// X11, which under WSLg is Xwayland on DISPLAY=:0. Unsetting the variable is
+// not enough: libwayland then connects to the default socket, wayland-0,
+// which WSLg provides.
+const wslX11Marker = "rfswift-prefers-x11"
+
+// WSLWaylandVar, set to 1, keeps WSLg's Wayland compositor for GUI tools
+// instead of steering them to X11.
+const WSLWaylandVar = "RFSWIFT_NIX_WAYLAND"
+
+// wslDisplayEnv returns the display variables for a WSL 2 distribution: GUI
+// tools are steered to X11 because GLFW's Wayland backend stalls at window
+// creation under WSLg's compositor (measured on SDR++: 2 to 8 s blocked in its
+// loading screen on Wayland, none on X11). nil elsewhere, without an X
+// display, and when RFSWIFT_NIX_WAYLAND=1 opts back into Wayland.
+func wslDisplayEnv(h glHost) map[string]string {
+	if !h.isWSL() || h.getenv("DISPLAY") == "" {
+		return nil
+	}
+	switch strings.ToLower(strings.TrimSpace(h.getenv(WSLWaylandVar))) {
+	case "1", "true", "yes", "on":
+		return nil
+	}
+	return map[string]string{"WAYLAND_DISPLAY": wslX11Marker}
+}
+
 // withWSLGPULibs appends WSLg's library directory to LD_LIBRARY_PATH, after
 // the nixpkgs libraries so nothing from the host shadows them: only what nix
 // lacks (libdxcore, libd3d12) is picked up there.
@@ -274,9 +302,10 @@ func glDir() string {
 	return filepath.Join(BaseDir(), "gl")
 }
 
-// GLEnvironment returns the variables to add to a shell of env, or nil when
-// the host needs none (NixOS, non-Linux, disabled) or the runtime could not be
-// realised (a warning is printed; GUI tools then behave as before).
+// GLEnvironment returns the variables to add to a shell of env: the OpenGL
+// runtime's, and under WSL 2 the display steering (wslDisplayEnv). nil when
+// the host needs none (NixOS, non-Linux, disabled); when the runtime could
+// not be realised a warning is printed and GUI tools behave as before.
 //
 // refresh re-realises the Mesa runtime from the flake, a no-op when nothing
 // changed: `run` passes true, `exec` and single tool runs reuse what exists.
@@ -299,18 +328,22 @@ const GLRuntimeVar = "RFSWIFT_NIX_GL_RUNTIME"
 
 func glEnvironmentFor(flakeRef, profilePath string, refresh bool) map[string]string {
 	h := currentGLHost()
+	display := wslDisplayEnv(h)
 	if !h.needed() {
-		return nil
+		return display
 	}
 	file, err := glEnvFile(h, flakeRef, profilePath, refresh)
 	if err != nil {
 		common.PrintWarningMessage(fmt.Sprintf("OpenGL runtime unavailable, GUI tools may fail to open a window: %v", err))
-		return nil
+		return display
 	}
 	vars, err := loadGLEnvFor(h, file)
 	if err != nil {
 		common.PrintWarningMessage(fmt.Sprintf("OpenGL runtime unavailable, GUI tools may fail to open a window: %v", err))
-		return nil
+		return display
+	}
+	for k, v := range display {
+		vars[k] = v
 	}
 	return vars
 }
@@ -409,8 +442,9 @@ func GLStatusFor(env *Environment) GLStatus {
 func GPUAdvice(st GLStatus) []string {
 	var lines []string
 	if st.WSL {
+		lines = append(lines, "WSL 2: GUI tools are started on X11 (WSLg's Xwayland, DISPLAY=:0) rather than Wayland: GLFW's Wayland backend stalls for seconds at window creation under WSLg's compositor (SDR++ blocked 2-8 s in its loading screen; 0 s on X11). "+WSLWaylandVar+"=1 keeps Wayland.")
 		if st.WSLGPULibs != "" {
-			lines = append(lines, "WSL 2: the host GPU is reached through WSLg's virtual GPU (/dev/dxg). Mesa's d3d12 driver from the environment's nixpkgs loads libdxcore from "+st.WSLGPULibs+"; if 'rfswift nix gl --check' reports llvmpipe, the pin's Mesa lacks the d3d12 driver and tools render in software (still functional).")
+			lines = append(lines, "WSL 2: the host GPU sits behind WSLg's virtual GPU (/dev/dxg) and Mesa's d3d12 driver can load libdxcore from "+st.WSLGPULibs+", but Xwayland exposes no DRI3 device, so 'rfswift nix gl --check' reports llvmpipe: tools render in software (functional). Forcing the driver (GALLIUM_DRIVER=d3d12) gives a GPU context in the probe but crashes SDR++, so RF Swift does not set it.")
 		} else {
 			lines = append(lines, "WSL 2 without "+wslGPULibDir+": WSLg's GPU libraries are missing (wsl --update), so GUI tools render in software (llvmpipe).")
 		}

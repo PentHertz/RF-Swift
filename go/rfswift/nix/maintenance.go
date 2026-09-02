@@ -6,17 +6,18 @@
 *  Realising environments accumulates store paths fast (each source build, each
 *  intermediate closure). This drives `nix store gc` so users can reclaim disk
 *  space without dropping to the raw nix CLI. Created environments each keep a
-*  `profile` gcroot (see paths.go / buildProfile), so garbage collection never
-*  deletes a built environment that still exists: only build leftovers and paths
-*  no environment references any more are removed. To reclaim a built
-*  environment's closure too, remove it first with `rfswift nix remove`.
+*  `profile` gcroot (see paths.go / buildProfile), and on-demand environments
+*  keep one out-link per tool they have built (tools/<attr>, see pin.go), so
+*  garbage collection never deletes a built environment or a built on-demand
+*  tool that still exists: only build leftovers and paths no environment
+*  references any more are removed. To reclaim a built environment's closure
+*  too, remove it first with `rfswift nix remove`.
  */
 
 package nix
 
 import (
 	"fmt"
-	"os"
 	"strconv"
 )
 
@@ -43,7 +44,8 @@ func GarbageCollect(opts GCOptions) error {
 	if opts.MaxFree > 0 {
 		args = append(args, "--max", strconv.FormatInt(opts.MaxFree, 10))
 	}
-	cmd := nixCommand(args...)
-	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
-	return cmd.Run()
+	// runInteractive attaches the console when there is one and captures the
+	// output otherwise: the Workbench on Windows has no console, and handing
+	// its invalid standard handles to wsl.exe fails ("The handle is invalid").
+	return runInteractive(nixCommand(args...))
 }

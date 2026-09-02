@@ -3,6 +3,7 @@ package nix
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -109,6 +110,23 @@ func TestManifestRoundTrip(t *testing.T) {
 	}
 }
 
+func TestNotFoundErrorsAreRecognisable(t *testing.T) {
+	t.Setenv("RFSWIFT_NIX_HOME", t.TempDir())
+	_, err := GetEnvironment("nope")
+	if !IsNotFound(err) {
+		t.Fatalf("GetEnvironment on a missing environment must be a NotFoundError, got %v", err)
+	}
+	if !strings.Contains(err.Error(), "rfswift nix list") {
+		t.Fatalf("the CLI hint must survive: %v", err)
+	}
+	if err := RemoveEnvironment("nope"); !IsNotFound(err) {
+		t.Fatalf("RemoveEnvironment on a missing environment must be a NotFoundError, got %v", err)
+	}
+	if IsNotFound(os.ErrPermission) {
+		t.Fatal("other errors are not NotFound")
+	}
+}
+
 func TestValidateEnvironmentNameRejectsUnsafeNames(t *testing.T) {
 	// Names flow unquoted into the sourced bashrc and into filesystem paths.
 	for _, ok := range []string{"rt", "sdr_light", "lab-1", "env.2"} {
@@ -189,10 +207,21 @@ func TestWriteShimsUsesResolvedMainProgram(t *testing.T) {
 		"path:/rf-swift-nix#sdr_light-prerequisites",
 		"path:/rf-swift-nix#gnuradio-rfswift-light",
 		`-- "$@"`,
+		shimFormatMarker,
+		// Built once into a pinned out-link (a gcroot), then exec'd from there.
+		`build --out-link "$link"`,
+		filepath.Join("tools", "gnuradio-rfswift-light"),
+		`exec "$link/bin/gnuradio-companion" "$@"`,
 	} {
 		if !strings.Contains(text, want) {
 			t.Errorf("shim does not contain %q:\n%s", want, text)
 		}
+	}
+	if !shimsCurrent(env) {
+		t.Error("freshly written shims must be current")
+	}
+	if _, err := os.Stat(toolsDir(env.Name)); err != nil {
+		t.Errorf("tools dir not created: %v", err)
 	}
 	info, err := os.Stat(shim)
 	if err != nil {
@@ -220,10 +249,109 @@ func TestLazyHandlerCoversSecondaryCommands(t *testing.T) {
 		`command_not_found_handle()`,
 		`[ -x "$out/bin/$cmd" ]`,
 		`nix-test`,
+		// What it builds is pinned under the environment like a shim's tool.
+		`build --out-link "$link"`,
+		`"$link/bin/$cmd" "$@"`,
 	} {
 		if !strings.Contains(handler, want) {
 			t.Errorf("lazy handler does not contain %q", want)
 		}
+	}
+}
+
+func TestShimsCurrentDetectsOlderFormat(t *testing.T) {
+	t.Setenv("RFSWIFT_NIX_HOME", t.TempDir())
+	t.Setenv("RFSWIFT_NIX_BIN", "/opt/nix/bin/nix")
+	env := &Environment{Name: "lazy", Image: "sdr_light", FlakeRef: "path:/rf-swift-nix", Commands: map[string]string{"gqrx": "gqrx"}}
+	if shimsCurrent(env) {
+		t.Fatal("no shims yet: not current")
+	}
+	if err := writeShims(env); err != nil {
+		t.Fatal(err)
+	}
+	if !shimsCurrent(env) {
+		t.Fatal("just written shims are current")
+	}
+	// A shim written by RF Swift 4.0.0 (format 1: nix run on every call).
+	legacy := "#!/bin/sh\n# RF Swift lazy tool shim: builds gqrx on first call, then runs it.\nexec nix run \"path:/rf-swift-nix#gqrx\" -- \"$@\"\n"
+	if err := os.WriteFile(filepath.Join(shimsDir(env.Name), "gqrx"), []byte(legacy), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if shimsCurrent(env) {
+		t.Fatal("a format-1 shim must be reported outdated so ensureShims regenerates it")
+	}
+}
+
+func TestWriteShimsRejectsUnsafeNames(t *testing.T) {
+	t.Setenv("RFSWIFT_NIX_HOME", t.TempDir())
+	t.Setenv("RFSWIFT_NIX_BIN", "/opt/nix/bin/nix")
+	env := &Environment{Name: "lazy", Image: "sdr_light", FlakeRef: "path:/rf-swift-nix", Commands: map[string]string{
+		`a"b`:        "ok-attr",
+		"ok-cmd":     `attr"; touch /tmp/pwned; "`,
+		"$(id)":      "attr",
+		"gqrx":       "gqrx",
+		"grc":        "gnuradioPackages.gnuradio-rfswift",
+		"python3.14": "python3",
+	}}
+	if err := writeShims(env); err != nil {
+		t.Fatal(err)
+	}
+	entries, err := os.ReadDir(shimsDir(env.Name))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var names []string
+	for _, e := range entries {
+		names = append(names, e.Name())
+	}
+	if len(names) != 3 {
+		t.Fatalf("only the plain names get a shim, got %v", names)
+	}
+}
+
+func TestParseLockedFlakeRef(t *testing.T) {
+	github := `{"description":"RF Swift","lastModified":1788362768,"locked":{"lastModified":1788362768,"owner":"PentHertz","repo":"RF-Swift-nix","rev":"ff12ceb11c7d369b3047dfbfcc18c7a774ee5f32","type":"github"},"original":{"owner":"PentHertz","repo":"RF-Swift-nix","type":"github"},"originalUrl":"github:PentHertz/RF-Swift-nix","resolved":{"owner":"PentHertz","repo":"RF-Swift-nix","type":"github"},"resolvedUrl":"github:PentHertz/RF-Swift-nix","revision":"ff12ceb11c7d369b3047dfbfcc18c7a774ee5f32","url":"github:PentHertz/RF-Swift-nix/ff12ceb11c7d369b3047dfbfcc18c7a774ee5f32"}`
+	locked, ok, err := parseLockedFlakeRef([]byte(github))
+	if err != nil || !ok || locked != "github:PentHertz/RF-Swift-nix/ff12ceb11c7d369b3047dfbfcc18c7a774ee5f32" {
+		t.Fatalf("github metadata: %q %v %v", locked, ok, err)
+	}
+	path := `{"locked":{"lastModified":1,"path":"/home/u/RF-Swift-nix","type":"path"},"original":{"path":"/home/u/RF-Swift-nix","type":"path"},"url":"path:/home/u/RF-Swift-nix?lastModified=1"}`
+	if _, ok, err := parseLockedFlakeRef([]byte(path)); err != nil || ok {
+		t.Fatalf("a path flake has no revision to pin: %v %v", ok, err)
+	}
+	if _, _, err := parseLockedFlakeRef([]byte("not json")); err == nil {
+		t.Fatal("garbage must be an error")
+	}
+	if got := shortRev("github:PentHertz/RF-Swift-nix/ff12ceb11c7d369b3047dfbfcc18c7a774ee5f32"); got != "github:PentHertz/RF-Swift-nix/ff12ceb11c7d" {
+		t.Fatalf("shortRev = %q", got)
+	}
+	if got := shortRev("github:PentHertz/RF-Swift-nix"); got != "github:PentHertz/RF-Swift-nix" {
+		t.Fatalf("no revision, unchanged: %q", got)
+	}
+}
+
+func TestLinkedToolsListsPinnedAttrs(t *testing.T) {
+	t.Setenv("RFSWIFT_NIX_HOME", t.TempDir())
+	if got := linkedTools("lazy"); got != nil {
+		t.Fatalf("no tools dir: %v", got)
+	}
+	if err := ensureDir(toolsDir("lazy")); err != nil {
+		t.Fatal(err)
+	}
+	for _, attr := range []string{"sdrpp-hydrasdr", "gqrx", ".hidden"} {
+		if err := os.Symlink("/nix/store/aaaa-"+attr, toolLink("lazy", attr)); err != nil {
+			if runtime.GOOS == "windows" {
+				t.Skip("symlinks need privileges on Windows; the links live on the Linux side anyway")
+			}
+			t.Fatal(err)
+		}
+	}
+	got := linkedTools("lazy")
+	if len(got) != 2 || got[0] != "gqrx" || got[1] != "sdrpp-hydrasdr" {
+		t.Fatalf("linkedTools = %v", got)
+	}
+	if _, err := ListEnvironmentTools("lazy"); err == nil {
+		t.Fatal("no manifest: expected an error")
 	}
 }
 

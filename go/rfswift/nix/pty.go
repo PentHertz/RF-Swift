@@ -22,11 +22,8 @@ func InteractiveCommand(name, requestedShell string) (*exec.Cmd, error) {
 	if err != nil {
 		return nil, err
 	}
-	if env.Lazy && !pathExists(shimsDir(name)) {
-		if env.Commands == nil {
-			env.Commands = resolveCommands(env.FlakeRef, env.Packages)
-		}
-		if err := writeShims(env); err != nil {
+	if env.Lazy {
+		if err := ensureShims(env); err != nil {
 			return nil, err
 		}
 	}

@@ -12,6 +12,23 @@ branch.
 
 ### Added
 
+- Nix engine: on-demand (`--lazy`) environments are pinned. At creation the
+  flake reference is resolved to its revision and recorded (`rfswift nix info`
+  shows the pin and the reference it came from), so a push to RF-Swift-nix no
+  longer makes the next `sdrpp` call silently recompile the tool; `rfswift env
+  update --check <name>` reports whether the reference moved on and `rfswift
+  env update <name>` moves the pin and rebuilds the tools already built. Each
+  tool a shim builds is now realised into `<env>/tools/<attribute>`, a Nix
+  gcroot, so `rfswift nix gc` keeps it (before, on-demand tools were `nix run`
+  results that the next GC deleted and the next call rebuilt), and later calls
+  exec the pinned program directly instead of going through `nix run` (0.03 s
+  against 0.9 s warm; `rfswift nix tools <name>` shows the store path of each
+  built tool). Environments created by earlier builds get the new shims, and
+  the pin, on their next entry. `rfswift nix run <env|image> <command>` takes a
+  command name: for an image it maps to the package that provides it
+  (`sdr_light sdrpp` is `sdrpp-hydrasdr`, not nixpkgs' `sdrpp`, which it used to
+  compile from source), for an environment it runs through the environment's
+  shim or profile with its pin and OpenGL runtime.
 - Nix engine on Windows, through WSL 2. Nix has no Windows port, so the engine
   now lives inside a WSL 2 distribution that RF Swift provisions and drives:
   every Nix command typed in a Windows console (`rfswift run --engine nix`,
@@ -403,6 +420,31 @@ branch.
 
 ### Fixed
 
+- Nix engine under WSL 2: SDR++ took seconds to show its window. GLFW 3.4
+  prefers Wayland whenever it can connect, and WSLg's compositor left SDR++
+  blocked 2 to 8 s in its loading screen at every start; on X11 (WSLg's
+  Xwayland) the same stage takes no time. Environment shells, the Workbench
+  terminal and `rfswift nix run` now steer GUI tools to X11 inside WSL
+  (`RFSWIFT_NIX_WAYLAND=1` keeps Wayland), and `rfswift nix gl` explains it,
+  along with the fact that Xwayland exposes no DRI3 device, so Mesa answers
+  with llvmpipe there (the previous advice blamed a missing `d3d12` driver;
+  the driver is present, and forcing it crashes SDR++).
+- Nix engine on Windows: the Workbench's "delete environment and clean the
+  store" and its per-tool refresh handed the GUI's invalid standard handles to
+  `wsl.exe` (`nix store gc`, `nix build`), the failure mode every other
+  delegated operation already avoided; both now go through the same
+  console-or-capture path. "Delete mission permanently" no longer fails on a
+  mission whose environment was already removed (with "Remove environment"
+  or the CLI): the missing environment is treated as already gone and the
+  mission record is deleted. After a store collection on Windows, the CLI and
+  the Workbench point out that the space freed inside the distribution only
+  reaches the Windows drive once the WSL virtual disk is sparse or compacted
+  (`wsl --manage <distro> --set-sparse true`), which is why `/nix/store` can
+  look full from Windows after `rfswift nix gc`. `rfswift nix wsl setup` now
+  also sets `keep-derivations = false` in the distribution's Nix
+  configuration (existing installations included), so a collection removes
+  the thousands of `.drv`, patch and tarball entries Nix otherwise keeps for
+  every live path.
 - Nix engine: on-demand (`--lazy`) environments did not realise their
   prerequisite device/driver layer, so hardware udev rules were never available
   in lazy mode - a device (e.g. a HydraSDR added to an rfid environment) stayed

@@ -536,13 +536,38 @@ func (a *App) DeleteNixEnvironment(id string, cleanStore bool) error {
 	if remoteEngine, ok := a.eng.(*RemoteEngine); ok {
 		return remoteEngine.Delete(id, true, cleanStore)
 	}
-	if err := rfnix.RemoveEnvironment(id); err != nil {
+	// An environment removed earlier ("Remove environment", the CLI) is not
+	// an error here: the mission is being deleted, and what it pointed at
+	// is already gone.
+	if err := rfnix.RemoveEnvironment(id); err != nil && !rfnix.IsNotFound(err) {
 		return err
 	}
 	if cleanStore {
-		return rfnix.GarbageCollect(rfnix.GCOptions{})
+		if err := rfnix.GarbageCollect(rfnix.GCOptions{}); err != nil {
+			return err
+		}
+		if note := wslDiskNote(); note != "" {
+			a.emitOperationProgress("nix-gc", id, 100, note)
+		}
 	}
 	return nil
+}
+
+// wslDiskNote reminds Windows users that freeing space inside the WSL 2
+// distribution does not shrink its virtual disk on the Windows side unless
+// the disk is sparse or compacted. "" on other hosts.
+func wslDiskNote() string {
+	if !rfnix.UsesWSL() {
+		return ""
+	}
+	distro := ""
+	if st, err := rfnix.WSLBackend(); err == nil {
+		distro = st.Distro
+	}
+	if distro == "" {
+		distro = "<distro>"
+	}
+	return "Space freed inside WSL is not returned to the Windows drive until its virtual disk is sparse or compacted: run 'wsl --shutdown' then 'wsl --manage " + distro + " --set-sparse true' once, or 'Optimize-VHD' on its ext4.vhdx."
 }
 
 // UpdateNixEnvironment refreshes the environment's flake lock (or, for a local

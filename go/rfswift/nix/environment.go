@@ -14,6 +14,7 @@ package nix
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -84,6 +85,9 @@ func RunEnvironment(opts RunOptions) error {
 	}
 
 	flakeRef := ResolveFlakeRef(opts.FlakeRef)
+	// A `run` on an existing name re-realises it; what it was pinned to before
+	// decides whether already-built on-demand tools must be rebuilt.
+	previous, _ := GetEnvironment(opts.Name)
 	envdir := EnvDir(opts.Name)
 	if err := ensureDir(envdir); err != nil {
 		return fmt.Errorf("failed to create environment dir: %w", err)
@@ -119,6 +123,13 @@ func RunEnvironment(opts RunOptions) error {
 		// the entry-time rule offer can see the rules even in lazy mode.
 		env.Lazy = true
 		env.ProfilePath = ""
+		// Pin to the revision the reference resolves to now (pin.go), so the
+		// tools built on demand stay consistent until `rfswift env update`.
+		if pinned, origin := pinLazyFlake(flakeRef); origin != "" {
+			env.FlakeRef, env.FlakeOrigin = pinned, origin
+			flakeRef = pinned
+			common.PrintInfoMessage(fmt.Sprintf("Pinned to %s (move it with: rfswift env update %s).", shortRev(pinned), opts.Name))
+		}
 		common.PrintInfoMessage(fmt.Sprintf("Preparing on-demand environment '%s' (%s). Tools build the first time you call them.", entry.Name, opts.Image))
 		if err := buildPrerequisites(flakeRef, entry.Name, entry.Prerequisites, prerequisitesLink(opts.Name)); err != nil {
 			return err
@@ -126,6 +137,13 @@ func RunEnvironment(opts RunOptions) error {
 		env.Commands = resolveCommands(flakeRef, entry.Packages)
 		if err := writeShims(env); err != nil {
 			return fmt.Errorf("failed to set up on-demand environment: %w", err)
+		}
+		// Re-created under another pin, or with --rebuild: the tools already
+		// built are rebuilt now rather than staying at the previous pin.
+		if opts.Rebuild || (previous != nil && previous.FlakeRef != env.FlakeRef) {
+			if err := rebuildLinkedTools(env); err != nil {
+				return err
+			}
 		}
 	case opts.Pure:
 		// Pure mode does not use a prebuilt profile; it evaluates the devShell
@@ -193,14 +211,9 @@ func ExecEnvironment(name, command string) error {
 	switch {
 	case env.Lazy:
 		// Regenerate the shims if they were lost (e.g. manifest copied between
-		// machines) so tools remain callable on demand.
-		if !pathExists(shimsDir(name)) {
-			if env.Commands == nil {
-				env.Commands = resolveCommands(env.FlakeRef, env.Packages)
-			}
-			if err := writeShims(env); err != nil {
-				return err
-			}
+		// machines) or predate the current layout, so tools remain callable.
+		if err := ensureShims(env); err != nil {
+			return err
 		}
 	case env.ProfilePath != "":
 		// Eager: make sure it is realised (a user may have run `nix store gc`
@@ -249,12 +262,33 @@ func (e *Environment) Realised() bool {
 	return e.ProfilePath != "" && pathExists(e.ProfilePath)
 }
 
+// NotFoundError reports an environment that does not exist (any more).
+// Callers that only need it gone, such as the Workbench deleting a mission
+// whose environment was already removed, test for it with IsNotFound.
+type NotFoundError struct {
+	Name string
+	Hint string
+}
+
+func (e *NotFoundError) Error() string {
+	if e.Hint != "" {
+		return fmt.Sprintf("environment '%s' not found. %s", e.Name, e.Hint)
+	}
+	return fmt.Sprintf("environment '%s' not found", e.Name)
+}
+
+// IsNotFound reports whether err says an environment does not exist.
+func IsNotFound(err error) bool {
+	var nf *NotFoundError
+	return errors.As(err, &nf)
+}
+
 // GetEnvironment loads one environment's manifest.
 func GetEnvironment(name string) (*Environment, error) {
 	data, err := os.ReadFile(manifestPath(name))
 	if err != nil {
 		if os.IsNotExist(err) {
-			return nil, fmt.Errorf("environment '%s' not found. List them with: rfswift nix list", name)
+			return nil, &NotFoundError{Name: name, Hint: "List them with: rfswift nix list"}
 		}
 		return nil, err
 	}
@@ -284,7 +318,7 @@ func RemoveEnvironment(name string) error {
 	}
 	dir := EnvDir(name)
 	if !pathExists(dir) {
-		return fmt.Errorf("environment '%s' not found", name)
+		return &NotFoundError{Name: name}
 	}
 	if err := os.RemoveAll(dir); err != nil {
 		return fmt.Errorf("failed to remove environment '%s': %w", name, err)
@@ -429,41 +463,168 @@ in builtins.listToAttrs (map (n: { name = n; value = main n; }) names)
 	return m, nil
 }
 
+// shimFormat identifies the shim script layout. Shims of an older format are
+// regenerated on the next entry (ensureShims), so an environment created by
+// an earlier RF Swift gets the pinned, GC-safe layout without being recreated.
+const shimFormat = "2"
+
+// shimFormatMarker is the line ensureShims looks for in an existing shim.
+const shimFormatMarker = "# rfswift-shim-format: " + shimFormat
+
+// shimNamePattern constrains the command names and flake attributes that are
+// interpolated into a shim script and its tools/ link path. Both come from
+// the manifest, which is untrusted after an import.
+var shimNamePattern = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9._+-]*$`)
+
+// nixFeatureArgs enables flakes on the nix calls written into shell scripts.
+const nixFeatureArgs = `--extra-experimental-features "nix-command flakes"`
+
 // writeShims creates the build-on-first-call wrapper scripts for a lazy
-// environment: one per command in env.Commands.
+// environment: one per command in env.Commands. A shim builds its tool with
+// an out-link under the environment (tools/<attr>): that link is a Nix
+// gcroot, so `rfswift env gc` keeps the tool, and every later call execs the
+// linked program directly, with no nix invocation at all.
 func writeShims(env *Environment) error {
 	dir := shimsDir(env.Name)
 	if err := ensureDir(dir); err != nil {
 		return err
 	}
+	if err := ensureDir(toolsDir(env.Name)); err != nil {
+		return err
+	}
 	nixbin := NixBinary()
 	for command, attr := range env.Commands {
-		if command == "" || strings.ContainsAny(command, "/ ") {
-			continue
-		}
-		// attr comes from the manifest (untrusted after import) and is written
-		// into a comment line of the generated shim; a newline would close the
-		// comment and inject a shell line that runs on first tool use. Nix
-		// attribute names never contain newlines, so skip anything that does.
-		if strings.ContainsAny(attr, "\n\r") {
+		// Anything but a plain name would break out of the quoted shell words
+		// (or, for attr, the comment line) it is written into.
+		if !shimNamePattern.MatchString(command) || !shimNamePattern.MatchString(attr) {
 			continue
 		}
 		installable := fmt.Sprintf("%s#%s", env.FlakeRef, attr)
 		prereq := fmt.Sprintf("%s#%s-prerequisites", env.FlakeRef, env.Image)
 		prereqStep := ""
 		if len(env.Prerequisites) > 0 {
-			prereqStep = fmt.Sprintf("%s --extra-experimental-features \"nix-command flakes\" build --out-link %q %q || exit $?\n", nixbin, prerequisitesLink(env.Name), prereq)
+			prereqStep = fmt.Sprintf("  %s %s build --out-link %q %q || exit $?\n", nixbin, nixFeatureArgs, prerequisitesLink(env.Name), prereq)
 		}
 		script := fmt.Sprintf(`#!/bin/sh
-# RF Swift lazy tool shim: builds %s on first call, then runs it.
 %s
-exec %s --extra-experimental-features "nix-command flakes" run %q -- "$@"
-`, attr, prereqStep, nixbin, installable)
+# RF Swift lazy tool shim: builds %s the first time it is called, pins it under
+# the environment (a Nix gcroot, so 'rfswift env gc' keeps it) and runs it from
+# there; later calls involve no nix at all.
+link=%q
+if [ ! -x "$link/bin/%s" ]; then
+%s  %s %s build --out-link "$link" %q || exit $?
+fi
+if [ -x "$link/bin/%s" ]; then
+  exec "$link/bin/%s" "$@"
+fi
+# The package provides no bin/%s of its own: let nix run its main program.
+exec %s %s run %q -- "$@"
+`, shimFormatMarker, attr, toolLink(env.Name, attr), command, prereqStep, nixbin, nixFeatureArgs, installable, command, command, command, nixbin, nixFeatureArgs, installable)
 		if err := os.WriteFile(filepath.Join(dir, command), []byte(script), 0o755); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// shimsCurrent reports whether an environment's shims exist and carry the
+// current format marker (all are written together, so one is inspected).
+func shimsCurrent(env *Environment) bool {
+	dir := hostPath(shimsDir(env.Name))
+	entries, err := os.ReadDir(dir)
+	if err != nil || len(entries) == 0 {
+		return false
+	}
+	data, err := os.ReadFile(filepath.Join(dir, entries[0].Name()))
+	return err == nil && strings.Contains(string(data), shimFormatMarker)
+}
+
+// ensureShims (re)generates an on-demand environment's shims when they are
+// missing (a manifest copied between machines) or of an older format. An
+// environment created before pins existed still follows an unpinned
+// reference; it is pinned on this occasion, as a new one is at creation, and
+// the manifest is rewritten accordingly.
+func ensureShims(env *Environment) error {
+	if shimsCurrent(env) {
+		return nil
+	}
+	if env.FlakeOrigin == "" {
+		if pinned, origin := pinLazyFlake(env.FlakeRef); origin != "" {
+			env.FlakeRef, env.FlakeOrigin = pinned, origin
+			common.PrintInfoMessage(fmt.Sprintf("Pinned on-demand environment '%s' to %s (it followed %s; move it with: rfswift env update %s).", env.Name, shortRev(pinned), origin, env.Name))
+		}
+	}
+	if env.Commands == nil {
+		env.Commands = resolveCommands(env.FlakeRef, env.Packages)
+	}
+	if err := writeShims(env); err != nil {
+		return err
+	}
+	return writeManifest(env)
+}
+
+// ToolAttribute returns the flake attribute among packages whose main
+// program is command, "" when none is or the evaluation fails. It lets
+// `rfswift nix run <image> <command>` run the image's own tool (sdrpp is
+// provided by sdrpp-hydrasdr in sdr_light) rather than a same-named attribute.
+func ToolAttribute(flakeRef string, packages []string, command string) string {
+	data, err := evalMainPrograms(flakeRef, packages)
+	if err != nil {
+		return ""
+	}
+	for attr, main := range data {
+		if main == command {
+			return attr
+		}
+	}
+	return ""
+}
+
+// RunEnvironmentTool runs one tool of an existing environment the way the
+// environment's own shell would: through its on-demand shim (build, pin,
+// exec) or the eager profile's program, with the OpenGL and display runtime
+// of gl.go, in the caller's working directory. A name that is neither is a
+// flake attribute of the environment's (pinned) flake.
+func RunEnvironmentTool(env *Environment, tool string, args []string) error {
+	attr := tool
+	if a, ok := env.Commands[tool]; ok && a != "" {
+		attr = a
+	}
+	if useWSL() {
+		return wslRunTool(env.FlakeRef, attr, args)
+	}
+	if !IsAvailable() {
+		return fmt.Errorf("nix is not installed or not on PATH")
+	}
+	program := ""
+	switch {
+	case env.Lazy:
+		if err := ensureShims(env); err != nil {
+			return err
+		}
+		if p := filepath.Join(shimsDir(env.Name), tool); pathExists(p) {
+			program = p
+		}
+	case env.ProfilePath != "":
+		if p := filepath.Join(env.ProfilePath, "bin", tool); pathExists(p) {
+			program = p
+		}
+	}
+	if program == "" {
+		return RunTool(env.FlakeRef, attr, args)
+	}
+	setupX11()
+	vars := map[string]string{"RFSWIFT_NIX_ENV": env.Name, "RFSWIFT_ENGINE": "nix"}
+	for k, v := range GLEnvironment(env, false) {
+		vars[k] = v
+	}
+	for k, v := range pluginPathEnv(env) {
+		vars[k] = v
+	}
+	cmd := exec.Command(program, args...)
+	cmd.Env = withEnv(os.Environ(), vars)
+	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
+	return cmd.Run()
 }
 
 // setupX11 best-effort grants local clients access to the X server so GUI RF
@@ -691,9 +852,10 @@ echo ""
 }
 
 // lazyHandler generates a bash command_not_found_handle that, for a command not
-// on PATH, builds the environment's package that ships it and runs it. Packages
-// whose name relates to the command are tried first so it stays close to
-// on-demand rather than building everything.
+// on PATH, builds the environment's package that ships it, pins it under
+// tools/ like a shim would, and runs it. Packages whose name relates to the
+// command are tried first so it stays close to on-demand rather than building
+// everything.
 func lazyHandler(env *Environment) string {
 	quoted := make([]string, 0, len(env.Packages))
 	for _, p := range env.Packages {
@@ -702,15 +864,16 @@ func lazyHandler(env *Environment) string {
 	attrs := strings.Join(quoted, " ")
 	prereqStep := ""
 	if len(env.Prerequisites) > 0 {
-		prereqStep = fmt.Sprintf("  \"$__rfx_nix\" --extra-experimental-features \"nix-command flakes\" build --out-link %q %q || return $?\n", prerequisitesLink(env.Name), fmt.Sprintf("%s#%s-prerequisites", env.FlakeRef, env.Image))
+		prereqStep = fmt.Sprintf("  \"$__rfx_nix\" %s build --out-link %q %q || return $?\n", nixFeatureArgs, prerequisitesLink(env.Name), fmt.Sprintf("%s#%s-prerequisites", env.FlakeRef, env.Image))
 	}
 	return fmt.Sprintf(`
 __rfx_flake=%q
 __rfx_nix=%q
+__rfx_tools=%q
 __rfx_attrs=(%s)
 command_not_found_handle() {
   local cmd="$1"; shift
-  local a leaf out ordered=()
+  local a leaf out link ordered=()
 %s
   # Try packages whose name relates to the command first.
   for a in "${__rfx_attrs[@]}"; do
@@ -720,16 +883,20 @@ command_not_found_handle() {
   ordered+=("${__rfx_attrs[@]}")
   echo "rfswift: '$cmd' not built yet; building the tool that provides it..." >&2
   for a in "${ordered[@]}"; do
-    out=$("$__rfx_nix" --extra-experimental-features "nix-command flakes" build --no-link --print-out-paths "$__rfx_flake#$a" 2>/dev/null) || continue
+    out=$("$__rfx_nix" %s build --no-link --print-out-paths "$__rfx_flake#$a" 2>/dev/null) || continue
     if [ -n "$out" ] && [ -x "$out/bin/$cmd" ]; then
-      export PATH="$out/bin:$PATH"
-      "$out/bin/$cmd" "$@"; return $?
+      # Pin the package under the environment (a gcroot, so a store GC keeps
+      # it) and put its programs on PATH for the rest of this shell.
+      link="$__rfx_tools/$a"
+      "$__rfx_nix" %s build --out-link "$link" "$__rfx_flake#$a" >/dev/null 2>&1 || link="$out"
+      export PATH="$link/bin:$PATH"
+      "$link/bin/$cmd" "$@"; return $?
     fi
   done
   echo "rfswift: '$cmd' is not provided by environment '$RFSWIFT_NIX_ENV'." >&2
   return 127
 }
-`, env.FlakeRef, NixBinary(), attrs, prereqStep)
+`, env.FlakeRef, NixBinary(), toolsDir(env.Name), attrs, prereqStep, nixFeatureArgs, nixFeatureArgs)
 }
 
 // userShell picks the interactive shell to launch.

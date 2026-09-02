@@ -14,6 +14,7 @@ package nix
 import (
 	"encoding/json"
 	"fmt"
+	"os"
 	"sort"
 	"strings"
 )
@@ -96,7 +97,12 @@ func ListEnvironmentTools(envName string) ([]EnvironmentTool, error) {
 	var tools []EnvironmentTool
 	if env.Lazy {
 		for command, attr := range env.Commands {
-			tools = append(tools, EnvironmentTool{Name: command, Attr: attr, Kind: "on-demand"})
+			t := EnvironmentTool{Name: command, Attr: attr, Kind: "on-demand"}
+			// A tool built at least once is pinned under tools/<attr>.
+			if target, err := os.Readlink(hostPath(toolLink(env.Name, attr))); err == nil {
+				t.StorePath = target
+			}
+			tools = append(tools, t)
 		}
 		sort.Slice(tools, func(i, j int) bool { return tools[i].Name < tools[j].Name })
 	}
@@ -112,8 +118,9 @@ func ListEnvironmentTools(envName string) ([]EnvironmentTool, error) {
 //     re-resolves it from its flake (a local flake's current source, or the
 //     refreshed remote);
 //   - an on-demand tool is rebuilt from the environment's flake right now
-//     (`nix build --refresh`), so its next call runs the new version instantly
-//     instead of building at that moment.
+//     into its pinned link (`nix build --out-link`, with --refresh for a
+//     remote flake), so its next call runs the new version instantly instead
+//     of building at that moment.
 //
 // name may be a command/shim name, a profile element name, or a flake attr.
 func UpdateEnvironmentTool(envName, name string) error {
@@ -154,9 +161,10 @@ func UpdateEnvironmentTool(envName, name string) error {
 	if !env.Lazy {
 		return fmt.Errorf("%q is part of the eager profile of %q; update the whole environment instead", name, envName)
 	}
-	args := []string{"build", "--no-link"}
-	if _, local := localFlakePath(env.FlakeRef); !local {
-		// A remote flake is cached by Nix; make the build see its current head.
+	args := []string{"build", "--out-link", toolLink(envName, attr)}
+	if _, local := localFlakePath(env.FlakeRef); !local && env.FlakeOrigin == "" {
+		// An unpinned remote flake is cached by Nix; make the build see its
+		// current head. A pinned one (FlakeOrigin set) names a revision.
 		args = append(args, "--refresh")
 	}
 	args = append(args, fmt.Sprintf("%s#%s", env.FlakeRef, attr))

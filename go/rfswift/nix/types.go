@@ -60,9 +60,14 @@ func (c *Catalog) Names() []string {
 // analogue of an RF Swift container: something you create once, re-enter, and
 // remove.
 type Environment struct {
-	Name            string    `json:"name"`
-	Image           string    `json:"image"`                   // catalog entry this env was built from
-	FlakeRef        string    `json:"flakeRef"`                // resolved flake reference used to realise it
+	Name     string `json:"name"`
+	Image    string `json:"image"`    // catalog entry this env was built from
+	FlakeRef string `json:"flakeRef"` // resolved flake reference used to realise it
+	// FlakeOrigin is the reference a lazy environment was created from when
+	// FlakeRef is its locked revision (see pin.go): `env update` re-resolves it
+	// to move the pin. Empty for eager environments, local checkouts and
+	// references that already name a revision.
+	FlakeOrigin     string    `json:"flakeOrigin,omitempty"`
 	Packages        []string  `json:"packages"`                // resolved package list (snapshot at creation)
 	Prerequisites   []string  `json:"prerequisites,omitempty"` // runtime device/library layer
 	Workspace       string    `json:"workspace"`               // host path mounted/linked as the working dir

@@ -52,6 +52,7 @@ rfswift nix tools mysdr             # on-demand shims and installed extras of on
 rfswift nix search hackrf           # find a tool (add --nixpkgs for the whole pinned nixpkgs)
 rfswift nix remove mysdr           # delete it (frees the pin; nix store gc reclaims space)
 rfswift nix run sdr_light gqrx     # build and run a single tool on demand
+rfswift nix gc                     # reclaim store space; environments and their built tools survive
 ```
 
 `list`, `info`, `tools`, `search`, `generations`, `gl` and `udev --list` accept
@@ -122,9 +123,16 @@ remove them. Updating invalidates the environment security audit while retaining
 the old report as a stale report beside the environment metadata. Run
 `rfswift env audit mysdr` again after updating.
 
-These generation guarantees apply to eager environments. Lazy and pure
-environments do not have a complete pinned profile to preserve; recreate them
-as eager environments when transactional update and rollback are required.
+These generation guarantees apply to eager environments. An on-demand (lazy)
+environment is pinned differently: at creation it records the revision its
+flake reference resolved to (`rfswift nix info` shows the pin and the reference
+it came from), and every tool it builds is realised from that revision, so a
+push to RF-Swift-nix never rebuilds a tool behind your back. `rfswift env update
+--check mysdr` tells whether the reference has moved on; `rfswift env update
+mysdr` moves the pin to its current tip and rebuilds the tools you have already
+built, so their next call runs the new version at once. There are no rollback
+generations for lazy environments; recreate one as eager when rollback is
+required. Pure environments have nothing pinned to preserve.
 
 The requested legacy-compatible forms are all available too:
 
@@ -151,14 +159,25 @@ Creating an environment can work two ways:
   prebuild anything. Each tool becomes a shim that builds it the first time you
   call it. Type `gqrx` and gqrx is built and run; type `inspectrum` next and only
   that is built. Nothing you never use is ever built. The interactive wizard also
-  offers this as a "build mode" choice.
+  offers this as a "build mode" choice. A tool built this way is pinned under
+  `~/.rfswift/nix/environments/<name>/tools/<attribute>` (a Nix gcroot, so
+  `rfswift nix gc` keeps it) and every later call starts it straight from that
+  link, with no `nix` invocation in between; `rfswift nix tools mysdr` lists
+  which tools are built. The environment itself is pinned to the flake revision
+  it was created from (see [Updating](#updating-rebuilding-and-rolling-back)).
 
 You can also run a single tool without creating an environment at all:
 
 ```bash
 rfswift nix run sdr_light gqrx            # build+run gqrx from the pinned set
-rfswift nix run mysdr inspectrum -- x.iq  # scoped to an environment's pinned flake
+rfswift nix run sdr_light sdrpp           # the image's SDR++ (sdrpp-hydrasdr), by command name
+rfswift nix run mysdr inspectrum -- x.iq  # through the environment: its shim or profile, its pin
 ```
+
+The second argument is a command name: for a catalog image it is mapped to the
+package that provides it, and for an existing environment the tool runs exactly
+as it would from the environment's shell (pinned, GC-safe, with the OpenGL
+runtime). A flake attribute is accepted too.
 
 Both modes build the same tool from the same pinned definition, so results are
 identical; the only difference is when the work happens.
@@ -490,12 +509,49 @@ doctor shows the same status and has a **Set up Nix in WSL 2** button.
   grants root to your Windows user). Replug the device afterwards.
 - **Display and sound** come from WSLg (`DISPLAY=:0`, PulseAudio), nothing to
   install. `rfswift doctor` and `rfswift nix wsl status` report both sockets.
+  GUI tools are started on X11 (WSLg's Xwayland) rather than on its Wayland
+  compositor: GLFW, hence SDR++, prefers Wayland whenever it can connect and
+  then stalls for seconds at window creation under WSLg (measured 2 to 8 s
+  blocked in SDR++'s loading screen, none on X11). The environment shell, the
+  Workbench terminal and `rfswift nix run` all apply this; set
+  `RFSWIFT_NIX_WAYLAND=1` to keep Wayland.
 - **OpenGL**: the environment's Mesa is used as on any non-NixOS host, with
-  WSLg's GPU libraries (`/usr/lib/wsl/lib`, `libdxcore`) appended so Mesa's
-  `d3d12` driver reaches your GPU through WSLg's virtual GPU; `rfswift nix gl
-  <name> --check` tells whether the GPU or llvmpipe answered.
+  WSLg's GPU libraries (`/usr/lib/wsl/lib`, `libdxcore`) appended for Mesa's
+  `d3d12` driver. Xwayland exposes no DRI3 device, so in practice Mesa answers
+  with llvmpipe (software rendering, fully functional); `rfswift nix gl
+  <name> --check` shows which one answered. Forcing the `d3d12` driver by hand
+  (`GALLIUM_DRIVER=d3d12`) gives a real GPU context in that probe but crashes
+  SDR++, so RF Swift does not do it.
 - `--isolate` works inside the distribution (bubblewrap, built from nixpkgs on
   first use).
+
+### Disk space
+
+`rfswift nix gc` frees space inside the distribution, but the WSL 2 virtual
+disk (`ext4.vhdx`) does not give that space back to the Windows drive on its
+own, so Explorer keeps showing the old size. Make the disk sparse once (it
+then shrinks by itself) or compact it:
+
+```powershell
+wsl --shutdown
+wsl --manage Ubuntu --set-sparse true        # your distribution's name
+```
+
+What stays after a collection is what the engine keeps rooted: every
+environment's profile or prerequisites, the tools an on-demand environment has
+built, the OpenGL runtime (Mesa with its LLVM, about 1 GB) and Nix itself.
+Removing an environment drops its roots; its store paths go with the next
+collection. A store is never empty, and its directory is owned by root: never
+delete inside `/nix/store` by hand, that removes Nix itself.
+
+Nix also keeps, by default, the recipe (`.drv` file) of every live path and
+the patches and tarballs those recipes reference, which is why a listing after
+a collection shows thousands of small entries next to a few hundred real
+outputs. `rfswift nix wsl setup` sets `keep-derivations = false` in the
+distribution's Nix configuration (`/etc/nix/nix.custom.conf` for Determinate
+Nix), so collections remove them too; they are regenerated by the next
+evaluation. On a Linux host, add the same line to `/etc/nix/nix.conf` and
+restart the daemon if you want the same behaviour.
 
 ### Keeping both sides aligned
 
