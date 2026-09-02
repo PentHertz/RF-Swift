@@ -83,15 +83,23 @@
     <util:RegistrySearch Id="SearchDockerDesktop" Variable="DockerDesktopVersion"
         Root="HKLM" Key="SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\Docker Desktop"
         Value="DisplayVersion" Result="value" />
-    <util:FileSearch Id="SearchPodmanDesktop" Variable="PodmanDesktopExe"
+    <!-- Podman Desktop: either an existing per-user install or the per-machine
+         one this bundle performs (electron-builder /allusers => Program Files). -->
+    <util:FileSearch Id="SearchPodmanDesktopUser" Variable="PodmanDesktopExe"
         Path="[LocalAppDataFolder]Programs\podman-desktop\Podman Desktop.exe" Result="exists" />
+    <util:FileSearch Id="SearchPodmanDesktopMachine" Variable="PodmanDesktopExeMachine"
+        Path="[ProgramFiles64Folder]podman-desktop\Podman Desktop.exe" Result="exists" />
 
     <Chain>
       <!-- 1) Enable WSL 2 + WSLg. Idempotent; no DetectCondition so it always
               runs when checked (re-enabling an enabled feature is a no-op). A
-              pending restart surfaces as DISM 3010 -> Burn reboots and resumes. -->
+              pending restart surfaces as DISM 3010 -> Burn reboots and resumes.
+              CacheId is explicit: this and SetupNixWsl embed the same
+              powershell.exe payload, and the default (payload hash) CacheId
+              would collide (WIX8000). -->
       <ExePackage Id="EnableWsl"
                   DisplayName="Enable WSL 2 and WSLg"
+                  CacheId="RFSwift.EnableWsl.$(BundleVersion)"
                   PerMachine="yes" Permanent="yes" Vital="yes"
                   InstallCondition="EnableWsl = 1"
                   InstallArguments="-ExecutionPolicy Bypass -NoProfile -File &quot;RunPrereqs.ps1&quot;">
@@ -124,15 +132,19 @@
         <ExitCode Value="3010" Behavior="scheduleReboot" />
       </ExePackage>
 
-      <!-- 3b) Podman Desktop (open-source engine). Per-user NSIS installer, so
-              PerMachine="no" runs it as the invoking user (no extra elevation). -->
+      <!-- 3b) Podman Desktop (open-source engine). electron-builder NSIS
+              installer, run per-machine (/allusers) so the bundle itself stays
+              per-machine: a single per-user package would make the whole bundle
+              per-user (HKCU ARP entry, no dependency registration on the
+              per-machine usbipd/RF Swift MSIs - WIX1140), and other accounts
+              could then never uninstall RF Swift. -->
       <ExePackage Id="PodmanDesktop"
                   DisplayName="Podman Desktop"
                   SourceFile="$(DepsDir)\$(PodmanExe)"
                   DownloadUrl="$(PodmanUrl)"
-                  Compressed="no" PerMachine="no" Permanent="yes" Vital="yes"
-                  InstallArguments="/S"
-                  DetectCondition="PodmanDesktopExe"
+                  Compressed="no" PerMachine="yes" Permanent="yes" Vital="yes"
+                  InstallArguments="/S /allusers"
+                  DetectCondition="PodmanDesktopExe OR PodmanDesktopExeMachine"
                   InstallCondition="ContainerEngine = &quot;podman&quot;" />
 
       <!-- 3c) Optional: Nix in WSL 2 (native environments, no container engine).
@@ -143,6 +155,7 @@
                back the container install. -->
       <ExePackage Id="SetupNixWsl"
                   DisplayName="Set up Nix in WSL 2"
+                  CacheId="RFSwift.SetupNixWsl.$(BundleVersion)"
                   PerMachine="yes" Permanent="yes" Vital="no"
                   InstallCondition="SetupNix = 1"
                   InstallArguments="-ExecutionPolicy Bypass -NoProfile -File &quot;SetupNixWSL.ps1&quot; -RFSwiftVersion &quot;$(RFSwiftTag)&quot;">
