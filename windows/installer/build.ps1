@@ -217,8 +217,8 @@ if ($Bundle) {
         $depArgs += @("-d", "$($d.WixVar)=$name", "-d", "$($d.WixUrl)=$($d.Url)")
     }
 
-    $bundle = Join-Path $buildDir "RFSwift-Setup-$Version-$Arch.exe"
-    Write-Host "==> building bundle $([System.IO.Path]::GetFileName($bundle))"
+    $bundleExe = Join-Path $buildDir "RFSwift-Setup-$Version-$Arch.exe"
+    Write-Host "==> building bundle $([System.IO.Path]::GetFileName($bundleExe))"
     & wix build -arch $Arch `
         -ext "WixToolset.BootstrapperApplications.wixext/$WixVersion" `
         -ext "WixToolset.Util.wixext/$WixVersion" `
@@ -231,23 +231,23 @@ if ($Bundle) {
         -d "ThemeDir=theme" `
         @depArgs `
         (Join-Path $here "Bundle.wxs") `
-        -o $bundle
+        -o $bundleExe
     if ($LASTEXITCODE -ne 0) { throw "wix build (bundle) failed" }
 
     if ($signing) {
         # Sign the Burn engine and the outer bundle separately (detach/reattach)
         # so the extracted engine used for repair/uninstall is itself signed.
         $engine = Join-Path $buildDir "burnengine.exe"
-        & wix burn detach $bundle -engine $engine
+        & wix burn detach $bundleExe -engine $engine
         if ($LASTEXITCODE -ne 0) { throw "wix burn detach failed" }
         Invoke-Sign $engine
-        $tmp = "$bundle.reattached"
-        & wix burn reattach $bundle -engine $engine -o $tmp
+        $tmp = "$bundleExe.reattached"
+        & wix burn reattach $bundleExe -engine $engine -o $tmp
         if ($LASTEXITCODE -ne 0) { throw "wix burn reattach failed" }
-        Move-Item -LiteralPath $tmp -Destination $bundle -Force
-        Invoke-Sign $bundle
+        Move-Item -LiteralPath $tmp -Destination $bundleExe -Force
+        Invoke-Sign $bundleExe
     }
-    Write-Host "==> Bundle: $bundle"
+    Write-Host "==> Bundle: $bundleExe"
 }
 
 Write-Host "==> done. Artifacts in $buildDir"
