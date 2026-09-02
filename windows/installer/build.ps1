@@ -37,6 +37,11 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+# Resolve caller-relative paths BEFORE moving into the script directory, so
+# `-BinDir windows\installer\bin-x64` (as the workflow passes from the repo
+# root) does not get re-anchored under windows\installer a second time.
+$binFull = (Resolve-Path -LiteralPath $BinDir).Path
+if ($CertFile) { $CertFile = (Resolve-Path -LiteralPath $CertFile).Path }
 $here = Split-Path -Parent $MyInvocation.MyCommand.Path
 Set-Location $here
 $buildDir = Join-Path $here "build"
@@ -47,7 +52,6 @@ New-Item -ItemType Directory -Force -Path $buildDir | Out-Null
 # version string stays in file names.
 $msiVersion = ($Version -split '[-+]')[0]
 $bundleVersion = "$msiVersion.0"
-$binFull = (Resolve-Path $BinDir).Path
 $signing = [bool]($CertThumbprint -or $CertFile)
 
 Write-Host "==> RF Swift installer build: version=$Version (msi=$msiVersion) arch=$Arch bundle=$Bundle signing=$signing"
@@ -143,7 +147,7 @@ function Invoke-Sign {
     $st = Get-SignTool
     $a = @("sign", "/fd", "SHA256", "/td", "SHA256", "/tr", $TimestampUrl)
     if ($CertThumbprint) { $a += @("/sha1", $CertThumbprint) }
-    elseif ($CertFile) { $a += @("/f", (Resolve-Path $CertFile).Path); if ($CertPassword) { $a += @("/p", $CertPassword) } }
+    elseif ($CertFile) { $a += @("/f", $CertFile); if ($CertPassword) { $a += @("/p", $CertPassword) } }
     else { throw "no signing credentials" }
     $a += $File
     & $st @a
