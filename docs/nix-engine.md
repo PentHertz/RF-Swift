@@ -21,6 +21,9 @@ sh <(curl -L https://nixos.org/nix/install) --daemon
 RF Swift enables the `nix-command` and `flakes` features on every call, so you do
 not need to edit `nix.conf`.
 
+On **Windows**, Nix runs inside a WSL 2 distribution that RF Swift provisions
+and drives for you: see [Windows: the engine runs in WSL 2](#windows-the-engine-runs-in-wsl-2).
+
 ## Quick start
 
 ```bash
@@ -45,9 +48,14 @@ rfswift exec --engine nix -c mysdr -e "gqrx"
 rfswift nix catalog                 # environments you can create
 rfswift nix list                    # environments you have created
 rfswift nix info mysdr              # details + package list for one environment
+rfswift nix tools mysdr             # on-demand shims and installed extras of one environment
+rfswift nix search hackrf           # find a tool (add --nixpkgs for the whole pinned nixpkgs)
 rfswift nix remove mysdr           # delete it (frees the pin; nix store gc reclaims space)
 rfswift nix run sdr_light gqrx     # build and run a single tool on demand
 ```
+
+`list`, `info`, `tools`, `search`, `generations`, `gl` and `udev --list` accept
+`--json` for scripts (and for the Windows front end, see below).
 
 The newer resource-first spelling is `rfswift env ...`; `rfswift nix ...`
 remains compatible and prints a deprecation notice.
@@ -213,6 +221,7 @@ those download prebuilt and no local compilation is needed.
 | `--pure` | Enter a pure environment (`nix develop --ignore-environment`), not inheriting the host environment |
 | `--isolate` | Enter inside a bubblewrap jail (Linux): hides `$HOME` and the host filesystem, keeps USB/serial devices, the display and the network. See [Isolation](#isolation---isolate). |
 | `--rebuild` | Force re-realisation during creation (eager mode); for an existing environment use `rfswift env rebuild <name>` |
+| `--create-only` | Create and realise the environment without entering it (scripts, the Workbench) |
 | `--flake <ref>` | Use a specific flake reference instead of the default |
 
 ## Isolation (`--isolate`)
@@ -362,9 +371,19 @@ profile are reached at their **real paths**, not under `/workspace` or
   Installing a setuid bubblewrap is an alternative (it needs no unprivileged
   namespaces). You do not need `sudo` to *run* `--isolate` once either is in
   place.
-- The network is kept by default. This is a jail for your filesystem, processes
-  and other workspaces, not a full security sandbox: treat untrusted tools with
-  the usual care, and lean on `rfswift env audit` for supply-chain posture.
+- The network is kept by default, name resolution included: when
+  `/etc/resolv.conf` is a symlink out of `/etc` (systemd-resolved,
+  resolvconf, NetworkManager, WSL) its target is bound into the jail. This is
+  a jail for your filesystem, processes and other workspaces, not a full
+  security sandbox: treat untrusted tools with the usual care, and lean on
+  `rfswift env audit` for supply-chain posture.
+- **WSL 2** (the Nix engine on Windows): the jail works unchanged inside the
+  distribution - unprivileged user namespaces are available and bubblewrap is
+  built from nixpkgs on first use - and additionally binds WSLg's `/mnt/wslg`
+  (display and sound sockets) and `/dev/dxg` (the virtual GPU) so GUI tools
+  keep working. Verified: an isolated shell sees its own PID namespace, the
+  private home, `/workspace`, the X11 and PulseAudio sockets, and can build
+  an on-demand tool over the network.
 
 ### The macOS Seatbelt policy
 
@@ -388,6 +407,103 @@ not permitted*, while the private HOME, the workspace, `/nix` and the network
 work normally. Because Seatbelt is a capability policy rather than a set of
 namespaces, the process/PID isolation and the private `/tmp` that Linux provides
 are not part of the macOS jail — the filesystem-hiding guarantee is identical.
+
+## Windows: the engine runs in WSL 2
+
+Nix has no Windows port, so on Windows the Nix engine lives inside a **WSL 2
+distribution** and RF Swift drives it for you. Every command keeps the same
+spelling: `rfswift run --engine nix`, `rfswift nix install`, `rfswift env
+update`, ... typed in PowerShell or the RF Swift Console are served by the Linux
+`rfswift` inside the distribution, with the same wizards, builds and shells.
+The Workbench uses the same backend, so Nix missions appear there as on Linux.
+
+```mermaid
+flowchart LR
+    subgraph win[Windows]
+        CLI["rfswift.exe<br/>(any console)"]
+        WB["Workbench"]
+    end
+    subgraph wsl["WSL 2 distribution (e.g. Ubuntu)"]
+        LX["Linux rfswift"]
+        NIX["nix daemon + /nix/store"]
+        ENV["~/.rfswift/nix/environments<br/>~/rfswift-workspace"]
+        LX --> NIX
+        LX --> ENV
+    end
+    CLI -->|"wsl.exe (login shell)"| LX
+    WB -->|"wsl.exe + ConPTY"| LX
+    WB -.->|"reads state via \\\\wsl.localhost"| ENV
+    USB["usbipd-win"] -->|"forwards radios"| wsl
+    WSLG["WSLg"] -->|"display + audio + GPU libs"| wsl
+```
+
+### Setting it up
+
+The Windows installer offers **Set up Nix in WSL 2**. Without it, or on a new
+distribution, run:
+
+```powershell
+rfswift nix wsl setup            # systemd, Nix with flakes, the Linux rfswift CLI
+rfswift nix wsl status           # what the distribution offers (nix, rfswift, WSLg, USB)
+```
+
+`setup` asks before each step (`--yes` answers for you), installs Ubuntu when no
+WSL 2 Linux distribution exists (`wsl --install -d Ubuntu`; you create a Linux
+user on first boot), enables systemd in `/etc/wsl.conf` so the nix daemon and
+udev run as services, installs Nix with the Determinate Systems installer, and
+puts the Linux `rfswift` in `/usr/local/bin` at the same version as the Windows
+one (falling back to the latest release). Any Nix command that finds the
+distribution unprovisioned offers the same setup. With several distributions,
+`rfswift nix wsl use <name>` (or `RFSWIFT_WSL_DISTRO`) picks the one to use;
+Docker Desktop's and Podman's utility VMs are never used. The Workbench's engine
+doctor shows the same status and has a **Set up Nix in WSL 2** button.
+
+### What lives where
+
+- Environments, their profiles, audit reports and default workspaces are inside
+  the distribution: `~/.rfswift/nix/` and `~/rfswift-workspace/<name>/` of your
+  Linux user. Explorer reaches them at
+  `\\wsl.localhost\<distro>\home\<user>\rfswift-workspace` (`rfswift nix wsl
+  status` prints the exact path; `run` tells it when a workspace is created).
+- A Windows path given to `--workspace`, `nix export -o`, `nix import` or
+  `--flake` (a local RF-Swift-nix checkout) is translated to its `/mnt/<drive>/`
+  view, so the environment's workspace can also be a folder of your Windows
+  profile. Working on `/mnt/c` is slower than on the distribution's own disk.
+- `RFSWIFT_ENGINE`, `RFSWIFT_NIX_FLAKE`, `RFSWIFT_NIX_GL`, `RFSWIFT_NIX_HOME` and
+  `RFSWIFT_NIX_CATALOG` set on Windows are forwarded to the Linux side, which
+  also receives `RFSWIFT_NO_BANNER=1` so only the Windows side prints the
+  banner (the Linux CLI prints it on interactive terminals only anyway).
+- The distribution is chosen from `RFSWIFT_WSL_DISTRO`, then `[nix] wsl_distro`
+  in `config.ini`, then the default WSL 2 distribution.
+
+### Hardware, display, sound and GPU
+
+- **USB radios**: forward them into the WSL 2 kernel with `rfswift usb attach`
+  (usbipd-win), exactly as for containers; `run`, `exec` and `shell` with the
+  Nix engine offer the picker when they detect RF hardware, and the Workbench's
+  **USB passthrough...** action is available on Nix missions. Every WSL 2
+  distribution shares that kernel, so one attach serves containers and Nix
+  environments alike. Inside the distribution the tools then see
+  `/dev/bus/usb`, and the environment's **udev rules** apply there (systemd
+  runs udev): `rfswift nix udev <name>`, or **Install device rules** in the
+  Workbench, installs them as on a Linux host, with no password prompt (WSL
+  grants root to your Windows user). Replug the device afterwards.
+- **Display and sound** come from WSLg (`DISPLAY=:0`, PulseAudio), nothing to
+  install. `rfswift doctor` and `rfswift nix wsl status` report both sockets.
+- **OpenGL**: the environment's Mesa is used as on any non-NixOS host, with
+  WSLg's GPU libraries (`/usr/lib/wsl/lib`, `libdxcore`) appended so Mesa's
+  `d3d12` driver reaches your GPU through WSLg's virtual GPU; `rfswift nix gl
+  <name> --check` tells whether the GPU or llvmpipe answered.
+- `--isolate` works inside the distribution (bubblewrap, built from nixpkgs on
+  first use).
+
+### Keeping both sides aligned
+
+The Windows `rfswift.exe` and the Linux `rfswift` should be the same version:
+the front end tells you when they differ, and `rfswift nix wsl setup --update`
+reinstalls the Linux one at the Windows version (or `--version <tag>`, or
+`--binary <file>` for a local build). `rfswift nix wsl shell` opens a login
+shell in the distribution when you want to work there directly.
 
 ## Choosing where environments come from
 
@@ -566,5 +682,6 @@ full process/network containment on macOS, use the container engine instead.
   proprietary vendor SDKs are opt-in and need a manual download. Anything not yet
   packaged is listed per environment and dropped from the shell with a trace
   rather than failing the build.
-- The Nix engine is Linux and macOS only (Nix does not run natively on Windows;
-  use WSL2).
+- Nix does not run natively on Windows: there the engine runs inside a WSL 2
+  distribution that RF Swift provisions and drives for you (see
+  [Windows: the engine runs in WSL 2](#windows-the-engine-runs-in-wsl-2)).

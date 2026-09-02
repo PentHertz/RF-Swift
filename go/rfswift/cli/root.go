@@ -69,6 +69,10 @@ var rootCmd = &cobra.Command{
 	Use:   "rfswift",
 	Short: "rfswift - you RF & HW swiss army",
 	Long:  `rfswift is THE toolbox for any HAM & radiocommunications and hardware professionals`,
+	// `rfswift --version` prints the version without touching the network or
+	// an engine; the Windows front end reads it from the Linux rfswift inside
+	// WSL to detect version skew.
+	Version: common.Version,
 	Run: func(cmd *cobra.Command, args []string) {
 		fmt.Println("Use '-h' for help")
 	},
@@ -167,6 +171,9 @@ func init() {
 			// both `--engine nix` on run/exec and the `rfswift nix` group.
 			if isNixEngineRequested(engineType) || isNixCommand(cmd) {
 				rfnix.SetSelected(true)
+				// Windows: the engine lives in a WSL 2 distribution; the Linux
+				// rfswift there serves the command (does not return when it does).
+				bridgeNixCommandToWSL(cmd)
 				rfutils.DisplayVersion()
 				return
 			}

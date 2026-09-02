@@ -182,11 +182,17 @@ func DefaultProfiles() []Profile {
 			Bindings:    usbTreeBinding,
 		},
 		{
+			// No /dev/ttyACM0 mapping on purpose: a Proxmark3 or other CDC-ACM
+			// reader is reached through the USB tree bind + cgroup rule below
+			// (hotplug-safe), while a fixed node mapping only exists when the
+			// device is plugged in at creation time and otherwise makes the
+			// container fail to start. Add it explicitly when a tool insists
+			// on the serial node (`--devices /dev/ttyACM0:/dev/ttyACM0`, or the
+			// Workbench's Proxmark shortcut).
 			Name:        "rfid",
 			Description: "RFID/NFC tools (Proxmark3, libnfc) over USB",
 			Image:       officialImage("rfid"),
 			Network:     "host",
-			Devices:     "/dev/ttyACM0:/dev/ttyACM0",
 			Bindings:    usbTreeBinding,
 			Cgroups:     "c 189:* rwm",
 		},

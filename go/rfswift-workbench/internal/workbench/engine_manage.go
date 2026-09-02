@@ -5,7 +5,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strconv"
@@ -43,7 +42,9 @@ func (a *App) NixGarbageCollect() (string, error) {
 	if !rfnix.IsAvailable() {
 		return "", fmt.Errorf("nix is not installed or not on PATH")
 	}
-	cmd := exec.Command(rfnix.NixBinary(), "--extra-experimental-features", "nix-command", "store", "gc")
+	// NixCommand runs nix where the engine is: locally, or inside the WSL 2
+	// distribution on Windows.
+	cmd := rfnix.NixCommand("--extra-experimental-features", "nix-command", "store", "gc")
 	var buf bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &buf, &buf
 	err := cmd.Run()

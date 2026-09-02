@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -113,6 +114,7 @@ func runNixEnvironment(cmd *cobra.Command) error {
 	lazy, _ := cmd.Flags().GetBool("lazy")
 	isolate, _ := cmd.Flags().GetBool("isolate")
 	flakeRef, _ := cmd.Flags().GetString("flake")
+	createOnly, _ := cmd.Flags().GetBool("create-only")
 
 	// Resolve the workspace selection into the value RunEnvironment expects.
 	workspace := ""
@@ -172,17 +174,42 @@ func runNixEnvironment(cmd *cobra.Command) error {
 	}
 
 	return rfnix.RunEnvironment(rfnix.RunOptions{
-		Name:      name,
-		Image:     image,
-		Command:   command,
-		Workspace: workspace,
-		FlakeRef:  flakeRef,
-		Rebuild:   rebuild,
-		Pure:      pure,
-		Lazy:      lazy,
-		Isolate:   isolate,
-		PreEnter:  offerUdevRules,
+		Name:       name,
+		Image:      image,
+		Command:    command,
+		Workspace:  workspace,
+		FlakeRef:   flakeRef,
+		Rebuild:    rebuild,
+		Pure:       pure,
+		Lazy:       lazy,
+		Isolate:    isolate,
+		CreateOnly: createOnly,
+		PreEnter:   offerUdevRules,
 	})
+}
+
+// printJSON writes v as indented JSON on stdout (the --json outputs of the nix
+// commands, read by scripts and by the Windows front end).
+func printJSON(v any) error {
+	enc := json.NewEncoder(os.Stdout)
+	enc.SetIndent("", "  ")
+	return enc.Encode(v)
+}
+
+// environmentJSON is the machine-readable shape of `nix list|info --json`:
+// the manifest plus the on-disk state the human tables show.
+type environmentJSON struct {
+	*rfnix.Environment
+	Realised bool   `json:"realised"`
+	State    string `json:"state"`
+}
+
+func environmentsJSON(envs []*rfnix.Environment) []environmentJSON {
+	out := make([]environmentJSON, 0, len(envs))
+	for _, e := range envs {
+		out = append(out, environmentJSON{Environment: e, Realised: e.Realised(), State: realisedLabel(e)})
+	}
+	return out
 }
 
 // offerUdevRules runs before the shell of `run --engine nix` is entered on
@@ -585,6 +612,12 @@ var nixListCmd = &cobra.Command{
 			common.PrintErrorMessage(err)
 			return
 		}
+		if asJSON, _ := cmd.Flags().GetBool("json"); asJSON {
+			if err := printJSON(environmentsJSON(envs)); err != nil {
+				common.PrintErrorMessage(err)
+			}
+			return
+		}
 		if len(envs) == 0 {
 			common.PrintInfoMessage("No Nix environments yet. Create one with: rfswift run --engine nix")
 			return
@@ -625,6 +658,12 @@ var nixInfoCmd = &cobra.Command{
 		env, err := rfnix.GetEnvironment(name)
 		if err != nil {
 			common.PrintErrorMessage(err)
+			return
+		}
+		if asJSON, _ := cmd.Flags().GetBool("json"); asJSON {
+			if err := printJSON(environmentJSON{Environment: env, Realised: env.Realised(), State: realisedLabel(env)}); err != nil {
+				common.PrintErrorMessage(err)
+			}
 			return
 		}
 		items := []tui.PropertyItem{
@@ -687,6 +726,7 @@ var nixRemoveCmd = &cobra.Command{
 		}
 		if err := rfnix.RemoveEnvironment(name); err != nil {
 			common.PrintErrorMessage(err)
+			os.Exit(1)
 		}
 	},
 }
@@ -745,8 +785,10 @@ var nixInstallCmd = &cobra.Command{
 			flake = resolveFlakeForTarget(target)
 		}
 		if err := rfnix.InstallPackages(flake, packages, target); err != nil {
+			// Non-zero exit: the Windows front end and scripts rely on it to
+			// tell a failed install from a successful one.
 			common.PrintErrorMessage(err)
-			return
+			os.Exit(1)
 		}
 		// A newly installed package may ship udev rules (e.g. a device library
 		// like libhydrasdr). Offer to install any that are not on the host yet,
@@ -789,6 +831,7 @@ var nixGCCmd = &cobra.Command{
 		}
 		if err := rfnix.GarbageCollect(rfnix.GCOptions{DryRun: dryRun, MaxFree: maxFree}); err != nil {
 			common.PrintErrorMessage(err)
+			os.Exit(1)
 		}
 	},
 }
@@ -809,9 +852,18 @@ update only one local flake input, for example nixpkgs.`,
 		check, _ := cmd.Flags().GetBool("check")
 		input, _ := cmd.Flags().GetString("input")
 		yes, _ := cmd.Flags().GetBool("yes")
+		tool, _ := cmd.Flags().GetString("tool")
 		name := ""
 		if len(args) == 1 {
 			name = args[0]
+		}
+		if tool != "" {
+			// One tool only: an installed extra is upgraded in place, an
+			// on-demand shim is rebuilt now (see UpdateEnvironmentTool).
+			if name == "" {
+				return fmt.Errorf("--tool needs the environment name: rfswift nix update --tool %s <name>", tool)
+			}
+			return rfnix.UpdateEnvironmentTool(name, tool)
 		}
 		if name == "" {
 			if !tui.IsInteractive() {
@@ -959,6 +1011,12 @@ var nixGenerationsCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
+		if asJSON, _ := cmd.Flags().GetBool("json"); asJSON {
+			if gens == nil {
+				gens = []rfnix.Generation{}
+			}
+			return printJSON(gens)
+		}
 		if len(gens) == 0 {
 			common.PrintInfoMessage("No previous generations yet.")
 			return nil
@@ -994,13 +1052,25 @@ tool's closure is realised, so you can bring tools up step by step.
 
 Examples:
   rfswift nix run sdr_light gqrx
-  rfswift nix run mysdr inspectrum -- recording.iq`,
-	Args: cobra.MinimumNArgs(2),
+  rfswift nix run mysdr inspectrum -- recording.iq
+  rfswift nix run --flake github:PentHertz/RF-Swift-nix sdrpp   # explicit flake, tool only`,
+	Args: cobra.MinimumNArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		flakeOverride, _ := cmd.Flags().GetString("flake")
-		target := args[0]
-		tool := args[1]
-		toolArgs := args[2:]
+		var target, tool string
+		var toolArgs []string
+		// With --flake the environment/image argument has nothing to resolve, so
+		// a single argument before "--" is the tool itself.
+		dash := cmd.ArgsLenAtDash()
+		if flakeOverride != "" && (dash == 1 || (dash < 0 && len(args) == 1)) {
+			tool, toolArgs = args[0], args[1:]
+		} else {
+			if len(args) < 2 {
+				common.PrintErrorMessage(fmt.Errorf("usage: rfswift nix run <environment|image> <tool> [-- args...] (or --flake <ref> <tool>)"))
+				os.Exit(1)
+			}
+			target, tool, toolArgs = args[0], args[1], args[2:]
+		}
 
 		flakeRef := flakeOverride
 		if flakeRef == "" {
@@ -1037,6 +1107,8 @@ Examples:
 		remove, _ := cmd.Flags().GetBool("remove")
 		noGroups, _ := cmd.Flags().GetBool("no-groups")
 		yes, _ := cmd.Flags().GetBool("yes")
+		asJSON, _ := cmd.Flags().GetBool("json")
+		listOnly = listOnly || asJSON
 		if runtime.GOOS != "linux" {
 			common.PrintInfoMessage("udev rules are a Linux mechanism. On macOS, USB devices are opened directly by the tools (no rules needed); on Windows, install the WinUSB driver for the device with Zadig.")
 			return
@@ -1060,11 +1132,32 @@ Examples:
 			return
 		}
 		// The device/library layer carries most rules; realise it for
-		// on-demand environments that have nothing built yet.
-		if err := rfnix.RealisePrerequisites(env); err != nil {
-			common.PrintWarningMessage(fmt.Sprintf("Could not realise the device layer: %v", err))
+		// on-demand environments that have nothing built yet. Not in --json
+		// mode, whose output must stay a single document (and which reports
+		// what is realised, not what could be).
+		if !asJSON {
+			if err := rfnix.RealisePrerequisites(env); err != nil {
+				common.PrintWarningMessage(fmt.Sprintf("Could not realise the device layer: %v", err))
+			}
 		}
 		rules := rfnix.ListUdevRules(env)
+		if asJSON {
+			absent, notMember := rfnix.GroupStatus(rules)
+			if rules == nil {
+				rules = []rfnix.UdevRule{}
+			}
+			if absent == nil {
+				absent = []string{}
+			}
+			if notMember == nil {
+				notMember = []string{}
+			}
+			if err := printJSON(map[string]any{"rules": rules, "groupsAbsent": absent, "groupsNotMember": notMember}); err != nil {
+				common.PrintErrorMessage(err)
+				os.Exit(1)
+			}
+			return
+		}
 		if len(rules) == 0 {
 			common.PrintInfoMessage(fmt.Sprintf("Environment '%s' ships no udev rules (nothing realised yet, or no hardware packages).", env.Name))
 			return
@@ -1123,6 +1216,7 @@ Examples:
 	Args: cobra.MaximumNArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		check, _ := cmd.Flags().GetBool("check")
+		asJSON, _ := cmd.Flags().GetBool("json")
 		var env *rfnix.Environment
 		if len(args) > 0 {
 			e, err := rfnix.GetEnvironment(args[0])
@@ -1133,6 +1227,20 @@ Examples:
 			env = e
 		}
 		st := rfnix.GLStatusFor(env)
+		if asJSON {
+			report := struct {
+				rfnix.GLStatus
+				Advice []string `json:"advice"`
+			}{st, rfnix.GPUAdvice(st)}
+			if report.Advice == nil {
+				report.Advice = []string{}
+			}
+			if err := printJSON(report); err != nil {
+				common.PrintErrorMessage(err)
+				os.Exit(1)
+			}
+			return
+		}
 		items := []tui.PropertyItem{
 			{Key: "Runtime needed", Value: fmt.Sprintf("%t", st.Needed)},
 			{Key: "Reason", Value: st.Reason},
@@ -1245,6 +1353,123 @@ Examples:
 	},
 }
 
+var nixToolsCmd = &cobra.Command{
+	Use:   "tools <name>",
+	Short: "List the tools an environment provides on demand or has installed",
+	Long: `Lists the per-tool state of an environment: the on-demand shims of a lazy
+environment (each builds the first time it is called) and the packages
+installed into it with 'rfswift nix install --env <name>'. --installed keeps
+only the latter; --json prints the same for scripts and the Workbench.
+
+Refresh one of them with: rfswift nix update --tool <tool> <name>`,
+	Args:         cobra.ExactArgs(1),
+	SilenceUsage: true,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		installedOnly, _ := cmd.Flags().GetBool("installed")
+		asJSON, _ := cmd.Flags().GetBool("json")
+		var tools []rfnix.EnvironmentTool
+		var err error
+		if installedOnly {
+			if _, err = rfnix.GetEnvironment(args[0]); err == nil {
+				tools, err = rfnix.ListInstalledExtras(args[0])
+			}
+		} else {
+			tools, err = rfnix.ListEnvironmentTools(args[0])
+		}
+		if err != nil {
+			return err
+		}
+		if asJSON {
+			if tools == nil {
+				tools = []rfnix.EnvironmentTool{}
+			}
+			return printJSON(tools)
+		}
+		if len(tools) == 0 {
+			common.PrintInfoMessage(fmt.Sprintf("Environment '%s' has no on-demand or installed tools to list (eager environments carry their tools in the profile: rfswift nix info %s).", args[0], args[0]))
+			return nil
+		}
+		rows := make([][]string, 0, len(tools))
+		for _, t := range tools {
+			rows = append(rows, []string{t.Name, t.Kind, t.Attr, t.StorePath})
+		}
+		tui.RenderTable(tui.TableConfig{Title: "🧰 Tools of " + args[0], TitleColor: tui.ColorPrimary, Headers: []string{"Tool", "Kind", "Attribute", "Store path"}, Rows: rows, BorderRow: false})
+		return nil
+	},
+}
+
+var nixSearchCmd = &cobra.Command{
+	Use:   "search <term>",
+	Short: "Search tools: the curated RF Swift set, or the whole pinned nixpkgs with --nixpkgs",
+	Long: `Finds packages to install with 'rfswift nix install'. Without --nixpkgs the
+search covers the curated RF Swift tool set and tells which environments bundle
+each hit; with --nixpkgs it asks Nix to search the complete nixpkgs package set
+pinned by the flake (slower, exhaustive). --json is for scripts.
+
+Examples:
+  rfswift nix search hackrf
+  rfswift nix search --nixpkgs gnss
+  rfswift nix search --nixpkgs --env mysdr wireshark   # against mysdr's pinned flake`,
+	Args:         cobra.ExactArgs(1),
+	SilenceUsage: true,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		nixpkgs, _ := cmd.Flags().GetBool("nixpkgs")
+		asJSON, _ := cmd.Flags().GetBool("json")
+		flake, _ := cmd.Flags().GetString("flake")
+		target, _ := cmd.Flags().GetString("env")
+		if nixpkgs {
+			if flake == "" {
+				flake = resolveFlakeForTarget(target)
+			}
+			hits, err := rfnix.SearchNixpkgs(flake, args[0])
+			if err != nil {
+				return fmt.Errorf("nix search failed: %w", err)
+			}
+			type hit struct {
+				Attr        string `json:"attr"`
+				Description string `json:"description"`
+			}
+			list := make([]hit, 0, len(hits))
+			for attr, desc := range hits {
+				list = append(list, hit{Attr: attr, Description: desc})
+			}
+			sort.Slice(list, func(i, j int) bool { return list[i].Attr < list[j].Attr })
+			if asJSON {
+				return printJSON(list)
+			}
+			if len(list) == 0 {
+				common.PrintInfoMessage(fmt.Sprintf("No nixpkgs package matches '%s'.", args[0]))
+				return nil
+			}
+			rows := make([][]string, 0, len(list))
+			for _, h := range list {
+				rows = append(rows, []string{h.Attr, truncate(h.Description, 70)})
+			}
+			tui.RenderTable(tui.TableConfig{Title: "📦 nixpkgs packages matching " + args[0], TitleColor: tui.ColorPrimary, Headers: []string{"Attribute", "Description"}, Rows: rows, BorderRow: false})
+			common.PrintInfoMessage("Install one with: rfswift nix install <attribute> [--env <name>]")
+			return nil
+		}
+		hits := rfnix.SearchPackages(args[0])
+		if asJSON {
+			if hits == nil {
+				hits = []rfnix.PkgHit{}
+			}
+			return printJSON(hits)
+		}
+		if len(hits) == 0 {
+			common.PrintInfoMessage(fmt.Sprintf("No curated RF Swift tool matches '%s'; try the full package set: rfswift nix search --nixpkgs %s", args[0], args[0]))
+			return nil
+		}
+		rows := make([][]string, 0, len(hits))
+		for _, h := range hits {
+			rows = append(rows, []string{h.Name, strings.Join(h.Envs, ", ")})
+		}
+		tui.RenderTable(tui.TableConfig{Title: "🔎 RF Swift tools matching " + args[0], TitleColor: tui.ColorPrimary, Headers: []string{"Package", "Environments"}, Rows: rows, BorderRow: false})
+		common.PrintInfoMessage("Install one with: rfswift nix install <package> [--env <name>]")
+		return nil
+	},
+}
+
 func registerNixCommands() {
 	rootCmd.AddCommand(nixCmd)
 	nixCmd.AddCommand(nixCatalogCmd)
@@ -1265,6 +1490,21 @@ func registerNixCommands() {
 	nixCmd.AddCommand(nixRollbackCmd)
 	nixCmd.AddCommand(nixUdevCmd)
 	nixCmd.AddCommand(nixGLCmd)
+	nixCmd.AddCommand(nixToolsCmd)
+	nixCmd.AddCommand(nixSearchCmd)
+	registerNixWSLCommands()
+	nixListCmd.Flags().Bool("json", false, "print machine-readable JSON")
+	nixInfoCmd.Flags().Bool("json", false, "print machine-readable JSON")
+	nixGenerationsCmd.Flags().Bool("json", false, "print machine-readable JSON")
+	nixGLCmd.Flags().Bool("json", false, "print machine-readable JSON")
+	nixUdevCmd.Flags().Bool("json", false, "print the rules and group status as JSON (implies --list)")
+	nixToolsCmd.Flags().Bool("installed", false, "only the packages installed with 'nix install --env'")
+	nixToolsCmd.Flags().Bool("json", false, "print machine-readable JSON")
+	nixSearchCmd.Flags().Bool("nixpkgs", false, "search the flake's complete pinned nixpkgs set instead of the curated RF Swift tools")
+	nixSearchCmd.Flags().Bool("json", false, "print machine-readable JSON")
+	nixSearchCmd.Flags().String("flake", "", "flake reference to search against (default: the environment's, or the resolved default)")
+	nixSearchCmd.Flags().String("env", "", "environment whose pinned flake is searched with --nixpkgs")
+	nixUpdateCmd.Flags().String("tool", "", "refresh only this tool (installed extra or on-demand shim) of the environment")
 	nixUdevCmd.Flags().Bool("list", false, "only show the rules and their state")
 	nixUdevCmd.Flags().Bool("remove", false, "remove the rules RF Swift installed for this environment")
 	nixUdevCmd.Flags().Bool("no-groups", false, "install the rules only; leave groups and membership alone")
@@ -1293,5 +1533,6 @@ func registerNixCommands() {
 	runCmd.Flags().Bool("rebuild", false, "Nix engine: force re-realisation of the environment closure")
 	runCmd.Flags().Bool("lazy", false, "Nix engine: build each tool on first call instead of all up front")
 	runCmd.Flags().Bool("isolate", false, "Nix engine (Linux): enter inside a bubblewrap jail - hides $HOME and the host filesystem, private PID/IPC/tmp, while keeping USB/serial devices, the display and the network")
+	runCmd.Flags().Bool("create-only", false, "Nix engine: create and realise the environment without entering it (scripts, the Workbench)")
 	runCmd.Flags().String("flake", "", "Nix engine: flake reference (default: local RF-Swift-nix checkout or github:PentHertz/RF-Swift-nix)")
 }

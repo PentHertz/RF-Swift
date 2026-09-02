@@ -27,7 +27,7 @@
   <String Id="OptionsIntro" Value="RF Swift itself is always installed. Pick the prerequisites below; everything is installed under a single administrator (UAC) approval, and anything already present is skipped." />
   <String Id="OptWsl" Value="Enable &amp;WSL 2 + WSLg  (required to run containers; may need one restart)" />
   <String Id="OptUsbipd" Value="Install &amp;usbipd-win  (USB / SDR device passthrough into WSL 2)" />
-  <String Id="OptNix" Value="Set up &amp;Nix in WSL 2  (native environments, no container engine; optional)" />
+  <String Id="OptNix" Value="Set up &amp;Nix in WSL 2  (native Nix environments from rfswift and the Workbench; optional)" />
   <String Id="OptEngineLabel" Value="Container engine:" />
   <String Id="OptEngineDocker" Value="&amp;Docker Desktop  (needs a paid Docker subscription for large organizations)" />
   <String Id="OptEnginePodman" Value="&amp;Podman Desktop  (open-source)" />

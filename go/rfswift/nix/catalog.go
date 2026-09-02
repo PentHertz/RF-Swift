@@ -37,8 +37,12 @@ func catalogSearchPaths() []string {
 	for _, root := range localFlakeRoots() {
 		paths = append(paths, filepath.Join(root, "catalog.json"))
 	}
-	// A cached copy the user may have refreshed.
-	paths = append(paths, filepath.Join(BaseDir(), "catalog.json"))
+	// A cached copy the user may have refreshed. Not on Windows: the state
+	// directory is inside the WSL distribution and looking there would start
+	// it for every catalog lookup; the embedded snapshot serves the front end.
+	if !useWSL() {
+		paths = append(paths, filepath.Join(BaseDir(), "catalog.json"))
+	}
 	return paths
 }
 

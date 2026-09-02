@@ -12,6 +12,9 @@ import (
 // persisted RF Swift Nix environment. GUI/TUI PTY frontends use this so shell
 // completion, resize, full-screen programs and job control behave normally.
 func InteractiveCommand(name, requestedShell string) (*exec.Cmd, error) {
+	if useWSL() {
+		return wslInteractiveCommand(name)
+	}
 	if !IsAvailable() {
 		return nil, fmt.Errorf("nix is not installed or not on PATH")
 	}
@@ -51,7 +54,7 @@ func InteractiveCommand(name, requestedShell string) (*exec.Cmd, error) {
 			args = append(args, "--keep", key)
 		}
 		args = append(args, "--command", shell)
-		cmd := exec.Command(NixBinary(), args...)
+		cmd := nixCommand(args...)
 		cmd.Env = withEnv(os.Environ(), gl)
 		cmd.Dir = workdir
 		if env.Isolate {

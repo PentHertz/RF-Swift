@@ -471,3 +471,4 @@ label.fld{display:flex;flex-direction:column;gap:4px;font-size:11.5px;color:var(
 .u133{display:flex;align-items:center;gap:8px;}
 .u134{display:flex;gap:7px;margin:7px 0 15px;}
 .u135{display:flex;gap:8px;border-top:1px solid var(--line);padding-top:13px;}
+.nixsetuplog{margin:0;max-height:220px;overflow:auto;font-family:var(--mono);font-size:11px;line-height:1.45;white-space:pre-wrap;word-break:break-word;color:var(--ink-2)}

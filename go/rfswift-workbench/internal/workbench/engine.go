@@ -844,6 +844,22 @@ func execNixEnvironmentStream(ev *rfnix.Environment, command string, live io.Wri
 	if strings.TrimSpace(command) == "" {
 		return "", errors.New("command is required")
 	}
+	if rfnix.UsesWSL() {
+		// Windows: the environment lives in the WSL 2 distribution; the Linux
+		// rfswift there runs the command with the environment's PATH and GL
+		// runtime (there is no sh, nix profile or bubblewrap on this side).
+		c, err := rfnix.WSLEnvironmentCommand(ev.Name, command)
+		if err != nil {
+			return "", err
+		}
+		var captured strings.Builder
+		combined := io.MultiWriter(&captured, live)
+		c.Stdout, c.Stderr = combined, combined
+		if err := c.Run(); err != nil {
+			return captured.String(), fmt.Errorf("command failed: %w", err)
+		}
+		return captured.String(), nil
+	}
 	workdir := ev.Workspace
 	if workdir == "" {
 		workdir, _ = os.Getwd()

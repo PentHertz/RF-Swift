@@ -8,6 +8,7 @@ import (
 
 	"penthertz/rfswift/common"
 	rfdock "penthertz/rfswift/dock"
+	rfnix "penthertz/rfswift/nix"
 	rfutils "penthertz/rfswift/rfutils"
 )
 
@@ -130,6 +131,11 @@ func (a *App) USBHostInfo() (USBHostInfo, error) {
 			} else {
 				info.Notes = append(info.Notes, "WSL 2 default distribution: "+info.WSLDistro)
 			}
+		}
+		// Every WSL 2 distribution shares the VM's kernel, so a forwarded device
+		// is visible to the Nix engine's distribution as well.
+		if nixBackend, err := rfnix.WSLBackend(); err == nil && nixBackend.Ready() {
+			info.Notes = append(info.Notes, fmt.Sprintf("Nix environments (%s) see forwarded devices under /dev/bus/usb; \"Install device rules\" on a Nix mission grants non-root access (%d device(s) currently visible there)", nixBackend.Distro, nixBackend.USBDevices))
 		}
 		info.Notes = append(info.Notes, "Sharing asks for administrator approval once per device; attach/detach never do")
 	case "lima":

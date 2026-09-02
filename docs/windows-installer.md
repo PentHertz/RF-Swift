@@ -42,8 +42,9 @@ custom `theme/`), each wired to a Burn variable that gates the matching package:
   Desktop**, or **I already have one** (install neither). Skipped when the
   chosen engine is already present.
 - **Set up Nix in WSL 2** — optional, default off. Provisions a WSL 2 Linux
-  distro with Nix (flakes) and the Linux `rfswift` CLI for the native,
-  container-free engine (`rfswift run --engine nix`). See below.
+  distro with systemd, Nix (flakes) and the Linux `rfswift` CLI for the native,
+  container-free engine, which the Windows `rfswift.exe` and the Workbench then
+  drive (`rfswift run --engine nix`, `rfswift nix wsl status`). See below.
 - **RF Swift CLI + Workbench** — always installed (this is the product).
 
 Everything the user leaves selected installs under the single elevation the
@@ -70,29 +71,41 @@ that matches your licensing. Choosing "I already have one" installs no engine.
 ## Nix through WSL 2 (native environments, no containers)
 
 RF Swift's Nix engine (`--engine nix`) runs tools in native environments instead
-of containers, and it is **Linux-only** — on Windows it runs the Linux `rfswift`
-inside a WSL 2 distribution. The optional **Set up Nix in WSL 2** bundle step
-(`SetupNixWSL.ps1`) provisions that for you:
+of containers. Nix has no Windows port, so on Windows the engine lives inside a
+**WSL 2 distribution**: Nix, the Linux `rfswift` CLI, the environments and their
+default workspaces are there, and the Windows `rfswift.exe` and the Workbench
+drive them (see [nix-engine.md](nix-engine.md#windows-the-engine-runs-in-wsl-2)).
+The optional **Set up Nix in WSL 2** bundle step (`SetupNixWSL.ps1`) provisions
+that distribution, the same way `rfswift nix wsl setup` does later:
 
-1. Installs a WSL 2 Linux distribution (Ubuntu) if none exists.
-2. Enables systemd in it, so the Nix daemon runs cleanly.
+1. Uses the existing WSL 2 Linux distribution (the default one), or installs
+   Ubuntu when there is none. Docker Desktop's and Podman's utility VMs never
+   qualify.
+2. Enables systemd in it (`[boot] systemd=true` in `/etc/wsl.conf`, merged into
+   an existing file), so the Nix daemon and udev run as services.
 3. Installs Nix with flakes via the **Determinate** installer (the path the RF
-   Swift docs endorse; see [nix-engine.md](nix-engine.md)) and the Linux
-   `rfswift` CLI.
+   Swift docs endorse), as root.
+4. Installs the Linux `rfswift` CLI in `/usr/local/bin`, at the version of the
+   RF Swift being installed when that release exists (the bundle passes it as
+   `-RFSwiftVersion`), else the latest release.
 
-After it finishes:
+After it finishes, from any Windows console:
 
 ```powershell
-wsl -d Ubuntu
-rfswift run --engine nix -i sdr_light -n lab   # inside WSL
+rfswift nix wsl status                          # what the distribution offers
+rfswift run --engine nix -i sdr_light -n lab   # served by the Linux rfswift inside WSL
 ```
+
+The same works from the Workbench: the engine doctor shows the WSL distribution
+and offers **Set up Nix in WSL 2** when it is not provisioned yet.
 
 This step is **best-effort and optional**: it is off by default, and any
 failure is logged without rolling back the rest of the install (the container
 path is unaffected). It downloads Nix and RF Swift from the network at install
-time, so it needs connectivity; on an air-gapped machine, skip it and set Nix up
-manually inside WSL. Set `RFSWIFT_WSL_DISTRO` before running the bundle to target
-a distribution other than `Ubuntu`.
+time, so it needs connectivity; on an air-gapped machine, skip it and run
+`rfswift nix wsl setup` (or set Nix up by hand inside WSL) later. Set
+`RFSWIFT_WSL_DISTRO` before running the bundle to target a distribution other
+than the default one.
 
 ## The MSI on its own
 

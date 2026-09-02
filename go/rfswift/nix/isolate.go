@@ -44,6 +44,11 @@ func IsolateSupported() bool {
 		return true
 	case "darwin":
 		return sandboxExecPath() != ""
+	case "windows":
+		// The environment runs inside the WSL 2 distribution, where bubblewrap
+		// (built from nixpkgs on first use) jails it like on any Linux host.
+		st, err := wslState()
+		return err == nil && st.Ready()
 	default:
 		return false
 	}
@@ -86,7 +91,7 @@ func resolveBwrap() (string, error) {
 		return fallback, nil
 	}
 	args := append(experimentalArgs(), "build", "--no-link", "--print-out-paths", "nixpkgs#bubblewrap")
-	out, err := exec.Command(NixBinary(), args...).Output()
+	out, err := nixCommand(args...).Output()
 	if err != nil {
 		return "", fmt.Errorf("bubblewrap not found on PATH and building it from nixpkgs failed: %w", err)
 	}
@@ -195,6 +200,13 @@ func isolateArgs(env *Environment, workdir string) []string {
 		"--dev-bind-try", "/dev/bus/usb", "/dev/bus/usb",
 		"--ro-bind-try", "/sys", "/sys",
 		"--ro-bind-try", "/run/udev", "/run/udev",
+
+		// WSL 2 (absent elsewhere, so these are no-ops there): WSLg serves the
+		// display and PulseAudio through /mnt/wslg (/tmp/.X11-unix and
+		// PULSE_SERVER point into it), and the host GPU is reached through
+		// /dev/dxg by Mesa's d3d12 driver with the libraries under /usr/lib/wsl.
+		"--ro-bind-try", "/mnt/wslg", "/mnt/wslg",
+		"--dev-bind-try", "/dev/dxg", "/dev/dxg",
 	}
 
 	// Serial device nodes are created dynamically and bubblewrap cannot glob, so
@@ -205,6 +217,12 @@ func isolateArgs(env *Environment, workdir string) []string {
 			args = append(args, "--dev-bind-try", node, node)
 		}
 	}
+
+	// The network is kept, so name resolution must work too: on systemd-resolved
+	// hosts (Ubuntu desktops, WSL 2 with systemd) /etc/resolv.conf is a symlink
+	// into /run, which the read-only /etc bind alone does not carry. Bind the
+	// resolved target at its own path so the symlink resolves inside the jail.
+	args = append(args, resolvConfBinds(filepath.EvalSymlinks)...)
 
 	// Private, clean HOME (persistent per environment): nothing else is bound
 	// under it, so `ls $HOME` shows only what the tools create. A private /tmp
@@ -239,6 +257,19 @@ func isolateArgs(env *Environment, workdir string) []string {
 	args = append(args, "--chdir", chdir)
 
 	return args
+}
+
+// resolvConfBinds returns the bubblewrap arguments that make /etc/resolv.conf
+// usable in the jail when it is a symlink out of /etc (systemd-resolved's
+// /run/systemd/resolve/stub-resolv.conf, resolvconf's /run/resolvconf/...,
+// NetworkManager's /run/NetworkManager/...). A plain file under /etc needs
+// nothing: the /etc bind carries it.
+func resolvConfBinds(evalSymlinks func(string) (string, error)) []string {
+	target, err := evalSymlinks("/etc/resolv.conf")
+	if err != nil || target == "" || target == "/etc/resolv.conf" || strings.HasPrefix(target, "/etc/") {
+		return nil
+	}
+	return []string{"--ro-bind-try", target, target}
 }
 
 // jailRemap rewrites a host path that lives under one of the jail mounts to its

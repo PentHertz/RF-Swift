@@ -173,6 +173,14 @@ does not display a start/stop lifecycle for them. Their tools execute through
 the console in the environment's workspace and with the same profile/shim PATH
 as the CLI.
 
+On Windows the `nix` package serves the same API through a WSL 2 distribution
+(Nix has no Windows port): environment state is read over `\\wsl.localhost\`,
+builds and installs are delegated to the Linux `rfswift` inside the distro, and
+the mission terminal runs `wsl.exe` under ConPTY. The engine doctor shows that
+distribution (`NixEngineStatus`) and provisions it with one click
+(`NixWSLSetup`, streaming its log as `rfswift:nix-wsl-setup` events) - the GUI
+equivalent of `rfswift nix wsl setup`. See docs/nix-engine.md.
+
 USB passthrough follows the CLI too. On macOS the **USB passthrough...** dialog
 hot-plugs host devices into the Lima VM (`rfswift macusb`). On Windows it drives
 usbipd-win for Docker/Podman missions (`rfswift usb`): devices are listed from

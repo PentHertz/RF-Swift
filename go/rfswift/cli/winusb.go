@@ -490,6 +490,7 @@ func attachWinUSBDevices(devices []rfutils.USBDevice, assumeYes bool) []rfutils.
 		fmt.Println("Containers reach the device through /dev/bus/usb (bound by the default RF Swift device list).")
 		fmt.Println("  New container:      rfswift run -i <image> -n <name>")
 		fmt.Println("  Existing container: it sees the device right away (hot-plug)")
+		fmt.Println("  Nix environment:    its tools see /dev/bus/usb in the WSL 2 distribution; run 'rfswift nix udev <name>' once for non-root access")
 		fmt.Println("  Give it back:       rfswift usb detach --busid <BUSID>")
 	}
 	return attached
@@ -553,7 +554,16 @@ func pickFromWinUSBDevices(title string, candidates []rfutils.USBDevice) []rfuti
 // container is created on Windows. It only speaks up when there is something
 // worth forwarding - a connected device that is already shared, or known RF
 // hardware - so plain keyboards and webcams never trigger a question.
-func WinUSBWizardStep() {
+func WinUSBWizardStep() { winUSBWizardStepFor("container") }
+
+// WinUSBWizardStepForNix is the same offer before a Nix environment is created
+// or entered on Windows: the environment runs in the WSL 2 distribution, which
+// shares the VM kernel usbipd forwards devices into.
+func WinUSBWizardStepForNix() { winUSBWizardStepFor("Nix environment") }
+
+// winUSBWizardStepFor is the shared picker; target names what the device is
+// forwarded for in the question ("container", "Nix environment").
+func winUSBWizardStepFor(target string) {
 	if runtime.GOOS != "windows" || !tui.IsInteractive() || !rfutils.IsUsbipdInstalled() {
 		return
 	}
@@ -573,9 +583,13 @@ func WinUSBWizardStep() {
 		return
 	}
 	attach := false
+	where := "in the container"
+	if target != "container" {
+		where = "inside the WSL 2 distribution, for the environment's tools"
+	}
 	err = huh.NewConfirm().
-		Title("Attach USB devices to WSL 2 for this container?").
-		Description("Detected: " + strings.Join(names, ", ") + ". Forwarded devices appear under /dev/bus/usb in the container.").
+		Title("Attach USB devices to WSL 2 for this " + target + "?").
+		Description("Detected: " + strings.Join(names, ", ") + ". Forwarded devices appear under /dev/bus/usb " + where + ".").
 		Affirmative("Yes").
 		Negative("No").
 		Value(&attach).

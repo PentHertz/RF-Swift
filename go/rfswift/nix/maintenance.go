@@ -17,7 +17,6 @@ package nix
 import (
 	"fmt"
 	"os"
-	"os/exec"
 	"strconv"
 )
 
@@ -44,7 +43,7 @@ func GarbageCollect(opts GCOptions) error {
 	if opts.MaxFree > 0 {
 		args = append(args, "--max", strconv.FormatInt(opts.MaxFree, 10))
 	}
-	cmd := exec.Command(NixBinary(), args...)
+	cmd := nixCommand(args...)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
 	return cmd.Run()
 }

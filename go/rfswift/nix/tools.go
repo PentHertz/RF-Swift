@@ -14,7 +14,6 @@ package nix
 import (
 	"encoding/json"
 	"fmt"
-	"os/exec"
 	"sort"
 	"strings"
 )
@@ -40,7 +39,7 @@ func ListInstalledExtras(envName string) ([]EnvironmentTool, error) {
 		return nil, nil
 	}
 	args := append(experimentalArgs(), "profile", "list", "--json", "--profile", profile)
-	out, err := exec.Command(NixBinary(), args...).Output()
+	out, err := nixCommand(args...).Output()
 	if err != nil {
 		return nil, fmt.Errorf("nix profile list: %w", err)
 	}

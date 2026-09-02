@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+
+	"golang.org/x/term"
 )
 
 type Config struct {
@@ -89,6 +91,24 @@ func GetDefaultDevices() string {
 // Unlike ReadOrCreateConfig it is non-interactive: it never prompts to create
 // the file, so it is safe to call from the early engine-selection path.
 func ConfiguredEngine(filename string) string {
+	return strings.ToLower(configValue(filename, "general", "engine"))
+}
+
+// ConfiguredNixWSLDistro returns the WSL 2 distribution set under
+// `[nix] wsl_distro` (Windows: the distribution hosting the Nix engine), or ""
+// when unset. Non-interactive, like ConfiguredEngine.
+func ConfiguredNixWSLDistro(filename string) string {
+	return configValue(filename, "nix", "wsl_distro")
+}
+
+// configValue reads one key of one section from the INI-style config file
+// without prompting: "" when the file, section or key is absent.
+//
+//	in(1): string filename config.ini path
+//	in(2): string section section name (case-insensitive)
+//	in(3): string key key name (case-insensitive)
+//	out: string trimmed value
+func configValue(filename, section, key string) string {
 	file, err := os.Open(filename)
 	if err != nil {
 		return ""
@@ -96,41 +116,125 @@ func ConfiguredEngine(filename string) string {
 	defer file.Close()
 
 	scanner := bufio.NewScanner(file)
-	section := ""
+	current := ""
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
 		if strings.HasPrefix(line, "[") && strings.HasSuffix(line, "]") {
-			section = strings.ToLower(line[1 : len(line)-1])
+			current = strings.ToLower(line[1 : len(line)-1])
 			continue
 		}
-		if section != "general" {
+		if !strings.EqualFold(current, section) {
 			continue
 		}
 		parts := strings.SplitN(line, "=", 2)
-		if len(parts) == 2 && strings.EqualFold(strings.TrimSpace(parts[0]), "engine") {
-			return strings.ToLower(strings.TrimSpace(parts[1]))
+		if len(parts) == 2 && strings.EqualFold(strings.TrimSpace(parts[0]), key) {
+			return strings.TrimSpace(parts[1])
 		}
 	}
 	return ""
+}
+
+// SetConfigValue writes key = value under section in the INI-style config
+// file, creating the file (with RF Swift's defaults) or the section when
+// absent and replacing the key in place when present. Comments and the other
+// keys are preserved.
+//
+//	in(1): string filename config.ini path
+//	in(2): string section section name (case-insensitive match, written as given)
+//	in(3): string key key name
+//	in(4): string value value to store
+//	out: error
+func SetConfigValue(filename, section, key, value string) error {
+	if err := EnsureDefaultConfig(filename); err != nil {
+		return err
+	}
+	data, err := os.ReadFile(filename)
+	if err != nil {
+		return err
+	}
+	lines := strings.Split(strings.ReplaceAll(string(data), "\r\n", "\n"), "\n")
+	// Drop the trailing empty element a final newline produces so the file is
+	// rebuilt without growing blank lines.
+	if len(lines) > 0 && lines[len(lines)-1] == "" {
+		lines = lines[:len(lines)-1]
+	}
+	entry := key + " = " + value
+	inSection := false
+	sectionStart, sectionEnd := -1, -1
+	for i, raw := range lines {
+		line := strings.TrimSpace(raw)
+		if strings.HasPrefix(line, "[") && strings.HasSuffix(line, "]") {
+			if inSection {
+				sectionEnd = i
+				break
+			}
+			inSection = strings.EqualFold(line[1:len(line)-1], section)
+			if inSection {
+				sectionStart = i
+			}
+			continue
+		}
+		if !inSection || line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		parts := strings.SplitN(line, "=", 2)
+		if len(parts) == 2 && strings.EqualFold(strings.TrimSpace(parts[0]), key) {
+			lines[i] = entry
+			return writeConfigLines(filename, lines)
+		}
+	}
+	switch {
+	case sectionStart < 0:
+		lines = append(lines, "", "["+section+"]", entry)
+	case sectionEnd < 0:
+		// Section runs to the end of the file: append after its last non-blank line.
+		end := len(lines)
+		for end > sectionStart+1 && strings.TrimSpace(lines[end-1]) == "" {
+			end--
+		}
+		lines = append(lines[:end], append([]string{entry}, lines[end:]...)...)
+	default:
+		insert := sectionEnd
+		for insert > sectionStart+1 && strings.TrimSpace(lines[insert-1]) == "" {
+			insert--
+		}
+		lines = append(lines[:insert], append([]string{entry}, lines[insert:]...)...)
+	}
+	return writeConfigLines(filename, lines)
+}
+
+func writeConfigLines(filename string, lines []string) error {
+	return os.WriteFile(filename, []byte(strings.Join(lines, "\n")+"\n"), 0o644)
 }
 
 func ReadOrCreateConfig(filename string) (*Config, error) {
 	config := &Config{}
 
 	if _, err := os.Stat(filename); os.IsNotExist(err) {
-		printOrange("Config file not found in your user profile. Would you like to create one with default values? (y/n)")
-		reader := bufio.NewReader(os.Stdin)
-		response, _ := reader.ReadString('\n')
-		if strings.ToLower(strings.TrimSpace(response)) == "y" {
+		if !term.IsTerminal(int(os.Stdin.Fd())) {
+			// No one to answer a prompt: scripts, the Workbench, or the Windows
+			// rfswift driving the Linux one inside WSL. Write the shipped
+			// defaults (the same file the prompt would create) and carry on;
+			// the prompt would otherwise swallow the caller's input or block.
 			if err := createDefaultConfig(filename); err != nil {
 				return nil, fmt.Errorf("error creating default config: %v", err)
 			}
-			printOrange("Default config file created.")
+			fmt.Fprintf(os.Stderr, "Created default config file %s\n", filename)
 		} else {
-			return nil, fmt.Errorf("config file not found and user chose not to create one")
+			printOrange("Config file not found in your user profile. Would you like to create one with default values? (y/n)")
+			reader := bufio.NewReader(os.Stdin)
+			response, _ := reader.ReadString('\n')
+			if strings.ToLower(strings.TrimSpace(response)) == "y" {
+				if err := createDefaultConfig(filename); err != nil {
+					return nil, fmt.Errorf("error creating default config: %v", err)
+				}
+				printOrange("Default config file created.")
+			} else {
+				return nil, fmt.Errorf("config file not found and user chose not to create one")
+			}
 		}
 	}
 
@@ -367,6 +471,11 @@ host = 127.0.0.1
 password =
 port = 6080
 ssl =
+
+[nix]
+# Windows only: the WSL 2 distribution that hosts the Nix engine
+# (empty = the default distribution; set with 'rfswift nix wsl use <name>').
+wsl_distro =
 `, defaultDevices)
 
 	dir := filepath.Dir(filename)

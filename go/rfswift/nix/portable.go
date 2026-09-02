@@ -122,6 +122,9 @@ func ExportEnvironmentWithProgress(name, outFile string, progress ExportProgress
 		}
 	}
 	report(3, "Checking Nix environment")
+	if useWSL() {
+		return wslExportEnvironment(name, outFile, progress)
+	}
 	if !IsAvailable() {
 		return fmt.Errorf("nix is not installed or not on PATH")
 	}
@@ -163,7 +166,7 @@ func ExportEnvironmentWithProgress(name, outFile string, progress ExportProgress
 	}
 	args := append(experimentalArgs(), "copy", "--no-check-sigs", "--to", cacheURL)
 	args = append(args, copyPaths...)
-	cp := exec.Command(NixBinary(), args...)
+	cp := nixCommand(args...)
 	cp.Stdout, cp.Stderr = os.Stderr, os.Stderr
 	if err := cp.Run(); err != nil {
 		return fmt.Errorf("nix copy (export) failed: %w", err)
@@ -236,6 +239,9 @@ func ImportEnvironmentWithProgress(inFile, newName, newWorkspace string, progres
 		}
 	}
 	report(3, "Checking portable environment")
+	if useWSL() {
+		return wslImportEnvironment(inFile, newName, newWorkspace, progress)
+	}
 	if !IsAvailable() {
 		return fmt.Errorf("nix is not installed or not on PATH")
 	}
@@ -300,7 +306,7 @@ func ImportEnvironmentWithProgress(inFile, newName, newWorkspace string, progres
 	}
 	args := append(experimentalArgs(), "copy", "--no-check-sigs", "--from", cacheURL)
 	args = append(args, copyPaths...)
-	cp := exec.Command(NixBinary(), args...)
+	cp := nixCommand(args...)
 	cp.Stdout, cp.Stderr = os.Stderr, os.Stderr
 	if err := cp.Run(); err != nil {
 		return fmt.Errorf("nix copy (import) failed: %w", err)
@@ -313,7 +319,7 @@ func ImportEnvironmentWithProgress(inFile, newName, newWorkspace string, progres
 	}
 	link := profileLink(name)
 	bargs := append(experimentalArgs(), "build", m.StorePath, "--out-link", link)
-	b := exec.Command(NixBinary(), bargs...)
+	b := nixCommand(bargs...)
 	b.Stderr = os.Stderr
 	if err := b.Run(); err != nil {
 		return fmt.Errorf("failed to pin the imported closure: %w", err)
@@ -323,7 +329,7 @@ func ImportEnvironmentWithProgress(inFile, newName, newWorkspace string, progres
 		report(74, "Restoring installed environment tools")
 		extras := EnvExtrasProfile(name)
 		eargs := append(experimentalArgs(), "build", m.ExtrasPath, "--out-link", extras)
-		e := exec.Command(NixBinary(), eargs...)
+		e := nixCommand(eargs...)
 		e.Stderr = os.Stderr
 		if err := e.Run(); err != nil {
 			return fmt.Errorf("failed to restore installed environment tools: %w", err)

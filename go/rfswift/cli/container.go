@@ -535,6 +535,7 @@ With --engine nix, use the guided Nix package installer instead.`,
 				}
 				if err := rfnix.InstallPackages(flake, packages, contID); err != nil {
 					common.PrintErrorMessage(err)
+					os.Exit(1)
 				}
 			}
 			return

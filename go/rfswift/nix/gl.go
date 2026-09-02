@@ -95,6 +95,57 @@ func (h glHost) needed() bool {
 	return !h.exists("/run/opengl-driver")
 }
 
+// wslGPULibDir is where WSLg mounts the Windows-side user-space GPU libraries
+// (libdxcore.so, libd3d12.so, and the NVIDIA CUDA stack when present) into
+// every WSL 2 distribution.
+const wslGPULibDir = "/usr/lib/wsl/lib"
+
+// isWSL reports whether this Linux is a WSL 2 distribution: WSL exports
+// WSL_DISTRO_NAME/WSL_INTEROP to every process, and its kernel names itself.
+func (h glHost) isWSL() bool {
+	if h.goos != "linux" {
+		return false
+	}
+	if h.getenv("WSL_DISTRO_NAME") != "" || h.getenv("WSL_INTEROP") != "" {
+		return true
+	}
+	data, err := h.readFile("/proc/sys/kernel/osrelease")
+	return err == nil && strings.Contains(strings.ToLower(string(data)), "microsoft")
+}
+
+// wslGPULibs returns WSLg's GPU library directory when this is WSL 2 and the
+// directory exists, else "". Mesa's d3d12 gallium driver (nixpkgs builds it
+// for x86_64) dlopens libdxcore.so from there to reach the host GPU through
+// WSLg's virtual GPU; without it on the loader path the driver fails to load
+// and every GUI tool falls back to llvmpipe software rendering.
+func (h glHost) wslGPULibs() string {
+	if h.isWSL() && h.exists(wslGPULibDir) {
+		return wslGPULibDir
+	}
+	return ""
+}
+
+// withWSLGPULibs appends WSLg's library directory to LD_LIBRARY_PATH, after
+// the nixpkgs libraries so nothing from the host shadows them: only what nix
+// lacks (libdxcore, libd3d12) is picked up there.
+func withWSLGPULibs(vars map[string]string, dir string) map[string]string {
+	if dir == "" {
+		return vars
+	}
+	current := vars["LD_LIBRARY_PATH"]
+	for _, p := range strings.Split(current, ":") {
+		if p == dir {
+			return vars
+		}
+	}
+	if current == "" {
+		vars["LD_LIBRARY_PATH"] = dir
+	} else {
+		vars["LD_LIBRARY_PATH"] = current + ":" + dir
+	}
+	return vars
+}
+
 var nvidiaVersionRe = regexp.MustCompile(`Module\s+([0-9][0-9.]*)\s`)
 
 // nvidiaDriverVersion returns the proprietary NVIDIA kernel module version, or
@@ -256,7 +307,7 @@ func glEnvironmentFor(flakeRef, profilePath string, refresh bool) map[string]str
 		common.PrintWarningMessage(fmt.Sprintf("OpenGL runtime unavailable, GUI tools may fail to open a window: %v", err))
 		return nil
 	}
-	vars, err := loadGLEnv(file)
+	vars, err := loadGLEnvFor(h, file)
 	if err != nil {
 		common.PrintWarningMessage(fmt.Sprintf("OpenGL runtime unavailable, GUI tools may fail to open a window: %v", err))
 		return nil
@@ -266,11 +317,18 @@ func glEnvironmentFor(flakeRef, profilePath string, refresh bool) map[string]str
 
 // loadGLEnv reads a gl.env and merges it with the host's variables.
 func loadGLEnv(file string) (map[string]string, error) {
-	data, err := os.ReadFile(file)
+	return loadGLEnvFor(currentGLHost(), file)
+}
+
+// loadGLEnvFor is loadGLEnv against an explicit host view. Under WSL 2 the
+// WSLg GPU libraries are appended so Mesa's d3d12 driver can reach the GPU.
+func loadGLEnvFor(h glHost, file string) (map[string]string, error) {
+	data, err := h.readFile(file)
 	if err != nil {
 		return nil, err
 	}
-	vars := mergeGLEnv(parseGLEnv(data), os.Getenv)
+	vars := mergeGLEnv(parseGLEnv(data), h.getenv)
+	vars = withWSLGPULibs(vars, h.wslGPULibs())
 	vars[GLRuntimeVar] = file
 	return vars, nil
 }
@@ -285,24 +343,38 @@ type GLStatus struct {
 	Runtime       string            `json:"runtime"`       // which runtime applies: mesa, nvidia-<version>, none
 	File          string            `json:"file"`          // gl.env that would be used, if realised
 	Vars          map[string]string `json:"vars"`          // its variables (before merging with the host's)
+	WSL           bool              `json:"wsl"`           // Linux is a WSL 2 distribution (WSLg virtual GPU)
+	WSLGPULibs    string            `json:"wslGpuLibs"`    // WSLg's GPU library directory, when present
 }
 
 // GLStatusFor inspects the host and the environment without building anything.
+// On Windows the question is answered by the Linux side inside WSL, where the
+// environment actually runs.
 func GLStatusFor(env *Environment) GLStatus {
+	if useWSL() {
+		if st, err := wslGLStatus(env); err == nil {
+			return st
+		}
+	}
 	h := currentGLHost()
-	st := GLStatus{Mode: h.mode(), NvidiaVersion: h.nvidiaDriverVersion(), GPUs: h.gpus(), Runtime: "none", Vars: map[string]string{}}
+	st := GLStatus{Mode: h.mode(), NvidiaVersion: h.nvidiaDriverVersion(), GPUs: h.gpus(), Runtime: "none", Vars: map[string]string{}, WSL: h.isWSL(), WSLGPULibs: h.wslGPULibs()}
 	if st.Mode == "" {
 		st.Mode = "auto"
 	}
 	switch {
 	case h.goos == "darwin":
 		st.Reason = "macOS: nixpkgs programs use Apple's OpenGL/Metal directly, the GPU works without a runtime"
+	case h.goos == "windows":
+		st.Reason = "Windows: the environment runs inside a WSL 2 distribution; ask there (rfswift nix wsl status)"
 	case h.goos != "linux":
 		st.Reason = "not Linux: nixpkgs programs use the system's OpenGL directly"
 	case h.mode() == "off":
 		st.Reason = "disabled with RFSWIFT_NIX_GL=off"
 	case h.exists("/run/opengl-driver"):
 		st.Reason = "/run/opengl-driver exists (NixOS or equivalent): the host provides drivers to nixpkgs programs"
+	case st.WSL:
+		st.Needed = true
+		st.Reason = "WSL 2: nixpkgs Mesa from the environment's pin, with WSLg's D3D12 GPU libraries (" + wslGPULibDir + ") appended so the d3d12 driver reaches the host GPU; llvmpipe otherwise"
 	default:
 		st.Needed = true
 		st.Reason = "host is not NixOS: nixpkgs Mesa/libglvnd find no drivers without the runtime"
@@ -336,6 +408,13 @@ func GLStatusFor(env *Environment) GLStatus {
 // and what to do when that is not the right one. Empty when nothing is known.
 func GPUAdvice(st GLStatus) []string {
 	var lines []string
+	if st.WSL {
+		if st.WSLGPULibs != "" {
+			lines = append(lines, "WSL 2: the host GPU is reached through WSLg's virtual GPU (/dev/dxg). Mesa's d3d12 driver from the environment's nixpkgs loads libdxcore from "+st.WSLGPULibs+"; if 'rfswift nix gl --check' reports llvmpipe, the pin's Mesa lacks the d3d12 driver and tools render in software (still functional).")
+		} else {
+			lines = append(lines, "WSL 2 without "+wslGPULibDir+": WSLg's GPU libraries are missing (wsl --update), so GUI tools render in software (llvmpipe).")
+		}
+	}
 	for _, g := range st.GPUs {
 		switch {
 		case g.Vendor == "NVIDIA" && g.Driver == "nvidia":
@@ -460,7 +539,7 @@ func nixBuildOutLink(args []string, outLink string, extraEnv []string, impure bo
 	if impure {
 		full = append(full, "--impure")
 	}
-	cmd := exec.Command(NixBinary(), full...)
+	cmd := nixCommand(full...)
 	cmd.Env = append(os.Environ(), extraEnv...)
 	var stderr bytes.Buffer
 	cmd.Stdout = os.Stdout
@@ -514,6 +593,9 @@ func nixString(s string) string {
 // `rfswift nix gl --check` prints: the same failure SDR++ would hit, in one
 // line and without a window.
 func GLProbe(env *Environment) (string, error) {
+	if useWSL() {
+		return wslGLProbe(env)
+	}
 	h := currentGLHost()
 	if !h.needed() {
 		return "", fmt.Errorf("no runtime applies on this host (%s)", GLStatusFor(env).Reason)

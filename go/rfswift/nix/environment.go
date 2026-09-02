@@ -55,6 +55,9 @@ func ValidateEnvironmentName(name string) error {
 
 // RunEnvironment creates (if needed), realises, and enters an environment.
 func RunEnvironment(opts RunOptions) error {
+	if useWSL() {
+		return wslRunEnvironment(opts)
+	}
 	if !IsAvailable() {
 		return fmt.Errorf("nix is not installed or not on PATH.\n" +
 			"  Install it from https://nixos.org/download (multi-user recommended):\n" +
@@ -152,6 +155,9 @@ func RunEnvironment(opts RunOptions) error {
 	if err := writeManifest(env); err != nil {
 		return fmt.Errorf("failed to write manifest: %w", err)
 	}
+	if hint := wslWorkspaceHint(env.Workspace); hint != "" {
+		common.PrintInfoMessage(hint)
+	}
 
 	// Make security awareness routine: surface the environment's posture (or a
 	// nudge to check it) right after building, without blocking entry.
@@ -174,6 +180,9 @@ func RunEnvironment(opts RunOptions) error {
 
 // ExecEnvironment re-enters an existing environment, optionally running a command.
 func ExecEnvironment(name, command string) error {
+	if useWSL() {
+		return wslExecEnvironment(name, command)
+	}
 	if !IsAvailable() {
 		return fmt.Errorf("nix is not installed or not on PATH")
 	}
@@ -270,6 +279,9 @@ func GetEnvironment(name string) (*Environment, error) {
 // RemoveEnvironment deletes an environment and its gcroot. The underlying store
 // paths are freed by the next `nix store gc`.
 func RemoveEnvironment(name string) error {
+	if useWSL() {
+		return wslRemoveEnvironment(name)
+	}
 	dir := EnvDir(name)
 	if !pathExists(dir) {
 		return fmt.Errorf("environment '%s' not found", name)
@@ -293,7 +305,7 @@ func buildProfile(flakeRef, image, outLink string) error {
 		"--out-link", outLink,
 		"--print-build-logs",
 	)
-	cmd := exec.Command(NixBinary(), args...)
+	cmd := nixCommand(args...)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	cmd.Stdin = os.Stdin
@@ -322,7 +334,7 @@ func buildPrerequisites(flakeRef, image string, prerequisites []string, outLink 
 	args := append(experimentalArgs(), "build", installable)
 	args = append(args, link...)
 	args = append(args, "--print-build-logs")
-	cmd := exec.Command(NixBinary(), args...)
+	cmd := nixCommand(args...)
 	cmd.Stdout, cmd.Stderr, cmd.Stdin = os.Stdout, os.Stderr, os.Stdin
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("nix prerequisite build failed for %s: %w", installable, err)
@@ -373,7 +385,7 @@ let
 in builtins.listToAttrs (map (n: { name = n; value = ver n; }) names)
 `, flakeRef, string(names))
 	args := append(experimentalArgs(), "eval", "--impure", "--json", "--expr", expr)
-	cmd := exec.Command(NixBinary(), args...)
+	cmd := nixCommand(args...)
 	var buf bytes.Buffer
 	cmd.Stdout = &buf
 	cmd.Stderr = io.Discard
@@ -403,7 +415,7 @@ let
 in builtins.listToAttrs (map (n: { name = n; value = main n; }) names)
 `, flakeRef, string(names))
 	args := append(experimentalArgs(), "eval", "--impure", "--json", "--expr", expr)
-	cmd := exec.Command(NixBinary(), args...)
+	cmd := nixCommand(args...)
 	var buf bytes.Buffer
 	cmd.Stdout = &buf
 	cmd.Stderr = io.Discard
@@ -523,7 +535,7 @@ func enter(env *Environment, command string, pure bool, gl map[string]string) er
 		} else {
 			nixArgs = append(nixArgs, "--command", shell)
 		}
-		cmd := exec.Command(NixBinary(), nixArgs...)
+		cmd := nixCommand(nixArgs...)
 		cmd.Env = withEnv(os.Environ(), gl)
 		cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
 		cmd.Dir = workdir
@@ -759,8 +771,10 @@ func writeManifest(env *Environment) error {
 	return os.WriteFile(manifestPath(env.Name), data, 0o644)
 }
 
+// pathExists reports whether p exists, p being a path as the Linux side of the
+// engine sees it (on Windows it is read through the distribution's share).
 func pathExists(p string) bool {
-	_, err := os.Lstat(p)
+	_, err := os.Lstat(hostPath(p))
 	return err == nil
 }
 

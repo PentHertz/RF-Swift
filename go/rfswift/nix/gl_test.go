@@ -159,8 +159,14 @@ func TestInteractiveCommandCarriesGLRuntime(t *testing.T) {
 	if err := writeManifest(env); err != nil {
 		t.Fatal(err)
 	}
+	// Under WSL 2 the runtime appends WSLg's GPU library directory (see
+	// withWSLGPULibs); the expectation follows the host this runs on.
+	wantLD := "/nix/store/mesa/lib:/host/lib"
+	if dir := currentGLHost().wslGPULibs(); dir != "" {
+		wantLD += ":" + dir
+	}
 	vars := GLEnvironment(env, false)
-	if vars["LIBGL_DRIVERS_PATH"] != "/nix/store/mesa/lib/dri" || vars["LD_LIBRARY_PATH"] != "/nix/store/mesa/lib:/host/lib" || vars[GLRuntimeVar] != profile+"/share/rfswift/gl.env" {
+	if vars["LIBGL_DRIVERS_PATH"] != "/nix/store/mesa/lib/dri" || vars["LD_LIBRARY_PATH"] != wantLD || vars[GLRuntimeVar] != profile+"/share/rfswift/gl.env" {
 		t.Fatalf("vars = %#v", vars)
 	}
 	cmd, err := InteractiveCommand("gltest", "/bin/sh")
@@ -172,7 +178,7 @@ func TestInteractiveCommandCarriesGLRuntime(t *testing.T) {
 		k, v, _ := strings.Cut(kv, "=")
 		got[k] = v
 	}
-	if got["LIBGL_DRIVERS_PATH"] != "/nix/store/mesa/lib/dri" || got["LD_LIBRARY_PATH"] != "/nix/store/mesa/lib:/host/lib" || got[GLRuntimeVar] == "" || !strings.HasPrefix(got["PATH"], profile+"/bin") {
+	if got["LIBGL_DRIVERS_PATH"] != "/nix/store/mesa/lib/dri" || got["LD_LIBRARY_PATH"] != wantLD || got[GLRuntimeVar] == "" || !strings.HasPrefix(got["PATH"], profile+"/bin") {
 		t.Fatalf("Workbench PTY command lacks the runtime: %#v", got)
 	}
 	if st := GLStatusFor(env); !st.Needed || st.File != profile+"/share/rfswift/gl.env" {

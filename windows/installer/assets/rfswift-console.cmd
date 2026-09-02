@@ -10,6 +10,8 @@ echo       rfswift --help
 echo       rfswift doctor
 echo       rfswift usb attach
 echo       rfswift run -i sdr_light -n lab
+echo       rfswift run --engine nix -i sdr_light -n lab    (Nix engine, inside WSL 2)
+echo       rfswift nix wsl status
 echo.
 cd /d "%USERPROFILE%"
 cmd /k

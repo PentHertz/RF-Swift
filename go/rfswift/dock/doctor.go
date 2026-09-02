@@ -64,11 +64,51 @@ func RunDoctor() {
 	checkAudioSystem(report)
 	checkAudioServer(report)
 	checkUSBDevices(report)
+	checkNixEngine(report)
 	checkConfigFile(report)
 	checkKernelModules(report)
 
 	// Print results
 	printReport(report)
+}
+
+// checkNixEngine reports whether the Nix engine can run. On Linux and macOS
+// that is a nix binary on PATH; on Windows the engine lives inside a WSL 2
+// distribution provisioned with nix and the Linux rfswift (rfswift nix wsl).
+func checkNixEngine(report *DoctorReport) {
+	if runtime.GOOS != "windows" {
+		if path, err := exec.LookPath("nix"); err == nil {
+			report.add(CheckResult{"Nix engine", "ok", fmt.Sprintf("nix found at %s ('rfswift run --engine nix' runs tools natively)", path)})
+		} else {
+			report.add(CheckResult{"Nix engine", "skip", "nix not installed (optional: native environments with --engine nix, see docs/nix-engine.md)"})
+		}
+		return
+	}
+	st, err := rfutils.ResolveWSLNix(common.ConfigFileByPlatform())
+	if err != nil {
+		report.add(CheckResult{"Nix engine (WSL 2)", "warn", fmt.Sprintf("%v", err)})
+		return
+	}
+	if !st.Ready() {
+		report.add(CheckResult{"Nix engine (WSL 2)", "warn", fmt.Sprintf("distribution %s lacks %s - set it up with 'rfswift nix wsl setup'", st.Distro, strings.Join(st.Missing(), " and "))})
+		return
+	}
+	extras := []string{}
+	if st.Systemd {
+		extras = append(extras, "systemd")
+	} else {
+		extras = append(extras, "no systemd (udev rules not applied automatically)")
+	}
+	if st.X11 && st.Audio {
+		extras = append(extras, "WSLg display+audio")
+	}
+	if st.GPULibs {
+		extras = append(extras, "WSLg GPU libs")
+	}
+	report.add(CheckResult{"Nix engine (WSL 2)", "ok", fmt.Sprintf("%s: %s, rfswift %s (%s)", st.Distro, st.NixVersion, st.RFSwiftVersion, strings.Join(extras, ", "))})
+	if st.RFSwiftVersion != "unknown" && st.RFSwiftVersion != common.Version {
+		report.add(CheckResult{"Nix engine (WSL 2)", "warn", fmt.Sprintf("the Linux rfswift in %s is %s while this one is %s; align them with 'rfswift nix wsl setup --update'", st.Distro, st.RFSwiftVersion, common.Version)})
+	}
 }
 
 func printReport(report *DoctorReport) {

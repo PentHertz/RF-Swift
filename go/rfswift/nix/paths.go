@@ -11,6 +11,8 @@ import (
 	"os/user"
 	"path/filepath"
 	"strings"
+
+	rfutils "penthertz/rfswift/rfutils"
 )
 
 // homeDir returns the invoking user's home directory, honoring SUDO_USER so a
@@ -33,10 +35,18 @@ func homeDir() string {
 }
 
 // BaseDir is the root of RF Swift's Nix state: ~/.rfswift/nix.
-// Override with RFSWIFT_NIX_HOME.
+// Override with RFSWIFT_NIX_HOME. On Windows the state lives in the WSL 2
+// distribution, under its user's home, and is reached through the
+// distribution's share; without a usable distribution the Windows profile is
+// used so paths stay well-formed (the operations report the real problem).
 func BaseDir() string {
 	if v := os.Getenv("RFSWIFT_NIX_HOME"); v != "" {
 		return v
+	}
+	if useWSL() {
+		if st, err := wslState(); err == nil && st.Home != "" {
+			return rfutils.WSLPathToWindows(st.Distro, st.Home+"/.rfswift/nix")
+		}
 	}
 	return filepath.Join(homeDir(), ".rfswift", "nix")
 }

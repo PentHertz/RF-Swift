@@ -29,6 +29,10 @@
 
   <?ifndef RFSwiftVersion ?><?define RFSwiftVersion = "4.0.1" ?><?endif?>
   <?ifndef BundleVersion ?><?define BundleVersion = "$(RFSwiftVersion).0" ?><?endif?>
+  <!-- Full version string (may carry -dev), i.e. the release tag without "v":
+       the Nix-in-WSL step installs the Linux rfswift of that release so both
+       sides of the engine agree. build.ps1 passes it; defaults to the MSI one. -->
+  <?ifndef RFSwiftTag ?><?define RFSwiftTag = "$(RFSwiftVersion)" ?><?endif?>
   <?ifndef MsiFile ?><?define MsiFile = "build\RFSwift-x64.msi" ?><?endif?>
   <?ifndef DepsDir ?><?define DepsDir = "deps" ?><?endif?>
   <?ifndef AssetsDir ?><?define AssetsDir = "assets" ?><?endif?>
@@ -132,14 +136,16 @@
                   InstallCondition="ContainerEngine = &quot;podman&quot;" />
 
       <!-- 3c) Optional: Nix in WSL 2 (native environments, no container engine).
-               Best-effort (Vital="no"): provisions a WSL 2 distro with Nix
-               (Determinate, flakes) + the Linux rfswift CLI. A failure here is
-               logged but never rolls back the container install. -->
+               Best-effort (Vital="no"): provisions a WSL 2 distro with systemd,
+               Nix (Determinate, flakes) + the Linux rfswift CLI of this release,
+               which the Windows rfswift.exe and the Workbench then drive
+               (rfswift nix wsl status). A failure here is logged but never rolls
+               back the container install. -->
       <ExePackage Id="SetupNixWsl"
                   DisplayName="Set up Nix in WSL 2"
                   PerMachine="yes" Permanent="yes" Vital="no"
                   InstallCondition="SetupNix = 1"
-                  InstallArguments="-ExecutionPolicy Bypass -NoProfile -File &quot;SetupNixWSL.ps1&quot;">
+                  InstallArguments="-ExecutionPolicy Bypass -NoProfile -File &quot;SetupNixWSL.ps1&quot; -RFSwiftVersion &quot;$(RFSwiftTag)&quot;">
         <ExePackagePayload SourceFile="$(env.SystemRoot)\System32\WindowsPowerShell\v1.0\powershell.exe" Name="powershell.exe" />
         <Payload SourceFile="SetupNixWSL.ps1" Name="SetupNixWSL.ps1" />
         <ExitCode Value="0" Behavior="success" />

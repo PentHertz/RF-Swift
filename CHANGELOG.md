@@ -12,6 +12,53 @@ branch.
 
 ### Added
 
+- Nix engine on Windows, through WSL 2. Nix has no Windows port, so the engine
+  now lives inside a WSL 2 distribution that RF Swift provisions and drives:
+  every Nix command typed in a Windows console (`rfswift run --engine nix`,
+  `rfswift nix install`, `rfswift env update`, ...) is served by the Linux
+  `rfswift` inside the distribution with the same wizards, builds and shells,
+  and the `nix` Go package serves the Workbench the same way (state read over
+  `\\wsl.localhost\`, builds and installs delegated, the mission terminal on
+  `wsl.exe` under ConPTY), so Nix missions now exist in the Windows Workbench
+  too. Radios forwarded with `rfswift usb attach` (offered before `run`,
+  `exec` and `shell`, and from the Workbench's **USB passthrough...** action,
+  now available on Nix missions on Windows), WSLg's display and sound, and its
+  GPU libraries reach the environments; udev rules install without a password
+  prompt (WSL grants root), from the CLI or the Workbench's **Install device
+  rules**. New
+  commands: `rfswift nix wsl status|setup|use|shell` (setup enables systemd,
+  installs Nix with flakes and the Linux `rfswift` at the Windows version, and
+  is offered automatically when a Nix command finds the distribution
+  unprovisioned); `rfswift doctor` reports the backend; the Workbench's engine
+  doctor shows it with a **Set up Nix in WSL 2** button. The installer's
+  "Set up Nix in WSL 2" step now really enables systemd (its previous `cp`
+  call had no destination), installs the Linux CLI of the same release and
+  needs no interactive installer script. Distribution choice:
+  `RFSWIFT_WSL_DISTRO`, `[nix] wsl_distro` in `config.ini`, else the default
+  WSL 2 distribution.
+- Nix engine: `rfswift nix tools <name>` lists an environment's on-demand shims
+  and installed extras (`--installed`, `--json`), `rfswift nix search <term>`
+  finds tools in the curated set or, with `--nixpkgs`, in the flake's whole
+  pinned nixpkgs, `rfswift nix update --tool <tool> <name>` refreshes a single
+  tool, `rfswift run --engine nix --create-only` realises an environment
+  without entering it, `rfswift nix run --flake <ref> <tool>` runs a tool with
+  an explicit flake, and `list`, `info`, `generations`, `gl` and `udev --list`
+  gained `--json`. `rfswift --version` prints the version without touching the
+  network.
+- Nix engine: under WSL 2 the OpenGL runtime appends WSLg's GPU libraries
+  (`/usr/lib/wsl/lib`) behind the nixpkgs ones, so Mesa's `d3d12` driver can
+  reach the host GPU through WSLg's virtual GPU instead of falling back to
+  llvmpipe; `rfswift nix gl` reports the WSL case. The `--isolate` jail binds
+  WSLg's `/mnt/wslg` (display and sound sockets) and `/dev/dxg` back in, and
+  now also the target of a `/etc/resolv.conf` symlink (systemd-resolved,
+  resolvconf, NetworkManager), so name resolution works inside the jail on
+  those hosts too - verified inside WSL 2 with an on-demand tool building
+  from the jail.
+- The ASCII banner is printed on interactive terminals only: not when stdout
+  is a pipe (scripts, `--json` consumers) and not when `RFSWIFT_NO_BANNER` is
+  set, which the Windows front end sets for the Linux rfswift it drives. A
+  missing `config.ini` is created with the shipped defaults, without a
+  prompt, when there is no terminal to answer one.
 - Nix engine: `rfswift run --engine nix --isolate` enters the environment shell
   inside a bubblewrap jail (Linux). It hides the real `$HOME` and the rest of
   the host filesystem behind a private per-environment home, gives the shell its

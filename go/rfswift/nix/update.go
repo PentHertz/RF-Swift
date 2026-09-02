@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -25,6 +24,15 @@ func localFlakePath(ref string) (string, bool) {
 	if ref == "" || looksLikeFlakeURL(ref) {
 		return "", false
 	}
+	// On Windows a manifest written by the Linux side names a checkout inside
+	// the WSL distribution; keep it as that Linux path (filepath.Abs would
+	// glue a drive letter onto it) and look for flake.nix through the share.
+	if useWSL() && strings.HasPrefix(ref, "/") {
+		if hasFlake(ref) {
+			return ref, true
+		}
+		return "", false
+	}
 	abs, err := filepath.Abs(ref)
 	if err != nil || !hasFlake(abs) {
 		return "", false
@@ -42,10 +50,10 @@ func EnvironmentFlakeInputs(name string) ([]string, error) {
 	}
 	var data []byte
 	if dir, ok := localFlakePath(env.FlakeRef); ok {
-		data, err = os.ReadFile(filepath.Join(dir, "flake.lock"))
+		data, err = os.ReadFile(filepath.Join(hostPath(dir), "flake.lock"))
 	} else {
 		args := append(experimentalArgs(), "flake", "metadata", "--json", env.FlakeRef)
-		cmd := exec.Command(NixBinary(), args...)
+		cmd := nixCommand(args...)
 		data, err = cmd.Output()
 	}
 	if err != nil {
@@ -91,14 +99,17 @@ func EnvironmentUsesLocalFlake(name string) bool {
 }
 
 func runNixStreaming(dir string, args ...string) error {
-	cmd := exec.Command(NixBinary(), append(experimentalArgs(), args...)...)
-	cmd.Dir = dir
+	cmd := nixCommand(append(experimentalArgs(), args...)...)
+	cmd.Dir = hostPath(dir)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
 	return cmd.Run()
 }
 
 // CheckEnvironmentUpdate asks Nix for lock changes without modifying the lock.
 func CheckEnvironmentUpdate(name, input string) error {
+	if useWSL() {
+		return wslUpdateEnvironment(name, UpdateOptions{Check: true, Input: input})
+	}
 	env, err := GetEnvironment(name)
 	if err != nil {
 		return err
@@ -123,6 +134,9 @@ func CheckEnvironmentUpdate(name, input string) error {
 // same dry-run, but Nix's report is returned instead of streamed to the
 // terminal, so it can be shown in a dialog before the user decides to update.
 func CheckEnvironmentUpdateOutput(name, input string) (string, error) {
+	if useWSL() {
+		return wslCheckEnvironmentUpdateOutput(name, input)
+	}
 	env, err := GetEnvironment(name)
 	if err != nil {
 		return "", err
@@ -144,8 +158,8 @@ func CheckEnvironmentUpdateOutput(name, input string) (string, error) {
 // runNixCapture runs nix like runNixStreaming but returns its combined output
 // (nix reports lock changes on stderr) instead of writing to the terminal.
 func runNixCapture(dir string, args ...string) (string, error) {
-	cmd := exec.Command(NixBinary(), append(experimentalArgs(), args...)...)
-	cmd.Dir = dir
+	cmd := nixCommand(append(experimentalArgs(), args...)...)
+	cmd.Dir = hostPath(dir)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return string(out), fmt.Errorf("%w: %s", err, strings.TrimSpace(string(out)))
@@ -250,6 +264,9 @@ func UpdateEnvironment(name string, opts UpdateOptions) error {
 	if opts.Check {
 		return CheckEnvironmentUpdate(name, opts.Input)
 	}
+	if useWSL() {
+		return wslUpdateEnvironment(name, opts)
+	}
 	env, err := GetEnvironment(name)
 	if err != nil {
 		return err
@@ -346,6 +363,9 @@ func updateLazyEnvironment(env *Environment, input string) error {
 // RebuildEnvironment rebuilds against the currently pinned flake without
 // changing flake.lock.
 func RebuildEnvironment(name string) error {
+	if useWSL() {
+		return wslRebuildEnvironment(name)
+	}
 	env, err := GetEnvironment(name)
 	if err != nil {
 		return err
@@ -428,6 +448,11 @@ func archiveCurrentProfile(name string) error {
 }
 
 func ListGenerations(name string) ([]Generation, error) {
+	if useWSL() {
+		// Generation links point into the distribution's /nix/store, which the
+		// share cannot resolve; the Linux side lists them.
+		return wslListGenerations(name)
+	}
 	if _, err := GetEnvironment(name); err != nil {
 		return nil, err
 	}
@@ -455,6 +480,9 @@ func ListGenerations(name string) ([]Generation, error) {
 // RollbackEnvironment switches to a saved generation. Empty generation means
 // the newest saved one. The displaced current closure is itself preserved.
 func RollbackEnvironment(name, generation string) error {
+	if useWSL() {
+		return wslRollbackEnvironment(name, generation)
+	}
 	env, err := GetEnvironment(name)
 	if err != nil {
 		return err

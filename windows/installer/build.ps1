@@ -219,6 +219,7 @@ if ($Bundle) {
         -ext "WixToolset.BootstrapperApplications.wixext/$WixVersion" `
         -ext "WixToolset.Util.wixext/$WixVersion" `
         -d "RFSwiftVersion=$msiVersion" `
+        -d "RFSwiftTag=$Version" `
         -d "BundleVersion=$bundleVersion" `
         -d "MsiFile=$msiForBundle" `
         -d "DepsDir=$depsDir" `

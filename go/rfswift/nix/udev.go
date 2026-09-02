@@ -68,6 +68,11 @@ var (
 // eager profile, the device prerequisite layer and the extras profiles. Only
 // Linux has udev; elsewhere the list is empty.
 func ListUdevRules(env *Environment) []UdevRule {
+	if useWSL() {
+		// udev runs inside the WSL distribution (with systemd), so its rules
+		// matter there for usbipd-forwarded hardware; the Linux side lists them.
+		return wslListUdevRules(env)
+	}
 	if runtime.GOOS != "linux" || env == nil {
 		return nil
 	}
@@ -209,6 +214,9 @@ func invokingUser() string {
 // on the host and which existing ones the invoking user is not a member of.
 // Both need fixing before the devices are accessible without root.
 func GroupStatus(rules []UdevRule) (absent, notMember []string) {
+	if useWSL() {
+		return wslGroupStatus(rules)
+	}
 	wanted := map[string]bool{}
 	for _, r := range rules {
 		for _, g := range r.Groups {
@@ -327,6 +335,9 @@ func runPrivileged(script string) error {
 // of it in a single privileged call. Nothing happens when there is nothing
 // to do.
 func InstallUdevRules(env *Environment, rules []UdevRule, createGroups, joinGroups []string) (UdevInstallReport, error) {
+	if useWSL() {
+		return wslInstallUdevRules(env, rules, createGroups, joinGroups)
+	}
 	var report UdevInstallReport
 	if runtime.GOOS != "linux" {
 		return report, fmt.Errorf("udev rules only apply on Linux")
@@ -398,6 +409,9 @@ func InstalledUdevRules(envName string) ([]string, error) {
 // RemoveUdevRules deletes the rules files RF Swift installed for envName and
 // reloads udev. Groups are left alone.
 func RemoveUdevRules(envName string) ([]string, error) {
+	if useWSL() {
+		return wslRemoveUdevRules(envName)
+	}
 	if runtime.GOOS != "linux" {
 		return nil, fmt.Errorf("udev rules only apply on Linux")
 	}

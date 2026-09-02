@@ -18,7 +18,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -108,7 +107,7 @@ func currentSystem() string {
 	if cachedSystem != "" {
 		return cachedSystem
 	}
-	out, err := exec.Command(NixBinary(), append(experimentalArgs(), "eval", "--raw", "--impure", "--expr", "builtins.currentSystem")...).Output()
+	out, err := nixCommand(append(experimentalArgs(), "eval", "--raw", "--impure", "--expr", "builtins.currentSystem")...).Output()
 	if err == nil && len(out) > 0 {
 		cachedSystem = strings.TrimSpace(string(out))
 	} else {
@@ -119,8 +118,8 @@ func currentSystem() string {
 
 // PkgHit is a search result: a package and the environments that bundle it.
 type PkgHit struct {
-	Name string
-	Envs []string
+	Name string   `json:"name"`
+	Envs []string `json:"envs"`
 }
 
 // PackageUniverse is the curated set of packages RF Swift environments bundle
@@ -165,7 +164,7 @@ func SearchNixpkgs(flakeRef, term string) (map[string]string, error) {
 	// Search the flake's pinned nixpkgs via --inputs-from so results match what
 	// would actually install.
 	args := append(experimentalArgs(), "search", "--json", "--inputs-from", flakeRef, "nixpkgs", term)
-	out, err := exec.Command(NixBinary(), args...).Output()
+	out, err := nixCommand(args...).Output()
 	if err != nil {
 		return nil, err
 	}
@@ -208,6 +207,9 @@ func InstallPackages(flakeRef string, pkgs []string, envName string) error {
 // InstallPackagesWithProgress installs packages and reports observable Nix
 // phases for GUI clients while retaining the live stderr stream for the CLI.
 func InstallPackagesWithProgress(flakeRef string, pkgs []string, envName string, progress InstallProgress) error {
+	if useWSL() {
+		return wslInstallPackages(flakeRef, pkgs, envName, progress)
+	}
 	if !IsAvailable() {
 		return fmt.Errorf("nix is not installed or not on PATH")
 	}
@@ -231,7 +233,7 @@ func InstallPackagesWithProgress(flakeRef string, pkgs []string, envName string,
 		installable := fmt.Sprintf("%s#legacyPackages.%s.%s", flakeRef, sys, p)
 		common.PrintInfoMessage(fmt.Sprintf("Installing %s into %s ...", p, scope))
 		args := append(experimentalArgs(), "profile", "install", "--profile", profile, installable)
-		cmd := exec.Command(NixBinary(), args...)
+		cmd := nixCommand(args...)
 		// Tee stderr: stream it live (the CLI shows nix's progress) while
 		// capturing the tail, so the returned error carries nix's real reason
 		// instead of a bare "exit status 1" — all the GUI would otherwise see.

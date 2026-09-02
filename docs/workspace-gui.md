@@ -55,7 +55,10 @@ the same way the CLI does:
   same CLI surface).
 - Lima: containers inside a Lima VM (macOS/Windows), through the same engine
   abstraction and `--engine`/`RFSWIFT_ENGINE` selection.
-- Nix: native environments (no daemon, no container) via the `nix` package.
+- Nix: native environments (no daemon, no container) via the `nix` package. On
+  Windows the package drives a WSL 2 distribution (Nix has no Windows port):
+  the engine doctor shows it and provisions it (`NixEngineStatus`,
+  `NixWSLSetup`), see docs/nix-engine.md.
 - A target list unifies all of them, so a workspace can mix, e.g., a Docker RFID
   container, a native Nix SDR env and a Lima reversing VM; the UI shows each
   target's engine and filters by it.

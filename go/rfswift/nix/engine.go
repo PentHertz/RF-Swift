@@ -25,6 +25,10 @@ import (
 //
 //	nix run <flakeRef>#<tool> -- <args...>
 func RunTool(flakeRef, tool string, args []string) error {
+	if useWSL() {
+		// The Linux side applies the OpenGL runtime the tool needs under WSLg.
+		return wslRunTool(flakeRef, tool, args)
+	}
 	if !IsAvailable() {
 		return fmt.Errorf("nix is not installed or not on PATH")
 	}
@@ -33,7 +37,7 @@ func RunTool(flakeRef, tool string, args []string) error {
 		full = append(full, "--")
 		full = append(full, args...)
 	}
-	cmd := exec.Command(NixBinary(), full...)
+	cmd := nixCommand(full...)
 	// GUI tools need the OpenGL runtime on non-NixOS hosts (gl.go).
 	cmd.Env = withEnv(os.Environ(), GLEnvironmentForFlake(flakeRef))
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
@@ -57,9 +61,31 @@ func RunAudit(flakeRef string, args []string) error {
 		full = append(full, "--")
 		full = append(full, args...)
 	}
-	cmd := exec.Command(NixBinary(), full...)
+	// On Windows the report directory (--out) is a \\wsl.localhost path of the
+	// distribution; nixCommand translates it for the Linux side. The Workbench
+	// (a GUI without a console on Windows) gets the output captured instead.
+	cmd := nixCommand(full...)
+	if !hasConsole() {
+		captured := &tailWriter{max: 64 << 10}
+		cmd.Stdout, cmd.Stderr = captured, captured
+		if err := cmd.Run(); err != nil {
+			if line := lastNixErrorLine(captured.String()); line != "" {
+				return fmt.Errorf("%s (%w)", line, err)
+			}
+			return err
+		}
+		return nil
+	}
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
 	return cmd.Run()
+}
+
+// NixCommand prepares a nix invocation for this host without starting it: the
+// local nix binary on Linux and macOS, nix inside the WSL 2 distribution on
+// Windows (Windows paths in args are translated). GUI and agent callers use it
+// instead of exec.Command(NixBinary(), ...) so they work on every host.
+func NixCommand(args ...string) *exec.Cmd {
+	return nixCommand(args...)
 }
 
 var (
@@ -94,6 +120,11 @@ func NixBinary() string {
 	if v := os.Getenv("RFSWIFT_NIX_BIN"); v != "" {
 		return v
 	}
+	if useWSL() {
+		// nix lives inside the WSL distribution; nixCommand runs it there
+		// through a login shell, so the bare name resolves on the Linux PATH.
+		return "nix"
+	}
 	if nixBinaryPath != "" {
 		return nixBinaryPath
 	}
@@ -115,15 +146,21 @@ func NixBinary() string {
 	return "nix"
 }
 
-// IsAvailable reports whether a usable nix binary is on PATH.
+// IsAvailable reports whether the Nix engine can run: a usable nix binary on
+// PATH, or on Windows a WSL 2 distribution provisioned with nix and the Linux
+// rfswift (see wsl.go).
 func IsAvailable() bool {
+	if useWSL() {
+		st, err := wslState()
+		return err == nil && st.Ready()
+	}
 	_, err := exec.LookPath(NixBinary())
 	return err == nil
 }
 
 // Version returns the output of `nix --version`, or an error if nix is absent.
 func Version() (string, error) {
-	out, err := exec.Command(NixBinary(), "--version").Output()
+	out, err := nixCommand("--version").Output()
 	if err != nil {
 		return "", err
 	}
@@ -167,8 +204,13 @@ func localFlakeRoots() []string {
 		add(filepath.Join(dir, "RF-Swift-nix"))
 		add(filepath.Join(filepath.Dir(dir), "RF-Swift-nix"))
 	}
-	// Under the RF Swift state directory.
-	add(filepath.Join(BaseDir(), "RF-Swift-nix"))
+	// Under the RF Swift state directory. On Windows that directory is inside
+	// the WSL distribution and resolving it starts the distribution, which a
+	// mere catalog lookup must not do; the Linux side has its own checkout
+	// search when it runs.
+	if !useWSL() {
+		add(filepath.Join(BaseDir(), "RF-Swift-nix"))
+	}
 	return roots
 }
 
@@ -187,9 +229,10 @@ func looksLikeFlakeURL(s string) bool {
 	return false
 }
 
-// hasFlake reports whether dir contains a flake.nix.
+// hasFlake reports whether dir contains a flake.nix (dir may be a path of the
+// WSL distribution on Windows).
 func hasFlake(dir string) bool {
-	_, err := os.Stat(filepath.Join(dir, "flake.nix"))
+	_, err := os.Stat(filepath.Join(hostPath(dir), "flake.nix"))
 	return err == nil
 }
 

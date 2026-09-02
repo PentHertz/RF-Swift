@@ -186,15 +186,7 @@ func (a *App) ContainerProfiles() []MissionProfile {
 		if _, exists := profilesByName[key]; !exists {
 			order = append(order, key)
 		}
-		// Repair the exact RFID layout shipped by older RF-Swift versions.
-		if key == "rfid" && p.Devices == "" && strings.Contains(p.Bindings, "/dev/ttyACM0:/dev/ttyACM0") {
-			p.Devices = "/dev/ttyACM0:/dev/ttyACM0"
-			p.Bindings = removeProfileCSVItem(p.Bindings, "/dev/ttyACM0:/dev/ttyACM0")
-			if p.Cgroups == "" {
-				p.Cgroups = "c 189:* rwm"
-			}
-		}
-		profilesByName[key] = p
+		profilesByName[key] = normalizeLegacyProfile(key, p)
 	}
 	profiles := make([]rfdock.Profile, 0, len(order))
 	for _, key := range order {
@@ -223,6 +215,29 @@ func (a *App) ContainerDefaults() (ContainerDefaults, error) {
 		Privileged: d.Privileged, Caps: d.Caps, Seccomp: d.Seccomp, CgroupRules: d.CgroupRules,
 		DesktopProto: d.DesktopProto, DesktopHost: d.DesktopHost, DesktopPort: d.DesktopPort,
 		DesktopPass: d.DesktopPass, DesktopSSL: d.DesktopSSL}, nil
+}
+
+// legacyRFIDSerialNode is the fixed CDC-ACM node older shipped `rfid` profiles
+// mapped for the Proxmark3. It only exists while the reader is plugged in at
+// creation time (and fails the create otherwise), so the profile now relies on
+// the hotplug-safe /dev/bus/usb tree + cgroup rule instead.
+const legacyRFIDSerialNode = "/dev/ttyACM0:/dev/ttyACM0"
+
+// normalizeLegacyProfile brings a user's YAML copy of a shipped profile in line
+// with the current default where the old layout is known to cause trouble:
+// the `rfid` profile loses its fixed /dev/ttyACM0 mapping (from bindings or
+// devices) and keeps the USB cgroup rule. Other profiles pass through, so a
+// user who wants the serial node still gets it from a profile of their own.
+func normalizeLegacyProfile(key string, p rfdock.Profile) rfdock.Profile {
+	if key != "rfid" {
+		return p
+	}
+	p.Bindings = removeProfileCSVItem(p.Bindings, legacyRFIDSerialNode)
+	p.Devices = removeProfileCSVItem(p.Devices, legacyRFIDSerialNode)
+	if p.Cgroups == "" {
+		p.Cgroups = "c 189:* rwm"
+	}
+	return p
 }
 
 func removeProfileCSVItem(value, unwanted string) string {
@@ -786,7 +801,9 @@ func (a *App) InstallMissionTool(mission, name string) error {
 // each is installed on the host (missing / outdated / installed), so the GUI
 // can show what a device needs. Empty on non-Linux or non-Nix missions.
 func (a *App) NixUdevRules(mission string) ([]rfnix.UdevRule, error) {
-	if runtime.GOOS != "linux" {
+	// Linux hosts, and Windows where the environment (and udev) live in the
+	// WSL 2 distribution; nothing on macOS.
+	if runtime.GOOS != "linux" && !rfnix.UsesWSL() {
 		return []rfnix.UdevRule{}, nil
 	}
 	env, err := rfnix.GetEnvironment(mission)
@@ -806,7 +823,7 @@ func (a *App) NixUdevRules(mission string) ([]rfnix.UdevRule, error) {
 // no-op (nil report) when nothing is pending.
 func (a *App) InstallNixUdevRules(mission string) (rfnix.UdevInstallReport, error) {
 	var report rfnix.UdevInstallReport
-	if runtime.GOOS != "linux" {
+	if runtime.GOOS != "linux" && !rfnix.UsesWSL() {
 		return report, errors.New("udev rules only apply on Linux")
 	}
 	env, err := rfnix.GetEnvironment(mission)

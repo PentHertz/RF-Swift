@@ -173,7 +173,7 @@ rfswift env generations mysdr                  # list rollback points
 rfswift env rollback mysdr                     # restore the previous closure
 ```
 
-Requires a [Nix](https://nixos.org/download) install with flakes (Linux and macOS; on Windows use WSL2). Full guide: [docs/nix-engine.md](docs/nix-engine.md).
+Requires a [Nix](https://nixos.org/download) install with flakes on Linux and macOS. On Windows the engine runs inside a WSL 2 distribution that `rfswift nix wsl setup` (or the installer) provisions, and the same commands work from any Windows console and from the Workbench. Full guide: [docs/nix-engine.md](docs/nix-engine.md).
 
 ### 🦙 macOS USB Passthrough (Lima)
 
@@ -216,7 +216,7 @@ Use `--gpu` for GPU compute; use `--engine lima` (without `--gpu`) for SDR hardw
 
 Two Windows deliverables ship with each release:
 
-- **`RFSwift-Setup-<version>-<arch>.exe`** (x64 + arm64) — a bundle that installs, under a **single** UAC prompt, the prerequisites you pick on one screen: **WSL 2 + WSLg**, **usbipd-win** (USB/SDR passthrough), a **container engine** (Docker Desktop by default, or Podman Desktop, or "I already have one"), an optional **Nix in WSL 2** for native environments, and RF Swift itself. Everything already present is skipped.
+- **`RFSwift-Setup-<version>-<arch>.exe`** (x64 + arm64) — a bundle that installs, under a **single** UAC prompt, the prerequisites you pick on one screen: **WSL 2 + WSLg**, **usbipd-win** (USB/SDR passthrough), a **container engine** (Docker Desktop by default, or Podman Desktop, or "I already have one"), an optional **Nix in WSL 2** for native environments driven by `rfswift.exe` and the Workbench, and RF Swift itself. Everything already present is skipped.
 - **`RFSwift-<version>-<arch>.msi`** (x64 + arm64) — RF Swift on its own (CLI on `PATH`, an "RF Swift Console" and "RF Swift Workbench" in the Start Menu), for enterprise deployment (Intune/GPO) or machines that already have the prerequisites.
 
 After it runs, `rfswift` works from any console and the Workbench opens from the Start Menu. Details, silent-install switches and the trust model: [docs/windows-installer.md](docs/windows-installer.md).
@@ -241,6 +241,19 @@ Inside the container, `/dev/bus/usb` must be mapped **and** USB device major 189
 #### 🔊 Sound and display on Windows (WSLg)
 
 No PulseAudio install and no `rfswift host audio enable` on Windows: WSLg already runs an X11 server and a PulseAudio server for the WSL 2 VM, and RF Swift mounts its `/mnt/wslg` tree into every container with `DISPLAY=:0` and `PULSE_SERVER=unix:/mnt/wslg/PulseServer`. GQRX, SDR++ and friends play through your Windows audio device. If `rfswift doctor` cannot find the WSLg sockets, run `wsl --update` followed by `wsl --shutdown`.
+
+#### ❄️ Nix engine on Windows (inside WSL 2)
+
+Nix has no Windows port, so the Nix engine lives inside a WSL 2 distribution and RF Swift drives it for you: the same `rfswift run --engine nix`, `rfswift nix install` and `rfswift env ...` commands work from PowerShell, and the Workbench shows Nix missions like on Linux. Radios forwarded with `rfswift usb attach` (offered by `run`/`exec`, and by the Workbench's **USB passthrough...** action on Nix missions) and WSLg's display, sound and GPU libraries reach the environments; `rfswift nix udev <name>` or **Install device rules** grants non-root access to the hardware.
+
+```powershell
+rfswift nix wsl setup                            # systemd, Nix (flakes) and the Linux rfswift in the distro
+rfswift nix wsl status                           # distro, nix, rfswift, WSLg, forwarded USB devices
+rfswift run --engine nix -i sdr_light -n lab     # served by the Linux rfswift inside WSL 2
+rfswift nix install gnuradioPackages.gr-foo --env lab
+```
+
+The installer's optional **Set up Nix in WSL 2** step does the provisioning too. Details: [docs/nix-engine.md](docs/nix-engine.md#windows-the-engine-runs-in-wsl-2).
 
 #### Quick Setup
 

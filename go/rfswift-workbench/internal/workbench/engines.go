@@ -1,12 +1,19 @@
 package workbench
 
 import (
+	"bytes"
+	"errors"
 	"fmt"
 	"os"
+	"regexp"
 	"runtime"
 	"strings"
+	"sync"
 
+	wruntime "github.com/wailsapp/wails/v2/pkg/runtime"
+	common "penthertz/rfswift/common"
 	rfdock "penthertz/rfswift/dock"
+	rfnix "penthertz/rfswift/nix"
 	rfutils "penthertz/rfswift/rfutils"
 )
 
@@ -14,10 +21,142 @@ import (
 // the GUI can hide capabilities the OS cannot provide.
 func (a *App) HostOS() string { return runtime.GOOS }
 
-// NixSupported reports whether the Nix engine can run on this host. Nix does not
-// run natively on Windows, so the GUI hides Nix environments and the Nix engine
-// option there (including in mission creation).
-func (a *App) NixSupported() bool { return runtime.GOOS != "windows" }
+// NixSupported reports whether the Nix engine can be offered on this host. It
+// is true everywhere: natively on Linux and macOS, and on Windows inside a
+// WSL 2 distribution that the engine drives for the GUI (see NixEngineStatus
+// for whether that distribution is provisioned, and NixWSLSetup to do it).
+func (a *App) NixSupported() bool { return true }
+
+// NixEngineStatus describes how the Nix engine is served on this host, for the
+// engine doctor.
+type NixEngineStatus struct {
+	Host           string   `json:"host"`  // "native" (Linux/macOS) or "wsl" (Windows: a WSL 2 distribution)
+	Ready          bool     `json:"ready"` // environments can be created and entered
+	NixVersion     string   `json:"nixVersion"`
+	Distro         string   `json:"distro,omitempty"`         // WSL 2 distribution hosting the engine
+	RFSwiftVersion string   `json:"rfswiftVersion,omitempty"` // the Linux rfswift inside it
+	Missing        []string `json:"missing"`                  // what keeps it from being ready
+	Detail         string   `json:"detail"`                   // one-line summary for the UI
+	WorkspaceRoot  string   `json:"workspaceRoot,omitempty"`  // where default workspaces are, as a host path
+	CanSetup       bool     `json:"canSetup"`                 // NixWSLSetup can provision it from here
+}
+
+// NixEngineStatus reports the Nix engine's availability: nix on PATH on Linux
+// and macOS; on Windows the WSL 2 distribution and what it offers.
+func (a *App) NixEngineStatus() NixEngineStatus {
+	st := NixEngineStatus{Host: "native", Missing: []string{}}
+	if _, ok := a.eng.(*LocalEngine); !ok {
+		st.Detail = "engine status is only available for the local connection"
+		return st
+	}
+	if runtime.GOOS != "windows" {
+		if rfnix.IsAvailable() {
+			st.Ready = true
+			if v, err := rfnix.Version(); err == nil {
+				st.NixVersion = v
+			}
+			st.Detail = st.NixVersion
+			if st.Detail == "" {
+				st.Detail = "nix available"
+			}
+		} else {
+			st.Missing = []string{"nix"}
+			st.Detail = "nix is not installed (https://nixos.org/download)"
+		}
+		return st
+	}
+	st.Host = "wsl"
+	w, err := rfnix.WSLBackend()
+	if err != nil {
+		st.Missing = []string{"a WSL 2 Linux distribution"}
+		st.Detail = err.Error()
+		if errors.Is(err, rfutils.ErrNoWSLNixDistro) {
+			st.Detail = "no WSL 2 Linux distribution: run 'wsl --install -d Ubuntu' in a terminal, then set up Nix from here"
+		}
+		return st
+	}
+	st.Distro, st.NixVersion, st.RFSwiftVersion = w.Distro, w.NixVersion, w.RFSwiftVersion
+	st.Ready = w.Ready()
+	st.Missing = w.Missing()
+	if st.Missing == nil {
+		st.Missing = []string{}
+	}
+	st.CanSetup = !st.Ready
+	st.WorkspaceRoot = rfnix.WSLWorkspaceRoot()
+	switch {
+	case st.Ready:
+		st.Detail = fmt.Sprintf("%s: %s, rfswift %s", w.Distro, w.NixVersion, w.RFSwiftVersion)
+		if w.RFSwiftVersion != "unknown" && w.RFSwiftVersion != common.Version {
+			st.Detail += fmt.Sprintf(" (Workbench is %s: 'rfswift nix wsl setup --update' aligns them)", common.Version)
+		}
+	default:
+		st.Detail = fmt.Sprintf("%s is missing %s", w.Distro, strings.Join(st.Missing, " and "))
+	}
+	return st
+}
+
+// NixWSLSetup provisions the WSL 2 distribution for the Nix engine from the
+// GUI (Windows): systemd, Nix with flakes and the Linux rfswift CLI, all as
+// root inside the distribution, so no password prompt is involved. Output
+// lines stream as "rfswift:nix-wsl-setup" events. A distribution must exist
+// already: installing one runs an interactive first boot that needs a console
+// ('wsl --install -d Ubuntu' in a terminal).
+func (a *App) NixWSLSetup() (NixEngineStatus, error) {
+	if _, err := a.requireLocal(); err != nil {
+		return NixEngineStatus{}, err
+	}
+	if runtime.GOOS != "windows" {
+		return a.NixEngineStatus(), errors.New("the Nix engine runs natively here; nothing to set up in WSL")
+	}
+	w := &setupEventWriter{a: a}
+	_, err := rfnix.SetupWSL(rfnix.WSLSetupOptions{Yes: true, Output: w, Log: w.emit})
+	w.flush()
+	rfnix.ResetWSLBackend()
+	return a.NixEngineStatus(), err
+}
+
+var setupANSI = regexp.MustCompile("\x1b\\[[0-9;?]*[ -/]*[@-~]")
+
+// setupEventWriter turns provisioning output into per-line GUI events.
+type setupEventWriter struct {
+	a   *App
+	mu  sync.Mutex
+	buf []byte
+}
+
+func (w *setupEventWriter) Write(p []byte) (int, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.buf = append(w.buf, p...)
+	for {
+		i := bytes.IndexAny(w.buf, "\r\n")
+		if i < 0 {
+			break
+		}
+		line := string(w.buf[:i])
+		w.buf = w.buf[i+1:]
+		w.emit(line)
+	}
+	return len(p), nil
+}
+
+// flush emits a trailing line without a newline.
+func (w *setupEventWriter) flush() {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if len(w.buf) > 0 {
+		w.emit(string(w.buf))
+		w.buf = nil
+	}
+}
+
+func (w *setupEventWriter) emit(line string) {
+	line = strings.TrimRight(setupANSI.ReplaceAllString(line, ""), " \t")
+	if strings.TrimSpace(line) == "" || w.a.ctx == nil {
+		return
+	}
+	wruntime.EventsEmit(w.a.ctx, "rfswift:nix-wsl-setup", map[string]any{"line": line})
+}
 
 // EngineStatus describes one container engine for the GUI's engine doctor.
 type EngineStatus struct {

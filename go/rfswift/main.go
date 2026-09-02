@@ -6,13 +6,17 @@ package main
 
 import (
 	"os"
+
+	"golang.org/x/term"
 	cli "penthertz/rfswift/cli"
 	common "penthertz/rfswift/common"
 )
 
-// main is the program entry point. It suppresses the ASCII banner when the
-// binary is invoked for shell-completion generation, then delegates all
-// command handling to the CLI layer via cli.Execute.
+// main is the program entry point. It prints the ASCII banner on interactive
+// terminals only - not for shell-completion generation, not when stdout is a
+// pipe (scripts, --json consumers), and not when RFSWIFT_NO_BANNER is set (the
+// Windows rfswift driving this Linux one inside WSL already showed its own) -
+// then delegates all command handling to the CLI layer via cli.Execute.
 func main() {
 	isCompletion := false
 
@@ -23,7 +27,7 @@ func main() {
 		}
 	}
 
-	if isCompletion == false {
+	if !isCompletion && os.Getenv("RFSWIFT_NO_BANNER") == "" && term.IsTerminal(int(os.Stdout.Fd())) {
 		common.PrintASCII()
 	}
 
