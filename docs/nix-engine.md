@@ -515,6 +515,20 @@ doctor shows the same status and has a **Set up Nix in WSL 2** button.
   blocked in SDR++'s loading screen, none on X11). The environment shell, the
   Workbench terminal and `rfswift nix run` all apply this; set
   `RFSWIFT_NIX_WAYLAND=1` to keep Wayland.
+- **A tool shows only a taskbar icon, no window**: the tool is running (SDR++
+  keeps logging, saves its config on exit), but WSLg's display client on the
+  Windows side, `msrdc.exe`, stopped painting after an RDP graphics error
+  (Windows records them under *Applications and Services Logs > Microsoft >
+  Windows > TerminalServices-RDPClient > Operational*, events 226, 1033 and
+  1404). It recovers by itself only minutes later, when it reconnects.
+  `rfswift nix wsl display-reset` restarts it at once: WSL relaunches the
+  client and every open window is shown again within seconds, no
+  `wsl --shutdown` needed and nothing inside the distribution is touched.
+  `run`, `exec` and `shell` check the event log before starting and do this
+  restart on their own when the errors are there (`RFSWIFT_WSLG_AUTORESET=0`
+  disables it); `rfswift nix wsl status`, `rfswift doctor` and the Workbench's
+  engine doctor show the client's state, the latter with a **Reset WSLg
+  display** button.
 - **OpenGL**: the environment's Mesa is used as on any non-NixOS host, with
   WSLg's GPU libraries (`/usr/lib/wsl/lib`, `libdxcore`) appended for Mesa's
   `d3d12` driver. Xwayland exposes no DRI3 device, so in practice Mesa answers

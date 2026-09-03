@@ -68,6 +68,7 @@ func wslRunEnvironment(opts RunOptions) error {
 	if _, err := wslReady(); err != nil {
 		return err
 	}
+	WSLDisplayPreflight()
 	if strings.TrimSpace(opts.Name) == "" {
 		return fmt.Errorf("environment name is required (use -n)")
 	}
@@ -88,6 +89,7 @@ func wslExecEnvironment(name, command string) error {
 	if _, err := GetEnvironment(name); err != nil {
 		return err
 	}
+	WSLDisplayPreflight()
 	args := []string{"exec", "--engine", "nix", "-c", name}
 	if command != "" {
 		args = append(args, "-e", command)
@@ -106,6 +108,7 @@ func wslInteractiveCommand(name string) (*exec.Cmd, error) {
 	if _, err := GetEnvironment(name); err != nil {
 		return nil, err
 	}
+	WSLDisplayPreflight()
 	return rfswiftCommand("exec", "--engine", "nix", "-c", name), nil
 }
 
@@ -256,6 +259,7 @@ func wslRunTool(flakeRef, tool string, args []string) error {
 	if _, err := wslReady(); err != nil {
 		return err
 	}
+	WSLDisplayPreflight()
 	full := []string{"nix", "run", "--flake", flakeRef, tool}
 	if len(args) > 0 {
 		full = append(full, "--")
@@ -372,6 +376,7 @@ func WSLEnvironmentCommand(name, command string) (*exec.Cmd, error) {
 	if strings.TrimSpace(command) == "" {
 		return nil, fmt.Errorf("command is required")
 	}
+	WSLDisplayPreflight()
 	return rfswiftCommand("exec", "--engine", "nix", "-c", name, "-e", command), nil
 }
 
@@ -386,6 +391,9 @@ func rfswiftCommandAsRoot(args ...string) *exec.Cmd {
 	argv := append([]string{"env", "SUDO_USER=" + st.User, "rfswift", "-q"}, translateArgs(args)...)
 	cmd := rfutils.WSLExecAs(st.Distro, "root", argv...)
 	cmd.Env = wslChildEnv()
+	if !hasConsole() {
+		rfutils.HideConsoleWindow(cmd) // see wslExec
+	}
 	return cmd
 }
 

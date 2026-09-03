@@ -448,6 +448,7 @@ func GPUAdvice(st GLStatus) []string {
 		} else {
 			lines = append(lines, "WSL 2 without "+wslGPULibDir+": WSLg's GPU libraries are missing (wsl --update), so GUI tools render in software (llvmpipe).")
 		}
+		lines = append(lines, "WSL 2: a tool that shows only a taskbar icon and no window is not an OpenGL problem: WSLg's display client on the Windows side (msrdc.exe) stopped painting after an RDP graphics error. 'rfswift nix wsl display-reset' restarts it and the window appears; run, exec and shell do that by themselves when the Windows event log shows the errors ("+WSLDisplayAutoResetVar+"=0 disables it).")
 	}
 	for _, g := range st.GPUs {
 		switch {

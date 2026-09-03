@@ -34,6 +34,12 @@ func hideConsoleWindow(cmd *exec.Cmd) {
 	cmd.SysProcAttr.CreationFlags |= windows.CREATE_NO_WINDOW
 }
 
+// HideConsoleWindow is hideConsoleWindow for the other packages: a GUI
+// process (the Workbench) that captures a console child's output would
+// otherwise get an empty terminal window on the desktop for every wsl.exe it
+// runs.
+func HideConsoleWindow(cmd *exec.Cmd) { hideConsoleWindow(cmd) }
+
 // shellExecuteInfo mirrors SHELLEXECUTEINFOW (shellapi.h). Field order and
 // types match the C layout so Go applies the same alignment.
 type shellExecuteInfo struct {

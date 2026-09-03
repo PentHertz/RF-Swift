@@ -81,6 +81,9 @@ func bridgeNixCommandToWSL(cmd *cobra.Command) {
 	switch cmd.Name() {
 	case "run", "create", "exec", "shell":
 		WinUSBWizardStepForNix()
+		// The tools will want a window: a WSLg display client that stopped
+		// painting them (only a taskbar icon appears) is restarted first.
+		rfnix.WSLDisplayPreflight()
 	}
 	code, err := rfnix.RunRFSwiftInWSL(rfnix.WSLBridgeArgs(os.Args[1:], engineCommandNames[cmd.Name()]))
 	if err != nil {
@@ -132,6 +135,7 @@ sound; 'rfswift usb attach' (usbipd) forwards your radios into the same kernel.
   rfswift nix wsl setup           provision it (systemd, Nix with flakes, the Linux rfswift)
   rfswift nix wsl use <distro>    pick the distribution when several are installed
   rfswift nix wsl shell           open a login shell inside it
+  rfswift nix wsl display-reset   restart WSLg's display client when a tool shows only a taskbar icon
 
 The distribution is chosen from RFSWIFT_WSL_DISTRO, then [nix] wsl_distro in
 config.ini, then the default WSL 2 distribution (container engines' utility
@@ -177,10 +181,26 @@ var nixWSLStatusCmd = &cobra.Command{
 			{Key: "bubblewrap (--isolate)", Value: yesNo(st.Bubblewrap) + " (built from nixpkgs on first use when absent)"},
 			{Key: "USB devices in WSL", Value: fmt.Sprintf("%d (forward radios with 'rfswift usb attach')", st.USBDevices)},
 		}
+		display, displayErr := rfnix.WSLDisplayState()
+		if displayErr == nil {
+			item := tui.PropertyItem{Key: "WSLg display client", Value: display.Summary()}
+			switch {
+			case display.Degraded:
+				item.Value += " - fix: rfswift nix wsl display-reset"
+				item.ValueColor = tui.ColorDanger
+			case display.ClientRunning:
+				item.ValueColor = tui.ColorSuccess
+			}
+			items = append(items, item)
+		}
 		if root := rfnix.WSLWorkspaceRoot(); root != "" {
 			items = append(items, tui.PropertyItem{Key: "Workspaces (Windows)", Value: root, ValueColor: tui.ColorCyan})
 		}
 		tui.RenderPropertySheet("🪟 Nix engine on Windows (WSL 2)", tui.ColorPrimary, items)
+		if displayErr == nil && display.Degraded {
+			fmt.Println()
+			common.PrintWarningMessage("WSLg's display client stopped painting windows: GUI tools show only a taskbar icon until it is restarted. Run: rfswift nix wsl display-reset")
+		}
 		if !st.Ready() {
 			fmt.Println()
 			common.PrintWarningMessage(rfnix.WSLReadyError(st, nil).Error())
@@ -288,6 +308,45 @@ var nixWSLShellCmd = &cobra.Command{
 	},
 }
 
+var nixWSLDisplayResetCmd = &cobra.Command{
+	Use:     "display-reset",
+	Aliases: []string{"reset-display"},
+	Short:   "Restart WSLg's display client when a GUI tool shows only a taskbar icon",
+	Long: `Every window a tool opens inside the WSL 2 distribution is painted on the
+Windows desktop by WSLg's RDP client, msrdc.exe. When that client trips over
+an RDP graphics error it keeps running but stops painting: a tool started
+afterwards shows only a taskbar icon while its log inside the distribution
+looks healthy (SDR++ loads its modules and saves its config). The client
+recovers by itself only minutes later, when it reconnects.
+
+This command restarts it now: WSL relaunches the client within seconds and
+every open window is shown again. No 'wsl --shutdown', nothing inside the
+distribution is touched. 'rfswift nix wsl status' and 'rfswift doctor' show
+when the client is in that state (the errors are in the Windows event log,
+Microsoft-Windows-TerminalServices-RDPClient/Operational), and run, exec and
+shell do this restart on their own when they find it (` + rfnix.WSLDisplayAutoResetVar + `=0 disables that).`,
+	Args: cobra.NoArgs,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		before, err := rfnix.WSLDisplayState()
+		if err != nil {
+			return err
+		}
+		common.PrintInfoMessage("WSLg display client: " + before.Summary())
+		if !before.ClientRunning {
+			return rfutils.ErrWSLgDisplayNotRunning
+		}
+		if !before.Degraded {
+			common.PrintInfoMessage("No graphics error recorded since it connected; restarting it anyway (open windows vanish for a few seconds and come back).")
+		}
+		after, err := rfnix.WSLDisplayReset()
+		if err != nil {
+			return err
+		}
+		common.PrintSuccessMessage("WSLg display client restarted: " + after.Summary())
+		return nil
+	},
+}
+
 // registerNixWSLCommands adds the `nix wsl` group. Only on Windows: elsewhere
 // the Nix engine runs natively and the group would be meaningless.
 func registerNixWSLCommands() {
@@ -295,7 +354,7 @@ func registerNixWSLCommands() {
 		return
 	}
 	nixCmd.AddCommand(nixWSLCmd)
-	nixWSLCmd.AddCommand(nixWSLStatusCmd, nixWSLSetupCmd, nixWSLUseCmd, nixWSLShellCmd)
+	nixWSLCmd.AddCommand(nixWSLStatusCmd, nixWSLSetupCmd, nixWSLUseCmd, nixWSLShellCmd, nixWSLDisplayResetCmd)
 	nixWSLSetupCmd.Flags().String("distro", "", "WSL 2 distribution to provision (default: the one the engine resolves)")
 	nixWSLSetupCmd.Flags().String("install-distro", "Ubuntu", "distribution to install when none exists")
 	nixWSLSetupCmd.Flags().BoolP("yes", "y", false, "answer every question with yes")

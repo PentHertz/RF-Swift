@@ -264,6 +264,12 @@ func wslChildEnv() []string {
 func wslExec(argv ...string) *exec.Cmd {
 	cmd := rfutils.WSLExec(wslDistro(), translateArgs(argv)...)
 	cmd.Env = wslChildEnv()
+	if !hasConsole() {
+		// A GUI front end captures the output; without this Windows opens a
+		// terminal window for wsl.exe on the desktop, empty, for every call.
+		// (The PTY front end builds its own console and ignores this.)
+		rfutils.HideConsoleWindow(cmd)
+	}
 	return cmd
 }
 

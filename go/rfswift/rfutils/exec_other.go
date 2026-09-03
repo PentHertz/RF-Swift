@@ -15,6 +15,9 @@ import "os/exec"
 // hideConsoleWindow is a no-op outside Windows.
 func hideConsoleWindow(*exec.Cmd) {}
 
+// HideConsoleWindow is a no-op outside Windows.
+func HideConsoleWindow(*exec.Cmd) {}
+
 // runElevated is only implemented on Windows (UAC).
 func runElevated(string, []string) (uint32, error) {
 	return 0, ErrUSBElevationNotWindow

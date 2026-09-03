@@ -39,6 +39,13 @@ type NixEngineStatus struct {
 	Detail         string   `json:"detail"`                   // one-line summary for the UI
 	WorkspaceRoot  string   `json:"workspaceRoot,omitempty"`  // where default workspaces are, as a host path
 	CanSetup       bool     `json:"canSetup"`                 // NixWSLSetup can provision it from here
+	// WSLg's display client (Windows): "ok" (connected, painting windows),
+	// "degraded" (stopped painting after an RDP graphics error: tools show
+	// only a taskbar icon; NixWSLDisplayReset fixes it), "off" (not started
+	// yet), "" when unknown or not Windows.
+	Display         string `json:"display,omitempty"`
+	DisplayDetail   string `json:"displayDetail,omitempty"`
+	CanResetDisplay bool   `json:"canResetDisplay"`
 }
 
 // NixEngineStatus reports the Nix engine's availability: nix on PATH on Linux
@@ -83,6 +90,18 @@ func (a *App) NixEngineStatus() NixEngineStatus {
 	}
 	st.CanSetup = !st.Ready
 	st.WorkspaceRoot = rfnix.WSLWorkspaceRoot()
+	if display, derr := rfnix.WSLDisplayState(); derr == nil {
+		st.DisplayDetail = display.Summary()
+		st.CanResetDisplay = display.ClientRunning
+		switch {
+		case display.Degraded:
+			st.Display = "degraded"
+		case display.ClientRunning:
+			st.Display = "ok"
+		default:
+			st.Display = "off"
+		}
+	}
 	switch {
 	case st.Ready:
 		st.Detail = fmt.Sprintf("%s: %s, rfswift %s", w.Distro, w.NixVersion, w.RFSwiftVersion)
@@ -113,6 +132,23 @@ func (a *App) NixWSLSetup() (NixEngineStatus, error) {
 	w.flush()
 	rfnix.ResetWSLBackend()
 	return a.NixEngineStatus(), err
+}
+
+// NixWSLDisplayReset restarts WSLg's display client on Windows, the fix for
+// GUI tools that show only a taskbar icon and no window: WSL relaunches the
+// client and re-creates every open window within seconds. Returns the
+// engine status afterwards.
+func (a *App) NixWSLDisplayReset() (NixEngineStatus, error) {
+	if _, err := a.requireLocal(); err != nil {
+		return NixEngineStatus{}, err
+	}
+	if runtime.GOOS != "windows" {
+		return a.NixEngineStatus(), errors.New("WSLg's display client only exists on Windows")
+	}
+	if _, err := rfnix.WSLDisplayReset(); err != nil {
+		return a.NixEngineStatus(), err
+	}
+	return a.NixEngineStatus(), nil
 }
 
 var setupANSI = regexp.MustCompile("\x1b\\[[0-9;?]*[ -/]*[@-~]")

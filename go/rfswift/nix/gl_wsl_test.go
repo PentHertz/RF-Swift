@@ -57,11 +57,16 @@ func TestGLWSLAppendsGPULibsBehindNixLibraries(t *testing.T) {
 
 func TestGLAdviceMentionsWSL(t *testing.T) {
 	lines := GPUAdvice(GLStatus{WSL: true, WSLGPULibs: wslGPULibDir})
-	if len(lines) != 2 || !strings.Contains(lines[0], "X11") || !strings.Contains(lines[0], WSLWaylandVar) || !strings.Contains(lines[1], wslGPULibDir) {
+	if len(lines) != 3 || !strings.Contains(lines[0], "X11") || !strings.Contains(lines[0], WSLWaylandVar) || !strings.Contains(lines[1], wslGPULibDir) {
 		t.Fatalf("advice = %q", lines)
 	}
+	// A window that never appears (taskbar icon only) is WSLg's display
+	// client, not OpenGL: the advice names the reset and its opt-out.
+	if !strings.Contains(lines[2], "display-reset") || !strings.Contains(lines[2], WSLDisplayAutoResetVar) {
+		t.Fatalf("taskbar-icon-only advice = %q", lines[2])
+	}
 	lines = GPUAdvice(GLStatus{WSL: true})
-	if len(lines) != 2 || !strings.Contains(lines[1], "wsl --update") {
+	if len(lines) != 3 || !strings.Contains(lines[1], "wsl --update") {
 		t.Fatalf("missing libraries advice = %q", lines)
 	}
 	if lines := GPUAdvice(GLStatus{}); len(lines) != 0 {

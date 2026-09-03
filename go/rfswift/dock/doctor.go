@@ -108,6 +108,18 @@ func checkNixEngine(report *DoctorReport) {
 		extras = append(extras, "WSLg GPU libs")
 	}
 	report.add(CheckResult{"Nix engine (WSL 2)", "ok", fmt.Sprintf("%s: %s, rfswift %s (%s)", st.Distro, st.NixVersion, st.RFSwiftVersion, strings.Join(extras, ", "))})
+	// WSLg's display client: when it has stopped painting after an RDP
+	// graphics error, GUI tools show only a taskbar icon.
+	if display, derr := rfutils.WSLgDisplayStatus(); derr == nil {
+		switch {
+		case display.Degraded:
+			report.add(CheckResult{"WSLg display client", "warn", fmt.Sprintf("stopped painting windows at %s (%s): GUI tools show only a taskbar icon - run 'rfswift nix wsl display-reset'", display.LastGfxError.Local().Format("15:04:05"), display.LastGfxErrorText)})
+		case display.ClientRunning:
+			report.add(CheckResult{"WSLg display client", "ok", "msrdc.exe connected, GUI windows are painted ('rfswift nix wsl display-reset' restarts it if one ever shows only a taskbar icon)"})
+		default:
+			report.add(CheckResult{"WSLg display client", "skip", "not running yet (WSL starts it with the first GUI window)"})
+		}
+	}
 	if st.RFSwiftVersion != "unknown" && st.RFSwiftVersion != common.Version {
 		report.add(CheckResult{"Nix engine (WSL 2)", "warn", fmt.Sprintf("the Linux rfswift in %s is %s while this one is %s; align them with 'rfswift nix wsl setup --update'", st.Distro, st.RFSwiftVersion, common.Version)})
 	}

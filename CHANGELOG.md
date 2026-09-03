@@ -12,6 +12,16 @@ branch.
 
 ### Added
 
+- Windows: `rfswift nix wsl display-reset` restarts WSLg's display client
+  (`msrdc.exe`), the fix for a GUI tool that shows only a taskbar icon and no
+  window: the tool runs fine inside the distribution, but the client stopped
+  painting after an RDP graphics error and recovers by itself only minutes
+  later. WSL relaunches the client and re-creates the open windows within
+  seconds, no `wsl --shutdown`. `rfswift nix wsl status`, `rfswift doctor` and
+  the Workbench's engine doctor (with a "Reset WSLg display" button) read the
+  client's state from the Windows event log; `run`, `exec` and `shell`, the
+  Workbench launches and the Workbench terminal restart a stuck client by
+  themselves before starting (`RFSWIFT_WSLG_AUTORESET=0` opts out).
 - Host setup, opt-in and asked for (`rfswift host setup`, plus `host udev` and
   `host docker-access` for a single step). The Linux packages ship RF Swift's
   udev rules for SDR/RF/hardware-security devices as a reference copy in
@@ -448,6 +458,12 @@ branch.
 
 ### Fixed
 
+- Windows Workbench: every delegated Nix-engine call (`rfswift exec` for a
+  tool launch, `nix install`, the WSL setup steps) spawned `wsl.exe` without
+  `CREATE_NO_WINDOW`, so a GUI-subsystem parent got an empty terminal window
+  on the desktop for each of them (Windows Terminal when it is the default
+  console host). The WSL command builders now hide that window whenever the
+  process has no console of its own; the CLI, which has one, is unchanged.
 - macOS DMG: double-clicking `Install RF Swift CLI.command` or
   `RF Swift Setup.command` was refused by Gatekeeper on Sequoia and later
   ("Apple could not verify ... is free of malware") because the scripts were

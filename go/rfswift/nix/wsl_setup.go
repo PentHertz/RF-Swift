@@ -186,7 +186,13 @@ echo "installed $1 to /usr/local/bin/rfswift"
 // runAsRoot runs a shell script as root inside distro (console or Output).
 func (o WSLSetupOptions) runAsRoot(distro, script string, args ...string) error {
 	argv := append([]string{"sh", "-c", script, "rfswift-wsl-setup"}, translateArgs(args)...)
-	return o.run(rfutils.WSLExecAs(distro, "root", argv...))
+	cmd := rfutils.WSLExecAs(distro, "root", argv...)
+	if o.Output != nil {
+		// A GUI caller reads Output; a terminal window for wsl.exe would only
+		// flash on the desktop, empty.
+		rfutils.HideConsoleWindow(cmd)
+	}
+	return o.run(cmd)
 }
 
 // SetupWSL provisions a WSL 2 distribution for the Nix engine (see the file
