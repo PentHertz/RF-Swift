@@ -197,6 +197,11 @@ func combineEnv(xdisplay, pulseServer, extraenv string) []string {
 	if extraenv != "" {
 		dockerenv = append(dockerenv, strings.Split(extraenv, ",")...)
 	}
+	// OpenGL over the forwarded display: EGL switch on hosts whose X server
+	// has no usable GLX (XQuartz), see x11gl.go.
+	if xdisplay != "" {
+		dockerenv = withX11GLEnv(dockerenv)
+	}
 	return dockerenv
 }
 

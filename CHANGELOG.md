@@ -448,6 +448,26 @@ branch.
 
 ### Fixed
 
+- macOS DMG: double-clicking `Install RF Swift CLI.command` or
+  `RF Swift Setup.command` was refused by Gatekeeper on Sequoia and later
+  ("Apple could not verify ... is free of malware") because the scripts were
+  unsigned; notarizing the image does not cover them. The DMG workflow now
+  code-signs both scripts with the Developer ID (signature in extended
+  attributes, preserved by the image and recorded by the notarization),
+  and asserts the Gatekeeper verdict on the mounted image before release.
+
+- OpenGL GUI tools on macOS (Docker Desktop, Podman and Lima): SDR++ and every
+  other GLFW, Qt or SDL program that needs an OpenGL context died at window
+  creation over XQuartz (`No matching fbConfigs or visuals found`, `GLX:
+  Failed to create context: BadValue`, then `glfwSetWindowIcon: Assertion
+  'window != NULL' failed`), because XQuartz's GLX exposes no fbconfig Mesa's
+  software rasterizer accepts. EGL on the same display works, so on macOS
+  hosts `rfswift run` and the Workbench now pass `RFSWIFT_GL_PLATFORM=egl`;
+  the images' shell then exports the Qt/SDL EGL switches and preloads a small
+  GLFW shim (`/usr/lib/rfswift/libglfw-egl.so`, built in the core image) that
+  makes `glfwCreateWindow` ask for an EGL context. SDR++ starts with
+  "Using OpenGL 3.0" (llvmpipe). Older images ignore the variable.
+
 - Workbench: containers created from the GUI had no sound on Linux and macOS.
   `dock.CreateContainer` set `PULSE_SERVER=tcp:localhost:34567` like the CLI
   but never loaded the host audio server's `module-native-protocol-tcp` the

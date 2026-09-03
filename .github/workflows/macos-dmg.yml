@@ -342,9 +342,12 @@ jobs:
           chmod +x "dmg-root/RF Swift Setup.command"
 
           # Double-clickable installer for the CLI: Terminal opens and
-          # sudo-copies the binary into /usr/local/bin. Shell scripts
-          # cannot be Mach-O signed, but notarization of the whole .dmg
-          # covers them.
+          # sudo-copies the binary into /usr/local/bin. Both .command
+          # files get a Developer ID signature of their own in the next
+          # step: since macOS Sequoia, Gatekeeper assesses a
+          # double-clicked script itself, and an unsigned one is refused
+          # ("Apple could not verify ... is free of malware") even inside
+          # a notarized image.
           cat > "dmg-root/Install RF Swift CLI.command" <<'EOF'
           #!/bin/bash
           set -e
@@ -388,6 +391,31 @@ jobs:
           EOF
 
           ls -la dmg-root/
+
+      - name: Code-sign launcher scripts
+        # A script's signature lives in extended attributes
+        # (com.apple.cs.*), which hdiutil preserves in the image, and
+        # the DMG notarization below records the scripts' code hashes in
+        # the ticket. That is what lets Gatekeeper accept a double-click
+        # on them. No hardened runtime: not a Mach-O.
+        if: env.MACOS_KEYCHAIN_PATH != ''
+        run: |
+          set -euo pipefail
+          codesign --force --timestamp \
+            --identifier com.penthertz.rfswift.install-cli \
+            --keychain "$MACOS_KEYCHAIN_PATH" \
+            --sign "$MACOS_SIGN_IDENTITY" \
+            "dmg-root/Install RF Swift CLI.command"
+          codesign --force --timestamp \
+            --identifier com.penthertz.rfswift.setup \
+            --keychain "$MACOS_KEYCHAIN_PATH" \
+            --sign "$MACOS_SIGN_IDENTITY" \
+            "dmg-root/RF Swift Setup.command"
+          for f in "dmg-root/Install RF Swift CLI.command" "dmg-root/RF Swift Setup.command"; do
+            codesign --verify --strict --verbose=2 "$f"
+            xattr -l "$f" | grep -q '^com.apple.cs.CodeSignature' \
+              || { echo "::error::$f: signature not stored in xattrs"; exit 1; }
+          done
 
       - name: Build DMG
         run: |
@@ -441,6 +469,20 @@ jobs:
           # downloaded image. "accepted ... source=Notarized Developer ID"
           # is the expected verdict; anything else fails the build.
           spctl -a -t open --context context:primary-signature -v "$DMG_NAME"
+
+          # Same check for what a user double-clicks inside the mounted
+          # image: the launcher scripts must come back "accepted" with
+          # source=Notarized Developer ID, or Sequoia refuses them with
+          # "Apple could not verify ... is free of malware". Fail the
+          # build rather than ship launchers that do not open.
+          MOUNT=$(mktemp -d)
+          hdiutil attach -nobrowse -readonly -mountpoint "$MOUNT" "$DMG_NAME" >/dev/null
+          trap 'hdiutil detach "$MOUNT" -quiet || true' EXIT
+          for f in "Install RF Swift CLI.command" "RF Swift Setup.command"; do
+            echo "==> Gatekeeper assessment: $f"
+            codesign --verify --strict --verbose=2 "$MOUNT/$f"
+            spctl -a -t execute -vv "$MOUNT/$f"
+          done
 
       - name: Attest build provenance
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2

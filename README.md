@@ -196,6 +196,10 @@ rfswift macusb detach --vid 0x1d50 --pid 0x604b
 
 Lima auto-creates the VM on first use with Docker, USB libraries, kernel modules, and udev rules for all supported RF hardware pre-configured. Use `--engine lima` when you need USB devices; use Docker Desktop normally for everything else.
 
+#### 🖥️ GUI tools on macOS (XQuartz)
+
+Containers show their windows through [XQuartz](https://www.xquartz.org) (`scripts/setup-xquartz-macos.sh` installs and configures it). XQuartz's GLX cannot give Mesa a usable OpenGL context, so RF Swift tells the container (`RFSWIFT_GL_PLATFORM=egl`) to create OpenGL contexts through EGL instead: Qt and SDL switch on their own, and a small preloaded shim does the same for GLFW programs (SDR++, SatDump, CyberEther, ...). Rendering is software (llvmpipe) and works with Docker Desktop, Podman and Lima alike. It needs images built after this change; older images keep failing with `GLX: Failed to create context`, in which case `--desktop` (noVNC) is the alternative.
+
 #### 🎮 GPU acceleration on Apple Silicon (opt-in)
 
 On Apple Silicon, **USB passthrough and GPU acceleration need different VM backends and cannot coexist in one VM**. The Lima VM above uses QEMU for USB/SDR devices. For GPU compute (e.g. Vulkan-accelerated ML/DSP) there is a separate opt-in profile that uses the **krunkit** backend (libkrun), which exposes the Apple GPU to containers as a **Vulkan** device (Mesa Venus -> MoltenVK -> Metal). It is **Vulkan, not CUDA**, and provides **no** USB passthrough.

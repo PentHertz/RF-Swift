@@ -254,6 +254,9 @@ func CreateContainer(opts CreateOptions) (string, error) {
 			display = ":0"
 		}
 		configEnv = append(configEnv, "DISPLAY="+display)
+		// OpenGL over that display: EGL switch on hosts whose X server has
+		// no usable GLX (XQuartz), see x11gl.go.
+		configEnv = withX11GLEnv(configEnv)
 		if runtime.GOOS == "windows" {
 			// WSLg serves DISPLAY=:0 for every WSL 2 VM; mount its socket tree
 			// the way the CLI does (see cli setupX11).
