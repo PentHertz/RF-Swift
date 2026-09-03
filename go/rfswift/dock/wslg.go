@@ -68,6 +68,13 @@ func wslgPulseServerFor(goos, pulseServer string) (string, bool) {
 	return pulseServer, false
 }
 
+// PulseServer returns the configured container audio target (config
+// [audio] pulse_server, default tcp:localhost:34567) as the CLI uses it, for
+// callers outside this package such as the Workbench.
+func PulseServer() string {
+	return containerCfg.pulseServer
+}
+
 // UsesWSLgAudio reports whether container audio on this host goes through
 // WSLg for the given configured server.
 func UsesWSLgAudio(pulseServer string) bool {

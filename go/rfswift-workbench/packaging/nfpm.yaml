@@ -28,6 +28,9 @@ description: |-
 recommends:
   - rfswift
 overrides:
+  # xhost and pactl: the Workbench creates containers through the same code
+  # as the CLI (X11 authorisation with xhost, host audio TCP module with
+  # pactl), so it needs them just like the rfswift package does.
   deb:
     depends:
       # The t64 names cover Debian 13+/Ubuntu 24.04+ (the time_t transition
@@ -35,14 +38,20 @@ overrides:
       # Ubuntu 22.04.
       - libgtk-3-0t64 | libgtk-3-0
       - libwebkit2gtk-4.1-0t64 | libwebkit2gtk-4.1-0
+      - x11-xserver-utils
+      - pulseaudio-utils
   rpm:
     depends:
       - gtk3
       - webkit2gtk4.1
+      - /usr/bin/xhost
+      - /usr/bin/pactl
   archlinux:
     depends:
       - gtk3
       - webkit2gtk-4.1
+      - xorg-xhost
+      - libpulse
 contents:
   # `expand: true` opts a contents entry into ${...} env expansion (nfpm only
   # expands version/arch/etc. unconditionally). Every entry pins file_info

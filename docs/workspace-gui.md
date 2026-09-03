@@ -88,6 +88,16 @@ Thin bindings over code that already exists, plus a workspace store:
   auto-classify. Built-in types come from Go and custom types persist in the
   selected workspace.
 - Findings: read/write `findings.json`.
+- Host audio (Linux/macOS): `HostAudioStatus` reports which audio server runs
+  (PulseAudio or PipeWire), whether its TCP module is loaded on the configured
+  `pulse_server` port and whether the port answers; `HostAudioEnable` /
+  `HostAudioDisable` load or unload it (engine doctor);
+  `SetMissionHostAudio(id, enable)` does the same from a container target's
+  context menu and remembers the choice (`hostAudioOff` in `mission.json`),
+  which `StartMission` honours. Creation (`noAudio`) and start load the module
+  by default, exactly what the CLI's `run` does, because a container's
+  `PULSE_SERVER` points at that module. Windows containers use the WSLg socket
+  and see none of this; Nix environments play sound natively.
 - USB passthrough: `USBBackend`/`ListHostUSB`/`VMUSBInfo` plus
   `AttachHostUSB`/`DetachHostUSB` (macOS: Lima QMP hot-plug) and
   `AttachWinUSB`/`DetachWinUSB`/`UnshareWinUSB` (Windows: usbipd-win into the

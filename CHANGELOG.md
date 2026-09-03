@@ -12,6 +12,14 @@ branch.
 
 ### Added
 
+- Workbench: host audio for Docker/Podman/Lima targets on Linux and macOS.
+  The create form's "Enable host audio server" option (on by default, like
+  the CLI) loads the PulseAudio/PipeWire TCP module the container's
+  `PULSE_SERVER` points at; a target's right-click menu now has "Enable host
+  audio server" / "Disable host audio server", remembered per target for its
+  next starts; the engine doctor shows the audio server, whether the module is
+  loaded on the configured port and whether the port answers, with
+  Enable/Disable buttons. Windows needs none of it (WSLg socket).
 - Nix engine: on-demand (`--lazy`) environments are pinned. At creation the
   flake reference is resolved to its revision and recorded (`rfswift nix info`
   shows the pin and the reference it came from), so a push to RF-Swift-nix no
@@ -420,6 +428,30 @@ branch.
 
 ### Fixed
 
+- Workbench: containers created from the GUI had no sound on Linux and macOS.
+  `dock.CreateContainer` set `PULSE_SERVER=tcp:localhost:34567` like the CLI
+  but never loaded the host audio server's `module-native-protocol-tcp` the
+  way `rfswift run` does on every start, so the target pointed at nothing
+  unless `rfswift host audio enable` had been run by hand. Creation and start
+  now load it (best effort; a missing pactl or audio server becomes a warning
+  in the GUI, and `rfswift host audio enable` names the package to install
+  instead of a bare "executable not found").
+- `rfswift host audio enable` is idempotent: when the TCP module already
+  listens on the configured port (a previous run, the Workbench) it says so
+  instead of failing with "Module initialization failed"; `unload` removes
+  every instance, works without pactl through the native PulseAudio
+  connection, and `tcp:localhost:<port>` from the config file now yields
+  `auth-ip-acl=127.0.0.1` (the module rejects host names).
+- `rfswift update` on a deb/rpm/pacman or Homebrew install explained how to
+  upgrade through the package instead of overwriting the packaged binary,
+  which desynced the package database and was reverted by the next package
+  upgrade.
+- `get_rfswift.sh`: after installing the native Linux packages (binary in
+  `/usr/bin`), copies left by an earlier tarball install in `/usr/local/bin`
+  or `~/.rfswift/bin` kept answering `rfswift` (PATH order, or the
+  `alias rfswift=` the script used to write). The installer now offers to
+  remove them and the alias, and warns when `rfswift` still resolves
+  elsewhere.
 - Nix engine under WSL 2: SDR++ took seconds to show its window. GLFW 3.4
   prefers Wayland whenever it can connect, and WSLg's compositor left SDR++
   blocked 2 to 8 s in its loading screen at every start; on X11 (WSLg's
@@ -518,6 +550,12 @@ branch.
 
 ### Changed
 
+- Linux packages: `rfswift` and `rfswift-workbench` now depend on the host
+  tools every container needs, `xhost` (`x11-xserver-utils`, `xorg-xhost`,
+  `/usr/bin/xhost` on rpm) and `pactl` (`pulseaudio-utils`, `libpulse`), the
+  same packages `get_rfswift.sh` installs; `bubblewrap` (Nix `--isolate`) and
+  a container engine are recommended (optional on Arch, where pacman never
+  installs them).
 - The Workbench Go implementation and its tests now live in the private
   `internal/workbench` application package. The executable root contains only
   Wails/platform bootstrap files, embedded assets are injected explicitly, and

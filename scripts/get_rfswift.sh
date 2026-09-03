@@ -845,6 +845,60 @@ prompt_choice() {
 }
 
 # Function to create an alias for RF-Swift in the user's shell configuration
+# After a native package install (binary in /usr/bin), copies left by earlier
+# tarball installs shadow it: /usr/local/bin comes before /usr/bin in PATH, and
+# the `alias rfswift=~/.rfswift/bin/rfswift` this script used to write wins
+# over both. The result is a freshly installed package and a stale binary that
+# still answers `rfswift`. Offer to remove the stale copies and the alias, and
+# say so when `rfswift` still does not resolve to the packaged binary.
+cleanup_legacy_installs() {
+  local pkg_bin="/usr/bin/rfswift" wb_bin="/usr/bin/rfswift-workbench" stale="" f
+  local user_home
+  user_home="$(eval echo "~$(get_real_user)")"
+  for f in /usr/local/bin/rfswift /usr/local/bin/rfswift-workbench \
+           "${user_home}/.rfswift/bin/rfswift" "${user_home}/.rfswift/bin/rfswift-workbench" \
+           "${HOME}/.rfswift/bin/rfswift" "${HOME}/.rfswift/bin/rfswift-workbench"; do
+    [ -f "$f" ] || continue
+    case " $stale " in *" $f "*) continue ;; esac
+    if [ "$f" -ef "$pkg_bin" ] || [ "$f" -ef "$wb_bin" ]; then continue; fi
+    stale="$stale $f"
+  done
+  stale="${stale# }"
+  if [ -n "$stale" ]; then
+    color_echo "yellow" "⚠️  Older RF-Swift copies from a previous tarball install were found:"
+    for f in $stale; do color_echo "yellow" "   - $f"; done
+    color_echo "yellow" "   They shadow the package's /usr/bin/rfswift (PATH order), so 'rfswift' would keep running the old version."
+    if prompt_yes_no "Remove these old copies?" "y"; then
+      for f in $stale; do
+        case "$f" in
+          /usr/local/bin/*) sudo rm -f "$f" && color_echo "green" "✅ Removed $f" || color_echo "red" "❌ Could not remove $f" ;;
+          *) rm -f "$f" && color_echo "green" "✅ Removed $f" || color_echo "red" "❌ Could not remove $f" ;;
+        esac
+      done
+    else
+      color_echo "yellow" "   Kept. Run /usr/bin/rfswift explicitly, or remove them later."
+    fi
+  fi
+
+  # The alias only ever pointed at a tarball location; the package is on PATH.
+  local rc
+  for rc in "${user_home}/.bashrc" "${user_home}/.bash_profile" "${user_home}/.zshrc" "${user_home}/.config/fish/config.fish"; do
+    [ -f "$rc" ] || continue
+    grep -q -E "^alias rfswift[ =]" "$rc" 2>/dev/null || continue
+    color_echo "yellow" "⚠️  $rc still defines an 'rfswift' alias pointing at the old install; it would hide /usr/bin/rfswift."
+    if prompt_yes_no "Remove the alias from $rc?" "y"; then
+      sed -i.bak -E '/^alias rfswift[ =]/d' "$rc" 2>/dev/null || sed -i '' -E '/^alias rfswift[ =]/d' "$rc" 2>/dev/null
+      color_echo "green" "✅ Alias removed from $rc (backup: $rc.bak). Open a new shell, or run: unalias rfswift"
+    fi
+  done
+
+  local resolved
+  resolved="$(command -v rfswift 2>/dev/null || true)"
+  if [ -n "$resolved" ] && [ ! "$resolved" -ef "$pkg_bin" ]; then
+    color_echo "yellow" "⚠️  'rfswift' currently resolves to $resolved, not to the package's $pkg_bin. Check your PATH and shell aliases (hash -r / a new shell may be enough)."
+  fi
+}
+
 create_alias() {
   local bin_path="$1"
   color_echo "blue" "🔗 Setting up an alias for RF-Swift..."
@@ -2941,7 +2995,10 @@ main() {
 
   # Prefer native packages (deb/rpm/pacman, or the Homebrew cask on macOS);
   # any miss falls back to the classic tarball flow below.
-  if ! try_native_package_install; then
+  if try_native_package_install; then
+    # Linux packages land in /usr/bin; make sure nothing older shadows them.
+    case "$(uname -s)" in Linux*) cleanup_legacy_installs ;; esac
+  else
     choose_workbench_format
 
     # Download files

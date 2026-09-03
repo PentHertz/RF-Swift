@@ -564,10 +564,27 @@ func SetPulseCTL(address string) error {
 	}
 	port := parts[2]
 	ip := parts[1]
+	// The config default is tcp:localhost:34567; auth-ip-acl wants addresses,
+	// not names, so the CLI flag default 127.0.0.1 is what gets loaded.
+	if ip == "localhost" {
+		ip = "127.0.0.1"
+	}
 
 	// Ensure audio system is running
 	if err := ensureAudioSystemRunning(); err != nil {
 		return fmt.Errorf("failed to ensure audio system is running: %w", err)
+	}
+
+	// Already listening on that port (a previous run/exec, the Workbench, or
+	// `host audio enable`): loading a second instance on the same port only
+	// fails with "Module initialization failed". Nothing to do.
+	if mods, err := pulseTCPModules(); err == nil {
+		for _, m := range mods {
+			if pulseModuleListensOn(m, port) {
+				common.PrintInfoMessage(fmt.Sprintf("%s already loaded on port %s (module #%s)", PulseTCPModule, port, m.Index))
+				return nil
+			}
+		}
 	}
 
 	// On macOS with Lima, containers run inside a VM with its own network.
@@ -630,7 +647,10 @@ func setPipeWireTCPModule(ip, port string) error {
 	// PipeWire with pipewire-pulse should support pactl commands
 	moduleArgs := fmt.Sprintf("port=%s auth-ip-acl=%s", port, ip)
 
-	cmd := exec.Command("pactl", "load-module", "module-native-protocol-tcp", moduleArgs)
+	cmd, err := pactlCommand("load-module", PulseTCPModule, moduleArgs)
+	if err != nil {
+		return err
+	}
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("failed to load module-native-protocol-tcp via pactl: %w\nOutput: %s", err, string(output))
@@ -771,56 +791,29 @@ func uidString() string {
 	return fmt.Sprintf("%d", os.Getuid())
 }
 
-// UnloadPulseCTL unloads the audio TCP module (module-native-protocol-tcp) from either
-// PulseAudio or PipeWire using pactl.
+// UnloadPulseCTL unloads every instance of the audio TCP module
+// (module-native-protocol-tcp) from PulseAudio or PipeWire, through pactl when
+// it is installed and the native PulseAudio protocol otherwise.
 //
 //	out: error
 func UnloadPulseCTL() error {
 	if runtime.GOOS == "windows" {
 		return fmt.Errorf("nothing to unload on Windows: container audio uses WSLg's PulseAudio socket, no TCP module is loaded")
 	}
-	cmd := exec.Command("pactl", "list", "modules")
-	output, err := cmd.CombinedOutput()
+	mods, err := pulseTCPModules()
 	if err != nil {
-		return fmt.Errorf("failed to list audio modules: %w\nOutput: %s", err, string(output))
+		return fmt.Errorf("failed to list audio modules: %w", err)
 	}
-
-	// Parse the output to find the module-native-protocol-tcp index
-	lines := strings.Split(string(output), "\n")
-	var moduleIndex string
-	for i, line := range lines {
-		if strings.Contains(line, "Name: module-native-protocol-tcp") {
-			// Find the "Index:" line above the module name
-			for j := i; j >= 0; j-- {
-				if strings.Contains(lines[j], "Module #") {
-					moduleIndex = strings.TrimSpace(strings.TrimPrefix(lines[j], "Module #"))
-					break
-				}
-			}
-			break
+	if len(mods) == 0 {
+		return fmt.Errorf("%s not found (nothing to unload)", PulseTCPModule)
+	}
+	name := audioSystemName()
+	for _, m := range mods {
+		if err := unloadPulseModule(m.Index); err != nil {
+			return err
 		}
+		common.PrintSuccessMessage(fmt.Sprintf("Successfully unloaded %s from %s (module #%s)", PulseTCPModule, name, m.Index))
 	}
-
-	if moduleIndex == "" {
-		return fmt.Errorf("module-native-protocol-tcp not found")
-	}
-
-	// Execute pactl unload-module to unload the module
-	unloadCmd := exec.Command("pactl", "unload-module", moduleIndex)
-	unloadOutput, err := unloadCmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("failed to unload module-native-protocol-tcp: %w\nOutput: %s", err, string(unloadOutput))
-	}
-	fmt.Printf("Command output: %s\n", string(unloadOutput))
-
-	audioSystemName := "audio system"
-	if detectAudioSystem() == AudioSystemPipeWire {
-		audioSystemName = "PipeWire"
-	} else if detectAudioSystem() == AudioSystemPulse {
-		audioSystemName = "PulseAudio"
-	}
-
-	common.PrintSuccessMessage(fmt.Sprintf("Successfully unloaded module-native-protocol-tcp from %s with index %s", audioSystemName, moduleIndex))
 	return nil
 }
 

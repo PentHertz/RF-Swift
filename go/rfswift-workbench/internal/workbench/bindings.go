@@ -92,6 +92,7 @@ func (a *App) Missions() ([]Mission, error) {
 				live[i].Title = m.Title
 			}
 			live[i].Notes = m.Notes
+			live[i].HostAudioOff = m.HostAudioOff
 			live[i].EnvironmentAudit = m.EnvironmentAudit
 			if severityTotal(live[i].EnvironmentAudit) == 0 {
 				live[i].EnvironmentAudit = m.Posture // migrate legacy audit counters
@@ -353,6 +354,7 @@ func (a *App) CreateMission(req MissionCreate) (Mission, error) {
 	// stored record.
 	warnings := m.Warnings
 	m.Warnings = nil
+	m.HostAudioOff = req.NoAudio && req.Engine != "nix"
 	if err := a.store.SaveMission(a.ws, m); err != nil {
 		return Mission{}, err
 	}
@@ -456,6 +458,9 @@ func (a *App) StartMission(id string) error {
 	if err := a.requireMission(id); err != nil {
 		return err
 	}
+	// Like the CLI's run: make sure the host audio server the container's
+	// PULSE_SERVER points at is listening before the tools start. Best effort.
+	a.ensureMissionHostAudio(id)
 	return a.eng.Start(id)
 }
 func (a *App) StopMission(id string) error {

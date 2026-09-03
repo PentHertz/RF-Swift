@@ -117,8 +117,12 @@ type CreateOptions struct {
 	DesktopPassword string
 	DesktopSSL      bool
 	NoX11           bool
-	Privileged      bool
-	Start           bool
+	// HostAudio loads the host audio server's TCP module (what `rfswift run`
+	// does on every start) so the PULSE_SERVER target exists. Failures are
+	// reported through Warn, never fatal.
+	HostAudio  bool
+	Privileged bool
+	Start      bool
 	// Warn receives one message per adjustment made to the requested
 	// configuration (for example the pieces rootless Podman cannot honour).
 	// Nil prints them to the terminal like the interactive CLI does.
@@ -270,6 +274,16 @@ func CreateContainer(opts CreateOptions) (string, error) {
 			configEnv = append(configEnv, "PULSE_SERVER="+pulse)
 		}
 		binds = ensureWSLgMount(binds, containerCfg.pulseServer)
+	}
+	// Host side of that target: the interactive CLI loads the audio server's
+	// TCP module on every run (SetPulseCTL), which this path never did, so
+	// Workbench containers had PULSE_SERVER pointing at nothing. Same call,
+	// idempotent; a failure (no pactl, no audio server) is a warning the GUI
+	// shows, and the container still starts.
+	if opts.HostAudio && (runtime.GOOS == "linux" || runtime.GOOS == "darwin") && !UsesWSLgAudio(containerCfg.pulseServer) {
+		if err := rfutils.SetPulseCTL(containerCfg.pulseServer); err != nil {
+			warn(fmt.Sprintf("Host audio server not enabled: %v. Containers get no sound until it is (right-click the target > Enable host audio server, or `rfswift host audio enable`).", err))
+		}
 	}
 	if opts.Workspace != "none" {
 		workspace := opts.Workspace

@@ -468,6 +468,13 @@ func GetLatestRFSwift() {
 		common.PrintErrorMessage(fmt.Errorf("Error determining the current executable path: %v", err))
 		return
 	}
+	// A deb/rpm/pacman or Homebrew install is upgraded by its package, not by
+	// overwriting the packaged file (the package database would no longer
+	// match, and the next package upgrade would revert the binary).
+	if hint := packageManagedHint(currentBinaryPath); hint != "" {
+		common.PrintWarningMessage(hint)
+		return
+	}
 
 	tempDest := filepath.Join(os.TempDir(), fileName)
 	err = DownloadFile(downloadURL, tempDest)

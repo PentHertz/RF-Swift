@@ -331,7 +331,7 @@ func (e *LocalEngine) Create(req MissionCreate) (Mission, error) {
 			}
 		}
 	case "docker", "podman", "lima":
-		_, err := rfdock.CreateContainer(rfdock.CreateOptions{Context: req.Context, Engine: req.Engine, Name: req.Name, Image: req.Image, Workspace: req.Workspace, Network: req.Network, Shell: req.Shell, Caps: req.Caps, Bindings: req.Bindings, Devices: req.Devices, ExposedPorts: req.ExposedPorts, PortBindings: req.PortBindings, CgroupRules: req.CgroupRules, GPUs: req.GPUs, Seccomp: req.Seccomp, ExtraHosts: req.ExtraHosts, Environment: req.Environment, Realtime: req.Realtime, Desktop: req.Desktop, DesktopProto: req.DesktopProto, DesktopHost: req.DesktopHost, DesktopPort: req.DesktopPort, DesktopPassword: req.DesktopPassword, DesktopSSL: req.DesktopSSL, NoX11: req.NoX11, Privileged: req.Privileged, Start: req.Start,
+		_, err := rfdock.CreateContainer(rfdock.CreateOptions{Context: req.Context, Engine: req.Engine, Name: req.Name, Image: req.Image, Workspace: req.Workspace, Network: req.Network, Shell: req.Shell, Caps: req.Caps, Bindings: req.Bindings, Devices: req.Devices, ExposedPorts: req.ExposedPorts, PortBindings: req.PortBindings, CgroupRules: req.CgroupRules, GPUs: req.GPUs, Seccomp: req.Seccomp, ExtraHosts: req.ExtraHosts, Environment: req.Environment, Realtime: req.Realtime, Desktop: req.Desktop, DesktopProto: req.DesktopProto, DesktopHost: req.DesktopHost, DesktopPort: req.DesktopPort, DesktopPassword: req.DesktopPassword, DesktopSSL: req.DesktopSSL, NoX11: req.NoX11, HostAudio: !req.NoAudio, Privileged: req.Privileged, Start: req.Start,
 			Warn: func(msg string) { warnings = append(warnings, msg) }})
 		if err != nil {
 			return Mission{}, err

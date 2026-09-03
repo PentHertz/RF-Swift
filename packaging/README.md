@@ -27,9 +27,17 @@ Two paths, because the two binaries build differently:
   `go/rfswift-workbench/packaging/linux/` is also the one bundled into the
   AppImage.
 
-Dependency policy: the CLI package has **no hard dependencies** (a container
-engine or Nix is Recommended, not Depended on - the Nix engine needs no
-daemon). The Workbench package depends on the gtk3/webkit2gtk-4.1 runtime
+Dependency policy: both packages depend on the two host tools every container
+needs, `xhost` (X11 authorisation of the container user; `x11-xserver-utils`
+on Debian, `xorg-xhost` on Arch, `/usr/bin/xhost` as a file dependency on rpm
+since Fedora and RHEL ship it in different packages) and `pactl` (loads the
+audio server's TCP module for PulseAudio and PipeWire alike;
+`pulseaudio-utils`, `libpulse` on Arch). Without them GUI tools cannot open a
+display and sound silently stays off, which is why `get_rfswift.sh` installs
+them too. A container engine or Nix is Recommended, not Depended on (the Nix
+engine needs no daemon), as is `bubblewrap` for the Nix engine's `--isolate`.
+pacman never installs optional dependencies, so on Arch they are hints only.
+The Workbench package additionally depends on the gtk3/webkit2gtk-4.1 runtime
 libraries; on deb the `t64` alternatives cover Debian 12/13 and
 Ubuntu 22.04/24.04+.
 

@@ -276,6 +276,8 @@ sudo dnf install ./rfswift-<version>-1.x86_64.rpm         # Fedora/RHEL
 sudo pacman -U rfswift-<version>-1-x86_64.pkg.tar.zst     # Arch Linux
 ```
 
+The packages pull in the two host tools every container needs, `xhost` (X11 authorisation) and `pactl` (host audio server), so GUI tools open a display and play sound without a manual step. They install `rfswift` in `/usr/bin`; the installer removes the copies an earlier tarball install left in `/usr/local/bin` or `~/.rfswift/bin` (and the shell alias pointing at them) when you agree, since those would shadow the packaged binary. A packaged `rfswift` is upgraded with the next package (or by re-running the installer), and `rfswift update` says so instead of overwriting it.
+
 On macOS, Homebrew installs the CLI and the Workbench GUI together from the signed release, and the bundled setup command picks your engine:
 
 ```bash

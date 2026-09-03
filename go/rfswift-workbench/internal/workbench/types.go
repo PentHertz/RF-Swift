@@ -69,8 +69,13 @@ type Mission struct {
 	FlakeRef         string          `json:"flakeRef"`
 	// Lazy marks an on-demand Nix environment (tools build on first call). It has
 	// no eager profile, so rebuild/rollback do not apply to it — only update.
-	Lazy bool `json:"lazy,omitempty"`
+	Lazy    bool `json:"lazy,omitempty"`
 	Isolate bool `json:"isolate,omitempty"`
+	// HostAudioOff records that this container mission should not load the
+	// host audio server's TCP module when it starts (the CLI's `run` and, by
+	// default, the Workbench do). Toggled from the target's context menu;
+	// persisted in mission.json.
+	HostAudioOff bool `json:"hostAudioOff,omitempty"`
 	// Warnings lists the adjustments made while creating the target (for
 	// example what rootless Podman could not honour). Returned to the caller
 	// of CreateMission only; never persisted in mission.json.
@@ -109,6 +114,7 @@ type MissionCreate struct {
 	DesktopPassword string          `json:"desktopPassword"`
 	DesktopSSL      bool            `json:"desktopSSL"`
 	NoX11           bool            `json:"noX11"`
+	NoAudio         bool            `json:"noAudio"` // do not enable the host audio server for this container
 	Privileged      bool            `json:"privileged"`
 	Start           bool            `json:"start"`
 	Lazy            bool            `json:"lazy"`
