@@ -36,7 +36,7 @@ builds:
       - riscv64
 
 archives:
-  - format: tar.gz
+  - formats: [tar.gz]
     # This name template makes the OS and Arch compatible with the results of `uname`.
     name_template: >-
       rfswift_
@@ -64,7 +64,7 @@ archives:
     # Use zip for Windows archives
     format_overrides:
       - goos: windows
-        format: zip
+        formats: [zip]
 
 # Native Linux packages for the CLI/TUI: .deb (Debian/Ubuntu), .rpm
 # (Fedora/RHEL/openSUSE) and .pkg.tar.zst (Arch, `pacman -U`). The GUI
@@ -103,14 +103,14 @@ nfpms:
     # Nix engine (built from nixpkgs on first use when absent).
     overrides:
       deb:
-        depends:
+        dependencies:
           - x11-xserver-utils
           - pulseaudio-utils
         recommends:
           - docker.io | docker-ce | podman
           - bubblewrap
       rpm:
-        depends:
+        dependencies:
           # File dependencies: xhost lives in xorg-x11-server-utils (RHEL 8/9)
           # or its own xhost package (Fedora 36+, openSUSE); pactl in
           # pulseaudio-utils everywhere. /usr/bin paths resolve without the
@@ -121,7 +121,7 @@ nfpms:
           - (moby-engine or docker-ce or podman)
           - bubblewrap
       archlinux:
-        depends:
+        dependencies:
           - xorg-xhost
           - libpulse
         # pacman never installs optional dependencies; they only show up in
