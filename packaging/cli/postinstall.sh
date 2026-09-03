@@ -1,13 +1,16 @@
 #!/bin/sh
 # rfswift package post-install hook (deb postinst, rpm %post, pacman
-# post_install/post_upgrade via nfpm). It changes NOTHING on the host: the
-# udev rules, the container engine and Docker socket access are deliberately
-# left to the user, who is pointed at the command that asks before doing
-# them. Never fails the package installation.
+# post_install/post_upgrade via nfpm). Do not invoke apt/dnf/pacman recursively
+# while their transaction lock is held. Record pending interactive setup; the
+# CLI offers it on its first terminal launch after the transaction completes.
+mkdir -p /var/lib/rfswift 2>/dev/null || true
+: > /var/lib/rfswift/host-setup-pending 2>/dev/null || true
 if [ -t 1 ] || [ -n "${RFSWIFT_POSTINST_VERBOSE:-}" ]; then
   cat <<'MSG'
 
-  RF Swift is installed. Optional host setup (asks before every step):
+  RF Swift is installed. xhost and pactl were installed as package dependencies.
+  The first interactive launch offers Nix and a Docker/Podman/Both/None choice.
+  To start that setup immediately after this package command finishes:
 
       rfswift host setup
 

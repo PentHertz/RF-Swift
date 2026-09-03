@@ -97,4 +97,19 @@ if [ "$(uname -s)" = Linux ]; then
   [ ! -e "$fake/calls" ] || { echo "a Workbench-only install has no CLI to run" >&2; exit 1; }
 fi
 
+# --- Existing tarball locations are retained during an upgrade ---------------
+cli_target="$tmp/old-cli"; wb_target="$tmp/old-workbench"
+mkdir -p "$cli_target" "$wb_target" "$tmp/pathbin"
+printf '#!/bin/sh\n' > "$cli_target/rfswift"
+printf '#!/bin/sh\n' > "$wb_target/rfswift-workbench"
+chmod +x "$cli_target/rfswift" "$wb_target/rfswift-workbench"
+ln -s "$cli_target/rfswift" "$tmp/pathbin/rfswift"
+ln -s "$wb_target/rfswift-workbench" "$tmp/pathbin/rfswift-workbench"
+old_path=$PATH; PATH="$tmp/pathbin:$PATH"
+INSTALL_COMPONENTS=both INSTALL_DIR=""
+choose_install_dir >/dev/null
+PATH=$old_path
+[ "$CLI_INSTALL_DIR" = "$cli_target" ] || { echo "CLI upgrade path was not retained: $CLI_INSTALL_DIR" >&2; exit 1; }
+[ "$WORKBENCH_INSTALL_DIR" = "$wb_target" ] || { echo "Workbench upgrade path was not retained: $WORKBENCH_INSTALL_DIR" >&2; exit 1; }
+
 echo "installer security, development-channel and native-package tests: ok"

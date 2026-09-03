@@ -12,6 +12,8 @@ package cli
 import (
 	"fmt"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strings"
 
@@ -20,6 +22,76 @@ import (
 	"penthertz/rfswift/hostsetup"
 	"penthertz/rfswift/tui"
 )
+
+var packageSetupMarker = "/var/lib/rfswift/host-setup-pending"
+
+func maybeOfferPackagedHostSetup(cmd *cobra.Command) {
+	if runtime.GOOS != "linux" || !tui.IsInteractive() || os.Geteuid() == 0 {
+		return
+	}
+	if _, err := os.Stat(packageSetupMarker); err != nil {
+		return
+	}
+	for c := cmd; c != nil; c = c.Parent() {
+		if c == hostSetupCmd || c == hostUdevCmd || c == hostDockerAccessCmd {
+			return
+		}
+	}
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return
+	}
+	seen := filepath.Join(home, ".config", "rfswift", "package-setup-seen")
+	if data, err := os.ReadFile(seen); err == nil && strings.TrimSpace(string(data)) == common.Version {
+		return
+	}
+	_ = os.MkdirAll(filepath.Dir(seen), 0700)
+	run := tui.ConfirmDefault("RF Swift was installed from a package. Configure xhost/pactl checks, Nix, Docker/Podman and hardware access now?", true)
+	_ = os.WriteFile(seen, []byte(common.Version+"\n"), 0600)
+	if run {
+		hostSetupCmd.Run(hostSetupCmd, nil)
+		fmt.Println()
+	}
+}
+
+func hostNixInstall(answer string, yes bool) error {
+	if _, err := exec.LookPath("nix"); err == nil {
+		common.PrintSuccessMessage("Nix is installed.")
+		return nil
+	}
+	install := strings.EqualFold(answer, "yes")
+	if strings.EqualFold(answer, "no") {
+		return nil
+	}
+	if answer == "ask" {
+		if yes {
+			install = true
+		} else {
+			if !tui.IsInteractive() {
+				common.PrintInfoMessage("Pass --nix yes to install Nix non-interactively.")
+				return nil
+			}
+			install = tui.ConfirmDefault("Install Nix with the Determinate installer (flakes enabled, no container required)?", true)
+		}
+	}
+	if !install {
+		return nil
+	}
+	if !yes && !tui.IsInteractive() {
+		return fmt.Errorf("Nix installation needs a terminal or --yes")
+	}
+	common.PrintInfoMessage("Downloading and running the Determinate Nix installer...")
+	command := "curl -fsSL https://install.determinate.systems/nix | sh -s -- install --no-confirm"
+	if _, err := exec.LookPath("curl"); err != nil {
+		if _, wgetErr := exec.LookPath("wget"); wgetErr != nil {
+			return fmt.Errorf("install curl or wget before installing Nix")
+		}
+		command = "wget -qO- https://install.determinate.systems/nix | sh -s -- install --no-confirm"
+	}
+	c := exec.Command("sh", "-c", command)
+	c.Stdin, c.Stdout, c.Stderr = os.Stdin, os.Stdout, os.Stderr
+	return c.Run()
+}
 
 // printHostUdevStatus renders hostsetup.UdevStatus for a terminal.
 func printHostUdevStatus(st hostsetup.UdevStatus) {
@@ -326,7 +398,7 @@ func hostEngineInstall(choice string, yes bool) error {
 
 var hostSetupCmd = &cobra.Command{
 	Use:   "setup",
-	Short: "Prepare this Linux host: udev rules, container engine, Docker access (asks first)",
+	Short: "Prepare this Linux host: dependencies, Nix, containers and hardware access",
 	Long: `Everything the rfswift package leaves to you on purpose, each step asked
 before it runs and applied in one sudo call:
 
@@ -334,10 +406,12 @@ before it runs and applied in one sudo call:
                    Nix environments need them; Docker does not)
   2. engine        install Docker and/or Podman from your distribution's
                    repositories, or skip (Nix engine only)
-  3. Docker access add you to the docker group AND make it effective in the
+  3. Nix           install the native, daemon-backed Nix engine with flakes
+  4. Docker access add you to the docker group AND make it effective in the
                    current session (socket ACL), so no logout is needed
 
-Scripts: --yes takes every recommended default; --udev, --engine and
+The deb/rpm packages install xhost and pactl automatically before this wizard.
+Scripts: --yes takes every recommended default; --udev, --engine, --nix and
 --docker-access pin a single step (yes|no, docker|podman|both|none).
 
 Examples:
@@ -348,6 +422,7 @@ Examples:
 		yes, _ := cmd.Flags().GetBool("yes")
 		udev, _ := cmd.Flags().GetString("udev")
 		engine, _ := cmd.Flags().GetString("engine")
+		nixChoice, _ := cmd.Flags().GetString("nix")
 		dockerAccess, _ := cmd.Flags().GetString("docker-access")
 		if runtime.GOOS != "linux" {
 			switch runtime.GOOS {
@@ -358,7 +433,7 @@ Examples:
 			}
 			return
 		}
-		step := func(n int, title string) { fmt.Printf("\n[%d/3] %s\n", n, title) }
+		step := func(n int, title string) { fmt.Printf("\n[%d/4] %s\n", n, title) }
 		failed := false
 
 		step(1, "udev rules for RF / hardware-security devices")
@@ -386,7 +461,13 @@ Examples:
 			}
 		}
 
-		step(3, "Docker access for "+hostsetup.InvokingUser())
+		step(3, "native Nix engine")
+		if err := hostNixInstall(nixChoice, yes); err != nil {
+			common.PrintErrorMessage(err)
+			failed = true
+		}
+
+		step(4, "Docker access for "+hostsetup.InvokingUser())
 		if strings.EqualFold(dockerAccess, "no") {
 			common.PrintInfoMessage("skipped (--docker-access no)")
 		} else {
@@ -419,5 +500,6 @@ func registerHostSetupCommands() {
 	hostSetupCmd.Flags().BoolP("yes", "y", false, "take every recommended default without asking (udev yes, Docker access yes, engine only with --engine)")
 	hostSetupCmd.Flags().String("udev", "ask", "udev rules step: ask, yes or no")
 	hostSetupCmd.Flags().String("engine", "ask", "engine step: ask, docker, podman, both or none")
+	hostSetupCmd.Flags().String("nix", "ask", "Nix step: ask, yes or no")
 	hostSetupCmd.Flags().String("docker-access", "ask", "Docker access step: ask, yes or no")
 }

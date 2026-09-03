@@ -44,13 +44,19 @@ Ubuntu 22.04/24.04+.
 Host setup is opt-in. The `rfswift` package ships RF Swift's udev rules for
 SDR/RF/hardware-security devices as a reference copy in
 `/usr/share/rfswift/udev/70-rfswift.rules` (the same file is embedded in the
-binary, so tarball installs have it too) and its post-install script only
-prints a pointer to `rfswift host setup`. That command asks before each step:
+binary, so tarball installs have it too). Its post-install script records that
+interactive setup is pending and prints a pointer to `rfswift host setup`.
+It deliberately does not invoke apt/dnf/pacman recursively while the package
+database lock is held. The first interactive CLI launch after each packaged
+version offers the wizard instead; declining is remembered, and unattended
+installs never block. That command asks before each step:
 installing the rules into `/etc/udev/rules.d` (group `plugdev` + the
 logged-in user's seat ACL, never world-writable nodes; rootless Podman and
 Nix environments need them, Docker does not), installing Docker and/or Podman
 from the distribution's repositories, and adding the user to the `docker`
-group together with a socket ACL so Docker works without logging out.
+group together with a socket ACL so Docker works without logging out, and
+installing Nix through the Determinate installer. `xhost` and `pactl` are hard
+package dependencies and are therefore already present before the wizard.
 `get_rfswift.sh` asks the same questions, and the Workbench's Engine doctor
 has buttons for the rules and for Docker access (polkit prompt). Nothing is
 applied silently by a package, which keeps unattended installs (Intune, GPO,

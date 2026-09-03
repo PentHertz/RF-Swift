@@ -148,6 +148,7 @@ func init() {
 	rootCmd.PersistentPreRun = func(cmd *cobra.Command, args []string) {
 		isCompletion := len(os.Args) > 1 && (os.Args[1] == "completion" || os.Args[1] == "__complete")
 		if !isCompletion {
+			maybeOfferPackagedHostSetup(cmd)
 			// Initialize container engine BEFORE anything else
 			engineType, _ := cmd.Flags().GetString("engine")
 			// --gpu selects the separate krunkit Lima VM (Vulkan via Venus/MoltenVK).

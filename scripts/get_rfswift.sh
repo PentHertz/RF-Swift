@@ -1180,7 +1180,7 @@ check_container_engine() {
 
   # ── Neither installed ──────────────────────────────────────────────────
   color_echo "yellow" "⚠️  No container engine found."
-  color_echo "blue" "ℹ️  RF-Swift requires Docker or Podman to run containers."
+  color_echo "blue" "ℹ️  Docker or Podman is required only for containers; the Nix engine needs neither."
   echo ""
   color_echo "cyan" "📝 Which container engine would you like to install?"
   echo ""
@@ -1234,14 +1234,14 @@ check_container_engine() {
         install_lima
       else
         color_echo "yellow" "⚠️  Container engine installation skipped."
-        color_echo "yellow" "   You will need Docker or Podman before using RF-Swift."
-        return 1
+        color_echo "cyan" "   You can select the Nix engine in the next step, or install Docker/Podman later."
+        return 0
       fi
       ;;
     5)
       color_echo "yellow" "⚠️  Container engine installation skipped."
-      color_echo "yellow" "   You will need Docker or Podman before using RF-Swift."
-      return 1
+      color_echo "cyan" "   You can select the Nix engine in the next step, or install Docker/Podman later."
+      return 0
       ;;
   esac
 
@@ -2182,7 +2182,31 @@ download_files() {
 
 # Choose installation directory
 choose_install_dir() {
+  # Preserve the location selected by an earlier tarball installation. This is
+  # especially important when CLI and Workbench were installed separately:
+  # an upgrade must replace each binary in place instead of creating a second,
+  # shadowed copy in the newly selected default directory.
+  CLI_INSTALL_DIR=""
+  WORKBENCH_INSTALL_DIR=""
+  existing_cli=$(installed_binary_dir rfswift)
+  existing_workbench=$(installed_binary_dir rfswift-workbench)
+
   color_echo "blue" "🏠 Choose where to install RF-Swift..."
+  [ -n "$existing_cli" ] && color_echo "green" "✅ Existing CLI detected in ${existing_cli}; it will be replaced there."
+  [ -n "$existing_workbench" ] && color_echo "green" "✅ Existing Workbench detected in ${existing_workbench}; it will be replaced there."
+
+  if [ -n "$existing_cli" ]; then CLI_INSTALL_DIR="$existing_cli"; fi
+  if [ -n "$existing_workbench" ]; then WORKBENCH_INSTALL_DIR="$existing_workbench"; fi
+
+  # If every requested component already has a destination, no new location
+  # needs to be selected. Keep INSTALL_DIR for the alias/post-install helpers.
+  if { [ "$INSTALL_COMPONENTS" = "cli" ] && [ -n "$CLI_INSTALL_DIR" ]; } ||
+     { [ "$INSTALL_COMPONENTS" = "workbench" ] && [ -n "$WORKBENCH_INSTALL_DIR" ]; } ||
+     { [ "$INSTALL_COMPONENTS" = "both" ] && [ -n "$CLI_INSTALL_DIR" ] && [ -n "$WORKBENCH_INSTALL_DIR" ]; }; then
+    INSTALL_DIR="${CLI_INSTALL_DIR:-$WORKBENCH_INSTALL_DIR}"
+    return 0
+  fi
+
   color_echo "cyan" "You have two options:"
   color_echo "cyan" "1. System-wide installation (/usr/local/bin) - requires sudo"
   color_echo "cyan" "2. User-local installation (~/.rfswift/bin) - doesn't require sudo"
@@ -2197,9 +2221,26 @@ choose_install_dir() {
   else
     INSTALL_DIR="$HOME/.rfswift/bin"
   fi
+
+  [ -n "$CLI_INSTALL_DIR" ] || CLI_INSTALL_DIR="$INSTALL_DIR"
+  [ -n "$WORKBENCH_INSTALL_DIR" ] || WORKBENCH_INSTALL_DIR="$INSTALL_DIR"
   
   color_echo "green" "👍 Will install RF-Swift to: ${INSTALL_DIR}"
   return 0
+}
+
+# Print the directory of an installed executable. Only absolute command paths
+# are accepted (aliases/functions are ignored), and symlinks are resolved where
+# the platform provides readlink -f so the actual installation is replaced.
+installed_binary_dir() {
+  binary_name="$1"
+  binary_path=$(command -v "$binary_name" 2>/dev/null || true)
+  case "$binary_path" in /*) ;; *) return 0 ;; esac
+  if command_exists readlink; then
+    resolved_path=$(readlink -f "$binary_path" 2>/dev/null || true)
+    [ -n "$resolved_path" ] && binary_path="$resolved_path"
+  fi
+  dirname "$binary_path"
 }
 
 validate_tar_archive() {
@@ -2238,17 +2279,18 @@ validate_zip_archive() {
 # Install the binary
 install_binary() {
   [ "$INSTALL_COMPONENTS" = "workbench" ] && return 0
+  cli_dir="${CLI_INSTALL_DIR:-$INSTALL_DIR}"
   color_echo "blue" "🔧 Installing RF-Swift..."
   
   # Create installation directory if needed
-  if [ "$INSTALL_DIR" = "/usr/local/bin" ]; then
+  if [ ! -w "$cli_dir" ] && [ -e "$cli_dir" ]; then
     if ! have_sudo_access; then
       color_echo "red" "🚨 System-wide installation requires sudo. Please run with sudo or choose user-local installation."
       exit 1
     fi
-    sudo mkdir -p "$INSTALL_DIR"
+    sudo mkdir -p "$cli_dir"
   else
-    mkdir -p "$INSTALL_DIR"
+    mkdir -p "$cli_dir"
   fi
   
   color_echo "blue" "📦 Extracting archive..."
@@ -2261,16 +2303,16 @@ install_binary() {
     exit 1
   fi
 
-  color_echo "blue" "🚀 Moving RF-Swift to ${INSTALL_DIR}..."
-  if [ "$INSTALL_DIR" = "/usr/local/bin" ]; then
-    sudo cp "${RFSWIFT_BIN}" "${INSTALL_DIR}/rfswift"
-    sudo chmod +x "${INSTALL_DIR}/rfswift"
+  color_echo "blue" "🚀 Moving RF-Swift to ${cli_dir}..."
+  if [ ! -w "$cli_dir" ]; then
+    sudo cp "${RFSWIFT_BIN}" "${cli_dir}/rfswift"
+    sudo chmod +x "${cli_dir}/rfswift"
   else
-    cp "${RFSWIFT_BIN}" "${INSTALL_DIR}/rfswift"
-    chmod +x "${INSTALL_DIR}/rfswift"
+    cp "${RFSWIFT_BIN}" "${cli_dir}/rfswift"
+    chmod +x "${cli_dir}/rfswift"
   fi
   
-  color_echo "green" "🎉 RF-Swift has been installed successfully to ${INSTALL_DIR}/rfswift!"
+  color_echo "green" "🎉 RF-Swift has been installed successfully to ${cli_dir}/rfswift!"
 }
 
 ensure_workbench_runtime() {
@@ -2296,17 +2338,18 @@ ensure_workbench_runtime() {
 install_workbench() {
   [ "$INSTALL_COMPONENTS" = "cli" ] && return 0
   color_echo "blue" "🖥️  Installing RF Swift Workbench..."
+  workbench_dir="${WORKBENCH_INSTALL_DIR:-$INSTALL_DIR}"
   case "$OS" in
     Linux)
       if [ "$WORKBENCH_FORMAT" = "appimage" ]; then
-        if [ "$INSTALL_DIR" = "/usr/local/bin" ]; then
-          sudo cp "${TMP_DIR}/${WORKBENCH_FILENAME}" "$INSTALL_DIR/rfswift-workbench"
-          sudo chmod 0755 "$INSTALL_DIR/rfswift-workbench"
+        if [ ! -w "$workbench_dir" ]; then
+          sudo cp "${TMP_DIR}/${WORKBENCH_FILENAME}" "$workbench_dir/rfswift-workbench"
+          sudo chmod 0755 "$workbench_dir/rfswift-workbench"
         else
-          cp "${TMP_DIR}/${WORKBENCH_FILENAME}" "$INSTALL_DIR/rfswift-workbench"
-          chmod 0755 "$INSTALL_DIR/rfswift-workbench"
+          cp "${TMP_DIR}/${WORKBENCH_FILENAME}" "$workbench_dir/rfswift-workbench"
+          chmod 0755 "$workbench_dir/rfswift-workbench"
         fi
-        color_echo "green" "✅ Portable AppImage installed as ${INSTALL_DIR}/rfswift-workbench"
+        color_echo "green" "✅ Portable AppImage installed as ${workbench_dir}/rfswift-workbench"
         return 0
       fi
       ensure_workbench_runtime
@@ -2316,19 +2359,26 @@ install_workbench() {
       tar -xzf "${TMP_DIR}/${WORKBENCH_FILENAME}" -C "$workbench_unpack"
       workbench_bin=$(find "$workbench_unpack" -type f -name rfswift-workbench | head -1)
       [ -n "$workbench_bin" ] || { color_echo "red" "Workbench binary is missing from its archive."; exit 1; }
-      if [ "$INSTALL_DIR" = "/usr/local/bin" ]; then
-        sudo cp "$workbench_bin" "$INSTALL_DIR/rfswift-workbench"
-        sudo chmod 0755 "$INSTALL_DIR/rfswift-workbench"
+      if [ ! -w "$workbench_dir" ]; then
+        sudo cp "$workbench_bin" "$workbench_dir/rfswift-workbench"
+        sudo chmod 0755 "$workbench_dir/rfswift-workbench"
       else
-        cp "$workbench_bin" "$INSTALL_DIR/rfswift-workbench"
-        chmod 0755 "$INSTALL_DIR/rfswift-workbench"
+        cp "$workbench_bin" "$workbench_dir/rfswift-workbench"
+        chmod 0755 "$workbench_dir/rfswift-workbench"
       fi
-      color_echo "green" "✅ Workbench installed as ${INSTALL_DIR}/rfswift-workbench"
+      color_echo "green" "✅ Workbench installed as ${workbench_dir}/rfswift-workbench"
       ;;
     Darwin)
       validate_zip_archive "${TMP_DIR}/${WORKBENCH_FILENAME}"
       app_root="$HOME/Applications"
-      prompt_yes_no "Install Workbench system-wide in /Applications?" "n" && app_root="/Applications"
+      if [ -d "/Applications/rfswift-workbench.app" ]; then
+        app_root="/Applications"
+        color_echo "green" "✅ Existing Workbench detected in /Applications; it will be replaced there."
+      elif [ -d "$HOME/Applications/rfswift-workbench.app" ]; then
+        color_echo "green" "✅ Existing Workbench detected in $HOME/Applications; it will be replaced there."
+      else
+        prompt_yes_no "Install Workbench system-wide in /Applications?" "n" && app_root="/Applications"
+      fi
       mkdir -p "$app_root"
       if [ "$app_root" = "/Applications" ]; then
         sudo ditto -x -k "${TMP_DIR}/${WORKBENCH_FILENAME}" "$app_root"
