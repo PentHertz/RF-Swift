@@ -21,6 +21,8 @@ import (
 
 	common "penthertz/rfswift/common"
 	rfutils "penthertz/rfswift/rfutils"
+
+	"penthertz/rfswift/hostsetup"
 )
 
 // wslRunArgs builds the Linux `rfswift run --engine nix ...` command line for
@@ -315,7 +317,7 @@ func wslGroupStatus(rules []UdevRule) (absent, notMember []string) {
 	var groups []string
 	for _, r := range rules {
 		for _, g := range r.Groups {
-			if validGroupRe.MatchString(g) && !wanted[g] {
+			if hostsetup.ValidGroupName(g) && !wanted[g] {
 				wanted[g] = true
 				groups = append(groups, g)
 			}

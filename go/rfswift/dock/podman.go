@@ -84,6 +84,11 @@ func podmanCreateViaCLI(name string, imageName string, cfg *container.Config, hc
 		args = append(args, "-l", k+"="+v)
 	}
 
+	// Supplementary groups (rootless: "keep-groups", see restrictRootlessPodmanHostConfig)
+	for _, g := range hc.GroupAdd {
+		args = append(args, "--group-add", g)
+	}
+
 	// Capabilities
 	for _, cap := range hc.CapAdd {
 		args = append(args, "--cap-add", cap)

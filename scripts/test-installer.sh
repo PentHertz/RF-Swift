@@ -82,4 +82,19 @@ if try_native_package_install >/dev/null 2>&1; then
   exit 1
 fi
 
+# --- udev rules offer: drives the installed CLI, honours RFSWIFT_UDEV --------
+if [ "$(uname -s)" = Linux ]; then
+  fake="$tmp/fakebin"; mkdir -p "$fake"
+  printf '#!/bin/sh\necho "$@" >> "%s/calls"\n' "$fake" > "$fake/rfswift"
+  chmod +x "$fake/rfswift"
+  NATIVE_INSTALLED=false INSTALL_DIR="$fake" INSTALL_COMPONENTS=cli
+  UDEV_RULES=1 offer_udev_rules >/dev/null 2>&1
+  grep -q '^host udev --yes$' "$fake/calls" || { echo "RFSWIFT_UDEV=1 did not run 'rfswift host udev --yes'" >&2; exit 1; }
+  rm -f "$fake/calls"
+  UDEV_RULES=0 offer_udev_rules >/dev/null 2>&1
+  [ ! -e "$fake/calls" ] || { echo "RFSWIFT_UDEV=0 must not run rfswift" >&2; exit 1; }
+  INSTALL_COMPONENTS=workbench UDEV_RULES=1 offer_udev_rules >/dev/null 2>&1
+  [ ! -e "$fake/calls" ] || { echo "a Workbench-only install has no CLI to run" >&2; exit 1; }
+fi
+
 echo "installer security, development-channel and native-package tests: ok"

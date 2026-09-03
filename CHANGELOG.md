@@ -12,6 +12,26 @@ branch.
 
 ### Added
 
+- Host setup, opt-in and asked for (`rfswift host setup`, plus `host udev` and
+  `host docker-access` for a single step). The Linux packages ship RF Swift's
+  udev rules for SDR/RF/hardware-security devices as a reference copy in
+  `/usr/share/rfswift/udev/70-rfswift.rules` (embedded in the binary too) and
+  only print a pointer at post-install; the wizard installs them into
+  `/etc/udev/rules.d` (group `plugdev` + the logged-in user's seat ACL, never
+  world-writable nodes, udev reloaded and re-triggered on the spot), offers to
+  install Docker and/or Podman from the distribution's repositories or to stay
+  with the Nix engine, and adds the user to the `docker` group together with a
+  socket ACL so Docker works without logging out. `get_rfswift.sh` asks the
+  same udev question (`RFSWIFT_UDEV=1|0` answers up front) and grants the
+  Docker session access after installing Docker; `rfswift doctor` reports the
+  rules and the effective Docker access; the Workbench's Engine doctor has
+  "Install rules" and "Grant access" blocks behind a polkit prompt.
+- Rootless Podman keeps the user's supplementary groups (`dialout`,
+  `plugdev`) inside containers when the OCI runtime is crun (`keep-groups`),
+  so a device the user may open on the host is usable in the container too.
+- Windows installer: a "No container engine, Nix only" choice on the options
+  page, which skips Docker/Podman and runs the Nix-in-WSL-2 setup; the CLI
+  points at the Nix engine when no container engine is present but Nix is.
 - Workbench: host audio for Docker/Podman/Lima targets on Linux and macOS.
   The create form's "Enable host audio server" option (on by default, like
   the CLI) loads the PulseAudio/PipeWire TCP module the container's

@@ -41,6 +41,21 @@ The Workbench package additionally depends on the gtk3/webkit2gtk-4.1 runtime
 libraries; on deb the `t64` alternatives cover Debian 12/13 and
 Ubuntu 22.04/24.04+.
 
+Host setup is opt-in. The `rfswift` package ships RF Swift's udev rules for
+SDR/RF/hardware-security devices as a reference copy in
+`/usr/share/rfswift/udev/70-rfswift.rules` (the same file is embedded in the
+binary, so tarball installs have it too) and its post-install script only
+prints a pointer to `rfswift host setup`. That command asks before each step:
+installing the rules into `/etc/udev/rules.d` (group `plugdev` + the
+logged-in user's seat ACL, never world-writable nodes; rootless Podman and
+Nix environments need them, Docker does not), installing Docker and/or Podman
+from the distribution's repositories, and adding the user to the `docker`
+group together with a socket ACL so Docker works without logging out.
+`get_rfswift.sh` asks the same questions, and the Workbench's Engine doctor
+has buttons for the rules and for Docker access (polkit prompt). Nothing is
+applied silently by a package, which keeps unattended installs (Intune, GPO,
+`apt -y`) side-effect free.
+
 All packages are covered by the release checksums and the Sigstore build
 provenance attestation, like every other release artifact:
 `gh attestation verify <file> --repo PentHertz/RF-Swift`.

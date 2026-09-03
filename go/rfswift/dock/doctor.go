@@ -16,6 +16,7 @@ import (
 
 	"github.com/moby/moby/client"
 	common "penthertz/rfswift/common"
+	"penthertz/rfswift/hostsetup"
 	rfutils "penthertz/rfswift/rfutils"
 	"penthertz/rfswift/tui"
 )
@@ -64,6 +65,7 @@ func RunDoctor() {
 	checkAudioSystem(report)
 	checkAudioServer(report)
 	checkUSBDevices(report)
+	checkHostUdevRules(report)
 	checkNixEngine(report)
 	checkConfigFile(report)
 	checkKernelModules(report)
@@ -228,16 +230,49 @@ func checkDockerPermissions(report *DoctorReport) {
 		return
 	}
 
+	access := hostsetup.GetDockerAccess()
 	for _, gid := range groups {
 		if gid == dockerGroup.Gid {
+			if access.SocketFound && !access.Accessible {
+				// Joined after this session started: the kernel still has the
+				// old group list. rfswift host docker-access adds a socket ACL.
+				report.add(CheckResult{"Docker permissions", "warn",
+					fmt.Sprintf("User '%s' is in the docker group but this session predates it: 'rfswift host docker-access' makes it work now (or 'newgrp docker' / log in again)", currentUser.Username)})
+				return
+			}
 			report.add(CheckResult{"Docker permissions", "ok",
 				fmt.Sprintf("User '%s' is in docker group", currentUser.Username)})
 			return
 		}
 	}
 
+	if access.Accessible {
+		report.add(CheckResult{"Docker permissions", "warn",
+			fmt.Sprintf("User '%s' can use the socket in this session only (ACL); 'rfswift host docker-access' makes it permanent", currentUser.Username)})
+		return
+	}
 	report.add(CheckResult{"Docker permissions", "warn",
-		fmt.Sprintf("User '%s' not in docker group (sudo usermod -aG docker %s)", currentUser.Username, currentUser.Username)})
+		fmt.Sprintf("User '%s' not in docker group: 'rfswift host docker-access' fixes it without logging out (or sudo usermod -aG docker %s)", currentUser.Username, currentUser.Username)})
+}
+
+// checkHostUdevRules reports whether RF Swift's udev rules (SDR/RF hardware
+// without root for rootless Podman and Nix environments) are installed on a
+// Linux host. Docker needs none, so a missing file is only a warning.
+func checkHostUdevRules(report *DoctorReport) {
+	if runtime.GOOS != "linux" {
+		return
+	}
+	st := hostsetup.GetUdevStatus()
+	switch {
+	case st.Ready:
+		report.add(CheckResult{"udev rules", "ok", st.Path + " installed, group " + strings.Join(st.Groups, ", ") + " in place"})
+	case st.State == hostsetup.UdevInstalled:
+		report.add(CheckResult{"udev rules", "warn", st.Detail + " - fix with 'rfswift host udev'"})
+	case st.State == hostsetup.UdevForeign:
+		report.add(CheckResult{"udev rules", "warn", st.Detail})
+	default:
+		report.add(CheckResult{"udev rules", "warn", st.Detail + " - install with 'rfswift host udev' (or 'rfswift host setup')"})
+	}
 }
 
 func checkContainerImages(report *DoctorReport) {

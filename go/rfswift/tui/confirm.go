@@ -159,3 +159,23 @@ func PrintCLIEquivalent(cmd string) {
 		Render(cmd)
 	fmt.Printf("\n  %s\n  %s\n\n", label, command)
 }
+
+// ConfirmDefault is Confirm with a preselected answer, so a recommended
+// step reads "Yes" by default and a risky one "No". Non-interactive
+// sessions get the default.
+func ConfirmDefault(message string, def bool) bool {
+	if !IsInteractive() {
+		return def
+	}
+	result := def
+	err := huh.NewConfirm().
+		Title(message).
+		Affirmative("Yes").
+		Negative("No").
+		Value(&result).
+		Run()
+	if err != nil {
+		return false
+	}
+	return result
+}

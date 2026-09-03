@@ -39,8 +39,10 @@ custom `theme/`), each wired to a Burn variable that gates the matching package:
 - **usbipd-win (USB passthrough)** — default on; the reason to run RF Swift on
   Windows at all. Skipped when already installed.
 - **Container engine** — a picker: **Docker Desktop** (default), **Podman
-  Desktop**, or **I already have one** (install neither). Skipped when the
-  chosen engine is already present.
+  Desktop**, **I already have one** (install neither), or **No container
+  engine, Nix only** (installs neither and runs the Nix setup below, so a
+  container-free install is one choice). Skipped when the chosen engine is
+  already present. Silent installs pass it as `ContainerEngine=docker|podman|none|nix`.
 - **Set up Nix in WSL 2** — optional, default off. Provisions a WSL 2 Linux
   distro with systemd, Nix (flakes) and the Linux `rfswift` CLI for the native,
   container-free engine, which the Windows `rfswift.exe` and the Workbench then

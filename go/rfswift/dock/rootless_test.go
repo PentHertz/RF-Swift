@@ -125,3 +125,29 @@ func TestRestrictRootlessPodmanHostConfigReportsEachChange(t *testing.T) {
 		t.Fatalf("warnings = %#v", warnings)
 	}
 }
+
+func TestRestrictRootlessPodmanKeepsGroupsOnlyWithCrun(t *testing.T) {
+	orig := podmanKeepsGroups
+	defer func() { podmanKeepsGroups = orig }()
+
+	podmanKeepsGroups = func() bool { return true }
+	hc := &container.HostConfig{}
+	restrictRootlessPodmanHostConfig(hc, nil)
+	if len(hc.GroupAdd) != 1 || hc.GroupAdd[0] != "keep-groups" {
+		t.Fatalf("crun: GroupAdd = %v, want [keep-groups]", hc.GroupAdd)
+	}
+
+	podmanKeepsGroups = func() bool { return false }
+	hc = &container.HostConfig{}
+	restrictRootlessPodmanHostConfig(hc, nil)
+	if len(hc.GroupAdd) != 0 {
+		t.Fatalf("runc: GroupAdd = %v, want none (keep-groups would fail to start)", hc.GroupAdd)
+	}
+
+	podmanKeepsGroups = func() bool { return true }
+	hc = &container.HostConfig{GroupAdd: []string{"audio"}}
+	restrictRootlessPodmanHostConfig(hc, nil)
+	if len(hc.GroupAdd) != 1 || hc.GroupAdd[0] != "audio" {
+		t.Fatalf("explicit groups must be left alone, got %v", hc.GroupAdd)
+	}
+}

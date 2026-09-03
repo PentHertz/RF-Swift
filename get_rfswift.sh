@@ -15,6 +15,9 @@ WORKBENCH_FORMAT="${RFSWIFT_WORKBENCH_FORMAT:-native}"
 # clean uninstall) on Linux, Homebrew cask on macOS; tarball = the classic
 # archive install to a directory. Empty = offer the choice (native first).
 PKG_FORMAT="${RFSWIFT_PKG_FORMAT:-}"
+# udev rules for RF hardware (Linux): 1 = install without asking, 0 = skip,
+# empty = ask. Installed by the freshly installed CLI (rfswift host udev).
+UDEV_RULES="${RFSWIFT_UDEV:-}"
 NATIVE_INSTALLED=false
 FOUND_VERSION=false
 
@@ -1525,11 +1528,96 @@ install_docker_compose_steamdeck() {
 add_user_to_docker_group() {
   if command_exists sudo && command_exists groups; then
     current_user=$(get_real_user)
-    if ! groups "$current_user" 2>/dev/null | grep -q docker; then
+    if ! groups "$current_user" 2>/dev/null | grep -qw docker; then
       color_echo "blue" "🔧 Adding '$current_user' to Docker group..."
       sudo usermod -aG docker "$current_user"
-      color_echo "yellow" "⚡ You may need to log out and log back in for Docker group changes to take effect."
     fi
+    grant_docker_session_access "$current_user"
+  fi
+}
+
+# Group membership only counts from the next login. An ACL on the daemon's
+# socket makes Docker usable in THIS session right away; it lasts until the
+# daemon recreates the socket, by which time the group is in effect. Same as
+# `rfswift host docker-access`. Silent when the socket is already writable.
+grant_docker_session_access() {
+  user="$1"
+  if [ ! -S /var/run/docker.sock ]; then
+    color_echo "yellow" "⚡ Docker socket not there yet; the docker group takes effect at your next login (or 'newgrp docker')."
+    return 0
+  fi
+  [ -w /var/run/docker.sock ] && return 0
+  if command_exists setfacl && sudo setfacl -m "u:${user}:rw" /var/run/docker.sock 2>/dev/null && [ -w /var/run/docker.sock ]; then
+    color_echo "green" "✅ Docker is usable right away in this session; the docker group makes it permanent from your next login."
+  else
+    color_echo "yellow" "⚡ Log out and back in (or run 'newgrp docker') for the docker group to take effect."
+  fi
+}
+
+# Locate the rfswift just installed: the packaged one on PATH, else the
+# tarball copy in INSTALL_DIR, else whatever PATH has.
+rfswift_binary_path() {
+  if [ "$NATIVE_INSTALLED" = true ] && command_exists rfswift; then
+    command -v rfswift
+    return 0
+  fi
+  if [ -n "${INSTALL_DIR:-}" ] && [ -x "${INSTALL_DIR}/rfswift" ]; then
+    echo "${INSTALL_DIR}/rfswift"
+    return 0
+  fi
+  if command_exists rfswift; then
+    command -v rfswift
+  fi
+}
+
+# Offer RF Swift's udev rules (Linux, CLI installed). Rootless Podman and Nix
+# environments run tools as the user and cannot open the root-owned USB nodes
+# without them; Docker does not need them. The rules are embedded in the
+# rfswift binary (and shipped by the packages under /usr/share/rfswift/udev/),
+# so the freshly installed CLI does the work in one sudo call. The CLI reads
+# its confirmation/sudo prompt from the terminal, so hand it /dev/tty when the
+# script itself runs from a pipe (curl | sh). RFSWIFT_UDEV=1|0 answers
+# non-interactively.
+offer_udev_rules() {
+  [ "$(uname -s)" = "Linux" ] || return 0
+  case "$INSTALL_COMPONENTS" in cli|both) ;; *) return 0 ;; esac
+  rfswift_bin=$(rfswift_binary_path)
+  if [ -z "$rfswift_bin" ]; then
+    color_echo "yellow" "⚠️  rfswift not found on PATH yet; run 'rfswift host udev' later for SDR/RF hardware access without root."
+    return 0
+  fi
+  echo ""
+  color_echo "blue" "🔌 udev rules for RF hardware (HackRF, RTL-SDR, bladeRF, USRP, Proxmark, ...)"
+  color_echo "cyan" "   Rootless Podman and Nix environments run tools as your user and need them; Docker does not."
+  color_echo "cyan" "   They grant group plugdev + the logged-in user (seat ACL), never world-writable device nodes."
+  install_rules=false
+  case "$UDEV_RULES" in
+    0|no|false)
+      color_echo "yellow" "   Skipped (RFSWIFT_UDEV=0). Later: rfswift host udev"
+      return 0
+      ;;
+    1|yes|true)
+      install_rules=true
+      ;;
+    *)
+      if prompt_yes_no "Install RF Swift's udev rules now? (one sudo prompt)" "y"; then
+        install_rules=true
+      fi
+      ;;
+  esac
+  if [ "$install_rules" != true ]; then
+    color_echo "yellow" "   Skipped. Later: rfswift host udev"
+    return 0
+  fi
+  if [ ! -t 0 ] && [ -c /dev/tty ] && ( : < /dev/tty ) 2>/dev/null; then
+    "$rfswift_bin" host udev --yes < /dev/tty
+  else
+    "$rfswift_bin" host udev --yes
+  fi
+  if [ $? -eq 0 ]; then
+    color_echo "green" "✅ udev rules installed (re-plug a device that was already connected)."
+  else
+    color_echo "yellow" "⚠️  Could not install the udev rules. Later: rfswift host udev"
   fi
 }
 
@@ -1613,13 +1701,12 @@ install_docker() {
           return 1
         fi
 
-        add_user_to_docker_group
-        
         if command_exists systemctl; then
           color_echo "blue" "🚀 Starting Docker service..."
           sudo systemctl start docker
           sudo systemctl enable docker
         fi
+        add_user_to_docker_group
 
         color_echo "green" "🎉 Docker is now installed and running!"
       fi
@@ -3012,6 +3099,9 @@ main() {
     install_workbench
     rm -rf "${TMP_DIR}"
   fi
+
+  # udev rules for RF hardware (asks; RFSWIFT_UDEV=1|0 to answer up front)
+  offer_udev_rules
 
   # check and install agnoster deps
   check_agnoster_dependencies

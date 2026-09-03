@@ -19,7 +19,9 @@ package dock
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"strings"
+	"sync"
 
 	"github.com/moby/moby/api/types/container"
 )
@@ -186,6 +188,13 @@ func restrictRootlessPodmanHostConfig(hc *container.HostConfig, warn func(string
 		}
 		hc.Binds = kept
 	}
+	// Entering the user namespace drops the host's supplementary groups, so
+	// a device this user may open on the host through dialout or plugdev is
+	// still EACCES inside the container. crun can keep them
+	// (--group-add keep-groups); runc cannot, and would fail to start.
+	if len(hc.GroupAdd) == 0 && podmanKeepsGroups() {
+		hc.GroupAdd = []string{"keep-groups"}
+	}
 	if len(hc.Resources.Ulimits) > 0 {
 		kept, dropped := filterRootlessUlimits(hc.Resources.Ulimits, hostHardLimit)
 		if len(dropped) > 0 {
@@ -194,3 +203,18 @@ func restrictRootlessPodmanHostConfig(hc *container.HostConfig, warn func(string
 		hc.Resources.Ulimits = kept
 	}
 }
+
+// podmanKeepsGroups reports whether the Podman OCI runtime is crun, the only
+// runtime that honours "keep-groups". Probed once per process; overridable
+// in tests.
+var podmanKeepsGroups = func() func() bool {
+	var once sync.Once
+	var crun bool
+	return func() bool {
+		once.Do(func() {
+			out, err := exec.Command("podman", "info", "--format", "{{.Host.OCIRuntime.Name}}").Output()
+			crun = err == nil && strings.Contains(strings.ToLower(string(out)), "crun")
+		})
+		return crun
+	}
+}()

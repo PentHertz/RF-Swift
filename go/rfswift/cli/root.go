@@ -80,8 +80,11 @@ var rootCmd = &cobra.Command{
 
 var HostCmd = &cobra.Command{
 	Use:   "host",
-	Short: "Host configuration",
-	Long:  `Configures the host for container operations`,
+	Short: "Host configuration (setup, udev rules, Docker access, audio)",
+	Long: `Configures the host for container and native operations. 'rfswift host setup'
+walks through the opt-in steps the Linux packages leave to you: udev rules for
+RF hardware, installing Docker and/or Podman, and Docker socket access that
+works without logging out.`,
 }
 
 var HostPulseAudioCmd = &cobra.Command{
@@ -128,6 +131,7 @@ func registerHostCommands() {
 	rootCmd.AddCommand(UpdateCmd)
 
 	HostCmd.AddCommand(HostPulseAudioCmd)
+	registerHostSetupCommands()
 	HostPulseAudioCmd.AddCommand(HostPulseAudioEnableCmd)
 	HostPulseAudioCmd.AddCommand(HostPulseAudioUnloadCmd)
 	HostPulseAudioEnableCmd.Flags().StringP("pulseserver", "s", "tcp:127.0.0.1:34567", "pulse server address (by default: 'tcp:127.0.0.1:34567')")
@@ -182,7 +186,14 @@ func init() {
 				rfdock.SetPreferredEngine(engineType)
 			}
 			// Trigger detection (sets DOCKER_HOST for Podman)
-			rfdock.GetEngine()
+			eng := rfdock.GetEngine()
+
+			// No container engine at all (Linux without one, or the Windows
+			// installer's "Nix only" choice): point at the Nix engine when it
+			// is set up instead of leaving the user with a Docker error.
+			if eng != nil && !eng.IsAvailable() && rfnix.IsAvailable() {
+				common.PrintInfoMessage("The Nix engine is set up on this host: run tools natively with 'rfswift --engine nix ...', or make it the default with 'rfswift engine set nix'.")
+			}
 
 			rfutils.DisplayVersion()
 

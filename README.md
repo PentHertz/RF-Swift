@@ -216,7 +216,7 @@ Use `--gpu` for GPU compute; use `--engine lima` (without `--gpu`) for SDR hardw
 
 Two Windows deliverables ship with each release:
 
-- **`RFSwift-Setup-<version>-<arch>.exe`** (x64 + arm64) — a bundle that installs, under a **single** UAC prompt, the prerequisites you pick on one screen: **WSL 2 + WSLg**, **usbipd-win** (USB/SDR passthrough), a **container engine** (Docker Desktop by default, or Podman Desktop, or "I already have one"), an optional **Nix in WSL 2** for native environments driven by `rfswift.exe` and the Workbench, and RF Swift itself. Everything already present is skipped.
+- **`RFSwift-Setup-<version>-<arch>.exe`** (x64 + arm64) — a bundle that installs, under a **single** UAC prompt, the prerequisites you pick on one screen: **WSL 2 + WSLg**, **usbipd-win** (USB/SDR passthrough), a **container engine** (Docker Desktop by default, or Podman Desktop, or "I already have one", or "Nix only" which skips engines and sets up Nix), an optional **Nix in WSL 2** for native environments driven by `rfswift.exe` and the Workbench, and RF Swift itself. Everything already present is skipped.
 - **`RFSwift-<version>-<arch>.msi`** (x64 + arm64) — RF Swift on its own (CLI on `PATH`, an "RF Swift Console" and "RF Swift Workbench" in the Start Menu), for enterprise deployment (Intune/GPO) or machines that already have the prerequisites.
 
 After it runs, `rfswift` works from any console and the Workbench opens from the Start Menu. Details, silent-install switches and the trust model: [docs/windows-installer.md](docs/windows-installer.md).
@@ -276,7 +276,15 @@ sudo dnf install ./rfswift-<version>-1.x86_64.rpm         # Fedora/RHEL
 sudo pacman -U rfswift-<version>-1-x86_64.pkg.tar.zst     # Arch Linux
 ```
 
-The packages pull in the two host tools every container needs, `xhost` (X11 authorisation) and `pactl` (host audio server), so GUI tools open a display and play sound without a manual step. They install `rfswift` in `/usr/bin`; the installer removes the copies an earlier tarball install left in `/usr/local/bin` or `~/.rfswift/bin` (and the shell alias pointing at them) when you agree, since those would shadow the packaged binary. A packaged `rfswift` is upgraded with the next package (or by re-running the installer), and `rfswift update` says so instead of overwriting it.
+The packages pull in the two host tools every container needs, `xhost` (X11 authorisation) and `pactl` (host audio server), so GUI tools open a display and play sound without a manual step. Three host changes are left to you on purpose, and asked for rather than applied by the package:
+
+```bash
+rfswift host setup                 # asks each step; --yes takes the defaults
+rfswift host udev                  # RF Swift's udev rules only (SDR/RF hardware without root)
+rfswift host docker-access         # docker group + socket ACL, works without logging out
+```
+
+The udev rules ship as a reference copy in `/usr/share/rfswift/udev/70-rfswift.rules` (and inside the binary). Rootless Podman and Nix environments run tools as your user and need them; Docker runs as root and does not. They grant group `plugdev` plus the logged-in user's seat ACL, never world-writable device nodes, and udev is reloaded on the spot. The setup wizard also offers to install Docker and/or Podman from your distribution's repositories, or to skip that and use the Nix engine. `get_rfswift.sh` asks the same questions (`RFSWIFT_UDEV=1|0` answers up front), and the Workbench's **Engine doctor** has the same buttons behind a polkit prompt. They install `rfswift` in `/usr/bin`; the installer removes the copies an earlier tarball install left in `/usr/local/bin` or `~/.rfswift/bin` (and the shell alias pointing at them) when you agree, since those would shadow the packaged binary. A packaged `rfswift` is upgraded with the next package (or by re-running the installer), and `rfswift update` says so instead of overwriting it.
 
 On macOS, Homebrew installs the CLI and the Workbench GUI together from the signed release, and the bundled setup command picks your engine:
 
@@ -287,7 +295,7 @@ curl -fsSL "https://raw.githubusercontent.com/PentHertz/RF-Swift/main/scripts/se
 
 > **Verifying downloads**: The installer offers to check each binary's Sigstore-backed **build provenance attestation** automatically. To verify manually with the [GitHub CLI](https://cli.github.com): `gh attestation verify <downloaded.tar.gz> --repo PentHertz/RF-Swift`. This proves the artifact was built by the official RF Swift release workflow from a specific commit - not swapped afterwards.
 
-> **Note**: When using Podman in rootless mode, some operations (like direct device passthrough) may require additional configuration. RF Swift handles most of this automatically, but see the [documentation](https://rfswift.io/docs/guide/) for details.
+> **Note**: Rootless Podman runs containers as your user, so USB devices are only reachable once the host grants you access: install RF Swift's udev rules with `rfswift host udev` (rules inside a container are never evaluated). Root-only device nodes and realtime limits are dropped automatically with a notice; see the [documentation](https://rfswift.io/docs/guide/) for details.
 
 ## 🎬 Demo Videos
 

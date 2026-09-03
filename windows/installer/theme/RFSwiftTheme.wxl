@@ -32,6 +32,7 @@
   <String Id="OptEngineDocker" Value="&amp;Docker Desktop  (needs a paid Docker subscription for large organizations)" />
   <String Id="OptEnginePodman" Value="&amp;Podman Desktop  (open-source)" />
   <String Id="OptEngineNone" Value="I already have a container &amp;engine  -  install neither" />
+  <String Id="OptEngineNix" Value="No container engine  -  Ni&amp;x only  (native tool environments in WSL 2; sets up Nix)" />
   <String Id="OptionsLocationLabel" Value="Install location:" />
   <String Id="OptionsBrowseButton" Value="&amp;Browse" />
   <String Id="OptionsOkButton" Value="&amp;OK" />

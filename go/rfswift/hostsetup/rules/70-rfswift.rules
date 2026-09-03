@@ -1,0 +1,105 @@
+# RF Swift - host udev rules for RF and hardware-security devices.
+#
+# Shipped by the rfswift package under /usr/share/rfswift/udev/ and installed
+# into /etc/udev/rules.d/ by `rfswift host udev` (or the Workbench's Engine
+# doctor) only when you ask for it. Remove with `rfswift host udev --remove`.
+#
+# Why: device nodes under /dev/bus/usb are root-owned and only readable by
+# other users, so libusb-based tools (HackRF, RTL-SDR, bladeRF, USRP,
+# Proxmark, ...) cannot open them without root. Docker runs containers as
+# root and bypasses this; rootless Podman and native Nix environments run as
+# YOUR user and are stopped by it. udev rules must live on the host: a rules
+# file inside a container is never evaluated.
+#
+# Access model (least privilege, no world-writable nodes):
+#   MODE="0660", GROUP="plugdev"  - members of plugdev (rfswift adds you)
+#   TAG+="uaccess"                - the user logged in at the local seat gets
+#                                   an ACL from systemd-logind, effective at
+#                                   plug time without a new login
+# Serial ports (ttyUSB/ttyACM) keep the distribution's dialout group and
+# only receive the seat ACL, so existing dialout-based access is untouched.
+
+ACTION!="add|change", GOTO="rfswift_end"
+SUBSYSTEM=="usb", GOTO="rfswift_match"
+SUBSYSTEM=="hidraw", GOTO="rfswift_match"
+SUBSYSTEM=="tty", GOTO="rfswift_match"
+GOTO="rfswift_end"
+
+LABEL="rfswift_match"
+# HackRF, Great Scott Gadgets, BladeRF, Airspy, LimeSDR, Ubertooth (OpenMoko VID)
+SUBSYSTEMS=="usb", ATTRS{idVendor}=="1d50", GOTO="rfswift_grant"
+# RTL-SDR, Realtek
+SUBSYSTEMS=="usb", ATTRS{idVendor}=="0bda", GOTO="rfswift_grant"
+# Ettus USRP
+SUBSYSTEMS=="usb", ATTRS{idVendor}=="2500", GOTO="rfswift_grant"
+SUBSYSTEMS=="usb", ATTRS{idVendor}=="3923", GOTO="rfswift_grant"
+# Nuand bladeRF
+SUBSYSTEMS=="usb", ATTRS{idVendor}=="2cf0", GOTO="rfswift_grant"
+# Airspy HF+ (Atmel VID)
+SUBSYSTEMS=="usb", ATTRS{idVendor}=="03eb", GOTO="rfswift_grant"
+# ADALM-Pluto / PlutoSDR (Analog Devices)
+SUBSYSTEMS=="usb", ATTRS{idVendor}=="0456", GOTO="rfswift_grant"
+SUBSYSTEMS=="usb", ATTRS{idVendor}=="2fa2", GOTO="rfswift_grant"
+# FTDI (LimeSDR, JTAG, serial adapters)
+SUBSYSTEMS=="usb", ATTRS{idVendor}=="0403", GOTO="rfswift_grant"
+# USRP1
+SUBSYSTEMS=="usb", ATTRS{idVendor}=="fffe", GOTO="rfswift_grant"
+# STM32 (VNA, ST-Link, DFU)
+SUBSYSTEMS=="usb", ATTRS{idVendor}=="0483", GOTO="rfswift_grant"
+# FUNcube Dongle (Microchip VID)
+SUBSYSTEMS=="usb", ATTRS{idVendor}=="04d8", GOTO="rfswift_grant"
+# pid.codes (NanoVNA and other open hardware)
+SUBSYSTEMS=="usb", ATTRS{idVendor}=="1209", GOTO="rfswift_grant"
+# Cypress FX3 (bladeRF recovery)
+SUBSYSTEMS=="usb", ATTRS{idVendor}=="04b4", GOTO="rfswift_grant"
+# RFNM
+SUBSYSTEMS=="usb", ATTRS{idVendor}=="15a2", GOTO="rfswift_grant"
+# Saleae Logic
+SUBSYSTEMS=="usb", ATTRS{idVendor}=="0925", GOTO="rfswift_grant"
+SUBSYSTEMS=="usb", ATTRS{idVendor}=="21a9", GOTO="rfswift_grant"
+# DSLogic / DreamSourceLab
+SUBSYSTEMS=="usb", ATTRS{idVendor}=="2a0e", GOTO="rfswift_grant"
+# Segger J-Link
+SUBSYSTEMS=="usb", ATTRS{idVendor}=="1366", GOTO="rfswift_grant"
+# CSR Bluetooth
+SUBSYSTEMS=="usb", ATTRS{idVendor}=="0a12", GOTO="rfswift_grant"
+# Broadcom Bluetooth
+SUBSYSTEMS=="usb", ATTRS{idVendor}=="0a5c", GOTO="rfswift_grant"
+# Intel Bluetooth
+SUBSYSTEMS=="usb", ATTRS{idVendor}=="8087", GOTO="rfswift_grant"
+# Qualcomm/Atheros Bluetooth
+SUBSYSTEMS=="usb", ATTRS{idVendor}=="0cf3", GOTO="rfswift_grant"
+# Nordic Semiconductor (nRF Sniffer)
+SUBSYSTEMS=="usb", ATTRS{idVendor}=="1915", GOTO="rfswift_grant"
+# TI CC2540/CC2531 (BLE sniffer)
+SUBSYSTEMS=="usb", ATTRS{idVendor}=="0451", GOTO="rfswift_grant"
+# NXP (HackRF bootloader)
+SUBSYSTEMS=="usb", ATTRS{idVendor}=="1fc9", GOTO="rfswift_grant"
+# Proxmark3
+SUBSYSTEMS=="usb", ATTRS{idVendor}=="9ac4", GOTO="rfswift_grant"
+SUBSYSTEMS=="usb", ATTRS{idVendor}=="2d2d", GOTO="rfswift_grant"
+# ACS NFC readers (ACR122U)
+SUBSYSTEMS=="usb", ATTRS{idVendor}=="072f", GOTO="rfswift_grant"
+# SCM Microsystems NFC
+SUBSYSTEMS=="usb", ATTRS{idVendor}=="04e6", GOTO="rfswift_grant"
+# Maple/STM32 (ChameleonMini)
+SUBSYSTEMS=="usb", ATTRS{idVendor}=="1eaf", GOTO="rfswift_grant"
+# Teensy / V-USB
+SUBSYSTEMS=="usb", ATTRS{idVendor}=="16c0", GOTO="rfswift_grant"
+# Silicon Labs CP210x
+SUBSYSTEMS=="usb", ATTRS{idVendor}=="10c4", GOTO="rfswift_grant"
+# QinHeng CH340/CH341
+SUBSYSTEMS=="usb", ATTRS{idVendor}=="1a86", GOTO="rfswift_grant"
+# Espressif ESP32
+SUBSYSTEMS=="usb", ATTRS{idVendor}=="303a", GOTO="rfswift_grant"
+# Adafruit (nRF52, RP2040)
+SUBSYSTEMS=="usb", ATTRS{idVendor}=="239a", GOTO="rfswift_grant"
+# Arduino
+SUBSYSTEMS=="usb", ATTRS{idVendor}=="2341", GOTO="rfswift_grant"
+GOTO="rfswift_end"
+
+LABEL="rfswift_grant"
+SUBSYSTEM=="tty", TAG+="uaccess", GOTO="rfswift_end"
+MODE="0660", GROUP="plugdev", TAG+="uaccess"
+
+LABEL="rfswift_end"

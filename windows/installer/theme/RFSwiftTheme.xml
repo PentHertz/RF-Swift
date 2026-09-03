@@ -10,7 +10,10 @@
   Control -> Burn variable bindings (see Bundle.wxs for the variable defaults):
     Checkbox      EnableWsl        1/0
     Checkbox      EnableUsbipd     1/0
-    RadioButtons  ContainerEngine  "docker" | "podman" | "none"
+    Checkbox      SetupNix         1/0
+    RadioButtons  ContainerEngine  "docker" | "podman" | "none" | "nix"
+                                   ("nix" = no container engine, Nix only:
+                                    Bundle.wxs runs the Nix setup for it)
 -->
 <!-- Copyright (c) .NET Foundation and contributors. All rights reserved. Licensed under the Microsoft Reciprocal License. See LICENSE.TXT file in the project root for full license information. -->
 <Theme xmlns="http://wixtoolset.org/schemas/v4/thmutil">
@@ -59,6 +62,7 @@
                 <RadioButton Value="docker" X="22" Y="242" Width="-11" Height="17" TabStop="yes" FontId="3">#(loc.OptEngineDocker)</RadioButton>
                 <RadioButton Value="podman" X="22" Y="263" Width="-11" Height="17" FontId="3">#(loc.OptEnginePodman)</RadioButton>
                 <RadioButton Value="none"   X="22" Y="284" Width="-11" Height="17" FontId="3">#(loc.OptEngineNone)</RadioButton>
+                <RadioButton Value="nix"    X="22" Y="305" Width="-11" Height="17" FontId="3">#(loc.OptEngineNix)</RadioButton>
             </RadioButtons>
             <Button Name="OptionsOkButton" X="-91" Y="-11" Width="75" Height="23" TabStop="yes" FontId="0">
                 <Text>#(loc.OptionsOkButton)</Text>
