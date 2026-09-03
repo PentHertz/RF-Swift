@@ -6,9 +6,13 @@ RF Swift ships a macOS disk image, `rfswift_Darwin_universal.dmg`, built by
 - `rfswift-workbench.app`: the Workbench GUI (`go/rfswift-workbench`, a Wails
   app) as a universal (Apple Silicon + Intel) bundle, next to an
   `Applications` link for the classic drag-to-install;
-- `rfswift`: the universal CLI/TUI binary, with a double-clickable
-  `Install RF Swift CLI.command` that copies it to `/usr/local/bin`, and
-  `RF Swift Setup.command` (the dependency wizard, `scripts/setup-macos.sh`);
+- `rfswift`: the universal CLI/TUI binary, with two double-clickable
+  helpers next to it: `Install RF Swift CLI.app` copies it to
+  `/usr/local/bin` (`scripts/macos-install-cli.sh`) and `RF Swift Setup.app`
+  is the dependency wizard (`scripts/setup-macos.sh`). Each helper is a
+  signed app bundle around the small `dmglauncher` executable
+  (`go/rfswift/cmd/dmglauncher`, wrapped by `scripts/macos-launcher-app.sh`)
+  that opens its script in Terminal;
 - the license and a short README.
 
 When the Apple secrets described below are configured on the repository, the
@@ -196,17 +200,31 @@ workflow_dispatch for a dry run). Step by step:
    the app still validates offline once dragged out of the image into
    `/Applications`. `spctl -a -t exec` confirms the Gatekeeper verdict.
 8. Stage + build the DMG: app (copied with `ditto` so the seal survives),
-   `Applications` link, CLI, `Install RF Swift CLI.command`,
-   `RF Swift Setup.command`, README, license -> `hdiutil create -format
-   UDZO`. The two `.command` scripts are code-signed first (`codesign
-   --timestamp`, explicit `--identifier`, no hardened runtime since they
-   are not Mach-O). A script's signature is stored in `com.apple.cs.*`
-   extended attributes, which the image preserves. Without it, macOS
-   Sequoia and later refuse a double-clicked script with "Apple could not
-   verify ... is free of malware" even when the DMG around it is
-   notarized: Gatekeeper assesses the script itself, and DMG notarization
-   only covers signed code. Never ship the scripts through a plain `zip`
-   or `curl`, which drop the xattrs and therefore the signature.
+   `Applications` link, CLI, `Install RF Swift CLI.app`,
+   `RF Swift Setup.app`, README, license -> `hdiutil create -format UDZO`.
+   The two helpers are app bundles, not `.command` files, and that is not
+   cosmetic: since macOS Sequoia Gatekeeper assesses a double-clicked
+   script itself, and a notarization ticket only ever lists Mach-O code.
+   A bare script inside a notarized image therefore stays "Unnotarized
+   Developer ID" even with a Developer ID signature of its own (signing
+   a script works, the signature lives in `com.apple.cs.*` extended
+   attributes, but the notary service ignores it), and Sequoia refuses
+   it with "Apple could not verify ... is free of malware".
+   `scripts/macos-launcher-app.sh` builds each helper: the universal
+   `dmglauncher` Mach-O (`go/rfswift/cmd/dmglauncher`, built with the
+   same recipe as `rfswift`) as `Contents/MacOS/<name>`, the script as
+   `Contents/Resources/main.sh`, and an Info.plist carrying the bundle
+   identifier (`com.penthertz.rfswift.install-cli`,
+   `com.penthertz.rfswift.setup`). Each bundle is code-signed like the
+   Workbench (`--options runtime --timestamp`), which seals the script
+   into the signature, and the DMG notarization records the launcher's
+   code hash. On a double-click the launcher writes a three-line
+   trampoline to a private temporary directory and opens it with
+   Terminal; the trampoline execs `bash` on the bundled script with
+   `RFSWIFT_DMG_ROOT` set to the image root, where `rfswift` sits.
+   Terminal never opens a quarantined file, so there is no Gatekeeper
+   prompt, and no AppleScript is involved, so no "wants to control
+   Terminal" automation prompt either.
 9. Sign the DMG: `codesign --force --timestamp` (no hardened runtime on a
    container file). Required, or notarytool answers "The signature does
    not include a secure timestamp".
@@ -214,9 +232,11 @@ workflow_dispatch for a dry run). Step by step:
     `xcrun stapler staple` so Gatekeeper validates offline, then
     `spctl -a -t open` as the final this-is-what-the-user-sees check.
     Expected verdict: `source=Notarized Developer ID`. The image is then
-    mounted and each `.command` is assessed with `spctl -a -t execute`;
-    anything but "accepted" fails the build, so launchers Gatekeeper
-    would block never reach a release.
+    mounted and each helper app is assessed with `spctl -a -t exec`;
+    anything but "accepted" fails the build, so helpers Gatekeeper would
+    block never reach a release. This is the check that caught the
+    earlier signed-script approach (`rejected`, `source=Unnotarized
+    Developer ID`).
 11. Provenance + upload: a Sigstore build attestation is generated for the
     DMG, and on tag builds the DMG is uploaded to the GitHub release
     created by `release.yml` (the workflow waits for goreleaser to create

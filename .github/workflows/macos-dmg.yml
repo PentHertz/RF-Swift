@@ -8,6 +8,12 @@ name: macOS signed DMG
 #
 #   rfswift                 universal (arm64 + x86_64) CLI/TUI binary
 #   rfswift-workbench.app   universal Wails GUI bundle (go/rfswift-workbench)
+#   Install RF Swift CLI.app, RF Swift Setup.app
+#                           double-clickable helpers: a signed universal
+#                           launcher (go/rfswift/cmd/dmglauncher) around
+#                           scripts/macos-install-cli.sh and
+#                           scripts/setup-macos.sh, built by
+#                           scripts/macos-launcher-app.sh
 #
 # This is a reusable workflow. release.yml calls it as part of the release
 # flowgraph (after generate-artifacts has created the GitHub release), passing
@@ -121,6 +127,24 @@ jobs:
               exit 1
             fi
           }
+
+      - name: Build universal DMG launcher
+        run: |
+          set -euo pipefail
+          # Mach-O behind the double-clickable helpers in the image
+          # (go/rfswift/cmd/dmglauncher; scripts/macos-launcher-app.sh
+          # wraps it into an app bundle at staging time). Same static
+          # universal recipe as rfswift above.
+          ( cd go/rfswift
+            GOOS=darwin GOARCH=amd64 CGO_ENABLED=0 \
+              go build -tags netgo -trimpath -ldflags "-s -w" \
+              -o ../../build/dmglauncher_amd64 ./cmd/dmglauncher
+            GOOS=darwin GOARCH=arm64 CGO_ENABLED=0 \
+              go build -tags netgo -trimpath -ldflags "-s -w" \
+              -o ../../build/dmglauncher_arm64 ./cmd/dmglauncher )
+          lipo -create -output build/dmglauncher \
+            build/dmglauncher_amd64 build/dmglauncher_arm64
+          lipo -info build/dmglauncher
 
       - name: Install Wails CLI
         # go install verifies the module against the Go checksum database,
@@ -335,33 +359,27 @@ jobs:
           ln -s /Applications dmg-root/Applications
           cp LICENSE dmg-root/LICENSE.txt
 
+          # Double-clickable helpers, each an app bundle around a script
+          # (scripts/macos-launcher-app.sh). Since macOS Sequoia Gatekeeper
+          # assesses a double-clicked script itself, and a notarization
+          # ticket lists Mach-O code only, so a bare .command (signed or
+          # not) inside a notarized image is refused with "Apple could not
+          # verify ... is free of malware". The launcher Mach-O is what the
+          # DMG notarization records; the script rides along as a sealed
+          # resource and runs in Terminal through bash. Both reuse the
+          # Workbench icon when Wails produced one.
+          ICNS=$(ls "$APP_PATH"/Contents/Resources/*.icns 2>/dev/null | head -1 || true)
+          # CLI installer: sudo-copies rfswift from the image root to
+          # /usr/local/bin.
+          scripts/macos-launcher-app.sh "dmg-root/Install RF Swift CLI.app" \
+            com.penthertz.rfswift.install-cli build/dmglauncher \
+            scripts/macos-install-cli.sh "$RFSWIFT_VERSION" ${ICNS:+"$ICNS"}
           # Interactive dependency setup (engine chooser + XQuartz + audio),
           # the macOS counterpart of the Windows installer's dependency
-          # bundle. Covered by the .dmg notarization like the other scripts.
-          cp scripts/setup-macos.sh "dmg-root/RF Swift Setup.command"
-          chmod +x "dmg-root/RF Swift Setup.command"
-
-          # Double-clickable installer for the CLI: Terminal opens and
-          # sudo-copies the binary into /usr/local/bin. Both .command
-          # files get a Developer ID signature of their own in the next
-          # step: since macOS Sequoia, Gatekeeper assesses a
-          # double-clicked script itself, and an unsigned one is refused
-          # ("Apple could not verify ... is free of malware") even inside
-          # a notarized image.
-          cat > "dmg-root/Install RF Swift CLI.command" <<'EOF'
-          #!/bin/bash
-          set -e
-          DIR="$(cd "$(dirname "$0")" && pwd)"
-          DEST="/usr/local/bin"
-          echo "Installing rfswift to $DEST (sudo password may be asked)..."
-          sudo mkdir -p "$DEST"
-          sudo install -m 0755 "$DIR/rfswift" "$DEST/rfswift"
-          echo ""
-          echo "Done. Open a new terminal and run: rfswift --help"
-          echo "For the GUI, drag rfswift-workbench.app onto Applications."
-          echo "Docs: https://rfswift.io/docs/getting-started/"
-          EOF
-          chmod +x "dmg-root/Install RF Swift CLI.command"
+          # bundle.
+          scripts/macos-launcher-app.sh "dmg-root/RF Swift Setup.app" \
+            com.penthertz.rfswift.setup build/dmglauncher \
+            scripts/setup-macos.sh "$RFSWIFT_VERSION" ${ICNS:+"$ICNS"}
 
           cat > dmg-root/README.txt <<EOF
           RF Swift v${RFSWIFT_VERSION} - macOS universal build
@@ -371,50 +389,51 @@ jobs:
             rfswift-workbench.app         RF Swift Workbench GUI (arm64 + x86_64)
                                           drag it onto the Applications link
             rfswift                       the RF Swift CLI/TUI (arm64 + x86_64)
-            Install RF Swift CLI.command  double-click to install the CLI to
-                                          /usr/local/bin
-            RF Swift Setup.command        double-click to pick and install an
+            Install RF Swift CLI          double-click to install the CLI to
+                                          /usr/local/bin (opens Terminal)
+            RF Swift Setup                double-click to pick and install an
                                           engine (Docker Desktop, OrbStack,
                                           Podman, Lima with USB passthrough,
                                           or native Nix) plus XQuartz/audio
+                                          (opens Terminal)
             LICENSE.txt
 
           RF Swift drives containers or native Nix environments, so one of
           these must be available: Docker Desktop, OrbStack, Podman, the
-          bundled Lima setup (USB passthrough), or Nix. "RF Swift
-          Setup.command" installs your pick; the macOS guide is at
+          bundled Lima setup (USB passthrough), or Nix. "RF Swift Setup"
+          installs your pick; the macOS guide is at
           https://rfswift.io/docs/getting-started/.
 
-          This disk image, the app and the CLI are signed and notarized
+          Prefer a one-liner? The installer script does the same from a
+          terminal, through Homebrew (CLI + Workbench, upgrades with brew):
+            curl -fsSL https://raw.githubusercontent.com/PentHertz/RF-Swift/main/get_rfswift.sh | bash
+
+          This disk image, the apps and the CLI are signed and notarized
           by PentHertz when downloaded from an official release, so macOS
           Gatekeeper accepts them without any right-click workaround.
           EOF
 
           ls -la dmg-root/
 
-      - name: Code-sign launcher scripts
-        # A script's signature lives in extended attributes
-        # (com.apple.cs.*), which hdiutil preserves in the image, and
-        # the DMG notarization below records the scripts' code hashes in
-        # the ticket. That is what lets Gatekeeper accept a double-click
-        # on them. No hardened runtime: not a Mach-O.
+      - name: Code-sign launcher apps
+        # Each helper is an app bundle around the dmglauncher Mach-O. The
+        # bundle signature signs the executable (hardened runtime +
+        # timestamp, like rfswift) and seals Contents/Resources/main.sh,
+        # so the script cannot be swapped without breaking the signature.
+        # The DMG notarization below then records the launcher's code
+        # hash in the ticket, which is what makes Gatekeeper accept a
+        # double-click on the app. The bundle identifier comes from the
+        # Info.plist scripts/macos-launcher-app.sh wrote.
         if: env.MACOS_KEYCHAIN_PATH != ''
         run: |
           set -euo pipefail
-          codesign --force --timestamp \
-            --identifier com.penthertz.rfswift.install-cli \
-            --keychain "$MACOS_KEYCHAIN_PATH" \
-            --sign "$MACOS_SIGN_IDENTITY" \
-            "dmg-root/Install RF Swift CLI.command"
-          codesign --force --timestamp \
-            --identifier com.penthertz.rfswift.setup \
-            --keychain "$MACOS_KEYCHAIN_PATH" \
-            --sign "$MACOS_SIGN_IDENTITY" \
-            "dmg-root/RF Swift Setup.command"
-          for f in "dmg-root/Install RF Swift CLI.command" "dmg-root/RF Swift Setup.command"; do
-            codesign --verify --strict --verbose=2 "$f"
-            xattr -l "$f" | grep -q '^com.apple.cs.CodeSignature' \
-              || { echo "::error::$f: signature not stored in xattrs"; exit 1; }
+          for app in "dmg-root/Install RF Swift CLI.app" "dmg-root/RF Swift Setup.app"; do
+            codesign --force --timestamp --options runtime \
+              --keychain "$MACOS_KEYCHAIN_PATH" \
+              --sign "$MACOS_SIGN_IDENTITY" \
+              "$app"
+            codesign --verify --deep --strict --verbose=2 "$app"
+            codesign -dv --verbose=4 "$app" 2>&1 | head -6
           done
 
       - name: Build DMG
@@ -471,17 +490,18 @@ jobs:
           spctl -a -t open --context context:primary-signature -v "$DMG_NAME"
 
           # Same check for what a user double-clicks inside the mounted
-          # image: the launcher scripts must come back "accepted" with
-          # source=Notarized Developer ID, or Sequoia refuses them with
-          # "Apple could not verify ... is free of malware". Fail the
-          # build rather than ship launchers that do not open.
+          # image: the launcher apps must come back "accepted" with
+          # source=Notarized Developer ID (their code hashes are in the
+          # image's ticket), or Sequoia refuses them with "Apple could not
+          # verify ... is free of malware". Fail the build rather than
+          # ship helpers that do not open.
           MOUNT=$(mktemp -d)
           hdiutil attach -nobrowse -readonly -mountpoint "$MOUNT" "$DMG_NAME" >/dev/null
           trap 'hdiutil detach "$MOUNT" -quiet || true' EXIT
-          for f in "Install RF Swift CLI.command" "RF Swift Setup.command"; do
-            echo "==> Gatekeeper assessment: $f"
-            codesign --verify --strict --verbose=2 "$MOUNT/$f"
-            spctl -a -t execute -vv "$MOUNT/$f"
+          for app in "Install RF Swift CLI.app" "RF Swift Setup.app"; do
+            echo "==> Gatekeeper assessment: $app"
+            codesign --verify --deep --strict --verbose=2 "$MOUNT/$app"
+            spctl -a -t exec -vv "$MOUNT/$app"
           done
 
       - name: Attest build provenance

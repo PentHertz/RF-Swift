@@ -7,8 +7,10 @@
 # engine (Docker Desktop, OrbStack, Podman, Lima, or native Nix) and
 # optionally set up X11 (XQuartz) and audio (PulseAudio).
 #
-# Shipped inside the release .dmg as "RF Swift Setup.command" (double-click
-# opens Terminal) and runnable from a repo checkout as scripts/setup-macos.sh.
+# Shipped inside the release .dmg as "RF Swift Setup.app" (double-click opens
+# it in Terminal; the app is a signed launcher around this script, see
+# go/rfswift/cmd/dmglauncher) and runnable from a repo checkout as
+# scripts/setup-macos.sh.
 # Detection-first and idempotent: components already present are skipped, and
 # re-running is always safe. Homebrew drives every install except Nix, which
 # uses the Determinate installer the Windows bundle and docs also use.
@@ -41,6 +43,11 @@ SCRIPT_DIR=""
 case "$0" in
   */*) [[ -f "$0" ]] && SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)" ;;
 esac
+# From the .dmg, "RF Swift Setup.app" runs this script out of its bundle and
+# names the image root, where the rfswift binary sits, in RFSWIFT_DMG_ROOT.
+# An explicit variable from the caller is a deliberate choice, unlike a CWD
+# guess, so it is trusted like a real script location.
+BIN_DIR="${RFSWIFT_DMG_ROOT:-$SCRIPT_DIR}"
 have() { command -v "$1" >/dev/null 2>&1; }
 
 # --- Homebrew (the one bootstrap everything else hangs off) ------------------
@@ -73,12 +80,12 @@ for probe in "Docker Desktop:has_docker" "OrbStack:has_orbstack" "Podman:has_pod
     if "$fn"; then say "$GREEN" "  ✅ $name is installed"; else say "$YELLOW" "  ⬜ $name not found"; fi
 done
 
-# --- rfswift CLI itself (when run from the .dmg, the binary sits alongside) --
-if ! have rfswift && [[ -n "$SCRIPT_DIR" && -x "$SCRIPT_DIR/rfswift" ]]; then
-    read -r -p "Install the rfswift CLI to /usr/local/bin? (sudo password may be asked) [Y/n] " answer
+# --- rfswift CLI itself (when run from the .dmg, the binary sits at its root) --
+if ! have rfswift && [[ -n "$BIN_DIR" && -x "$BIN_DIR/rfswift" ]]; then
+    read -r -p "Install the rfswift CLI from $BIN_DIR to /usr/local/bin? (sudo password may be asked) [Y/n] " answer
     if [[ "${answer:-y}" != [nN]* ]]; then
         sudo mkdir -p /usr/local/bin
-        sudo install -m 0755 "$SCRIPT_DIR/rfswift" /usr/local/bin/rfswift
+        sudo install -m 0755 "$BIN_DIR/rfswift" /usr/local/bin/rfswift
         say "$GREEN" "✅ rfswift installed to /usr/local/bin"
     fi
 fi

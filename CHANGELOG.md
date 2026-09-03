@@ -466,11 +466,15 @@ branch.
   process has no console of its own; the CLI, which has one, is unchanged.
 - macOS DMG: double-clicking `Install RF Swift CLI.command` or
   `RF Swift Setup.command` was refused by Gatekeeper on Sequoia and later
-  ("Apple could not verify ... is free of malware") because the scripts were
-  unsigned; notarizing the image does not cover them. The DMG workflow now
-  code-signs both scripts with the Developer ID (signature in extended
-  attributes, preserved by the image and recorded by the notarization),
-  and asserts the Gatekeeper verdict on the mounted image before release.
+  ("Apple could not verify ... is free of malware"): Gatekeeper assesses a
+  double-clicked script itself, and a notarization ticket only lists Mach-O
+  code, so neither notarizing the image nor signing the scripts helps. The
+  helpers are now app bundles, `Install RF Swift CLI.app` and
+  `RF Swift Setup.app`: a small signed universal launcher
+  (`go/rfswift/cmd/dmglauncher`) that the image's notarization does cover,
+  with the script sealed inside as a resource and opened in Terminal. The
+  DMG workflow asserts the Gatekeeper verdict of both apps on the mounted
+  image before release.
 
 - OpenGL GUI tools on macOS (Docker Desktop, Podman and Lima): SDR++ and every
   other GLFW, Qt or SDL program that needs an OpenGL context died at window

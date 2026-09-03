@@ -92,10 +92,13 @@ scripts/mkpackages.sh build/bin/rfswift-workbench_linux_$(go env GOARCH) $(go en
 Two delivery paths, both from the signed + notarized universal `.dmg`:
 
 - **The .dmg itself**: drag-install the Workbench, double-click
-  "Install RF Swift CLI.command" for the CLI, and double-click
-  "RF Swift Setup.command" to pick and install an engine (Docker Desktop,
-  OrbStack, Podman, Lima with USB passthrough, or native Nix) plus
-  XQuartz/PulseAudio. The setup script is `scripts/setup-macos.sh` - the
+  "Install RF Swift CLI" for the CLI, and double-click "RF Swift Setup" to
+  pick and install an engine (Docker Desktop, OrbStack, Podman, Lima with
+  USB passthrough, or native Nix) plus XQuartz/PulseAudio. Both helpers are
+  signed app bundles that open a script in Terminal
+  (`scripts/macos-launcher-app.sh` around `go/rfswift/cmd/dmglauncher`;
+  `docs/macos-signing.md` explains why a plain `.command` cannot pass
+  Gatekeeper on Sequoia). The setup script is `scripts/setup-macos.sh` - the
   macOS counterpart of the Windows installer's dependency bundle
   (`windows/installer/Bundle.wxs`), also runnable non-interactively
   (`RFSWIFT_SETUP_ENGINE=... RFSWIFT_SETUP_XQUARTZ=0|1 RFSWIFT_SETUP_AUDIO=0|1`).
