@@ -12,6 +12,18 @@ branch.
 
 ### Added
 
+- `get_rfswift.sh`: `RFSWIFT_ENGINE=docker|podman|both|skip`, `RFSWIFT_NIX=1|0`
+  and `RFSWIFT_INSTALL_DIR=<dir>` answer the container-engine, Nix and
+  install-directory questions up front, next to `RFSWIFT_CHANNEL`,
+  `RFSWIFT_INSTALL`, `RFSWIFT_PKG_FORMAT`, `RFSWIFT_WORKBENCH_FORMAT` and
+  `RFSWIFT_UDEV`, so a `curl | sh` from automation (or a test harness) is
+  deterministic. Debian's default install leaves the first user out of the
+  sudo group, so the installer now works from a root shell (`su -`): with the
+  sudo package missing the privileged steps run directly, and the docker group
+  and shell alias go to the desktop user behind `su` (`logname`), not to root.
+  An account that can get root neither directly nor through sudo is told so
+  once, up front, with the `su -` and `usermod -aG sudo` ways out, instead of
+  failing step by step later; it can still do the user-local tarball install.
 - Windows: `rfswift nix wsl display-reset` restarts WSLg's display client
   (`msrdc.exe`), the fix for a GUI tool that shows only a taskbar icon and no
   window: the tool runs fine inside the distribution, but the client stopped
@@ -458,6 +470,30 @@ branch.
 
 ### Fixed
 
+- `get_rfswift.sh` dev channel: the script pinned `4.0.0-dev` after the
+  prerelease had moved to `v4.0.1-dev`, so every dev-channel install
+  (`RFSWIFT_CHANNEL=dev`, or the second choice of the channel prompt)
+  downloaded from a 404 and stopped. The dev channel now resolves the newest
+  prerelease from the GitHub releases API (curl or wget) and only falls back
+  to the built-in `DEV_VERSION`. Verified in Debian 13, Ubuntu 24.04, Arch,
+  Kali rolling and Fedora 44 containers and on a Debian 13 desktop VM.
+- `get_rfswift.sh` no longer ends with its optional steps. The script runs
+  under `set -e`, so a container engine that failed to install or start
+  (get.docker.com refusing Kali with "Unsupported distribution 'kali'",
+  `systemctl start docker` on WSL or in a container without systemd), a Nix
+  installer that gave up (the Debian run that stopped at "Nix installation
+  failed"), `rfswift host udev` failing without a udev daemon, a missing
+  `unzip` during the Nerd Fonts download, or a missing or failing `clear`
+  (minimal Fedora, no `TERM`) ended the whole installer before RF Swift itself
+  was installed. Each is now reported and the install goes on. Kali installs
+  `docker.io` from its own repository; the Arch PipeWire step drops the
+  withdrawn `pipewire-media-session` (it conflicts with wireplumber and failed
+  on every run); the shell alias goes to `~/.bashrc` on Linux (terminals open
+  non-login shells, and the Arch/Fedora skeleton `.bash_profile` swallowed it)
+  and is not offered when the install directory is already on PATH; without a
+  usable terminal the prompts take their defaults silently instead of leaking
+  "cannot open /dev/tty"; the Nix installers download with wget when curl is
+  absent (a stock Debian desktop).
 - Installer: on Debian, and in any shell without `/usr/sbin` on PATH (a
   root shell reached with plain `su`, most user shells), the optional Nix
   engine step died in the Determinate installer with "Could not find a

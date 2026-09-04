@@ -21,10 +21,21 @@ if (validate_tar_archive "$tmp/bad.tar.gz") >/dev/null 2>&1; then
   exit 1
 fi
 
+# --- Dev channel: newest GitHub prerelease; DEV_VERSION only as a fallback ---
+# (v4.0.0-dev was retired while the script still pinned it, so every
+# dev-channel install ended on a 404.)
 RELEASE_CHANNEL=dev
-get_latest_release
-[ "$VERSION" = "4.0.0-dev" ]
-[ "$DOWNLOAD_BASE_URL" = "https://github.com/PentHertz/RF-Swift/releases/download/v4.0.0-dev" ]
+http_get() { printf '[{"tag_name":"v9.9.9","prerelease":false,"assets":[{"name":"a"},{"name":"b"}]},{"tag_name":"v9.9.9-dev","prerelease":true,"assets":[{"name":"c"}]}]'; }
+get_latest_release >/dev/null
+[ "$VERSION" = "9.9.9-dev" ] || { echo "dev channel did not pick the newest prerelease: $VERSION" >&2; exit 1; }
+[ "$DOWNLOAD_BASE_URL" = "https://github.com/PentHertz/RF-Swift/releases/download/v9.9.9-dev" ]
+http_get() { return 1; }
+get_latest_release >/dev/null
+[ "$VERSION" = "$DEV_VERSION" ] || { echo "dev channel fallback is not DEV_VERSION: $VERSION" >&2; exit 1; }
+http_get() { printf '[{"tag_name":"v1;id","prerelease":true}]'; }
+get_latest_release >/dev/null
+[ "$VERSION" = "$DEV_VERSION" ] || { echo "an unsafe prerelease tag was accepted: $VERSION" >&2; exit 1; }
+unset -f http_get
 
 # --- Version string validation (network-derived, flows into paths/URLs) ------
 validate_version_string "4.0.1"
@@ -132,6 +143,78 @@ if [ "$(uname -s)" = Linux ] && [ -d /usr/sbin ]; then
     echo "install_nix proceeded without groupadd/addgroup" >&2; exit 1
   fi
   PATH=$old_path
+fi
+
+# --- Engine / Nix / install-dir knobs; optional steps never end the run ------
+if (RFSWIFT_CHANNEL=stable RFSWIFT_INSTALL=cli ENGINE_PREF=bogus choose_release_and_components) >/dev/null 2>&1; then
+  echo "RFSWIFT_ENGINE=bogus was accepted" >&2; exit 1
+fi
+if (RFSWIFT_CHANNEL=stable RFSWIFT_INSTALL=cli INSTALL_DIR_PREF=relative/dir choose_release_and_components) >/dev/null 2>&1; then
+  echo "a relative RFSWIFT_INSTALL_DIR was accepted" >&2; exit 1
+fi
+(RFSWIFT_CHANNEL=stable RFSWIFT_INSTALL=cli ENGINE_PREF=skip NIX_PREF=0 INSTALL_DIR_PREF=/opt/rfswift choose_release_and_components) >/dev/null
+# The knobs answer without a prompt; a failed engine or Nix install is
+# reported and the function still returns success (the RF Swift install must
+# go on: a plain call under `set -e` used to end the whole script there).
+detect_container_engines() { HAS_DOCKER=false; HAS_PODMAN=false; }
+prompt_choice() { echo "unexpected prompt: $1" >&2; exit 1; }
+install_docker() { echo "unexpected Docker install" >&2; exit 1; }
+install_podman() { echo "unexpected Podman install" >&2; exit 1; }
+ENGINE_PREF=skip check_container_engine >/dev/null
+install_docker() { return 1; }
+ENGINE_PREF=docker check_container_engine >/dev/null || { echo "a failed Docker install ended check_container_engine" >&2; exit 1; }
+command_exists() { case "$1" in nix|bwrap) return 1 ;; esac; command -v "$1" >/dev/null 2>&1; }
+install_nix() { return 1; }
+NIX_PREF=1 check_nix_engine >/dev/null || { echo "a failed Nix install ended check_nix_engine" >&2; exit 1; }
+NIX_PREF=0 check_nix_engine >/dev/null
+# With Docker present, RFSWIFT_ENGINE also answers "install Podman as well?".
+detect_container_engines() { HAS_DOCKER=true; HAS_PODMAN=false; }
+prompt_yes_no() { echo "unexpected prompt: $1" >&2; exit 1; }
+second=""; install_podman() { second=podman; return 0; }
+ENGINE_PREF=both check_container_engine >/dev/null
+[ "$second" = podman ] || { echo "RFSWIFT_ENGINE=both did not add Podman next to Docker" >&2; exit 1; }
+second=""; ENGINE_PREF=docker check_container_engine >/dev/null
+[ -z "$second" ] || { echo "RFSWIFT_ENGINE=docker installed Podman" >&2; exit 1; }
+install_podman() { return 1; }
+ENGINE_PREF=podman check_container_engine >/dev/null || { echo "a failed second-engine install ended check_container_engine" >&2; exit 1; }
+# Restore the script's own definitions for the tests that follow.
+. "$ROOT/get_rfswift.sh"
+
+# A CLI that cannot install the udev rules (no udev daemon: WSL, containers)
+# must reach the fallback message, not end the installer.
+if [ "$(uname -s)" = Linux ]; then
+  fake2="$tmp/fakebin2"; mkdir -p "$fake2"
+  printf '#!/bin/sh\nexit 1\n' > "$fake2/rfswift"; chmod +x "$fake2/rfswift"
+  NATIVE_INSTALLED=false INSTALL_DIR="$fake2" INSTALL_COMPONENTS=cli
+  UDEV_RULES=1 offer_udev_rules >/dev/null 2>&1 || { echo "a failing 'rfswift host udev' ended offer_udev_rules" >&2; exit 1; }
+fi
+
+# Nerd Fonts need unzip; without it the step is skipped, not fatal, and
+# nothing is downloaded.
+command_exists() { [ "$1" = unzip ] && return 1; command -v "$1" >/dev/null 2>&1; }
+curl() { echo "unexpected download without unzip" >&2; exit 1; }
+wget() { curl; }
+install_nerd_fonts_linux >/dev/null || { echo "a missing unzip ended install_nerd_fonts_linux" >&2; exit 1; }
+command_exists() { command -v "$1" >/dev/null 2>&1; }
+unset -f curl wget
+
+# Root without the sudo package (Debian's `su -` route): sudo passes through.
+out=$( id() { echo 0; }; command_exists() { [ "$1" = sudo ] && return 1; command -v "$1" >/dev/null 2>&1; }; provide_sudo_shim; sudo -v && sudo echo shim-ok )
+[ "$out" = shim-ok ] || { echo "root without sudo: the shim did not pass the command through" >&2; exit 1; }
+
+# No alias for a directory that is already on PATH; on Linux the alias goes
+# to .bashrc (terminals open non-login shells), even when .bash_profile exists.
+mkdir -p "$tmp/onpath"
+(PATH="/usr/bin:$tmp/onpath:/bin"; dir_on_path "$tmp/onpath") || { echo "dir_on_path missed a PATH entry" >&2; exit 1; }
+if (PATH="/usr/bin:/bin"; dir_on_path "$tmp/onpath"); then echo "dir_on_path matched a directory that is not on PATH" >&2; exit 1; fi
+if [ "$(uname -s)" = Linux ]; then
+  home="$tmp/home"; mkdir -p "$home"; : > "$home/.bash_profile"; : > "$home/.bashrc"
+  getent() { return 1; }
+  prompt_yes_no() { return 0; }
+  HOME="$home" SHELL=/bin/bash create_alias "$tmp/bin" >/dev/null || { echo "create_alias failed" >&2; exit 1; }
+  unset -f getent prompt_yes_no
+  grep -q "alias rfswift='$tmp/bin/rfswift'" "$home/.bashrc" || { echo "alias was not written to .bashrc" >&2; exit 1; }
+  if grep -q rfswift "$home/.bash_profile"; then echo "alias was written to .bash_profile on Linux" >&2; exit 1; fi
 fi
 
 echo "installer security, development-channel and native-package tests: ok"

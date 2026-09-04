@@ -7,7 +7,9 @@ set -e
 
 # Configuration
 GITHUB_REPO="PentHertz/RF-Swift"
-DEV_VERSION="4.0.0-dev"
+# Fallback for the dev channel when GitHub cannot be asked for the newest
+# prerelease tag (see get_latest_release); keep it at the current prerelease.
+DEV_VERSION="4.0.1-dev"
 RELEASE_CHANNEL="${RFSWIFT_CHANNEL:-stable}"
 INSTALL_COMPONENTS="${RFSWIFT_INSTALL:-cli}"
 WORKBENCH_FORMAT="${RFSWIFT_WORKBENCH_FORMAT:-native}"
@@ -18,6 +20,14 @@ PKG_FORMAT="${RFSWIFT_PKG_FORMAT:-}"
 # udev rules for RF hardware (Linux): 1 = install without asking, 0 = skip,
 # empty = ask. Installed by the freshly installed CLI (rfswift host udev).
 UDEV_RULES="${RFSWIFT_UDEV:-}"
+# Container engine to set up when none is installed: docker, podman, both or
+# skip (macOS also: lima); empty = ask. Nix engine: 1 = install, 0 = skip,
+# empty = ask. Both make curl|sh and automated installs deterministic.
+ENGINE_PREF="${RFSWIFT_ENGINE:-}"
+NIX_PREF="${RFSWIFT_NIX:-}"
+# Tarball flow: install directory (absolute path, e.g. /usr/local/bin or
+# ~/.rfswift/bin); empty = ask.
+INSTALL_DIR_PREF="${RFSWIFT_INSTALL_DIR:-}"
 NATIVE_INSTALLED=false
 FOUND_VERSION=false
 
@@ -378,7 +388,7 @@ install_pipewire() {
         # Install PipeWire and related packages
         sudo pacman -S --noconfirm --needed pipewire pipewire-pulse pipewire-alsa pipewire-jack wireplumber libpulse
         # Optional: install additional tools
-        sudo pacman -S --noconfirm --needed pipewire-audio pipewire-media-session || true
+        sudo pacman -S --noconfirm --needed pipewire-audio || true
       else
         color_echo "red" "sudo access required for package installation"
         return 1
@@ -751,13 +761,74 @@ have_sudo_access() {
   return 1
 }
 
-# Function to get the current user even when run with sudo
-get_real_user() {
-  if [ -n "$SUDO_USER" ]; then
-    echo "$SUDO_USER"
+# Fetch a URL to stdout with whatever the host has (Debian desktops ship wget
+# but not curl). Fails silently; callers decide what a miss means.
+http_get() {
+  if command_exists curl; then
+    curl -fsSL --retry 2 -H "User-Agent: RF-Swift-Installer" "$1" 2>/dev/null
+  elif command_exists wget; then
+    wget -qO- --header="User-Agent: RF-Swift-Installer" "$1" 2>/dev/null
   else
-    whoami
+    return 1
   fi
+}
+
+# Debian sets a root password at install time and leaves the first user out of
+# the sudo group, so the natural way to run this installer there is a root
+# shell (`su -`). Every privileged step calls `sudo cmd`; as root without the
+# sudo package, run cmd directly.
+provide_sudo_shim() {
+  if [ "$(id -u 2>/dev/null)" = "0" ] && ! command_exists sudo; then
+    sudo() {
+      [ "$1" = "-v" ] && return 0
+      "$@"
+    }
+  fi
+}
+
+# True when the account can get root neither directly nor through sudo
+# (checked without a password prompt). Used for an early, one-time notice.
+lacks_root_access() {
+  [ "$(id -u 2>/dev/null)" = "0" ] && return 1
+  command_exists sudo || return 0
+  sudo -n -v >/dev/null 2>&1 && return 1
+  id -nG 2>/dev/null | tr ' ' '\n' | grep -qxE 'sudo|wheel|admin' && return 1
+  return 0
+}
+
+warn_without_root_access() {
+  lacks_root_access || return 0
+  me=$(id -un 2>/dev/null)
+  grant="usermod -aG sudo ${me}"
+  command_exists sudo || grant="apt-get install -y sudo && ${grant}"
+  color_echo "yellow" "⚠️  This account cannot use sudo: packages, container engines, Nix, udev rules and a system-wide install are out of reach; only a user-local tarball install (~/.rfswift/bin) can proceed."
+  color_echo "cyan" "   Debian leaves the first user out of the sudo group when a root password is set. Either run this installer from a root shell:"
+  color_echo "cyan" "     su -                      (then re-run the installer; it sets things up for ${me})"
+  color_echo "cyan" "   or grant sudo once and log out and back in:"
+  color_echo "cyan" "     su - -c '${grant}'"
+}
+
+# Is a directory already on PATH (so a shell alias would be redundant)?
+dir_on_path() {
+  case ":$PATH:" in *":$1:"*) return 0 ;; esac
+  return 1
+}
+
+# The user things are set up for: the sudo caller, or the desktop user behind
+# a `su -` root shell (logname), else the current account.
+get_real_user() {
+  if [ -n "${SUDO_USER:-}" ]; then
+    echo "$SUDO_USER"
+    return 0
+  fi
+  if [ "$(id -u 2>/dev/null)" = "0" ]; then
+    login_user=$(logname 2>/dev/null || true)
+    if [ -n "$login_user" ] && [ "$login_user" != "root" ]; then
+      echo "$login_user"
+      return 0
+    fi
+  fi
+  whoami
 }
 
 # Function to prompt user for yes/no with terminal redirection solution
@@ -769,7 +840,7 @@ prompt_yes_no() {
   # Try to use /dev/tty for interactive input even in pipe scenarios
   if [ -t 0 ]; then
     tty_device="/dev/stdin"
-  elif [ -e "/dev/tty" ]; then
+  elif [ -e "/dev/tty" ] && ( : < /dev/tty ) 2>/dev/null; then
     tty_device="/dev/tty"
   else
     # No interactive terminal available, use defaults
@@ -785,7 +856,7 @@ prompt_yes_no() {
   # Try to read from the terminal
   while true; do
     printf "${YELLOW}%s (y/n): ${NC}" "${prompt}"
-    if read -r response < "$tty_device" 2>/dev/null; then
+    if read -r response 2>/dev/null < "$tty_device"; then
       case "$response" in
         [Yy]* ) return 0 ;;
         [Nn]* ) return 1 ;;
@@ -814,7 +885,7 @@ prompt_choice() {
 
   if [ -t 0 ]; then
     tty_device="/dev/stdin"
-  elif [ -e "/dev/tty" ]; then
+  elif [ -e "/dev/tty" ] && ( : < /dev/tty ) 2>/dev/null; then
     tty_device="/dev/tty"
   else
     printf "${YELLOW}%s: Defaulting to option 1 (no terminal available)${NC}\n" "${prompt}" >&2
@@ -831,7 +902,7 @@ prompt_choice() {
 
   while true; do
     printf "${YELLOW}Enter your choice [1-%d]: ${NC}" "$num" >&2
-    if read -r response < "$tty_device" 2>/dev/null; then
+    if read -r response 2>/dev/null < "$tty_device"; then
       case "$response" in
         [1-9]|[1-9][0-9])
           if [ "$response" -ge 1 ] && [ "$response" -le "$num" ] 2>/dev/null; then
@@ -941,13 +1012,12 @@ create_alias() {
   # Determine the correct shell configuration file
   case "${USER_SHELL}" in
     bash)
-      # Check for .bash_profile first (macOS preference), then .bashrc (Linux preference)
-      if [ -f "${USER_HOME}/.bash_profile" ]; then
+      # macOS terminals open login shells and read .bash_profile; Linux
+      # terminals open interactive non-login shells and read .bashrc (an Arch
+      # or Fedora skeleton .bash_profile would otherwise swallow the alias).
+      if [ "$(uname -s)" = "Darwin" ] && [ -f "${USER_HOME}/.bash_profile" ]; then
         SHELL_RC="${USER_HOME}/.bash_profile"
-      elif [ -f "${USER_HOME}/.bashrc" ]; then
-        SHELL_RC="${USER_HOME}/.bashrc"
       else
-        # Default to .bashrc if neither exists
         SHELL_RC="${USER_HOME}/.bashrc"
       fi
       ;;
@@ -1019,6 +1089,26 @@ create_alias() {
 # ═══════════════════════════════════════════════════════════════════════════════
 # Container Engine Selection: Docker or Podman
 # ═══════════════════════════════════════════════════════════════════════════════
+
+# The "also install the other engine?" question when one is present already:
+# RFSWIFT_ENGINE answers it (podman or both -> Podman yes, docker or both ->
+# Docker yes, anything else -> no); without the knob, ask, default no.
+want_second_engine() {
+  case "$ENGINE_PREF" in
+    "") prompt_yes_no "$2" "n" ;;
+    "$1"|both) color_echo "cyan" "   RFSWIFT_ENGINE=${ENGINE_PREF}"; return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+engine_setup_incomplete() {
+  color_echo "yellow" "⚠️  $1 setup did not complete; RF Swift itself is still installed. Set it up later with: rfswift host setup"
+}
+
+docker_service_not_started() {
+  color_echo "yellow" "⚠️  Docker is installed but its service could not be started (no systemd, e.g. a container or WSL without systemd)."
+  color_echo "cyan" "   Start it by hand before using RF Swift: sudo systemctl enable --now docker"
+}
 
 # Check which container engines are already installed
 detect_container_engines() {
@@ -1157,8 +1247,8 @@ check_container_engine() {
   # ── Only Docker installed ──────────────────────────────────────────────
   if [ "$HAS_DOCKER" = true ]; then
     color_echo "green" "✅ Docker is already installed."
-    if prompt_yes_no "Would you also like to install Podman (rootless containers)?" "n"; then
-      install_podman
+    if want_second_engine podman "Would you also like to install Podman (rootless containers)?"; then
+      install_podman || engine_setup_incomplete "Podman"
     fi
     # On macOS, offer Lima for USB passthrough
     if [ "$(uname -s)" = "Darwin" ]; then
@@ -1170,8 +1260,8 @@ check_container_engine() {
   # ── Only Podman installed ──────────────────────────────────────────────
   if [ "$HAS_PODMAN" = true ]; then
     color_echo "green" "✅ Podman is already installed."
-    if prompt_yes_no "Would you also like to install Docker?" "n"; then
-      install_docker
+    if want_second_engine docker "Would you also like to install Docker?"; then
+      install_docker || engine_setup_incomplete "Docker"
     fi
     # On macOS, offer Lima for USB passthrough
     if [ "$(uname -s)" = "Darwin" ]; then
@@ -1216,18 +1306,32 @@ check_container_engine() {
     choices="Docker Podman Both Skip"
   fi
 
-  CHOICE=$(prompt_choice "Select a container engine to install:" $choices)
+  if [ -n "$ENGINE_PREF" ]; then
+    case "$ENGINE_PREF" in
+      docker) CHOICE=1 ;;
+      podman) CHOICE=2 ;;
+      both)   CHOICE=3 ;;
+      lima)   CHOICE=4 ;;
+      *) if [ "$(uname -s)" = "Darwin" ]; then CHOICE=5; else CHOICE=4; fi ;;
+    esac
+    color_echo "cyan" "   RFSWIFT_ENGINE=${ENGINE_PREF}"
+  else
+    CHOICE=$(prompt_choice "Select a container engine to install:" $choices)
+  fi
 
+  # An engine that fails to install (or to start: no systemd in a container or
+  # on WSL, an unsupported distribution) must not take the RF Swift install
+  # down with it, which a plain call would do through `set -e`.
   case "$CHOICE" in
     1)
-      install_docker
+      install_docker || engine_setup_incomplete "Docker"
       ;;
     2)
-      install_podman
+      install_podman || engine_setup_incomplete "Podman"
       ;;
     3)
-      install_docker
-      install_podman
+      install_docker || engine_setup_incomplete "Docker"
+      install_podman || engine_setup_incomplete "Podman"
       ;;
     4)
       if [ "$(uname -s)" = "Darwin" ]; then
@@ -1611,12 +1715,15 @@ offer_udev_rules() {
     color_echo "yellow" "   Skipped. Later: rfswift host udev"
     return 0
   fi
+  # Checked in an `if` so a failure (no udev daemon, WSL, a container) reaches
+  # the fallback message instead of ending the script through `set -e`.
+  udev_ok=false
   if [ ! -t 0 ] && [ -c /dev/tty ] && ( : < /dev/tty ) 2>/dev/null; then
-    "$rfswift_bin" host udev --yes < /dev/tty
+    if "$rfswift_bin" host udev --yes < /dev/tty; then udev_ok=true; fi
   else
-    "$rfswift_bin" host udev --yes
+    if "$rfswift_bin" host udev --yes; then udev_ok=true; fi
   fi
-  if [ $? -eq 0 ]; then
+  if [ "$udev_ok" = true ]; then
     color_echo "green" "✅ udev rules installed (re-plug a device that was already connected)."
   else
     color_echo "yellow" "⚠️  Could not install the udev rules. Later: rfswift host udev"
@@ -1670,13 +1777,12 @@ install_docker() {
         
         color_echo "blue" "📦 Installing Docker using pacman..."
         sudo pacman -Sy --noconfirm
-        sudo pacman -S --noconfirm --needed docker docker-compose
+        sudo pacman -S --noconfirm --needed docker docker-compose || return 1
         
         # Enable and start Docker service
         if command_exists systemctl; then
           color_echo "blue" "🚀 Enabling and starting Docker service..."
-          sudo systemctl enable docker
-          sudo systemctl start docker
+          sudo systemctl enable --now docker || docker_service_not_started
         fi
         
         add_user_to_docker_group
@@ -1694,10 +1800,15 @@ install_docker() {
         
         color_echo "blue" "Using sudo to install Docker..."
         
-        if command_exists curl; then
-          curl -fsSL "https://get.docker.com/" | sudo sh
+        # get.docker.com refuses Kali ("Unsupported distribution 'kali'");
+        # Kali packages Docker itself, so install it from the Kali repository.
+        if grep -qs '^ID=kali' /etc/os-release; then
+          color_echo "cyan" "🐉 Kali Linux detected - installing docker.io from the Kali repository..."
+          sudo apt-get update && sudo apt-get install -y docker.io || return 1
+        elif command_exists curl; then
+          curl -fsSL "https://get.docker.com/" | sudo sh || return 1
         elif command_exists wget; then
-          wget -qO- "https://get.docker.com/" | sudo sh
+          wget -qO- "https://get.docker.com/" | sudo sh || return 1
         else
           color_echo "red" "🚨 Missing curl/wget. Please install one of them."
           return 1
@@ -1705,8 +1816,7 @@ install_docker() {
 
         if command_exists systemctl; then
           color_echo "blue" "🚀 Starting Docker service..."
-          sudo systemctl start docker
-          sudo systemctl enable docker
+          sudo systemctl enable --now docker || docker_service_not_started
         fi
         add_user_to_docker_group
 
@@ -1739,12 +1849,24 @@ choose_release_and_components() {
     ""|native|tarball) ;;
     *) color_echo "red" "Invalid RFSWIFT_PKG_FORMAT '$PKG_FORMAT' (use native or tarball)"; exit 1 ;;
   esac
+  case "$ENGINE_PREF" in
+    ""|docker|podman|both|lima|skip|none) ;;
+    *) color_echo "red" "Invalid RFSWIFT_ENGINE '$ENGINE_PREF' (use docker, podman, both, lima or skip)"; exit 1 ;;
+  esac
+  case "$NIX_PREF" in
+    ""|1|0|yes|no|true|false) ;;
+    *) color_echo "red" "Invalid RFSWIFT_NIX '$NIX_PREF' (use 1 or 0)"; exit 1 ;;
+  esac
+  case "$INSTALL_DIR_PREF" in
+    ""|/*) ;;
+    *) color_echo "red" "Invalid RFSWIFT_INSTALL_DIR '$INSTALL_DIR_PREF' (use an absolute path)"; exit 1 ;;
+  esac
 
   # Environment variables make curl|sh and automated installs deterministic.
   # Interactive installs get a concise choice; no-TTY installs retain the
   # backwards-compatible stable CLI default.
   if [ -z "${RFSWIFT_CHANNEL+x}" ]; then
-    channel_choice=$(prompt_choice "Select RF Swift release channel" "Stable" "v4.0.0-dev")
+    channel_choice=$(prompt_choice "Select RF Swift release channel" "Stable" "Development-prerelease")
     [ "$channel_choice" = "2" ] && RELEASE_CHANNEL="dev" || RELEASE_CHANNEL="stable"
   fi
   if [ -z "${RFSWIFT_INSTALL+x}" ]; then
@@ -1772,6 +1894,18 @@ get_latest_release() {
 
   if [ "$RELEASE_CHANNEL" = "dev" ]; then
     VERSION="$DEV_VERSION"
+    # The prerelease tag moves (v4.0.0-dev, v4.0.1-dev, ...) and a stale
+    # DEV_VERSION sent every dev-channel install to a 404. Ask GitHub for the
+    # newest prerelease; DEV_VERSION only covers an unreachable API.
+    latest_prerelease=$(http_get "https://api.github.com/repos/${GITHUB_REPO}/releases?per_page=20" \
+      | tr -d '\n' | sed 's/},{/}\
+{/g' | grep '"prerelease": *true' | grep -o '"tag_name": *"[^"]*"' | head -1 \
+      | sed 's/.*: *"v\{0,1\}\([^"]*\)".*/\1/' || true)
+    if [ -n "$latest_prerelease" ] && validate_version_string "$latest_prerelease"; then
+      VERSION="$latest_prerelease"
+    else
+      color_echo "yellow" "⚠️ Could not query GitHub for the newest prerelease; assuming v${DEV_VERSION}."
+    fi
     FOUND_VERSION=true
     RELEASE_URL="https://github.com/${GITHUB_REPO}/releases/tag/v${VERSION}"
     DOWNLOAD_BASE_URL="https://github.com/${GITHUB_REPO}/releases/download/v${VERSION}"
@@ -2213,7 +2347,10 @@ choose_install_dir() {
   color_echo "cyan" "1. System-wide installation (/usr/local/bin) - requires sudo"
   color_echo "cyan" "2. User-local installation (~/.rfswift/bin) - doesn't require sudo"
   
-  if prompt_yes_no "Install system-wide (requires sudo)?" "n"; then
+  if [ -n "$INSTALL_DIR_PREF" ]; then
+    INSTALL_DIR="$INSTALL_DIR_PREF"
+    color_echo "cyan" "   RFSWIFT_INSTALL_DIR=${INSTALL_DIR}"
+  elif prompt_yes_no "Install system-wide (requires sudo)?" "n"; then
     INSTALL_DIR="/usr/local/bin"
     if ! have_sudo_access; then
       color_echo "red" "🚨 System-wide installation requires sudo. You don't seem to have sudo access."
@@ -2407,8 +2544,9 @@ display_rainbow_logo_animated() {
     PURPLE='\033[1;35m'
     NC='\033[0m' # No Color
     
-    # Clear the screen for better presentation
-    clear
+    # Clear the screen for better presentation (clear is missing on minimal
+    # installs; the script must not stop there)
+    if command_exists clear; then clear 2>/dev/null || true; fi
     
     # Store the logo lines in variables (sh doesn't support arrays)
     LINE1="   888~-_   888~~        ,d88~~\\                ,e,   88~\\   d8   "
@@ -2806,6 +2944,10 @@ check_agnoster_dependencies() {
 
 install_nerd_fonts_linux() {
   color_echo "blue" "📥 Installing Nerd Fonts manually..."
+  if ! command_exists unzip; then
+    color_echo "yellow" "⚠️  'unzip' is not installed; skipping the Nerd Fonts download (install unzip and re-run, or use your distribution's nerd-font packages)."
+    return 0
+  fi
   
   FONTS_DIR="$HOME/.local/share/fonts"
   mkdir -p "$FONTS_DIR"
@@ -3035,14 +3177,30 @@ nix_enable_flakes() {
   fi
 }
 
+# The installers are fetched with curl or, on hosts without it (a stock Debian
+# desktop ships wget only), with wget.
+fetch_installer() {
+  if command_exists curl; then
+    curl --proto '=https' --tlsv1.2 -sSf -L "$1"
+  elif command_exists wget; then
+    wget -qO- --https-only "$1"
+  else
+    color_echo "red" "🚨 Neither curl nor wget is available to download the Nix installer."
+    return 1
+  fi
+}
+
 nix_installer_determinate() {
   color_echo "blue" "🚀 Running the Determinate Systems Nix installer (enables flakes + nix-command)..."
-  curl --proto '=https' --tlsv1.2 -sSf -L https://install.determinate.systems/nix | sh -s -- install --no-confirm
+  fetch_installer https://install.determinate.systems/nix | sh -s -- install --no-confirm
 }
 
 nix_installer_official() {
   color_echo "yellow" "⚠️  The Determinate installer did not complete; trying the official NixOS multi-user installer..."
-  curl --proto '=https' --tlsv1.2 -sSf -L https://nixos.org/nix/install | sh -s -- --daemon --yes || return 1
+  if ! command_exists xz; then
+    color_echo "yellow" "   It unpacks with 'xz' (Debian/Ubuntu: sudo apt-get install xz-utils; Fedora: sudo dnf install xz)."
+  fi
+  fetch_installer https://nixos.org/nix/install | sh -s -- --daemon --yes || return 1
   nix_enable_flakes
 }
 
@@ -3150,10 +3308,18 @@ check_nix_engine() {
     return 0
   fi
   color_echo "cyan" "   RF Swift can also run its tool environments natively via Nix - no container needed."
-  choice=$(prompt_choice "Install Nix for the native engine?" "Yes" "No")
+  case "$NIX_PREF" in
+    1|yes|true) choice=1; color_echo "cyan" "   RFSWIFT_NIX=${NIX_PREF}" ;;
+    0|no|false) choice=2; color_echo "cyan" "   RFSWIFT_NIX=${NIX_PREF}" ;;
+    *) choice=$(prompt_choice "Install Nix for the native engine?" "Yes" "No") ;;
+  esac
   if [ "$choice" = "1" ]; then
-    install_nix
-    check_bubblewrap
+    # A Nix installer that gives up must not end the RF Swift install.
+    if install_nix; then
+      check_bubblewrap
+    else
+      color_echo "yellow" "⚠️  Nix setup did not complete; RF Swift itself is still installed. Retry later from https://nixos.org/download"
+    fi
   else
     color_echo "yellow" "   Skipped. Install Nix later from https://nixos.org/download to use '--engine nix'."
   fi
@@ -3165,6 +3331,7 @@ main() {
   # Nix installer then report tools as missing that are installed; see
   # ensure_sbin_on_path. Normalise once, for the whole run.
   ensure_sbin_on_path
+  provide_sudo_shim
 
   display_rainbow_logo_animated
 
@@ -3176,20 +3343,24 @@ main() {
     color_echo "red" "🚨 Cannot proceed due to missing system requirements."
     exit 1
   fi
+  warn_without_root_access
   
   # Show Steam Deck detection status
   if is_steam_deck; then
     color_echo "magenta" "🎮 Steam Deck detected! Special optimizations will be applied."
   fi
   
-  # Check container engine (Docker / Podman) and offer to install
-  check_container_engine
+  # Host extras: a container engine, the Nix engine and audio. Each is
+  # optional, so a failure there is reported and the RF Swift install goes on
+  # (a plain call would end the script through `set -e` before anything of
+  # RF Swift itself is installed).
+  check_container_engine || color_echo "yellow" "⚠️  Container engine setup did not complete; continuing with the RF Swift install."
 
   # Offer the native Nix engine (rfswift --engine nix)
-  check_nix_engine
+  check_nix_engine || color_echo "yellow" "⚠️  Nix setup did not complete; continuing with the RF Swift install."
 
   # Check and install audio system
-  check_audio_system
+  check_audio_system || color_echo "yellow" "⚠️  Audio setup did not complete; continuing with the RF Swift install."
 
   # Check X11 display forwarding (installs XQuartz on macOS). This is a host
   # dependency like the container engine and audio above, so it runs here —
@@ -3225,18 +3396,17 @@ main() {
   fi
 
   # udev rules for RF hardware (asks; RFSWIFT_UDEV=1|0 to answer up front)
-  offer_udev_rules
+  offer_udev_rules || true
 
-  # check and install agnoster deps
-  check_agnoster_dependencies
-
-  # Check and optionally install asciinema
-  check_asciinema
+  # Fonts and asciinema are cosmetic extras; never let them end the install.
+  check_agnoster_dependencies || color_echo "yellow" "⚠️  Font setup did not complete."
+  check_asciinema || color_echo "yellow" "⚠️  asciinema setup did not complete."
 
   # Set up alias if requested. Native packages land on PATH with completions
-  # already installed, so the alias only matters for tarball installs.
-  if [ "$NATIVE_INSTALLED" != true ] && prompt_yes_no "Would you like to set up an alias for RF-Swift?" "y"; then
-    create_alias "$INSTALL_DIR"
+  # already installed, and a directory that is already on PATH needs none, so
+  # the alias only matters for tarball installs into a private directory.
+  if [ "$NATIVE_INSTALLED" != true ] && ! dir_on_path "$INSTALL_DIR" && prompt_yes_no "Would you like to set up an alias for RF-Swift?" "y"; then
+    create_alias "$INSTALL_DIR" || true
   fi
   
   # Show audio system status
@@ -3246,7 +3416,7 @@ main() {
   
   # Final instructions should only advertise components actually requested.
   if [ "$INSTALL_COMPONENTS" = "cli" ] || [ "$INSTALL_COMPONENTS" = "both" ]; then
-    if [ "$NATIVE_INSTALLED" != true ] && [ "$INSTALL_DIR" != "/usr/local/bin" ]; then
+    if [ "$NATIVE_INSTALLED" != true ] && ! dir_on_path "$INSTALL_DIR"; then
       color_echo "cyan" "🚀 To use RF-Swift, you can:"
       color_echo "cyan" "   - Run it directly: ${INSTALL_DIR}/rfswift"
       color_echo "cyan" "   - Add ${INSTALL_DIR} to your PATH"
