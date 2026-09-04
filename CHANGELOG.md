@@ -24,6 +24,12 @@ branch.
   An account that can get root neither directly nor through sudo is told so
   once, up front, with the `su -` and `usermod -aG sudo` ways out, instead of
   failing step by step later; it can still do the user-local tarball install.
+  On Debian and Ubuntu the notice is also an offer: RF Swift can run the
+  Debian wiki's fix (https://wiki.debian.org/sudo) for you - install the
+  `sudo` and `adduser` packages if missing and add you to the `sudo` group -
+  driven by the root password you already have (`su -`). Group membership only
+  takes effect at the next login, so the installer then stops with a one-line
+  re-run instruction rather than limping through steps that cannot get root.
 - Windows: `rfswift nix wsl display-reset` restarts WSLg's display client
   (`msrdc.exe`), the fix for a GUI tool that shows only a taskbar icon and no
   window: the tool runs fine inside the distribution, but the client stopped

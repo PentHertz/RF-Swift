@@ -796,13 +796,68 @@ lacks_root_access() {
   return 0
 }
 
+# A valid local user name (letters, digits, dot, underscore, dash) - refuse to
+# build a privileged command around anything else.
+valid_username() {
+  case "$1" in ""|*[!A-Za-z0-9._-]*) return 1 ;; *) return 0 ;; esac
+}
+
+# Debian's installer leaves the first user out of the sudo group whenever a
+# root password is set, so a fresh desktop account cannot use sudo at all. The
+# Debian wiki's fix (https://wiki.debian.org/sudo) is, from a root shell:
+#   apt install sudo
+#   adduser <user> sudo
+# then log out and back in. Offer exactly that here, driven by the root
+# password the user already has, on apt-based systems that are missing sudo or
+# the account's membership in the sudo group.
+offer_debian_sudo_bootstrap() {
+  command_exists apt-get || return 1
+  me=$(id -un 2>/dev/null)
+  valid_username "$me" || return 1
+  color_echo "cyan" "   On Debian a freshly created user is left out of the 'sudo' group when a root password is set (https://wiki.debian.org/sudo)."
+  need=""
+  command_exists sudo || need="the sudo package"
+  color_echo "cyan" "   RF Swift can fix this now: install sudo and 'adduser' if missing, then add '${me}' to the sudo group. You'll be asked for the ROOT password."
+  prompt_yes_no "Install sudo${need:+ and adduser} and add '${me}' to the sudo group now (asks for the root password)?" "y" || return 1
+
+  # su reads the password straight from the controlling terminal, so it works
+  # even under 'curl | sh'; hand it /dev/tty when our own stdin is not one so
+  # apt/adduser inside it stay non-interactive. Install adduser alongside sudo
+  # (the wiki uses 'adduser <user> <group>'), then add the user to the group.
+  boot_cmd="apt-get update && apt-get install -y sudo adduser && adduser $me sudo"
+  if [ ! -t 0 ] && [ -c /dev/tty ] && ( : < /dev/tty ) 2>/dev/null; then
+    su - -c "$boot_cmd" < /dev/tty
+  else
+    su - -c "$boot_cmd"
+  fi || {
+    color_echo "yellow" "   That did not complete (wrong root password, or no root password set). You can do it by hand: su - , then 'apt install sudo' and 'adduser ${me} sudo'."
+    return 1
+  }
+
+  color_echo "green" "✅ sudo is installed and '${me}' is now in the sudo group."
+  # Group membership only applies to a new login session (verified: sudo still
+  # denies in the current one right after adduser). Installing sudo mid-run
+  # also flips it from absent to present-but-unusable, which would make the
+  # remaining root steps prompt for a password there is no way to answer, so
+  # stop here with a clear next step instead of limping on.
+  color_echo "cyan" "   It takes effect at your NEXT login. Log out and back in (or start a fresh session with 'newgrp sudo'), then re-run this installer:"
+  case "$RELEASE_CHANNEL" in
+    dev) color_echo "cyan" "     RFSWIFT_CHANNEL=dev sh get_rfswift.sh" ;;
+    *)   color_echo "cyan" "     sh get_rfswift.sh   (or the curl | sh one-liner)" ;;
+  esac
+  color_echo "cyan" "   It will then set up Docker/Podman, Nix, the udev rules and a system-wide install. Nothing was installed in this run."
+  exit 0
+}
+
 warn_without_root_access() {
   lacks_root_access || return 0
+  color_echo "yellow" "⚠️  This account cannot use sudo yet: packages, container engines, Nix, udev rules and a system-wide install need root; without it only a user-local tarball install (~/.rfswift/bin) can proceed."
+  # On Debian/Ubuntu, offer to fix it automatically with the root password.
+  offer_debian_sudo_bootstrap && return 0
   me=$(id -un 2>/dev/null)
   grant="usermod -aG sudo ${me}"
   command_exists sudo || grant="apt-get install -y sudo && ${grant}"
-  color_echo "yellow" "⚠️  This account cannot use sudo: packages, container engines, Nix, udev rules and a system-wide install are out of reach; only a user-local tarball install (~/.rfswift/bin) can proceed."
-  color_echo "cyan" "   Debian leaves the first user out of the sudo group when a root password is set. Either run this installer from a root shell:"
+  color_echo "cyan" "   To get root yourself: run this installer from a root shell,"
   color_echo "cyan" "     su -                      (then re-run the installer; it sets things up for ${me})"
   color_echo "cyan" "   or grant sudo once and log out and back in:"
   color_echo "cyan" "     su - -c '${grant}'"

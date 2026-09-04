@@ -217,4 +217,47 @@ if [ "$(uname -s)" = Linux ]; then
   if grep -q rfswift "$home/.bash_profile"; then echo "alias was written to .bash_profile on Linux" >&2; exit 1; fi
 fi
 
+# --- Debian sudo bootstrap: username guard, apt-only, and the wiki recipe ----
+valid_username user_1.name || { echo "valid_username rejected a legal name" >&2; exit 1; }
+for bad in "" "a b" 'x;id' '$(reboot)' "../x"; do
+  if valid_username "$bad"; then echo "valid_username accepted '$bad'" >&2; exit 1; fi
+done
+
+# Non-apt system: the bootstrap declines so the manual hints are shown instead.
+command_exists() { [ "$1" = apt-get ] && return 1; command -v "$1" >/dev/null 2>&1; }
+if offer_debian_sudo_bootstrap >/dev/null 2>&1; then
+  echo "the sudo bootstrap ran on a system without apt-get" >&2; exit 1
+fi
+command_exists() { command -v "$1" >/dev/null 2>&1; }
+
+# apt system, user says no: no privileged command runs.
+if [ "$(uname -s)" = Linux ]; then
+  bootstrap_calls="$tmp/su-calls"; : > "$bootstrap_calls"
+  fake="$tmp/sudobootbin"; mkdir -p "$fake"
+  printf '#!/bin/sh
+echo "su $*" >> "%s"
+' "$bootstrap_calls" > "$fake/su"; chmod +x "$fake/su"
+  printf '#!/bin/sh
+exit 0
+' > "$fake/apt-get"; chmod +x "$fake/apt-get"
+  old_path=$PATH; PATH="$fake:$PATH"
+  prompt_yes_no() { return 1; }
+  offer_debian_sudo_bootstrap >/dev/null 2>&1 && { echo "bootstrap returned success after the user declined" >&2; exit 1; }
+  [ -s "$bootstrap_calls" ] && { echo "bootstrap invoked su even though the user declined" >&2; exit 1; }
+  # user says yes: su runs the wiki recipe (apt install sudo adduser; adduser
+  # <user> sudo). On success the function ends the installer with exit 0, so
+  # run it in a subshell to keep the suite alive and assert that exit code.
+  prompt_yes_no() { return 0; }
+  ( offer_debian_sudo_bootstrap >/dev/null 2>&1 ); [ $? -eq 0 ] || { echo "bootstrap did not exit 0 with a passing su" >&2; exit 1; }
+  grep -q "adduser $(id -un) sudo" "$bootstrap_calls" || { echo "bootstrap did not run 'adduser <user> sudo' via su: $(cat "$bootstrap_calls")" >&2; exit 1; }
+  grep -q "install -y sudo adduser" "$bootstrap_calls" || { echo "bootstrap did not install sudo and adduser: $(cat "$bootstrap_calls")" >&2; exit 1; }
+  # A failing su (wrong root password) is reported, not fatal.
+  printf '#!/bin/sh
+exit 1
+' > "$fake/su"; chmod +x "$fake/su"
+  offer_debian_sudo_bootstrap >/dev/null 2>&1 && { echo "bootstrap reported success on a failing su" >&2; exit 1; }
+  PATH=$old_path
+  unset -f prompt_yes_no
+fi
+
 echo "installer security, development-channel and native-package tests: ok"
