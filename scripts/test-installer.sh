@@ -112,4 +112,26 @@ PATH=$old_path
 [ "$CLI_INSTALL_DIR" = "$cli_target" ] || { echo "CLI upgrade path was not retained: $CLI_INSTALL_DIR" >&2; exit 1; }
 [ "$WORKBENCH_INSTALL_DIR" = "$wb_target" ] || { echo "Workbench upgrade path was not retained: $WORKBENCH_INSTALL_DIR" >&2; exit 1; }
 
+# --- Nix installer: sbin directories reach PATH; no group tool stops early ---
+# Debian's `su` (without `-`) and user shells have no /usr/sbin on PATH, where
+# groupadd lives, and the Determinate installer only searches PATH (seen on
+# Debian 13: "Could not find a supported command to create groups").
+if [ "$(uname -s)" = Linux ] && [ -d /usr/sbin ]; then
+  old_path=$PATH; PATH=/usr/local/bin:/usr/bin:/bin
+  ensure_sbin_on_path
+  case ":$PATH:" in
+    *":/usr/sbin:"*) ;;
+    *) echo "ensure_sbin_on_path did not add /usr/sbin: $PATH" >&2; exit 1 ;;
+  esac
+  once=$PATH; ensure_sbin_on_path
+  [ "$PATH" = "$once" ] || { echo "ensure_sbin_on_path is not idempotent: $PATH" >&2; exit 1; }
+  # Without any group-creation tool the installer must stop before downloading.
+  curl() { echo "unexpected network access" >&2; exit 1; }
+  command_exists() { case "$1" in nix|groupadd|addgroup) return 1 ;; esac; command -v "$1" >/dev/null 2>&1; }
+  if install_nix >/dev/null 2>&1; then
+    echo "install_nix proceeded without groupadd/addgroup" >&2; exit 1
+  fi
+  PATH=$old_path
+fi
+
 echo "installer security, development-channel and native-package tests: ok"

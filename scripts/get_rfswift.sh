@@ -102,8 +102,10 @@ check_xhost() {
                     sudo pacman -S --noconfirm --needed xorg-xhost
                     ;;
                 "fedora")
-                    color_echo "yellow" "📦 Installing xorg-x11-server-utils using dnf... 📦"
-                    sudo dnf install -y xorg-x11-server-utils
+                    # Fedora split xorg-x11-server-utils into per-tool packages
+                    # (xhost, xrandr, ...); the old name no longer resolves.
+                    color_echo "yellow" "📦 Installing xhost using dnf... 📦"
+                    sudo dnf install -y xhost
                     ;;
                 "rhel"|"centos")
                     if command -v dnf >/dev/null 2>&1; then
@@ -2634,11 +2636,15 @@ install_powerline_fonts() {
         "fedora")
           if have_sudo_access; then
             color_echo "blue" "📦 Using dnf to install fonts..."
+            # dnf5 rejects the whole transaction when one name is unknown, so
+            # every name here must exist in the Fedora repos (Hack is packaged
+            # as source-foundry-hack-fonts; there is no google-noto-fonts).
             sudo dnf install -y \
               powerline-fonts \
               fira-code-fonts \
-              hack-fonts \
-              google-noto-fonts \
+              source-foundry-hack-fonts \
+              google-noto-sans-fonts \
+              google-noto-sans-mono-fonts \
               google-noto-color-emoji-fonts 2>/dev/null || true
             
             # Install additional Nerd Fonts manually
@@ -2985,14 +2991,76 @@ check_asciinema() {
 # Main
 # ═══════════════════════════════════════════════════════════════════════════════
 
+# Debian's `su` (without `-`) and ordinary user shells have no sbin directory
+# on PATH, and the Determinate installer looks `groupadd`/`addgroup` up on the
+# caller's PATH before it escalates. It then stops with "Could not find a
+# supported command to create groups" although /usr/sbin/groupadd is right
+# there. Put the sbin directories on PATH for the installer; sudo's secure_path
+# runs the same binaries for the privileged steps anyway.
+ensure_sbin_on_path() {
+  local dir
+  for dir in /usr/local/sbin /usr/sbin /sbin; do
+    [ -d "$dir" ] || continue
+    case ":$PATH:" in
+      *":$dir:"*) ;;
+      *) PATH="$PATH:$dir" ;;
+    esac
+  done
+  export PATH
+}
+
+# Run a command as root: directly when already root, through sudo otherwise.
+run_as_root() {
+  if [ "$(id -u 2>/dev/null)" = "0" ]; then
+    "$@"
+  else
+    sudo "$@"
+  fi
+}
+
+# The official installer leaves flakes and nix-command off; RF Swift's engine
+# needs both, so enable them system-wide and restart the daemon.
+nix_enable_flakes() {
+  local conf="/etc/nix/nix.conf"
+  if grep -qs 'experimental-features.*flakes' "$conf"; then
+    return 0
+  fi
+  if [ "$(id -u 2>/dev/null)" != "0" ] && ! have_sudo_access; then
+    color_echo "yellow" "   Add 'experimental-features = nix-command flakes' to $conf to finish enabling flakes."
+    return 0
+  fi
+  printf 'experimental-features = nix-command flakes\n' | run_as_root tee -a "$conf" >/dev/null
+  if command_exists systemctl; then
+    run_as_root systemctl restart nix-daemon >/dev/null 2>&1 || true
+  fi
+}
+
+nix_installer_determinate() {
+  color_echo "blue" "🚀 Running the Determinate Systems Nix installer (enables flakes + nix-command)..."
+  curl --proto '=https' --tlsv1.2 -sSf -L https://install.determinate.systems/nix | sh -s -- install --no-confirm
+}
+
+nix_installer_official() {
+  color_echo "yellow" "⚠️  The Determinate installer did not complete; trying the official NixOS multi-user installer..."
+  curl --proto '=https' --tlsv1.2 -sSf -L https://nixos.org/nix/install | sh -s -- --daemon --yes || return 1
+  nix_enable_flakes
+}
+
 install_nix() {
   color_echo "blue" "❄️  Installing Nix (native engine)..."
   if command_exists nix; then
     color_echo "green" "✅ Nix is already installed."
     return 0
   fi
-  color_echo "blue" "🚀 Running the Determinate Systems Nix installer (enables flakes + nix-command)..."
-  if curl --proto '=https' --tlsv1.2 -sSf -L https://install.determinate.systems/nix | sh -s -- install --no-confirm; then
+  if [ "$(uname)" = "Linux" ]; then
+    ensure_sbin_on_path
+    if ! command_exists groupadd && ! command_exists addgroup; then
+      color_echo "red" "🚨 Neither 'groupadd' nor 'addgroup' is available; the Nix installer needs one to create the nixbld build group."
+      color_echo "cyan" "   Install it first (Debian/Ubuntu: 'sudo apt-get install passwd'; Alpine: 'apk add shadow'), then re-run."
+      return 1
+    fi
+  fi
+  if nix_installer_determinate || nix_installer_official; then
     color_echo "green" "✅ Nix installed."
     color_echo "cyan" "   Open a new shell (or 'source /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh') so 'nix' is on PATH,"
     color_echo "cyan" "   then:  rfswift --engine nix run <environment>"
@@ -3092,6 +3160,12 @@ check_nix_engine() {
 }
 
 main() {
+  # A root shell reached with plain `su` keeps the user's PATH, without the
+  # sbin directories (Debian's su no longer adds them). dpkg, ldconfig and the
+  # Nix installer then report tools as missing that are installed; see
+  # ensure_sbin_on_path. Normalise once, for the whole run.
+  ensure_sbin_on_path
+
   display_rainbow_logo_animated
 
   fun_welcome

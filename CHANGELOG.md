@@ -458,6 +458,27 @@ branch.
 
 ### Fixed
 
+- Installer: on Debian, and in any shell without `/usr/sbin` on PATH (a
+  root shell reached with plain `su`, most user shells), the optional Nix
+  engine step died in the Determinate installer with "Could not find a
+  supported command to create groups in PATH" even though `groupadd` was
+  installed: the installer only searches the caller's PATH before it
+  escalates. The same shell also hides `ldconfig` from the Workbench
+  dependency check. `get_rfswift.sh` now puts the sbin directories on PATH
+  once at start-up for the whole run, stops with an actionable hint when
+  neither `groupadd` nor `addgroup` exists at all, and falls back to the
+  official NixOS multi-user installer (enabling `nix-command flakes` in
+  `/etc/nix/nix.conf`) when the Determinate one cannot complete.
+- Installer, Fedora: the `xhost` install step asked dnf for
+  `xorg-x11-server-utils`, a package Fedora split into per-tool packages
+  (`xhost`, `xrandr`, ...) years ago, so the step always failed; it now
+  installs `xhost`. The font step named `hack-fonts` and `google-noto-fonts`,
+  neither of which exists, and dnf5 refuses a whole transaction over one
+  unknown name, so no font was ever installed on Fedora; the list now uses
+  `source-foundry-hack-fonts`, `google-noto-sans-fonts` and
+  `google-noto-sans-mono-fonts`. Verified against the Fedora 41, 43 and 44
+  repositories. The Debian `su` PATH trap does not exist on Fedora: 41 puts
+  the sbin directories on every user's PATH and 42+ merged sbin into bin.
 - Windows Workbench: every delegated Nix-engine call (`rfswift exec` for a
   tool launch, `nix install`, the WSL setup steps) spawned `wsl.exe` without
   `CREATE_NO_WINDOW`, so a GUI-subsystem parent got an empty terminal window
