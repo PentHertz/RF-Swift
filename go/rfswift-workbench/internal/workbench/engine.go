@@ -403,7 +403,7 @@ func (e *LocalEngine) ListTargets() ([]Mission, error) {
 			if ev.Realised() {
 				st = "up"
 			}
-			out = append(out, Mission{
+			m := Mission{
 				ID:       ev.Name,
 				Title:    ev.Name,
 				Engine:   "nix",
@@ -413,7 +413,9 @@ func (e *LocalEngine) ListTargets() ([]Mission, error) {
 				FlakeRef: ev.FlakeRef,
 				Lazy:     ev.Lazy,
 				Isolate:  ev.Isolate,
-			})
+			}
+			setNixWorkspace(&m, ev)
+			out = append(out, m)
 		}
 	}
 	sort.SliceStable(out, func(i, j int) bool { return out[i].ID < out[j].ID })
@@ -461,13 +463,14 @@ func listEngineContainers(eng rfdock.ContainerEngine) []engineContainer {
 // routed moby client) or a Nix environment.
 func (e *LocalEngine) Inspect(id string) (Mission, error) {
 	if ev, err := rfnix.GetEnvironment(id); err == nil {
-		return Mission{
+		m := Mission{
 			ID: ev.Name, Title: ev.Name, Engine: "nix", Env: ev.Image,
 			Image: "nix env (" + ev.FlakeRef + ")", User: "you",
 			Net: "host (native)", Status: boolState(ev.Realised()),
-			Mounts:   []string{ev.Workspace},
-			FlakeRef: ev.FlakeRef,
-		}, nil
+			FlakeRef: ev.FlakeRef, Lazy: ev.Lazy, Isolate: ev.Isolate,
+		}
+		setNixWorkspace(&m, ev)
+		return m, nil
 	}
 	cli, engType, err := e.clientFor(id)
 	if err != nil {
@@ -529,6 +532,9 @@ func (e *LocalEngine) Inspect(id string) (Mission, error) {
 		}
 	}
 	for _, mp := range info.Mounts {
+		if mp.Destination == "/workspace" && m.Workspace == "" {
+			m.Workspace, m.ShellWorkspace = mp.Source, mp.Destination
+		}
 		rw := "ro"
 		if mp.RW {
 			rw = "rw"
@@ -931,6 +937,29 @@ func execNixEnvironmentStream(ev *rfnix.Environment, command string, live io.Wri
 }
 
 // --- helpers ---
+
+// setNixWorkspace fills a Nix mission's workspace fields and its Mounts entry
+// from the environment manifest. The mount is written in the container form
+// ("host -> /workspace (rw)") when a Linux jail binds the workspace there, so
+// the Configuration card reads the same for both engines; a native
+// environment shows the host path, which is what its shell sees. On Windows
+// the manifest's Linux path is translated to the WSL 2 share so the Captures
+// tab can inventory it.
+func setNixWorkspace(m *Mission, ev *rfnix.Environment) {
+	host := rfnix.WorkspaceHostPath(ev.Workspace)
+	if ev.Workspace == "" || ev.Workspace == "none" {
+		m.Mounts = []string{"none (created without a workspace)"}
+		return
+	}
+	m.Workspace = host
+	m.ShellWorkspace = rfnix.WorkspaceInShell(ev)
+	switch {
+	case m.ShellWorkspace != ev.Workspace:
+		m.Mounts = []string{host + " -> " + m.ShellWorkspace + " (rw, jail)"}
+	default:
+		m.Mounts = []string{host + " (workspace, native path)"}
+	}
+}
 
 func mapState(state string) string {
 	if strings.EqualFold(state, "running") {

@@ -12,6 +12,54 @@ branch.
 
 ### Added
 
+- Nix engine: the workspace is now visible wherever the environment is. The
+  Workbench shows a "Workspace" row on every target's Configuration card (host
+  path, plus the path the shell sees when a container or Linux jail mounts it
+  at `/workspace`), the Captures tab says which directory its live inventory
+  reads, Nix targets list their workspace as a mount from the first refresh,
+  and the engine doctor names the default workspace root on Linux and macOS,
+  not only on Windows. On Windows the Workbench translates a Nix
+  environment's Linux workspace to the WSL 2 share, so the Captures tab can
+  inventory it instead of finding nothing. Entering an environment prints
+  `Workspace: <dir>` (with the in-jail `/workspace` path for `--isolate`),
+  the shell banner names it through `RFSWIFT_WORKSPACE`, and the CLI summary
+  shows the jail path next to the host directory. zsh - macOS's default shell,
+  which until now opened silently - gets the same environment shell as bash
+  through a generated rc in a private `ZDOTDIR` (the user's own `.zshrc` is
+  sourced first): banner, `(rfswift:<name>)` prompt prefix, tools on PATH,
+  `rfsudo` and the lazy build-on-first-call hook. An isolated environment's
+  private HOME now carries a `workspace` link to the shared directory
+  (`/workspace` in a Linux jail, the host path in the macOS sandbox), so
+  `ls ~` in the jail shows where captures go instead of an empty home.
+- Deleting a mission completely can now take its workspace directory with
+  it. The Workbench's "Delete mission completely" dialog offers a checkbox
+  naming the directory (ticked by default for the automatic
+  `~/rfswift-workspace/<name>` location, unticked for a custom path), and
+  `rfswift nix remove --workspace` does the same from the CLI. Without it the
+  workspace is kept as before, since it holds the captures. Home directories,
+  filesystem roots and symlinked workspaces are refused.
+
+### Fixed
+
+- Nix engine, macOS `--isolate`: lazy tools failed to build inside the
+  sandbox with `cannot open SQLite database .../jail-home/.cache/nix/
+  fetcher-cache-v4.sqlite`. nix's SQLite resolves the database path one
+  component at a time, and the Seatbelt profile denied even metadata reads on
+  `/Users` and the user's home on the way to the allowed jail HOME (`mkdir -p`
+  and `realpath` failed the same way). The profile now allows metadata-only
+  reads on the ancestors of each permitted directory, as literals, so the rest
+  of the home stays unreadable and unlistable.
+- Nix engine, `--isolate` with lazy environments (Linux and macOS): the first
+  call of a tool failed with `creating symlink ".../prerequisites.tmp-..."`:
+  `Operation not permitted`. The jail exposes the environment's state
+  read-only, but a shim pins what it builds there (`nix build --out-link`).
+  The `tools/` directory is now writable in both jails - the manifest and the
+  shell rc files stay read-only, since a jailed tool must not choose what the
+  next session mounts - and shims (and the shell's build-on-first-call hook)
+  re-pin the prerequisites layer only when its gcroot is missing, instead of
+  rewriting the link on every first call. Existing shims are regenerated on
+  the next entry.
+
 - `get_rfswift.sh`: `RFSWIFT_ENGINE=docker|podman|both|skip`, `RFSWIFT_NIX=1|0`
   and `RFSWIFT_INSTALL_DIR=<dir>` answer the container-engine, Nix and
   install-directory questions up front, next to `RFSWIFT_CHANNEL`,

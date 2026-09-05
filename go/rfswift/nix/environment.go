@@ -192,6 +192,7 @@ func RunEnvironment(opts RunOptions) error {
 	if opts.PreEnter != nil {
 		opts.PreEnter(env)
 	}
+	common.PrintInfoMessage(WorkspaceHint(env))
 	common.PrintSuccessMessage(fmt.Sprintf("Environment '%s' ready. Entering shell (exit to leave).", opts.Name))
 	return enter(env, opts.Command, opts.Pure, GLEnvironment(env, true))
 }
@@ -324,6 +325,49 @@ func RemoveEnvironment(name string) error {
 		return fmt.Errorf("failed to remove environment '%s': %w", name, err)
 	}
 	common.PrintSuccessMessage(fmt.Sprintf("Removed environment '%s'", name))
+	return nil
+}
+
+// RemoveWorkspaceDir deletes an environment's workspace directory - the
+// user's captures, so only ever on their explicit request (`remove
+// --workspace`, the Workbench's ticked option). It refuses the targets a
+// hand-edited manifest or a careless path could name: a home directory, a
+// filesystem root, or a symlink (the link's target is not ours to delete).
+// A workspace that is already gone is not an error.
+func RemoveWorkspaceDir(path string) error {
+	if path == "" || path == "none" {
+		return nil
+	}
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return err
+	}
+	clean := filepath.Clean(abs)
+	if clean == filepath.Clean(homeDir()) {
+		return fmt.Errorf("refusing to delete %s: it is the home directory", clean)
+	}
+	if home, err := os.UserHomeDir(); err == nil && clean == filepath.Clean(home) {
+		return fmt.Errorf("refusing to delete %s: it is the home directory", clean)
+	}
+	if clean == filepath.VolumeName(clean)+string(filepath.Separator) || clean == filepath.Dir(clean) {
+		return fmt.Errorf("refusing to delete %s: it is a filesystem root", clean)
+	}
+	fi, err := os.Lstat(clean)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	if fi.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("refusing to delete %s: it is a symlink; remove it yourself if that is intended", clean)
+	}
+	if !fi.IsDir() {
+		return fmt.Errorf("refusing to delete %s: not a directory", clean)
+	}
+	if err := os.RemoveAll(clean); err != nil {
+		return fmt.Errorf("failed to delete workspace %s: %w", clean, err)
+	}
 	return nil
 }
 
@@ -466,7 +510,7 @@ in builtins.listToAttrs (map (n: { name = n; value = main n; }) names)
 // shimFormat identifies the shim script layout. Shims of an older format are
 // regenerated on the next entry (ensureShims), so an environment created by
 // an earlier RF Swift gets the pinned, GC-safe layout without being recreated.
-const shimFormat = "2"
+const shimFormat = "3"
 
 // shimFormatMarker is the line ensureShims looks for in an existing shim.
 const shimFormatMarker = "# rfswift-shim-format: " + shimFormat
@@ -503,7 +547,12 @@ func writeShims(env *Environment) error {
 		prereq := fmt.Sprintf("%s#%s-prerequisites", env.FlakeRef, env.Image)
 		prereqStep := ""
 		if len(env.Prerequisites) > 0 {
-			prereqStep = fmt.Sprintf("  %s %s build --out-link %q %q || exit $?\n", nixbin, nixFeatureArgs, prerequisitesLink(env.Name), prereq)
+			// The layer is realised at creation (and by updates), outside any
+			// jail; only re-pin it when its gcroot is gone (a store GC after
+			// the link was removed, a manifest copied between machines). A
+			// jail exposes the environment's state read-only apart from
+			// tools/, so an unconditional --out-link there would fail.
+			prereqStep = fmt.Sprintf("  if [ ! -e %q ]; then %s %s build --out-link %q %q || exit $?; fi\n", prerequisitesLink(env.Name), nixbin, nixFeatureArgs, prerequisitesLink(env.Name), prereq)
 		}
 		script := fmt.Sprintf(`#!/bin/sh
 %s
@@ -688,7 +737,11 @@ func enter(env *Environment, command string, pure bool, gl map[string]string) er
 			"develop", fmt.Sprintf("%s#%s", env.FlakeRef, env.Image),
 			"--ignore-environment",
 		)
-		for _, key := range glEnvKeys(gl) {
+		keep := shellEnv(env, workdir, gl)
+		for k, v := range zshEnv(env, shell, "") {
+			keep[k] = v
+		}
+		for _, key := range glEnvKeys(keep) {
 			nixArgs = append(nixArgs, "--keep", key)
 		}
 		if command != "" {
@@ -697,7 +750,7 @@ func enter(env *Environment, command string, pure bool, gl map[string]string) er
 			nixArgs = append(nixArgs, "--command", shell)
 		}
 		cmd := nixCommand(nixArgs...)
-		cmd.Env = withEnv(os.Environ(), gl)
+		cmd.Env = withEnv(os.Environ(), keep)
 		cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
 		cmd.Dir = workdir
 		if env.Isolate {
@@ -731,13 +784,12 @@ func enter(env *Environment, command string, pure bool, gl map[string]string) er
 		"RFSWIFT_NIX_ENV": env.Name,
 		"RFSWIFT_ENGINE":  "nix",
 	}
-	for k, v := range gl {
+	for k, v := range shellEnv(env, workdir, gl) {
 		vars[k] = v
 	}
 	for k, v := range pluginPathEnv(env) {
 		vars[k] = v
 	}
-	childEnv := withEnv(os.Environ(), vars)
 
 	shell := userShell()
 	var cmd *exec.Cmd
@@ -751,9 +803,12 @@ func enter(env *Environment, command string, pure bool, gl map[string]string) er
 			cmd = exec.Command(shell, "-i")
 		}
 	} else {
+		for k, v := range zshEnv(env, shell, binDir) {
+			vars[k] = v
+		}
 		cmd = exec.Command(shell, "-i")
 	}
-	cmd.Env = childEnv
+	cmd.Env = withEnv(os.Environ(), vars)
 	cmd.Dir = workdir
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
 	if env.Isolate {
@@ -833,6 +888,7 @@ echo ""
 echo "  RF Swift (nix) - environment '%s' [%s]"
 echo "  %s"
 echo "  Root: run a tool with sudo via 'rfsudo <tool>' (e.g. rfsudo airmon-ng)."
+if [ -n "${RFSWIFT_WORKSPACE:-}" ]; then echo "  Workspace: $RFSWIFT_WORKSPACE (shared with the host; the Workbench Captures tab inventories it)."; fi
 if [ -n "${RFSWIFT_NIX_GL_RUNTIME:-}" ]; then echo "  OpenGL: nix GL runtime active for GUI tools (rfswift nix gl %s)."; fi
 echo ""
 `, binDir, env.Name, env.Name, env.Name, env.Image, toolLine, env.Name)
@@ -856,7 +912,94 @@ echo ""
 // tools/ like a shim would, and runs it. Packages whose name relates to the
 // command are tried first so it stays close to on-demand rather than building
 // everything.
-func lazyHandler(env *Environment) string {
+// zshDir is the private ZDOTDIR an environment's zsh starts from.
+func zshDir(name string) string { return filepath.Join(EnvDir(name), "zsh") }
+
+// zshEnv returns the variables that give zsh the same environment shell as
+// bash gets through --rcfile: ZDOTDIR pointing at a generated .zshrc (which
+// sources the user's own first). Empty for other shells or when the rc cannot
+// be written, so the shell still opens, just without the banner. binDir may be
+// "" (pure `nix develop`, which puts the tools on PATH itself).
+func zshEnv(env *Environment, shell, binDir string) map[string]string {
+	if filepath.Base(shell) != "zsh" {
+		return nil
+	}
+	dir, err := writeZshRC(env, binDir)
+	if err != nil {
+		return nil
+	}
+	// macOS Terminal's session save/restore (/etc/zshrc_Apple_Terminal) keeps
+	// its files under ZDOTDIR, which here is the environment's read-only state
+	// dir; it is meaningless for an environment shell, so switch it off rather
+	// than let it fail noisily on exit.
+	return map[string]string{"ZDOTDIR": dir, "RFSWIFT_USER_ZDOTDIR": os.Getenv("ZDOTDIR"), "SHELL_SESSIONS_DISABLE": "1"}
+}
+
+// writeZshRC generates <env>/zsh/.zshrc - zsh's counterpart of writeBashRC,
+// since zsh has no --rcfile - and returns its directory for ZDOTDIR. It sources
+// the user's own .zshrc (from their ZDOTDIR or HOME - a jail's private HOME has
+// none, like the bash rc), then adds PATH, the prompt prefix, rfsudo, the
+// banner naming the workspace, and the lazy build-on-first-call hook.
+func writeZshRC(env *Environment, binDir string) (string, error) {
+	dir := zshDir(env.Name)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", err
+	}
+	toolLine := fmt.Sprintf("~%d tools on PATH. Type 'exit' to leave.", len(env.Packages))
+	if env.Lazy {
+		toolLine = fmt.Sprintf("%d tools available; each builds the first time you call it. Type 'exit' to leave.", len(env.Commands))
+	}
+	pathLine := ""
+	if binDir != "" {
+		pathLine = fmt.Sprintf("export PATH=%q:\"$PATH\"\n", binDir)
+	}
+	content := fmt.Sprintf(`# Generated by RF Swift (nix engine). Do not edit.
+# The user's own zsh setup first (their ZDOTDIR, else HOME), then ours.
+_rfx_zdotdir="${RFSWIFT_USER_ZDOTDIR:-$HOME}"
+if [ -f "$_rfx_zdotdir/.zshrc" ]; then ZDOTDIR="$_rfx_zdotdir" . "$_rfx_zdotdir/.zshrc"; fi
+if [ -n "${RFSWIFT_USER_ZDOTDIR:-}" ]; then export ZDOTDIR="$RFSWIFT_USER_ZDOTDIR"; else unset ZDOTDIR; fi
+# /etc/zshrc derives HISTFILE from ZDOTDIR; keep history with the user, not in
+# the environment's state dir.
+if [ "${HISTFILE:-}" = %q ]; then HISTFILE="$_rfx_zdotdir/.zsh_history"; fi
+unset _rfx_zdotdir RFSWIFT_USER_ZDOTDIR
+%sexport RFSWIFT_NIX_ENV=%q
+PROMPT="(rfswift:%s) $PROMPT"
+# Run an environment tool as root: sudo resets the environment, so pass PATH,
+# the display and the OpenGL runtime (non-NixOS hosts) through.
+rfsudo() {
+  local -a keep; local v
+  for v in DISPLAY XAUTHORITY WAYLAND_DISPLAY LD_LIBRARY_PATH LIBGL_DRIVERS_PATH LIBVA_DRIVERS_PATH GBM_BACKENDS_PATH __EGL_VENDOR_LIBRARY_FILENAMES; do
+    [ -n "${(P)v:-}" ] && keep+=("$v=${(P)v}")
+  done
+  sudo env "PATH=$PATH" "${keep[@]}" "$@"
+}
+echo ""
+echo "  RF Swift (nix) - environment '%s' [%s]"
+echo "  %s"
+echo "  Root: run a tool with sudo via 'rfsudo <tool>' (e.g. rfsudo airmon-ng)."
+if [ -n "${RFSWIFT_WORKSPACE:-}" ]; then echo "  Workspace: $RFSWIFT_WORKSPACE (shared with the host; the Workbench Captures tab inventories it)."; fi
+if [ -n "${RFSWIFT_NIX_GL_RUNTIME:-}" ]; then echo "  OpenGL: nix GL runtime active for GUI tools (rfswift nix gl %s)."; fi
+echo ""
+`, filepath.Join(dir, ".zsh_history"), pathLine, env.Name, env.Name, env.Name, env.Image, toolLine, env.Name)
+	if env.Lazy {
+		content += lazyHandlerFor(env, "zsh")
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".zshrc"), []byte(content), 0o644); err != nil {
+		return "", err
+	}
+	return dir, nil
+}
+
+func lazyHandler(env *Environment) string { return lazyHandlerFor(env, "bash") }
+
+// lazyHandlerFor renders the build-on-first-call fallback for bash or zsh. The
+// two differ only in the hook's name and in how a local array is declared;
+// everything else is common shell syntax.
+func lazyHandlerFor(env *Environment, shell string) string {
+	handler, locals := "command_not_found_handle", "local a leaf out link ordered=()"
+	if shell == "zsh" {
+		handler, locals = "command_not_found_handler", "local a leaf out link; local -a ordered; ordered=()"
+	}
 	quoted := make([]string, 0, len(env.Packages))
 	for _, p := range env.Packages {
 		quoted = append(quoted, fmt.Sprintf("%q", p))
@@ -864,16 +1007,16 @@ func lazyHandler(env *Environment) string {
 	attrs := strings.Join(quoted, " ")
 	prereqStep := ""
 	if len(env.Prerequisites) > 0 {
-		prereqStep = fmt.Sprintf("  \"$__rfx_nix\" %s build --out-link %q %q || return $?\n", nixFeatureArgs, prerequisitesLink(env.Name), fmt.Sprintf("%s#%s-prerequisites", env.FlakeRef, env.Image))
+		prereqStep = fmt.Sprintf("  if [ ! -e %q ]; then \"$__rfx_nix\" %s build --out-link %q %q || return $?; fi\n", prerequisitesLink(env.Name), nixFeatureArgs, prerequisitesLink(env.Name), fmt.Sprintf("%s#%s-prerequisites", env.FlakeRef, env.Image))
 	}
 	return fmt.Sprintf(`
 __rfx_flake=%q
 __rfx_nix=%q
 __rfx_tools=%q
 __rfx_attrs=(%s)
-command_not_found_handle() {
+%s() {
   local cmd="$1"; shift
-  local a leaf out link ordered=()
+  %s
 %s
   # Try packages whose name relates to the command first.
   for a in "${__rfx_attrs[@]}"; do
@@ -896,7 +1039,49 @@ command_not_found_handle() {
   echo "rfswift: '$cmd' is not provided by environment '$RFSWIFT_NIX_ENV'." >&2
   return 127
 }
-`, env.FlakeRef, NixBinary(), toolsDir(env.Name), attrs, prereqStep, nixFeatureArgs, nixFeatureArgs)
+`, env.FlakeRef, NixBinary(), toolsDir(env.Name), attrs, handler, locals, prereqStep, nixFeatureArgs, nixFeatureArgs)
+}
+
+// shellWorkspaceVar is the RFSWIFT_WORKSPACE value for a shell that starts in
+// workdir: the workspace's host path when that is where the shell starts, ""
+// when the environment has no workspace (or it is missing on disk). A Linux
+// jail remaps the value to /workspace with the other path-bearing variables,
+// so the shell banner always names the path the user actually sees.
+func shellWorkspaceVar(env *Environment, workdir string) string {
+	ws := env.Workspace
+	if ws == "" || ws == "none" || workdir != ws {
+		return ""
+	}
+	return ws
+}
+
+// shellEnv merges the OpenGL runtime variables with RFSWIFT_WORKSPACE: the
+// variables an environment shell gets on top of the host's, and that a pure
+// `nix develop` keeps through --ignore-environment.
+func shellEnv(env *Environment, workdir string, gl map[string]string) map[string]string {
+	out := make(map[string]string, len(gl)+1)
+	for k, v := range gl {
+		out[k] = v
+	}
+	if ws := shellWorkspaceVar(env, workdir); ws != "" {
+		out["RFSWIFT_WORKSPACE"] = ws
+	}
+	return out
+}
+
+// WorkspaceHint is the one-line "where is my workspace" note shown before an
+// environment shell opens: the host directory shared with the host tools and
+// inventoried by the Workbench Captures tab, and - in a jail - the path it is
+// mounted at inside, since that is the only one the shell shows.
+func WorkspaceHint(env *Environment) string {
+	ws := env.Workspace
+	if ws == "" || ws == "none" {
+		return "Workspace: none (tools write wherever they run; create with --workspace <dir> to share a directory with the host)"
+	}
+	if in := WorkspaceInShell(env); in != ws {
+		return fmt.Sprintf("Workspace: %s (mounted at %s inside the jail)", ws, in)
+	}
+	return "Workspace: " + ws
 }
 
 // userShell picks the interactive shell to launch.

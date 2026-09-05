@@ -48,15 +48,22 @@ type AuditResult struct {
 
 // Mission is one pentest against one target (a container or a Nix env).
 type Mission struct {
-	ID               string          `json:"id"`
-	Title            string          `json:"title"`
-	Engine           string          `json:"engine"` // docker|podman|lima|nix
-	Env              string          `json:"env"`
-	Image            string          `json:"image"`
-	User             string          `json:"user"`
-	Caps             []string        `json:"caps"`
-	Cgroups          []string        `json:"cgroups"`
-	Mounts           []string        `json:"mounts"`
+	ID      string   `json:"id"`
+	Title   string   `json:"title"`
+	Engine  string   `json:"engine"` // docker|podman|lima|nix
+	Env     string   `json:"env"`
+	Image   string   `json:"image"`
+	User    string   `json:"user"`
+	Caps    []string `json:"caps"`
+	Cgroups []string `json:"cgroups"`
+	Mounts  []string `json:"mounts"`
+	// Workspace is the host directory shared with the target - the one the
+	// Captures tab inventories - as a path this process can open ("" when the
+	// target has none). ShellWorkspace is where the target's shell sees it:
+	// /workspace in a container or a Linux jail, the host path for a native
+	// Nix environment or the macOS sandbox.
+	Workspace        string          `json:"workspace,omitempty"`
+	ShellWorkspace   string          `json:"shellWorkspace,omitempty"`
 	Net              string          `json:"net"`
 	Ports            []Port          `json:"ports"`
 	Status           string          `json:"status"` // stopped|starting|up (runtime, from the engine)

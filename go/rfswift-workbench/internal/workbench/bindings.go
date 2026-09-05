@@ -719,10 +719,27 @@ func (a *App) UpdateMissionTool(mission, name string) error {
 
 // DeleteMissionCompletely removes the live target and all Workbench-owned
 // mission data. Host bind mounts, named volumes and images remain outside the
-// Workbench data root and are intentionally preserved.
-func (a *App) DeleteMissionCompletely(id, engine string) error {
+// Workbench data root and are intentionally preserved - except the mission's
+// workspace directory when deleteWorkspace is set: it holds the user's
+// captures, so the confirmation dialog asks for that explicitly.
+func (a *App) DeleteMissionCompletely(id, engine string, deleteWorkspace bool) error {
 	if err := a.requireMission(id); err != nil {
 		return err
+	}
+	workspace := ""
+	if deleteWorkspace {
+		if _, remote := a.eng.(*RemoteEngine); remote {
+			return errors.New("deleting the workspace directory is only available on the local connection")
+		}
+		// Read it now: removing a Nix environment takes its manifest away.
+		m, err := a.eng.Inspect(id)
+		if err != nil {
+			return err
+		}
+		if m.Workspace == "" {
+			return errors.New("this target has no workspace directory to delete")
+		}
+		workspace = m.Workspace
 	}
 	if engine == "nix" {
 		if err := a.DeleteNixEnvironment(id, false); err != nil {
@@ -735,7 +752,13 @@ func (a *App) DeleteMissionCompletely(id, engine string) error {
 	} else {
 		return errors.New("unsupported mission engine")
 	}
-	return a.store.DeleteMission(a.ws, id)
+	if err := a.store.DeleteMission(a.ws, id); err != nil {
+		return err
+	}
+	if workspace != "" {
+		return rfnix.RemoveWorkspaceDir(workspace)
+	}
+	return nil
 }
 
 // Exec runs a command inside a mission's container and returns its output.

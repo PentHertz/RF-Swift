@@ -146,10 +146,12 @@ const (
 )
 
 // jailMount is one host directory exposed in the jail at a clean path.
+// workdir marks the workspace, where the shell starts.
 type jailMount struct {
-	host string
-	jail string
-	rw   bool
+	host    string
+	jail    string
+	rw      bool
+	workdir bool
 }
 
 // jailMounts returns exactly the host directories the jail exposes for env, and
@@ -158,13 +160,24 @@ type jailMount struct {
 // environments under ~/.rfswift/nix/environments, nor any other workspace. So
 // an isolated session cannot read or tamper with another workspace's files or
 // its captured evidence.
+//
+// The state dir is read-only - a jailed tool must not rewrite the manifest
+// (its workspace path decides what the next session mounts) or the shell rc
+// files - except tools/, where a lazy environment's shims pin what they build
+// (`nix build --out-link tools/<attr>`). Its own private HOME (under the state
+// dir) is bound over HOME separately.
 func jailMounts(env *Environment, workdir string) []jailMount {
 	mounts := []jailMount{{host: EnvDir(env.Name), jail: jailEnv}}
+	if env.Lazy {
+		tools := toolsDir(env.Name)
+		_ = ensureDir(tools)
+		mounts = append(mounts, jailMount{host: tools, jail: jailEnv + "/tools", rw: true})
+	}
 	if sh := SharedExtrasProfile(); pathExists(sh) {
 		mounts = append(mounts, jailMount{host: sh, jail: jailShared})
 	}
 	if workdir != "" && workdir != homeDir() && pathExists(workdir) {
-		mounts = append(mounts, jailMount{host: workdir, jail: jailWorkdir, rw: true})
+		mounts = append(mounts, jailMount{host: workdir, jail: jailWorkdir, rw: true, workdir: true})
 	}
 	return mounts
 }
@@ -176,6 +189,7 @@ func isolateArgs(env *Environment, workdir string) []string {
 	home := homeDir()
 	jail := jailHomeDir(env.Name)
 	_ = os.MkdirAll(jail, 0o700)
+	linkJailWorkspace(jail, jailWorkdir, workdir)
 
 	args := []string{
 		"--die-with-parent",
@@ -225,8 +239,9 @@ func isolateArgs(env *Environment, workdir string) []string {
 	args = append(args, resolvConfBinds(filepath.EvalSymlinks)...)
 
 	// Private, clean HOME (persistent per environment): nothing else is bound
-	// under it, so `ls $HOME` shows only what the tools create. A private /tmp
-	// with just the display sockets bound back in.
+	// under it, so `ls $HOME` shows only what the tools create, plus the
+	// `workspace` link to /workspace. A private /tmp with just the display
+	// sockets bound back in.
 	args = append(args,
 		"--bind", jail, home,
 		"--setenv", "HOME", home,
@@ -249,9 +264,11 @@ func isolateArgs(env *Environment, workdir string) []string {
 	for _, m := range jailMounts(env, workdir) {
 		if m.rw {
 			args = append(args, "--bind-try", m.host, m.jail)
-			chdir = m.jail
 		} else {
 			args = append(args, "--ro-bind-try", m.host, m.jail)
+		}
+		if m.workdir {
+			chdir = m.jail
 		}
 	}
 	args = append(args, "--chdir", chdir)
@@ -292,6 +309,43 @@ func jailRemapList(v string, mounts []jailMount) string {
 		parts[i] = jailRemap(p, mounts)
 	}
 	return strings.Join(parts, ":")
+}
+
+// linkJailWorkspace keeps a `workspace` symlink in the jail's private HOME
+// pointing at where the workspace is seen from inside (target): /workspace in
+// a Linux jail, the host path in the macOS sandbox. So `ls ~` in a jail shows
+// where the shared directory is instead of an empty home. Without a usable
+// workspace (workdir "" or the home itself) a stale link is removed.
+func linkJailWorkspace(jail, target, workdir string) {
+	link := filepath.Join(jail, "workspace")
+	if workdir == "" || workdir == homeDir() || !pathExists(workdir) {
+		if fi, err := os.Lstat(link); err == nil && fi.Mode()&os.ModeSymlink != 0 {
+			_ = os.Remove(link)
+		}
+		return
+	}
+	if cur, err := os.Readlink(link); err == nil && cur == target {
+		return
+	}
+	if fi, err := os.Lstat(link); err == nil && fi.Mode()&os.ModeSymlink != 0 {
+		_ = os.Remove(link)
+	}
+	_ = os.Symlink(target, link)
+}
+
+// WorkspaceInShell reports where env's workspace appears from inside its
+// shell. A Linux jail (bubblewrap, natively or in the WSL 2 distribution)
+// binds it at /workspace and shows nothing of the host path; the macOS
+// sandbox and unjailed shells keep the host path. "" without a workspace.
+func WorkspaceInShell(env *Environment) string {
+	ws := env.Workspace
+	if ws == "" || ws == "none" {
+		return ""
+	}
+	if env.Isolate && (runtime.GOOS == "linux" || useWSL()) {
+		return jailWorkdir
+	}
+	return ws
 }
 
 // IsolateCommand wraps inner in a jail for env. It returns a new *exec.Cmd that
@@ -401,12 +455,33 @@ func darwinSandboxProfile(env *Environment, workdir, jail string) string {
 	b.WriteString("(deny file-read* file-write* (subpath \"/Users\"))\n")
 	b.WriteString("(deny file-read* file-write* (subpath \"/private/var/root\"))\n")
 
+	// Every allowed directory sits under a denied home, and path resolution
+	// needs to stat each component on the way there: SQLite (nix's fetcher
+	// and eval caches under $HOME/.cache) lstat()s the full path component by
+	// component and fails with "unable to open database file" when /Users is
+	// opaque; `mkdir -p` and realpath() trip the same way. Allow metadata
+	// reads on the ancestors only - as literals, so their contents (the rest
+	// of the home) stay unreadable and unlistable.
+	seen := map[string]bool{}
 	writeAllow := func(mode, p string) {
-		if p != "" {
-			fmt.Fprintf(&b, "(allow %s (subpath %s))\n", mode, sbplString(p))
+		if p == "" {
+			return
 		}
+		for _, dir := range ancestorDirs(p) {
+			if !seen[dir] {
+				seen[dir] = true
+				fmt.Fprintf(&b, "(allow file-read-metadata (literal %s))\n", sbplString(dir))
+			}
+		}
+		fmt.Fprintf(&b, "(allow %s (subpath %s))\n", mode, sbplString(p))
 	}
 	writeAllow("file-read*", EnvDir(env.Name))
+	if env.Lazy {
+		// Where the shims pin what they build; the rest of the state dir
+		// (manifest, rc files) stays read-only, as in the Linux jail.
+		_ = ensureDir(toolsDir(env.Name))
+		writeAllow("file-read* file-write*", toolsDir(env.Name))
+	}
 	if sh := SharedExtrasProfile(); pathExists(sh) {
 		writeAllow("file-read*", sh)
 	}
@@ -415,6 +490,16 @@ func darwinSandboxProfile(env *Environment, workdir, jail string) string {
 	}
 	writeAllow("file-read* file-write*", jail)
 	return b.String()
+}
+
+// ancestorDirs lists the directories above p, nearest last, excluding the
+// root and p itself: "/a/b/c" -> ["/a", "/a/b"].
+func ancestorDirs(p string) []string {
+	var out []string
+	for dir := filepath.Dir(filepath.Clean(p)); dir != "/" && dir != "." && dir != filepath.Dir(dir); dir = filepath.Dir(dir) {
+		out = append([]string{dir}, out...)
+	}
+	return out
 }
 
 // isolateCommandDarwin wraps inner in a Seatbelt sandbox. Unlike the Linux jail
@@ -430,6 +515,7 @@ func isolateCommandDarwin(inner *exec.Cmd, env *Environment, workdir string) (*e
 	if err := os.MkdirAll(jail, 0o700); err != nil {
 		return nil, fmt.Errorf("could not create the isolated HOME %q: %w", jail, err)
 	}
+	linkJailWorkspace(jail, workdir, workdir)
 	profile := darwinSandboxProfile(env, workdir, jail)
 
 	// sandbox-exec -p <profile> <program> [args...]. The profile is a single

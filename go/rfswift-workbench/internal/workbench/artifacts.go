@@ -34,13 +34,27 @@ func (a *App) missionWorkspace(mission string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	if m.Workspace != "" {
+		return m.Workspace, nil
+	}
 	for _, mount := range m.Mounts {
 		if strings.Contains(mount, " -> /workspace ") {
 			return strings.TrimSpace(strings.SplitN(mount, " -> ", 2)[0]), nil
 		}
 	}
-	if m.Engine == "nix" && len(m.Mounts) > 0 && m.Mounts[0] != "" && m.Mounts[0] != "none" {
-		return m.Mounts[0], nil
+	if m.Engine == "nix" && len(m.Mounts) > 0 {
+		// Older callers (and tests) pass the bare host path as the only
+		// mount; a labelled "none (...)" entry means no workspace at all.
+		first := strings.TrimSpace(m.Mounts[0])
+		if strings.HasPrefix(first, "none") {
+			return "", errors.New("this environment was created without a workspace: recreate it with a workspace path to inventory files")
+		}
+		if i := strings.Index(first, " ("); i > 0 {
+			first = first[:i]
+		}
+		if first != "" {
+			return first, nil
+		}
 	}
 	home, err := os.UserHomeDir()
 	if err != nil {

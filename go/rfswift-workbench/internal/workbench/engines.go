@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"regexp"
 	"runtime"
 	"strings"
@@ -57,6 +58,9 @@ func (a *App) NixEngineStatus() NixEngineStatus {
 		return st
 	}
 	if runtime.GOOS != "windows" {
+		if home, err := os.UserHomeDir(); err == nil {
+			st.WorkspaceRoot = filepath.Join(home, "rfswift-workspace")
+		}
 		if rfnix.IsAvailable() {
 			st.Ready = true
 			if v, err := rfnix.Version(); err == nil {

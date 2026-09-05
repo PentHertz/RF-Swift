@@ -138,6 +138,22 @@ func WSLWorkspaceRoot() string {
 	return rfutils.WSLPathToWindows(st.Distro, st.Home+"/rfswift-workspace")
 }
 
+// WorkspaceHostPath returns an environment's workspace as a path this process
+// can open. On Windows the manifest holds the Linux path of the WSL 2
+// distribution; it is translated to the distribution's share (or back to the
+// drive for /mnt/<drive>/...), so the Workbench can inventory it. Elsewhere,
+// and without a workspace, ws is returned unchanged.
+func WorkspaceHostPath(ws string) string {
+	if ws == "" || ws == "none" || !useWSL() {
+		return ws
+	}
+	st, err := wslState()
+	if err != nil || st.Distro == "" {
+		return ws
+	}
+	return rfutils.WSLPathToWindows(st.Distro, ws)
+}
+
 // wslWorkspaceHint tells a user of the Linux side running inside WSL 2 where
 // Windows sees an environment's workspace (Explorer opens \\wsl.localhost\...).
 // "" outside WSL, without a workspace, or when the workspace already lives on

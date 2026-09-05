@@ -47,12 +47,16 @@ func InteractiveCommand(name, requestedShell string) (*exec.Cmd, error) {
 	pure := env.ProfilePath == "" && !env.Lazy
 	if pure {
 		args := append(experimentalArgs(), "develop", fmt.Sprintf("%s#%s", env.FlakeRef, env.Image), "--ignore-environment")
-		for _, key := range glEnvKeys(gl) {
+		keep := shellEnv(env, workdir, gl)
+		for k, v := range zshEnv(env, shell, "") {
+			keep[k] = v
+		}
+		for _, key := range glEnvKeys(keep) {
 			args = append(args, "--keep", key)
 		}
 		args = append(args, "--command", shell)
 		cmd := nixCommand(args...)
-		cmd.Env = withEnv(os.Environ(), gl)
+		cmd.Env = withEnv(os.Environ(), keep)
 		cmd.Dir = workdir
 		if env.Isolate {
 			return IsolateCommand(cmd, env, workdir)
@@ -82,10 +86,15 @@ func InteractiveCommand(name, requestedShell string) (*exec.Cmd, error) {
 		cmd = exec.Command(shell, "-i")
 	}
 	vars := map[string]string{"PATH": strings.Join(pathParts, string(os.PathListSeparator)), "RFSWIFT_NIX_ENV": env.Name, "RFSWIFT_ENGINE": "nix", "TERM": "xterm-256color", "COLORTERM": "truecolor"}
+	if filepath.Base(shell) != "bash" {
+		for k, v := range zshEnv(env, shell, binDir) {
+			vars[k] = v
+		}
+	}
 	for k, v := range pluginPathEnv(env) {
 		vars[k] = v
 	}
-	for k, v := range gl {
+	for k, v := range shellEnv(env, workdir, gl) {
 		vars[k] = v
 	}
 	cmd.Env = withEnv(os.Environ(), vars)

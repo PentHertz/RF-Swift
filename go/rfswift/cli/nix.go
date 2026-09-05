@@ -338,7 +338,7 @@ func renderNixSummary(env *rfnix.Environment) {
 		{Key: "Name", Value: env.Name, ValueColor: tui.ColorPrimary},
 		{Key: "Tools", Value: fmt.Sprintf("%d", tools)},
 		{Key: "Mode", Value: mode},
-		{Key: "Workspace", Value: wsShort(env.Workspace)},
+		{Key: "Workspace", Value: wsSummary(env)},
 		{Key: "Flake", Value: env.FlakeRef, ValueColor: tui.ColorCyan},
 	}
 	if env.FlakeOrigin != "" {
@@ -732,11 +732,38 @@ var nixRemoveCmd = &cobra.Command{
 			common.PrintErrorMessage(fmt.Errorf("environment name required: rfswift nix remove <name>"))
 			return
 		}
+		// The manifest names the workspace; read it before the removal takes
+		// it away. Only its explicit request deletes the user's captures.
+		deleteWorkspace, _ := cmd.Flags().GetBool("workspace")
+		workspace := ""
+		if deleteWorkspace {
+			env, err := rfnix.GetEnvironment(name)
+			if err != nil {
+				common.PrintErrorMessage(err)
+				os.Exit(1)
+			}
+			workspace = rfnix.WorkspaceHostPath(env.Workspace)
+		}
 		if err := rfnix.RemoveEnvironment(name); err != nil {
 			common.PrintErrorMessage(err)
 			os.Exit(1)
 		}
+		if deleteWorkspace {
+			if workspace == "" || workspace == "none" {
+				common.PrintInfoMessage("No workspace directory to delete: the environment had none.")
+				return
+			}
+			if err := rfnix.RemoveWorkspaceDir(workspace); err != nil {
+				common.PrintErrorMessage(err)
+				os.Exit(1)
+			}
+			common.PrintSuccessMessage(fmt.Sprintf("Deleted workspace %s", workspace))
+		}
 	},
+}
+
+func init() {
+	nixRemoveCmd.Flags().Bool("workspace", false, "also delete the environment's workspace directory (its captures) - by default it is kept")
 }
 
 func realisedLabel(e *rfnix.Environment) string {
@@ -755,6 +782,16 @@ func realisedLabel(e *rfnix.Environment) string {
 func wsShort(ws string) string {
 	if ws == "" {
 		return "none"
+	}
+	return ws
+}
+
+// wsSummary is the workspace line of the environment summary: the host
+// directory and, when a jail hides that path, where the shell sees it.
+func wsSummary(env *rfnix.Environment) string {
+	ws := wsShort(env.Workspace)
+	if in := rfnix.WorkspaceInShell(env); in != "" && in != env.Workspace {
+		return fmt.Sprintf("%s (%s inside the jail)", ws, in)
 	}
 	return ws
 }
