@@ -164,4 +164,5 @@ osv-scanner scan source -L go/rfswift-workbench/frontend/package-lock.json
 ```
 
 The same checks run in GitHub Actions through the CI, security, and
-modules-audit workflows, and gate the release workflow.
+modules-audit workflows and gate CI on every push to main and v*-dev. The
+release workflow repeats them for the record without blocking publication.

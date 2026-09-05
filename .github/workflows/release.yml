@@ -9,6 +9,11 @@ permissions:
   contents: read
 
 jobs:
+  # The dependency audits, security scans and regression checks already gate
+  # CI (ci.yml) on every push to main and v*-dev, so a tagged revision has
+  # been through them before the tag lands. They are repeated here for the
+  # record only: the build and publish jobs do not wait for them, and a
+  # failure here never blocks a release.
   modules:
     strategy:
       matrix:
@@ -212,7 +217,7 @@ jobs:
 
   generate-artifacts:
     name: Build CLI/TUI release archives
-    needs: [modules, security, regression, workbench-linux, workbench-linux-arm64, workbench-windows, workbench-macos]
+    needs: [workbench-linux, workbench-linux-arm64, workbench-windows, workbench-macos]
     runs-on: ubuntu-latest
     permissions:
       contents: write      # create the GitHub release (goreleaser)

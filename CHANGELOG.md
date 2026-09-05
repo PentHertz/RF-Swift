@@ -96,9 +96,11 @@ branch.
 - Refreshed the embedded Nix catalog to match the companion checkout.
 - Added consistent inner spacing to Workbench's agent setup card, including the
   private-key notice, connection heading and saved-agent controls.
-- Tagged publication now depends on regression checks and dependency/security
-  workflows for the tagged revision. Both Go modules receive dependency audits;
-  build jobs default to read-only repository permissions.
+- Tagged publication runs the regression checks and dependency/security
+  workflows for the tagged revision as informational jobs: they gate CI on
+  every push to main and v*-dev, and no longer block the release. Both Go
+  modules receive dependency audits; build jobs default to read-only
+  repository permissions.
 - Added native remote/PTY regression jobs for Linux, macOS and Windows, plus
   behavior tests for terminal keyboard mappings and the confirmed backend bugs.
 
