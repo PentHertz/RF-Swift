@@ -15,8 +15,8 @@
 #     (sum.golang.org) - the same transparency log that protects our
 #     regular dependencies. No curl-pipe-bash, no unverified release
 #     binaries.
-#   - `go mod verify` re-hashes the local module cache against go.sum,
-#     catching any module tampered with in transit or on disk.
+#   - `go mod verify` re-hashes cached modules against their recorded
+#     download hashes, catching changes made after download.
 
 name: Modules audit
 
@@ -57,8 +57,21 @@ jobs:
         # not set, so verification is on by default).
         run: go mod download
 
-      - name: Verify module cache against go.sum
-        run: go mod verify
+      - name: Verify downloaded module cache
+        # Local replacements have no downloaded archive or ziphash. Make
+        # them workspace modules for this step so Go only verifies cached
+        # dependencies. Later checks still use the original module graph.
+        shell: bash
+        run: |
+          local_modules=$(go list -m -f '{{with .Replace}}{{if not .Version}}{{.Dir}}{{end}}{{end}}' all)
+          if [[ -n "$local_modules" ]]; then
+            export GOWORK="$RUNNER_TEMP/module-integrity.work"
+            go work init .
+            while IFS= read -r local_module; do
+              go work use "$local_module"
+            done <<< "$local_modules"
+          fi
+          go mod verify
 
       - name: Check go.mod/go.sum drift
         # Fails if `go mod tidy` would change anything - i.e. someone

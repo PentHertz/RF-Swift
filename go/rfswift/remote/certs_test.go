@@ -12,6 +12,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -117,8 +118,13 @@ func TestGenerateCertificateBundleEncryptedAndLoadable(t *testing.T) {
 		if bytes.Contains(raw, []byte("EC PRIVATE KEY")) {
 			t.Fatalf("%s leaked a plaintext key", keyFile)
 		}
-		info, _ := os.Stat(keyFile)
-		if info.Mode().Perm() != 0600 {
+		info, err := os.Stat(keyFile)
+		if err != nil {
+			t.Fatal(err)
+		}
+		// Windows reports writable files as 0666; Unix permission bits do
+		// not describe the file's Windows ACL.
+		if runtime.GOOS != "windows" && info.Mode().Perm() != 0600 {
 			t.Fatalf("%s mode is %o", keyFile, info.Mode().Perm())
 		}
 	}
