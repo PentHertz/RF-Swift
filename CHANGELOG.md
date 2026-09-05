@@ -12,6 +12,12 @@ branch.
 
 ### Added
 
+- `get_rfswift.sh` checks the `--isolate` jail's host mechanism on every
+  install, not only when Nix is being set up in the same run: bubblewrap on
+  Linux (offered when missing, `RFSWIFT_ISOLATE=1|0` answers up front, then
+  the sandbox is tested as the installing user), Apple's `sandbox-exec` on
+  macOS (part of the OS; the installer confirms it runs a trivial Seatbelt
+  profile, since a device-management policy can block it).
 - Nix engine: the workspace is now visible wherever the environment is. The
   Workbench shows a "Workspace" row on every target's Configuration card (host
   path, plus the path the shell sees when a container or Linux jail mounts it
@@ -41,6 +47,28 @@ branch.
 
 ### Fixed
 
+- Nix engine, Linux `--isolate` on Ubuntu 24.04+: the jail failed with
+  `bwrap: setting up uid map: Permission denied` even though bubblewrap
+  itself worked from a shell. Ubuntu restricts unprivileged user namespaces
+  with AppArmor and lets only a *profiled* bwrap create one; the profile is
+  attached to `/usr/bin/bwrap`, so the bubblewrap RF Swift built from nixpkgs
+  (or found first on PATH from a Nix profile) was unconfined and blocked. RF
+  Swift now prefers the distribution's `/usr/bin/bwrap` over any other bwrap
+  on PATH, and the error explains the actual cause with the targeted fix
+  first: install the distribution's bubblewrap package, and on Ubuntu 24.04
+  enable its `bwrap-userns-restrict` profile (`apparmor-profiles`), before
+  the last-resort sysctl that lifts the restriction for every program. The
+  message no longer claims Debian restricts user namespaces (stock Debian
+  kernels do not; a `kernel.unprivileged_userns_clone=0` host gets its own
+  hint). `get_rfswift.sh` tests the sandbox even when bubblewrap is already
+  installed (it used to only announce it "works out of the box"), offers the
+  distribution package and the AppArmor profile before the sysctl, and only
+  persists the sysctl keys the running kernel has (a key it lacks made every
+  boot log an error).
+- Workbench: a multi-line error from the engine (such as the bubblewrap
+  guidance above) rendered as a staircase in the terminal panel, each line
+  starting where the previous one ended, because the terminal does not
+  convert bare line feeds. Errors written to a terminal now carry `\r\n`.
 - Nix engine, macOS `--isolate`: lazy tools failed to build inside the
   sandbox with `cannot open SQLite database .../jail-home/.cache/nix/
   fetcher-cache-v4.sqlite`. nix's SQLite resolves the database path one

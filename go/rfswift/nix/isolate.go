@@ -69,11 +69,40 @@ func isSetuid(p string) bool {
 	return err == nil && fi.Mode()&os.ModeSetuid != 0
 }
 
+// Where the distribution's bubblewrap package installs the binary. Ubuntu
+// 24.04+ restricts unprivileged user namespaces with AppArmor: only a bwrap
+// covered by an AppArmor profile may create one, and that profile (shipped
+// active on 26.04, optional in apparmor-profiles on 24.04) is attached to this
+// path. A bwrap from a Nix profile or a local build is unconfined and fails
+// with "setting up uid map: Permission denied" there, so the distribution's
+// binary is preferred over any other found on PATH. A variable so tests can
+// point it elsewhere.
+var distroBwrap = "/usr/bin/bwrap"
+
+// The kernel knobs that decide whether an unprivileged, non-setuid bwrap may
+// create its user namespace. The first is Ubuntu's (24.04+, AppArmor); the
+// second is carried by Debian kernels, on by default.
+const (
+	sysctlAppArmorUserns = "/proc/sys/kernel/apparmor_restrict_unprivileged_userns"
+	sysctlUsernsClone    = "/proc/sys/kernel/unprivileged_userns_clone"
+)
+
+// readProcSysctl returns the trimmed content of a /proc/sys entry, or "" when
+// the kernel has no such knob. A variable so tests can simulate hosts.
+var readProcSysctl = func(path string) string {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(b))
+}
+
 // resolveBwrap finds the bubblewrap binary. A setuid-root bwrap is preferred
-// (it does not need unprivileged user namespaces), then any bwrap on PATH
-// (including the NixOS wrapper), then a build from nixpkgs.
+// (it does not need unprivileged user namespaces), then the distribution's
+// /usr/bin/bwrap (the one an AppArmor profile covers where user namespaces are
+// restricted), then any other bwrap on PATH, then a build from nixpkgs.
 func resolveBwrap() (string, error) {
-	candidates := []string{"/run/wrappers/bin/bwrap"} // NixOS setuid wrapper
+	candidates := []string{"/run/wrappers/bin/bwrap", distroBwrap} // NixOS setuid wrapper, distro package
 	if p, err := exec.LookPath("bwrap"); err == nil {
 		candidates = append(candidates, p)
 	}
@@ -122,16 +151,46 @@ func bwrapPreflight(bwrap string) error {
 	if strings.Contains(low, "namespace") || strings.Contains(low, "uid map") ||
 		strings.Contains(low, "user namespace") || strings.Contains(low, "permission denied") ||
 		strings.Contains(low, "operation not permitted") || strings.Contains(low, "setuid") {
-		return fmt.Errorf("bubblewrap cannot create a sandbox on this host, so --isolate is unavailable:\n"+
-			"  %s\n"+
-			"  This is almost always restricted unprivileged user namespaces (default on Ubuntu 24.04+/Debian with AppArmor).\n"+
-			"  Fix it as root, then retry, e.g.:\n"+
-			"    sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0\n"+
-			"    sudo sysctl -w kernel.unprivileged_userns_clone=1        # older kernels\n"+
-			"  Persist by adding those lines under /etc/sysctl.d/. Alternatively install a setuid bubblewrap\n"+
-			"  (so it needs no unprivileged namespaces), or run without --isolate.", msg)
+		return fmt.Errorf("%s", usernsGuidance(bwrap, msg))
 	}
 	return fmt.Errorf("bubblewrap preflight failed, --isolate is unavailable: %s", msg)
+}
+
+// usernsGuidance explains why bwrap at path could not create its user
+// namespace (bwrap's own message is msg) and how to fix it, from the most
+// targeted change to the bluntest. The host's sysctls decide which case
+// applies: Ubuntu 24.04+ restricts unprivileged user namespaces with AppArmor
+// and only a profiled bwrap (/usr/bin/bwrap) may create one; a Debian kernel
+// with kernel.unprivileged_userns_clone=0 forbids them for every program.
+// Stock Debian does not restrict them.
+func usernsGuidance(path, msg string) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "bubblewrap cannot create a sandbox on this host, so --isolate is unavailable:\n  %s\n", msg)
+	switch {
+	case readProcSysctl(sysctlAppArmorUserns) == "1":
+		b.WriteString("  This host restricts unprivileged user namespaces with AppArmor (Ubuntu 24.04+ default):\n")
+		fmt.Fprintf(&b, "  only a bwrap covered by an AppArmor profile may create one, and that profile is attached to %s.\n", distroBwrap)
+		if path != distroBwrap {
+			fmt.Fprintf(&b, "  The bwrap in use is %s, which no profile covers. Install the distribution's package\n", path)
+			fmt.Fprintf(&b, "  (sudo apt install bubblewrap); RF Swift then prefers %s.\n", distroBwrap)
+		}
+		b.WriteString("  On Ubuntu 24.04 that profile is optional; enable it (it keeps the restriction for everything else):\n")
+		b.WriteString("    sudo apt install apparmor-profiles\n")
+		b.WriteString("    sudo cp /usr/share/apparmor/extra-profiles/bwrap-userns-restrict /etc/apparmor.d/\n")
+		b.WriteString("    sudo apparmor_parser -r /etc/apparmor.d/bwrap-userns-restrict\n")
+		b.WriteString("  get_rfswift.sh offers both steps. Last resort, it weakens the host's hardening for every program:\n")
+		b.WriteString("    sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0   # persist under /etc/sysctl.d/\n")
+	case readProcSysctl(sysctlUsernsClone) == "0":
+		b.WriteString("  Unprivileged user namespaces are disabled on this kernel (kernel.unprivileged_userns_clone=0). Enable them as root:\n")
+		b.WriteString("    sudo sysctl -w kernel.unprivileged_userns_clone=1   # persist under /etc/sysctl.d/\n")
+	default:
+		b.WriteString("  This usually means unprivileged user namespaces are restricted: check as root\n")
+		b.WriteString("    sysctl kernel.apparmor_restrict_unprivileged_userns   # Ubuntu 24.04+: 1 = only AppArmor-profiled programs\n")
+		b.WriteString("    sysctl kernel.unprivileged_userns_clone               # Debian kernels: 0 = disabled\n")
+		b.WriteString("  or your kernel's hardening (seccomp, a container runtime).\n")
+	}
+	b.WriteString("  Alternatively install a setuid bubblewrap, which needs no unprivileged namespaces, or run without --isolate.")
+	return b.String()
 }
 
 // Fixed in-jail mount points, kept OUTSIDE the private home so the home stays

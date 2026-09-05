@@ -260,4 +260,88 @@ exit 1
   unset -f prompt_yes_no
 fi
 
+# --- Nix engine --isolate: bubblewrap, user namespaces, sandbox-exec ---------
+if [ "$(uname -s)" = Linux ]; then
+  ubin="$tmp/usernsbin"; mkdir -p "$ubin" "$tmp/procsys/kernel"
+  sudo_log="$tmp/sudo-calls"; : > "$sudo_log"
+  # A bwrap that fails the way an AppArmor-restricted host does, unless the
+  # marker file exists (the "profile enabled" state).
+  printf '#!/bin/sh\n[ -e "%s" ] && exit 0\necho "bwrap: setting up uid map: Permission denied" >&2\nexit 1\n' "$tmp/profile-enabled" > "$ubin/bwrap"; chmod +x "$ubin/bwrap"
+  sudo() { case "$1" in tee) cat > "$tmp/sysctl.conf"; echo "tee $2" >> "$sudo_log" ;; *) echo "$*" >> "$sudo_log" ;; esac; }
+  old_path=$PATH; PATH="$ubin:$PATH"
+  RFSWIFT_PROC_SYS="$tmp/procsys"
+
+  # Ubuntu 24.04+: the AppArmor knob is on and the bwrap in use is not the
+  # distribution's. The package is offered; declined, the profile question is
+  # skipped (no /usr/bin/bwrap to profile) and the sysctl question, declined
+  # too, changes nothing.
+  echo 1 > "$tmp/procsys/kernel/apparmor_restrict_unprivileged_userns"
+  echo 1 > "$tmp/procsys/kernel/unprivileged_userns_clone"
+  DISTRO_BWRAP="$tmp/no-distro/bwrap"
+  asked="$tmp/asked"; : > "$asked"
+  prompt_yes_no() { echo "$1" >> "$asked"; return 1; }
+  install_bubblewrap_package() { echo "unexpected package install" >&2; exit 1; }
+  enable_bwrap_apparmor_profile() { echo "unexpected profile enable" >&2; exit 1; }
+  check_userns >/dev/null 2>&1 || { echo "check_userns failed on a declined AppArmor fix" >&2; exit 1; }
+  grep -q "distribution's bubblewrap package" "$asked" || { echo "AppArmor host: the distribution package was not offered" >&2; exit 1; }
+  grep -q "AppArmor profile" "$asked" && { echo "AppArmor host: the profile was offered without a distribution bwrap" >&2; exit 1; }
+  grep -q "sysctl" "$asked" || { echo "AppArmor host: the sysctl fallback was not offered" >&2; exit 1; }
+  [ -s "$sudo_log" ] && { echo "check_userns ran sudo after every fix was declined: $(cat "$sudo_log")" >&2; exit 1; }
+
+  # Same host, the distribution's bwrap present but unprofiled: enabling the
+  # profile fixes it, and the sysctl (which weakens the host) is never asked.
+  : > "$asked"
+  DISTRO_BWRAP="$ubin/bwrap"
+  prompt_yes_no() { echo "$1" >> "$asked"; case "$1" in *sysctl*) echo "sysctl offered although the profile fixed it" >&2; exit 1 ;; esac; return 0; }
+  enable_bwrap_apparmor_profile() { : > "$tmp/profile-enabled"; }
+  out=$(check_userns 2>&1) || { echo "check_userns failed after enabling the profile" >&2; exit 1; }
+  grep -q "AppArmor profile" "$asked" || { echo "AppArmor host: the profile was not offered for the distribution bwrap" >&2; exit 1; }
+  echo "$out" | grep -q "can sandbox" || { echo "check_userns did not report the profiled bwrap as working: $out" >&2; exit 1; }
+  rm -f "$tmp/profile-enabled"
+
+  # Debian kernel with user namespaces switched off: no AppArmor knob, so no
+  # profile talk; the accepted sysctl writes only the key this kernel has.
+  : > "$asked"; : > "$sudo_log"
+  rm -f "$tmp/procsys/kernel/apparmor_restrict_unprivileged_userns"
+  echo 0 > "$tmp/procsys/kernel/unprivileged_userns_clone"
+  DISTRO_BWRAP="$tmp/no-distro/bwrap"
+  prompt_yes_no() { echo "$1" >> "$asked"; return 0; }
+  check_userns >/dev/null 2>&1 || { echo "check_userns failed on the sysctl path" >&2; exit 1; }
+  grep -q -e "AppArmor" -e "distribution's bubblewrap" "$asked" && { echo "non-AppArmor host: AppArmor fixes were offered" >&2; exit 1; }
+  grep -q "sysctl -w kernel.unprivileged_userns_clone=1" "$sudo_log" || { echo "sysctl path did not enable unprivileged_userns_clone: $(cat "$sudo_log")" >&2; exit 1; }
+  grep -q "apparmor_restrict" "$sudo_log" "$tmp/sysctl.conf" && { echo "sysctl path touched a knob this kernel lacks" >&2; exit 1; }
+  grep -q "^kernel.unprivileged_userns_clone=1$" "$tmp/sysctl.conf" || { echo "sysctl.d file missing the enabled key: $(cat "$tmp/sysctl.conf")" >&2; exit 1; }
+
+  # A working bwrap needs no question at all.
+  : > "$tmp/profile-enabled"
+  prompt_yes_no() { echo "unexpected prompt: $1" >&2; exit 1; }
+  check_userns >/dev/null 2>&1 || { echo "check_userns failed on a working bwrap" >&2; exit 1; }
+  rm -f "$tmp/profile-enabled"
+
+  # check_isolate runs on every Linux install: RFSWIFT_ISOLATE answers the
+  # bubblewrap offer without a prompt, and a check already done by
+  # check_nix_engine is not repeated.
+  command_exists() { [ "$1" = bwrap ] && return 1; command -v "$1" >/dev/null 2>&1; }
+  prompt_choice() { echo "unexpected prompt: $1" >&2; exit 1; }
+  installed=""; install_bubblewrap_package() { installed=1; return 1; }
+  BWRAP_CHECKED=0 ISOLATE_PREF=0 check_isolate >/dev/null 2>&1 || { echo "check_isolate failed with RFSWIFT_ISOLATE=0" >&2; exit 1; }
+  [ -z "$installed" ] || { echo "RFSWIFT_ISOLATE=0 still installed bubblewrap" >&2; exit 1; }
+  BWRAP_CHECKED=0 ISOLATE_PREF=1 check_isolate >/dev/null 2>&1 || { echo "a failed bubblewrap install ended check_isolate" >&2; exit 1; }
+  [ -n "$installed" ] || { echo "RFSWIFT_ISOLATE=1 did not install bubblewrap" >&2; exit 1; }
+  installed=""; BWRAP_CHECKED=1 ISOLATE_PREF=1 check_isolate >/dev/null 2>&1
+  [ -z "$installed" ] || { echo "check_isolate repeated a bubblewrap check already done" >&2; exit 1; }
+
+  # macOS: --isolate is sandbox-exec; the check reports whether it runs.
+  uname() { echo Darwin; }
+  printf '#!/bin/sh\nexit 0\n' > "$ubin/sandbox-exec"; chmod +x "$ubin/sandbox-exec"
+  SANDBOX_EXEC="$ubin/sandbox-exec"
+  check_isolate 2>&1 | grep -q "sandbox-exec works" || { echo "macOS: a working sandbox-exec was not reported" >&2; exit 1; }
+  SANDBOX_EXEC="$tmp/no-such-sandbox-exec"
+  (PATH="$tmp/no-distro"; check_isolate) 2>&1 | grep -q "sandbox-exec not found" || { echo "macOS: a missing sandbox-exec was not reported" >&2; exit 1; }
+  PATH=$old_path
+  unset -f uname sudo prompt_yes_no prompt_choice install_bubblewrap_package enable_bwrap_apparmor_profile command_exists
+  unset RFSWIFT_PROC_SYS
+  . "$ROOT/get_rfswift.sh"
+fi
+
 echo "installer security, development-channel and native-package tests: ok"

@@ -25,6 +25,8 @@ UDEV_RULES="${RFSWIFT_UDEV:-}"
 # empty = ask. Both make curl|sh and automated installs deterministic.
 ENGINE_PREF="${RFSWIFT_ENGINE:-}"
 NIX_PREF="${RFSWIFT_NIX:-}"
+ISOLATE_PREF="${RFSWIFT_ISOLATE:-}"  # 1|0: install bubblewrap for the Nix engine's --isolate jail (Linux)
+BWRAP_CHECKED=0
 # Tarball flow: install directory (absolute path, e.g. /usr/local/bin or
 # ~/.rfswift/bin); empty = ask.
 INSTALL_DIR_PREF="${RFSWIFT_INSTALL_DIR:-}"
@@ -3293,16 +3295,36 @@ check_bubblewrap() {
   if [ "$(uname)" != "Linux" ]; then
     return 0
   fi
+  BWRAP_CHECKED=1
   if command_exists bwrap; then
-    color_echo "green" "✅ bubblewrap present - 'rfswift run --engine nix --isolate' works out of the box."
+    color_echo "green" "✅ bubblewrap present ($(rfswift_bwrap))."
+    check_userns
     return 0
   fi
   color_echo "cyan" "   bubblewrap enables the Nix engine's --isolate jail: hides \$HOME and the host filesystem while keeping USB devices, the display and the network."
-  choice=$(prompt_choice "Install bubblewrap for the Nix engine's --isolate jail?" "Yes" "No")
+  case "$ISOLATE_PREF" in
+    1|yes|true) choice=1; color_echo "cyan" "   RFSWIFT_ISOLATE=${ISOLATE_PREF}" ;;
+    0|no|false) choice=2; color_echo "cyan" "   RFSWIFT_ISOLATE=${ISOLATE_PREF}" ;;
+    *) choice=$(prompt_choice "Install bubblewrap for the Nix engine's --isolate jail?" "Yes" "No") ;;
+  esac
   if [ "$choice" != "1" ]; then
     color_echo "yellow" "   Skipped. --isolate will build bubblewrap from nixpkgs on first use, or install it later (e.g. 'sudo apt install bubblewrap')."
+    if apparmor_userns_restricted; then
+      color_echo "yellow" "   Note: this host lets only the distribution's ${DISTRO_BWRAP} create user namespaces (AppArmor), so the nixpkgs build cannot sandbox here."
+    fi
     return 0
   fi
+  install_bubblewrap_package || return 0
+  if command_exists bwrap; then
+    color_echo "green" "✅ bubblewrap installed."
+  else
+    color_echo "yellow" "   bubblewrap install did not complete; --isolate will fall back to building it from nixpkgs."
+  fi
+  check_userns
+}
+
+# Install the distribution's bubblewrap package.
+install_bubblewrap_package() {
   pm=$(get_package_manager)
   case "$pm" in
     apt)    sudo apt update && sudo apt install -y bubblewrap ;;
@@ -3312,43 +3334,162 @@ check_bubblewrap() {
     zypper) sudo zypper install -y bubblewrap ;;
     apk)    sudo apk add bubblewrap ;;
     emerge) sudo emerge --ask=n sys-apps/bubblewrap ;;
-    *)      color_echo "yellow" "   Unknown package manager; install 'bubblewrap' manually to use --isolate." ; return 0 ;;
+    *)      color_echo "yellow" "   Unknown package manager; install 'bubblewrap' manually to use --isolate." ; return 1 ;;
   esac
-  if command_exists bwrap; then
-    color_echo "green" "✅ bubblewrap installed."
-  else
-    color_echo "yellow" "   bubblewrap install did not complete; --isolate will fall back to building it from nixpkgs."
+}
+
+# Where the distribution's bubblewrap lives. Ubuntu 24.04+ restricts
+# unprivileged user namespaces with AppArmor: only a bwrap covered by an
+# AppArmor profile may create one, and that profile is attached to this path.
+# RF Swift prefers it over any other bwrap on PATH for the same reason.
+DISTRO_BWRAP=/usr/bin/bwrap
+# Ubuntu's profile for it: active out of the box on 26.04, shipped as an
+# optional extra profile by apparmor-profiles on 24.04 (and Debian).
+BWRAP_APPARMOR_PROFILE=/etc/apparmor.d/bwrap-userns-restrict
+BWRAP_APPARMOR_EXTRA=/usr/share/apparmor/extra-profiles/bwrap-userns-restrict
+
+# The bwrap the CLI will use: a NixOS setuid wrapper, else the distribution's
+# binary, else whatever PATH has.
+rfswift_bwrap() {
+  for b in /run/wrappers/bin/bwrap "$DISTRO_BWRAP"; do
+    [ -x "$b" ] && { echo "$b"; return 0; }
+  done
+  command -v bwrap
+}
+
+# Can this bwrap create a sandbox as the current user?
+bwrap_sandbox_works() {
+  "$1" --ro-bind / / --proc /proc -- true >/dev/null 2>&1
+}
+
+# True when the kernel's AppArmor restriction on unprivileged user namespaces
+# is on (Ubuntu 24.04+). Stock Debian kernels have no such knob. The /proc/sys
+# root is overridable so the tests can simulate hosts.
+apparmor_userns_restricted() {
+  [ "$(cat "${RFSWIFT_PROC_SYS:-/proc/sys}/kernel/apparmor_restrict_unprivileged_userns" 2>/dev/null)" = 1 ]
+}
+
+# Enable the AppArmor profile that lets ${DISTRO_BWRAP} create user
+# namespaces while the restriction stays in force for everything else - the
+# targeted fix on Ubuntu 24.04. Copies the extra profile into /etc/apparmor.d
+# (installing apparmor-profiles first when needed) and loads it.
+enable_bwrap_apparmor_profile() {
+  command_exists apparmor_parser || { color_echo "yellow" "   apparmor_parser not found; is AppArmor installed?"; return 1; }
+  if [ ! -f "$BWRAP_APPARMOR_PROFILE" ]; then
+    if [ ! -f "$BWRAP_APPARMOR_EXTRA" ]; then
+      case "$(get_package_manager)" in
+        apt) sudo apt install -y apparmor-profiles ;;
+        *)   color_echo "yellow" "   No packaged bwrap-userns-restrict profile for this distribution."; return 1 ;;
+      esac
+      [ -f "$BWRAP_APPARMOR_EXTRA" ] || return 1
+    fi
+    sudo cp "$BWRAP_APPARMOR_EXTRA" "$BWRAP_APPARMOR_PROFILE" || return 1
   fi
-  check_userns
+  sudo apparmor_parser -r "$BWRAP_APPARMOR_PROFILE"
 }
 
 # bubblewrap needs unprivileged user namespaces unless it is setuid-root.
-# Ubuntu 24.04+/Debian restrict them by default (AppArmor), which makes
-# --isolate fail with a uid-map permission error. Detect it and offer to relax.
+# Ubuntu 24.04+ restricts them with AppArmor (only a profiled bwrap may create
+# one), which makes --isolate fail with a uid-map permission error; a Debian
+# kernel can have them switched off with kernel.unprivileged_userns_clone=0.
+# Test the bwrap the CLI will use and offer the most targeted fix first: the
+# distribution package and its AppArmor profile, then the sysctl as last resort.
 check_userns() {
   command_exists bwrap || return 0
-  if bwrap --ro-bind / / --proc /proc -- true >/dev/null 2>&1; then
+  bw=$(rfswift_bwrap)
+  if bwrap_sandbox_works "$bw"; then
     color_echo "green" "✅ bubblewrap sandbox works - 'rfswift run --engine nix --isolate' is ready."
     return 0
   fi
-  if [ -u "$(command -v bwrap)" ]; then
+  if [ -u "$bw" ]; then
     color_echo "yellow" "   bubblewrap is setuid but the sandbox test failed; check your AppArmor/seccomp policy."
     return 0
   fi
-  color_echo "yellow" "   bubblewrap cannot create a sandbox yet: unprivileged user namespaces look restricted (default on Ubuntu 24.04+/Debian)."
-  choice=$(prompt_choice "Enable unprivileged user namespaces for --isolate (sysctl, persisted)?" "Yes" "No")
-  if [ "$choice" != "1" ]; then
+  if apparmor_userns_restricted; then
+    color_echo "yellow" "   bubblewrap cannot create a sandbox yet: this host restricts unprivileged user namespaces with AppArmor (Ubuntu 24.04+ default)."
+    color_echo "cyan" "   Only a bwrap covered by an AppArmor profile may create one; the profile is attached to ${DISTRO_BWRAP}."
+    if [ ! -x "$DISTRO_BWRAP" ]; then
+      color_echo "yellow" "   The bwrap in use is ${bw}, which no profile covers."
+      if prompt_yes_no "Install the distribution's bubblewrap package (${DISTRO_BWRAP}) for --isolate?" "y"; then
+        install_bubblewrap_package || true
+      fi
+    fi
+    if [ -x "$DISTRO_BWRAP" ] && ! bwrap_sandbox_works "$DISTRO_BWRAP"; then
+      if prompt_yes_no "Enable the AppArmor profile for ${DISTRO_BWRAP} (keeps the restriction for every other program)?" "y"; then
+        enable_bwrap_apparmor_profile || color_echo "yellow" "   Could not enable the profile."
+      fi
+    fi
+    if [ -x "$DISTRO_BWRAP" ] && bwrap_sandbox_works "$DISTRO_BWRAP"; then
+      color_echo "green" "✅ ${DISTRO_BWRAP} can sandbox - 'rfswift run --engine nix --isolate' is ready."
+      return 0
+    fi
+    color_echo "yellow" "   Still restricted. Lifting the restriction for every program is the last resort."
+  else
+    color_echo "yellow" "   bubblewrap cannot create a sandbox yet: unprivileged user namespaces look disabled (kernel.unprivileged_userns_clone=0, or a hardened kernel)."
+  fi
+  # Defaults to no: without a terminal the installer must not weaken the host.
+  if ! prompt_yes_no "Enable unprivileged user namespaces for every program (sysctl, persisted)? This weakens the host's hardening" "n"; then
     color_echo "yellow" "   Skipped. --isolate needs unprivileged user namespaces enabled or a setuid bubblewrap."
     return 0
   fi
-  sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 >/dev/null 2>&1 || true
-  sudo sysctl -w kernel.unprivileged_userns_clone=1 >/dev/null 2>&1 || true
-  printf 'kernel.apparmor_restrict_unprivileged_userns=0\nkernel.unprivileged_userns_clone=1\n' \
-    | sudo tee /etc/sysctl.d/99-rfswift-userns.conf >/dev/null 2>&1 || true
-  if bwrap --ro-bind / / --proc /proc -- true >/dev/null 2>&1; then
+  # Only knobs this kernel has: an unknown key in sysctl.d makes every boot
+  # log an error.
+  conf=""
+  for kv in kernel.apparmor_restrict_unprivileged_userns=0 kernel.unprivileged_userns_clone=1; do
+    key=${kv%%=*}
+    [ -e "${RFSWIFT_PROC_SYS:-/proc/sys}/$(echo "$key" | tr . /)" ] || continue
+    sudo sysctl -w "$kv" >/dev/null 2>&1 || true
+    conf="${conf}${kv}
+"
+  done
+  if [ -n "$conf" ]; then
+    printf '%s' "$conf" | sudo tee /etc/sysctl.d/99-rfswift-userns.conf >/dev/null 2>&1 || true
+  else
+    color_echo "yellow" "   This kernel has neither user-namespace sysctl; nothing to change."
+  fi
+  if bwrap_sandbox_works "$bw"; then
     color_echo "green" "✅ Unprivileged user namespaces enabled - --isolate is ready."
   else
     color_echo "yellow" "   Still restricted; a reboot or an AppArmor policy change may be required."
+  fi
+}
+
+# The Nix engine's --isolate jail needs a host mechanism: bubblewrap on Linux
+# (offered when missing, then tested), Apple's sandbox-exec on macOS (ships
+# with the OS, tested). Runs for every install, whether or not Nix is set up
+# yet, so the jail works the day Nix is added. check_nix_engine may already
+# have covered bubblewrap; then this is a no-op.
+check_isolate() {
+  case "$(uname -s)" in
+    Linux*)
+      [ "$BWRAP_CHECKED" = 1 ] && return 0
+      color_echo "blue" "🔒 Isolation for the Nix engine (--isolate)"
+      check_bubblewrap
+      ;;
+    Darwin*)
+      color_echo "blue" "🔒 Isolation for the Nix engine (--isolate)"
+      check_sandbox_exec
+      ;;
+  esac
+}
+
+# macOS: --isolate is a Seatbelt sandbox applied with sandbox-exec, part of
+# the OS. Nothing to install; confirm it is there and can run a trivial
+# profile (a device-management policy can block it).
+SANDBOX_EXEC="${SANDBOX_EXEC:-/usr/bin/sandbox-exec}"
+check_sandbox_exec() {
+  sb="$SANDBOX_EXEC"
+  if [ ! -x "$sb" ]; then
+    sb=$(command -v sandbox-exec 2>/dev/null) || sb=""
+  fi
+  if [ -z "$sb" ]; then
+    color_echo "yellow" "   sandbox-exec not found (macOS ships it as /usr/bin/sandbox-exec): 'rfswift run --engine nix --isolate' is unavailable; use the container engine for isolation."
+    return 0
+  fi
+  if "$sb" -p '(version 1) (allow default)' /usr/bin/true >/dev/null 2>&1; then
+    color_echo "green" "✅ sandbox-exec works - 'rfswift run --engine nix --isolate' is ready (Seatbelt sandbox)."
+  else
+    color_echo "yellow" "   sandbox-exec is present but could not run a trivial profile; --isolate may be blocked by a device-management policy."
   fi
 }
 
@@ -3413,6 +3554,10 @@ main() {
 
   # Offer the native Nix engine (rfswift --engine nix)
   check_nix_engine || color_echo "yellow" "⚠️  Nix setup did not complete; continuing with the RF Swift install."
+
+  # The --isolate jail's host mechanism: bubblewrap (Linux), sandbox-exec
+  # (macOS). Checked on every install, not only when Nix is already there.
+  check_isolate || color_echo "yellow" "⚠️  Isolation setup did not complete; continuing with the RF Swift install."
 
   # Check and install audio system
   check_audio_system || color_echo "yellow" "⚠️  Audio setup did not complete; continuing with the RF Swift install."
