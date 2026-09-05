@@ -19,7 +19,7 @@ const (
 // the target archive. Credential values remain in the OS vault, and secrets
 // metadata is excluded because its vault references are machine-local.
 func (a *App) exportMissionNotes(mission, targetArchive, password string) (string, error) {
-	source := a.store.missionDir(a.ws, mission)
+	source := a.store.missionDir(a.workspace(), mission)
 	entries, err := os.ReadDir(source)
 	if os.IsNotExist(err) || (err == nil && len(entries) == 0) {
 		return "", nil
@@ -155,9 +155,9 @@ func (a *App) ImportTargetNotes(mission, targetArchive, password string) error {
 			return errors.New("mission companion contains no portable mission data")
 		}
 	}
-	destination := a.store.missionDir(a.ws, mission)
+	destination := a.store.missionDir(a.workspace(), mission)
 	if legacyNotesOnly {
-		destination = a.store.notesDir(a.ws, mission)
+		destination = a.store.notesDir(a.workspace(), mission)
 	} else {
 		// Keep the current target identity and machine-local credential-vault
 		// references while replacing every portable archived artifact.

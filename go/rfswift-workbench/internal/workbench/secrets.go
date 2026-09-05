@@ -121,14 +121,14 @@ func (a *App) ListSecrets(mission string) ([]MissionSecret, error) {
 	if err := a.requireMission(mission); err != nil {
 		return nil, err
 	}
-	return a.store.LoadSecrets(a.ws, mission)
+	return a.store.LoadSecrets(a.workspace(), mission)
 }
 
 func (a *App) SaveSecret(mission string, item MissionSecret, value string) (MissionSecret, error) {
 	if err := a.requireMission(mission); err != nil {
 		return MissionSecret{}, err
 	}
-	return saveMissionSecret(a.store, a.secretStore, a.ws, mission, item, value)
+	return saveMissionSecret(a.store, a.secretStore, a.workspace(), mission, item, value)
 }
 
 func (a *App) RevealSecret(mission, id string) (string, error) {
@@ -138,13 +138,13 @@ func (a *App) RevealSecret(mission, id string) (string, error) {
 	if !validSecretID(id) {
 		return "", errors.New("invalid secret ID")
 	}
-	items, err := a.store.LoadSecrets(a.ws, mission)
+	items, err := a.store.LoadSecrets(a.workspace(), mission)
 	if err != nil {
 		return "", err
 	}
 	for _, item := range items {
 		if item.ID == id {
-			b, e := a.secretStore.Get(secretRef(a.store.Root, a.ws, mission, id))
+			b, e := a.secretStore.Get(secretRef(a.store.Root, a.workspace(), mission, id))
 			return string(b), e
 		}
 	}
@@ -158,7 +158,7 @@ func (a *App) DeleteSecret(mission, id string) error {
 	if !validSecretID(id) {
 		return errors.New("invalid secret ID")
 	}
-	items, err := a.store.LoadSecrets(a.ws, mission)
+	items, err := a.store.LoadSecrets(a.workspace(), mission)
 	if err != nil {
 		return err
 	}
@@ -174,10 +174,10 @@ func (a *App) DeleteSecret(mission, id string) error {
 	if !found {
 		return errors.New("secret not found")
 	}
-	if err := a.secretStore.Delete(secretRef(a.store.Root, a.ws, mission, id)); err != nil {
+	if err := a.secretStore.Delete(secretRef(a.store.Root, a.workspace(), mission, id)); err != nil {
 		return fmt.Errorf("delete from OS credential vault: %w", err)
 	}
-	return a.store.SaveSecrets(a.ws, mission, next)
+	return a.store.SaveSecrets(a.workspace(), mission, next)
 }
 
 func validSecretID(id string) bool {

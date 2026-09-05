@@ -61,7 +61,46 @@ branch.
   workspace is kept as before, since it holds the captures. Home directories,
   filesystem roots and symlinked workspaces are refused.
 
+### Changed
+
+- CI: the remaining GitHub Actions still referenced by major tag
+  (`actions/checkout@v4`, `setup-go@v5`, `upload-artifact@v4`,
+  `download-artifact@v4`, `setup-node@v4`, `setup-dotnet@v4`,
+  `codeql-action@v3`) are pinned by commit to their current releases, like the
+  release workflow already was. The old majors ran on Node.js 20, which GitHub
+  is retiring; every job logged a deprecation warning.
+
 ### Fixed
+
+- Remote creation now shares its request schema with the agent, forwards Nix
+  isolation and container audio/cancellation settings, and uses
+  `targets.create.v2`. Upgrade the remote agent alongside Workbench: older
+  agents are rejected instead of silently ignoring requested protections.
+- Workbench mission creation retains its original project and engine, including
+  when the user switches projects between preparation and creation. Selection
+  access is synchronized across backend calls.
+- Nix rollback generations are registered as GC roots before the active profile
+  changes. New generations survive garbage collection while their links exist.
+- Container upgrades preserve the original archive bytes, including executable
+  permissions, ownership and links. Preservation failures stop the upgrade;
+  recovery archives are retained on failure, and restoration precedes startup.
+- Remote execution respects caller deadlines instead of an eight-second probe
+  timeout. Response limits account for JSON/base64 expansion and reject oversized
+  responses explicitly. Terminal polls preserve split UTF-8 characters and warn
+  when output is truncated; exited terminals release their PTY resources.
+- Remote connections consistently default to port 8443. Artifact paths resolve
+  symlinked workspace roots on macOS and map Nix workspaces through WSL on Windows.
+- macOS Workbench terminals map Option+Left/Right to word navigation and enable
+  Option-as-Meta by default, with a terminal context-menu toggle for international
+  keyboards. Generated Nix zsh configurations accept modified-arrow sequences.
+- Refreshed the embedded Nix catalog to match the companion checkout.
+- Added consistent inner spacing to Workbench's agent setup card, including the
+  private-key notice, connection heading and saved-agent controls.
+- Tagged publication now depends on regression checks and dependency/security
+  workflows for the tagged revision. Both Go modules receive dependency audits;
+  build jobs default to read-only repository permissions.
+- Added native remote/PTY regression jobs for Linux, macOS and Windows, plus
+  behavior tests for terminal keyboard mappings and the confirmed backend bugs.
 
 - Nix engine, Linux `--isolate` on Ubuntu 24.04+: the jail failed with
   `bwrap: setting up uid map: Permission denied` even though bubblewrap

@@ -57,7 +57,7 @@ func (a *App) StartTerminal(missionID, shell string, record bool, recordingDir s
 	if err := a.requireMission(missionID); err != nil {
 		return TerminalStartResult{}, err
 	}
-	if remoteEngine, ok := a.eng.(*RemoteEngine); ok {
+	if remoteEngine, ok := a.engine().(*RemoteEngine); ok {
 		return a.startRemoteTerminal(remoteEngine, missionID, shell, record, recordingDir, cols, rows)
 	}
 	if isNixEnv(missionID) {
@@ -72,7 +72,7 @@ func (a *App) StartTerminal(missionID, shell string, record bool, recordingDir s
 	if shell == "" {
 		shell = "/bin/zsh"
 	}
-	local, ok := a.eng.(*LocalEngine)
+	local, ok := a.engine().(*LocalEngine)
 	if !ok {
 		return TerminalStartResult{}, errors.New("interactive terminals need a local engine")
 	}
@@ -118,7 +118,7 @@ func (a *App) StartTerminal(missionID, shell string, record bool, recordingDir s
 	if record {
 		dir := strings.TrimSpace(recordingDir)
 		if dir == "" {
-			dir = filepath.Join(a.store.missionDir(a.ws, missionID), "recordings")
+			dir = filepath.Join(a.store.missionDir(a.workspace(), missionID), "recordings")
 		}
 		dir, err = filepath.Abs(dir)
 		if err != nil {
@@ -169,7 +169,7 @@ func (a *App) startRemoteTerminal(engine *RemoteEngine, missionID, shell string,
 	if record {
 		dir := strings.TrimSpace(recordingDir)
 		if dir == "" {
-			dir = filepath.Join(a.store.missionDir(a.ws, missionID), "recordings")
+			dir = filepath.Join(a.store.missionDir(a.workspace(), missionID), "recordings")
 		}
 		var err error
 		dir, err = filepath.Abs(dir)
@@ -243,7 +243,7 @@ func (a *App) startNixTerminal(missionID, shell string, record bool, recordingDi
 	if record {
 		dir := strings.TrimSpace(recordingDir)
 		if dir == "" {
-			dir = filepath.Join(a.store.missionDir(a.ws, missionID), "recordings")
+			dir = filepath.Join(a.store.missionDir(a.workspace(), missionID), "recordings")
 		}
 		dir, err = filepath.Abs(dir)
 		if err != nil {
@@ -284,7 +284,7 @@ func (a *App) StartTerminalRecording(id, recordingDir string, cols, rows int) (s
 	}
 	dir := strings.TrimSpace(recordingDir)
 	if dir == "" {
-		dir = filepath.Join(a.store.missionDir(a.ws, s.mission), "recordings")
+		dir = filepath.Join(a.store.missionDir(a.workspace(), s.mission), "recordings")
 	}
 	dir, err = filepath.Abs(dir)
 	if err != nil {

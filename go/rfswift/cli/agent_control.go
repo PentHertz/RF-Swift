@@ -14,6 +14,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/moby/moby/client"
 	rfdock "penthertz/rfswift/dock"
@@ -28,11 +29,7 @@ type agentTarget struct {
 	Summary                                                                *rfdock.ContainerSummary `json:",omitempty"`
 }
 type agentPort struct{ Port, Published, Service string }
-type agentCreate struct {
-	Name, Title, Engine, Image, FlakeRef, Workspace, Network, ExposedPorts, PortBindings, GPUs, Seccomp, Shell, DesktopProto, DesktopHost, DesktopPort, DesktopPassword string
-	Caps, Bindings, Devices, CgroupRules, ExtraHosts, Environment                                                                                                       []string
-	Realtime, Desktop, DesktopSSL, NoX11, Privileged, Start, Lazy, Pure                                                                                                 bool
-}
+type agentCreate = remote.CreateRequest
 type agentChange struct {
 	ID, Kind, Value, Source, Target string
 	Add                             bool
@@ -55,11 +52,12 @@ type agentArtifactData struct {
 // comes from ptyx, so it is a Unix PTY on Linux/macOS agents and a ConPTY on
 // Windows agents.
 type remotePTY struct {
-	term    ptyx.Terminal
-	cmdDone chan struct{}
-	mu      sync.Mutex
-	output  []byte
-	closed  bool
+	term      ptyx.Terminal
+	cmdDone   chan struct{}
+	mu        sync.Mutex
+	output    []byte
+	closed    bool
+	truncated bool
 }
 
 var remotePTYs = struct {
@@ -84,11 +82,12 @@ func agentControl(ctx context.Context, req remote.ControlRequest) (any, error) {
 			return nil, err
 		}
 		return nil, agentLifecycle(ctx, p.ID, req.Method == "targets.start")
-	case "targets.create":
+	case "targets.create", "targets.create.v2":
 		var p agentCreate
 		if err := decode(&p); err != nil {
 			return nil, err
 		}
+		p.Context = ctx
 		return agentCreateTarget(p)
 	case "targets.delete":
 		var p struct {
@@ -347,18 +346,25 @@ func agentLifecycle(ctx context.Context, id string, start bool) error {
 	return e
 }
 func agentCreateTarget(p agentCreate) (agentTarget, error) {
+	if p.Isolate && p.Engine != "nix" {
+		return agentTarget{}, errors.New("isolate is supported only for Nix targets")
+	}
 	if p.Engine == "nix" {
-		e := rfnix.RunEnvironment(rfnix.RunOptions{Name: p.Name, Image: p.Image, Workspace: p.Workspace, FlakeRef: p.FlakeRef, Lazy: p.Lazy, Pure: p.Pure, CreateOnly: true})
+		e := rfnix.RunEnvironment(agentNixCreateOptions(p))
 		if e != nil {
 			return agentTarget{}, e
 		}
 	} else {
-		_, e := rfdock.CreateContainer(rfdock.CreateOptions{Engine: p.Engine, Name: p.Name, Image: p.Image, Workspace: p.Workspace, Network: p.Network, Shell: p.Shell, Caps: p.Caps, Bindings: p.Bindings, Devices: p.Devices, ExposedPorts: p.ExposedPorts, PortBindings: p.PortBindings, CgroupRules: p.CgroupRules, GPUs: p.GPUs, Seccomp: p.Seccomp, ExtraHosts: p.ExtraHosts, Environment: p.Environment, Realtime: p.Realtime, Desktop: p.Desktop, DesktopProto: p.DesktopProto, DesktopHost: p.DesktopHost, DesktopPort: p.DesktopPort, DesktopPassword: p.DesktopPassword, DesktopSSL: p.DesktopSSL, NoX11: p.NoX11, Privileged: p.Privileged, Start: p.Start})
+		_, e := rfdock.CreateContainer(rfdock.CreateOptions{Context: p.Context, Engine: p.Engine, Name: p.Name, Image: p.Image, Workspace: p.Workspace, Network: p.Network, Shell: p.Shell, Caps: p.Caps, Bindings: p.Bindings, Devices: p.Devices, ExposedPorts: p.ExposedPorts, PortBindings: p.PortBindings, CgroupRules: p.CgroupRules, GPUs: p.GPUs, Seccomp: p.Seccomp, ExtraHosts: p.ExtraHosts, Environment: p.Environment, Realtime: p.Realtime, Desktop: p.Desktop, DesktopProto: p.DesktopProto, DesktopHost: p.DesktopHost, DesktopPort: p.DesktopPort, DesktopPassword: p.DesktopPassword, DesktopSSL: p.DesktopSSL, NoX11: p.NoX11, HostAudio: !p.NoAudio, Privileged: p.Privileged, Start: p.Start})
 		if e != nil {
 			return agentTarget{}, e
 		}
 	}
 	return agentInspect(p.Name)
+}
+
+func agentNixCreateOptions(p agentCreate) rfnix.RunOptions {
+	return rfnix.RunOptions{Name: p.Name, Image: p.Image, Workspace: p.Workspace, FlakeRef: p.FlakeRef, Lazy: p.Lazy, Pure: p.Pure, Isolate: p.Isolate, CreateOnly: true}
 }
 func agentDelete(id string, nix, clean bool) error {
 	if nix {
@@ -428,8 +434,12 @@ func agentTerminalStart(p agentTerminalRequest) (map[string]string, error) {
 			n, e := f.Read(buf)
 			if n > 0 {
 				s.mu.Lock()
-				if len(s.output) < 4<<20 {
-					s.output = append(s.output, buf[:n]...)
+				remaining := remote.MaxTerminalOutput - len(s.output)
+				if !s.truncated && remaining > 0 {
+					s.output = append(s.output, buf[:min(n, remaining)]...)
+				}
+				if n > remaining {
+					s.truncated = true
 				}
 				s.mu.Unlock()
 			}
@@ -437,6 +447,10 @@ func agentTerminalStart(p agentTerminalRequest) (map[string]string, error) {
 				break
 			}
 		}
+		// A read error need not mean the child exited. Hang up the terminal
+		// before waiting so a broken stream cannot leave this goroutine stuck.
+		_ = f.Close()
+		_ = f.Wait()
 		s.mu.Lock()
 		s.closed = true
 		s.mu.Unlock()
@@ -472,10 +486,29 @@ func agentTerminalRead(id string) (map[string]any, error) {
 		return map[string]any{"closed": true}, nil
 	}
 	s.mu.Lock()
-	b := append([]byte{}, s.output...)
-	s.output = nil
+	// A PTY read/poll may split a multibyte character. Keep the incomplete
+	// suffix until the next poll so JSON encoding cannot replace it with U+FFFD.
+	n := len(s.output)
+	if !s.closed && !s.truncated {
+		n = 0
+		for n < len(s.output) && utf8.FullRune(s.output[n:]) {
+			_, size := utf8.DecodeRune(s.output[n:])
+			n += size
+		}
+	}
+	b := append([]byte{}, s.output[:n]...)
+	s.output = append([]byte{}, s.output[n:]...)
+	if s.truncated {
+		b = append(b, []byte("\r\n[RF Swift: terminal output truncated; client is not keeping up]\r\n")...)
+		s.truncated = false
+	}
 	closed := s.closed
 	s.mu.Unlock()
+	if closed {
+		remotePTYs.Lock()
+		delete(remotePTYs.sessions, id)
+		remotePTYs.Unlock()
+	}
 	return map[string]any{"data": string(b), "closed": closed}, nil
 }
 func agentTerminalStop(id string) error {
@@ -501,7 +534,7 @@ func agentWorkspace(mission string) (string, error) {
 		}
 	}
 	if t.Engine == "nix" && len(t.Mounts) > 0 && t.Mounts[0] != "" && t.Mounts[0] != "none" {
-		return t.Mounts[0], nil
+		return rfnix.WorkspaceHostPath(t.Mounts[0]), nil
 	}
 	h, e := os.UserHomeDir()
 	if e != nil {
@@ -514,12 +547,20 @@ func agentSafeArtifact(mission, rel string) (string, error) {
 	if e != nil {
 		return "", e
 	}
+	return safeAgentArtifactPath(root, rel)
+}
+
+func safeAgentArtifactPath(root, rel string) (string, error) {
+	root, e := filepath.EvalSymlinks(root)
+	if e != nil {
+		return "", e
+	}
 	root, e = filepath.Abs(root)
 	if e != nil {
 		return "", e
 	}
 	rel = filepath.Clean(filepath.FromSlash(rel))
-	if rel == "." || filepath.IsAbs(rel) || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+	if rel == "." || !filepath.IsLocal(rel) {
 		return "", errors.New("artifact path escapes workspace")
 	}
 	p := filepath.Join(root, rel)
@@ -527,7 +568,8 @@ func agentSafeArtifact(mission, rel string) (string, error) {
 	if e != nil {
 		return "", e
 	}
-	if resolved != root && !strings.HasPrefix(resolved, root+string(filepath.Separator)) {
+	within, e := filepath.Rel(root, resolved)
+	if e != nil || !filepath.IsLocal(within) {
 		return "", errors.New("artifact symlink escapes workspace")
 	}
 	return resolved, nil
@@ -579,13 +621,13 @@ func agentArtifactRead(mission, rel string) (agentArtifactData, error) {
 		return agentArtifactData{}, e
 	}
 	defer f.Close()
-	b, e := io.ReadAll(io.LimitReader(f, 16<<20+1))
+	b, e := io.ReadAll(io.LimitReader(f, remote.MaxArtifactBytes+1))
 	if e != nil {
 		return agentArtifactData{}, e
 	}
-	tr := len(b) > 16<<20
+	tr := len(b) > remote.MaxArtifactBytes
 	if tr {
-		b = b[:16<<20]
+		b = b[:remote.MaxArtifactBytes]
 	}
 	return agentArtifactData{Path: rel, Data: base64.StdEncoding.EncodeToString(b), Truncated: tr}, nil
 }

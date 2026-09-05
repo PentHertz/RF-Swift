@@ -30,7 +30,7 @@ func (a *App) missionWorkspace(mission string) (string, error) {
 	if err := a.requireMission(mission); err != nil {
 		return "", err
 	}
-	m, err := a.eng.Inspect(mission)
+	m, err := a.engine().Inspect(mission)
 	if err != nil {
 		return "", err
 	}
@@ -101,12 +101,12 @@ func (a *App) workspaceArtifactPath(mission, relative string) (string, error) {
 }
 
 func (a *App) ListWorkspaceArtifacts(mission string) ([]WorkspaceArtifact, error) {
-	if remoteEngine, ok := a.eng.(*RemoteEngine); ok {
+	if remoteEngine, ok := a.engine().(*RemoteEngine); ok {
 		var out []WorkspaceArtifact
 		if err := remoteEngine.call("artifacts.list", map[string]string{"mission": mission}, &out); err != nil {
 			return nil, err
 		}
-		registered, _ := a.store.ListCaptures(a.ws, mission)
+		registered, _ := a.store.ListCaptures(a.workspace(), mission)
 		bySource := map[string]Capture{}
 		for _, c := range registered {
 			bySource[c.Meta["Workspace path"]] = c
@@ -124,7 +124,7 @@ func (a *App) ListWorkspaceArtifacts(mission string) ([]WorkspaceArtifact, error
 	if err != nil {
 		return nil, err
 	}
-	registered, _ := a.store.ListCaptures(a.ws, mission)
+	registered, _ := a.store.ListCaptures(a.workspace(), mission)
 	bySource := map[string]Capture{}
 	for _, c := range registered {
 		if source := c.Meta["Workspace path"]; source != "" {
@@ -288,7 +288,7 @@ func cleanTerminalTranscript(value string) string {
 }
 
 func (a *App) PreviewWorkspaceArtifact(mission, relative string) (ArtifactPreview, error) {
-	if remoteEngine, ok := a.eng.(*RemoteEngine); ok {
+	if remoteEngine, ok := a.engine().(*RemoteEngine); ok {
 		data, truncated, err := remoteArtifactBytes(remoteEngine, mission, relative)
 		if err != nil {
 			return ArtifactPreview{}, err
@@ -327,7 +327,7 @@ func artifactPreview(path string, data []byte, truncated bool) ArtifactPreview {
 }
 
 func (a *App) RegisterWorkspaceArtifact(mission, relative string, allowAI bool) (Capture, error) {
-	if remoteEngine, ok := a.eng.(*RemoteEngine); ok {
+	if remoteEngine, ok := a.engine().(*RemoteEngine); ok {
 		return a.registerRemoteArtifact(remoteEngine, mission, relative, allowAI)
 	}
 	path, err := a.workspaceArtifactPath(mission, relative)
@@ -356,7 +356,7 @@ func (a *App) RegisterWorkspaceArtifact(mission, relative string, allowAI bool) 
 		meta["AI content access"] = "approved"
 	}
 	c := Capture{Mission: mission, Name: filepath.Base(path), Path: path, Type: ClassifyCapture(path), Tool: "workspace", Meta: meta, Note: "Registered from the live mission workspace"}
-	if err := a.store.ImportCapture(a.ws, mission, &c); err != nil {
+	if err := a.store.ImportCapture(a.workspace(), mission, &c); err != nil {
 		if os.IsExist(err) {
 			return Capture{}, errors.New("an artifact with this filename is already registered")
 		}
@@ -388,7 +388,7 @@ func (a *App) registerRemoteArtifact(engine *RemoteEngine, mission, relative str
 	if allowAI && (!utf8.Valid(data) || strings.IndexByte(string(data), 0) >= 0) {
 		return Capture{}, errors.New("cannot allow AI content access for a binary artifact")
 	}
-	dir := a.store.capturesDir(a.ws, mission)
+	dir := a.store.capturesDir(a.workspace(), mission)
 	if err = os.MkdirAll(dir, 0700); err != nil {
 		return Capture{}, err
 	}
@@ -406,7 +406,7 @@ func (a *App) registerRemoteArtifact(engine *RemoteEngine, mission, relative str
 		meta["AI content access"] = "approved"
 	}
 	c := Capture{Mission: mission, Name: name, Path: path, Type: ClassifyCapture(relative), Tool: "remote workspace", Meta: meta, Note: "Copied from the authenticated remote mission workspace"}
-	if err = a.store.AddCapture(a.ws, mission, c); err != nil {
+	if err = a.store.AddCapture(a.workspace(), mission, c); err != nil {
 		return Capture{}, err
 	}
 	return c, nil
@@ -417,7 +417,7 @@ func (a *App) AttachWorkspaceArtifactToNote(mission, relative string) (Capture, 
 	if err != nil {
 		return Capture{}, err
 	}
-	body, err := a.store.GetNote(a.ws, mission, "note.md")
+	body, err := a.store.GetNote(a.workspace(), mission, "note.md")
 	if err != nil {
 		return Capture{}, err
 	}
@@ -426,12 +426,12 @@ func (a *App) AttachWorkspaceArtifactToNote(mission, relative string) (Capture, 
 		body += "\n"
 	}
 	body += "\n" + link + "\n"
-	return c, a.store.SaveNote(a.ws, mission, "note.md", body)
+	return c, a.store.SaveNote(a.workspace(), mission, "note.md", body)
 }
 
 func (a *App) SetArtifactAIContentAccess(mission, name string, allowed bool) error {
 	name = safeName(name)
-	captures, err := a.store.ListCaptures(a.ws, mission)
+	captures, err := a.store.ListCaptures(a.workspace(), mission)
 	if err != nil {
 		return err
 	}
@@ -440,14 +440,14 @@ func (a *App) SetArtifactAIContentAccess(mission, name string, allowed bool) err
 			continue
 		}
 		if allowed {
-			if _, _, err := readArtifactAIContent(filepath.Join(a.store.capturesDir(a.ws, mission), name)); err != nil {
+			if _, _, err := readArtifactAIContent(filepath.Join(a.store.capturesDir(a.workspace(), mission), name)); err != nil {
 				return fmt.Errorf("cannot allow AI content access: %w", err)
 			}
 			c.Meta["AI content access"] = "approved"
 		} else {
 			c.Meta["AI content access"] = "denied"
 		}
-		return a.store.AddCapture(a.ws, mission, c)
+		return a.store.AddCapture(a.workspace(), mission, c)
 	}
 	return errors.New("registered artifact not found")
 }

@@ -23,7 +23,7 @@ import (
 // local engine on Linux (Windows/macOS have no udev, Docker Desktop manages
 // its own socket access).
 func (a *App) hostSetupApplies() bool {
-	if _, ok := a.eng.(*LocalEngine); !ok {
+	if _, ok := a.engine().(*LocalEngine); !ok {
 		return false
 	}
 	return runtime.GOOS == "linux"

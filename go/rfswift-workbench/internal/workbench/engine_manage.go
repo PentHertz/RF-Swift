@@ -23,7 +23,7 @@ import (
 // connections.
 
 func (a *App) requireLocal() (*LocalEngine, error) {
-	local, ok := a.eng.(*LocalEngine)
+	local, ok := a.engine().(*LocalEngine)
 	if !ok {
 		return nil, fmt.Errorf("engine management is only available for the local connection")
 	}

@@ -5,15 +5,14 @@
 package dock
 
 import (
-	"archive/tar"
 	"bufio"
 	"compress/gzip"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 	"strings"
 
 	"github.com/moby/moby/client"
@@ -21,128 +20,20 @@ import (
 	common "penthertz/rfswift/common"
 )
 
-// extractTarArchive extracts a tar archive from a reader into the destination directory.
-//
-//	in(1): io.Reader reader source tar stream to extract from
-//	in(2): string destDir filesystem path where archive contents are written
-//	out: error non-nil if extraction fails at any step
-func extractTarArchive(reader io.Reader, destDir string) error {
-	tarReader := tar.NewReader(reader)
-
-	for {
-		header, err := tarReader.Next()
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			return err
-		}
-
-		// Defense in depth against tar path traversal. Today this archive is
-		// produced by the container engine archiving a real filesystem (no ".."
-		// components), but validate anyway so a future or compromised source
-		// cannot write outside destDir. Reject absolute paths and any entry
-		// whose cleaned path escapes the destination; ignore link entries,
-		// which this extractor does not create.
-		target := filepath.Join(destDir, header.Name)
-		if rel, err := filepath.Rel(destDir, target); err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
-			return fmt.Errorf("refusing tar entry outside destination: %q", header.Name)
-		}
-
-		switch header.Typeflag {
-		case tar.TypeDir:
-			if err := os.MkdirAll(target, 0755); err != nil {
-				return err
-			}
-		case tar.TypeReg:
-			outFile, err := os.Create(target)
-			if err != nil {
-				return err
-			}
-			if _, err := io.Copy(outFile, tarReader); err != nil {
-				outFile.Close()
-				return err
-			}
-			outFile.Close()
-		}
+// saveUpgradeArchive spools a container archive without interpreting its paths
+// or losing tar metadata. A partial copy is never returned as a usable backup.
+func saveUpgradeArchive(reader io.Reader, dir string) (string, error) {
+	f, err := os.CreateTemp(dir, "preserved-*.tar")
+	if err != nil {
+		return "", err
 	}
-
-	return nil
-}
-
-// createTarArchive creates a tar archive from a local source directory, preserving the container path structure.
-//
-//	in(1): string srcDir local directory whose contents are packed into the archive
-//	in(2): string containerPath destination path inside the container, used as the archive root name
-//	out: io.ReadCloser pipe reader that streams the tar data (caller must close)
-//	out: error non-nil if the archive cannot be started
-func createTarArchive(srcDir string, containerPath string) (io.ReadCloser, error) {
-	pr, pw := io.Pipe()
-
-	go func() {
-		defer pw.Close()
-		tarWriter := tar.NewWriter(pw)
-		defer tarWriter.Close()
-
-		// Get the base name of the container path
-		baseName := filepath.Base(containerPath)
-
-		// First, check what's actually in srcDir
-		// Docker cp creates: srcDir/baseName/contents
-		actualSrcDir := filepath.Join(srcDir, baseName)
-
-		// If the expected structure exists, use it
-		if _, err := os.Stat(actualSrcDir); err == nil {
-			srcDir = actualSrcDir
-		}
-
-		filepath.Walk(srcDir, func(file string, fi os.FileInfo, err error) error {
-			if err != nil {
-				return err
-			}
-
-			// Create tar header
-			header, err := tar.FileInfoHeader(fi, fi.Name())
-			if err != nil {
-				return err
-			}
-
-			// Get relative path from srcDir
-			relPath, err := filepath.Rel(srcDir, file)
-			if err != nil {
-				return err
-			}
-
-			// Skip the root directory itself
-			if relPath == "." {
-				// Use baseName for the directory itself
-				header.Name = baseName
-			} else {
-				// Build path: baseName/relPath
-				header.Name = filepath.Join(baseName, relPath)
-			}
-
-			if err := tarWriter.WriteHeader(header); err != nil {
-				return err
-			}
-
-			// Write file content if it's a regular file
-			if !fi.IsDir() {
-				data, err := os.Open(file)
-				if err != nil {
-					return err
-				}
-				defer data.Close()
-				if _, err := io.Copy(tarWriter, data); err != nil {
-					return err
-				}
-			}
-
-			return nil
-		})
-	}()
-
-	return pr, nil
+	_, copyErr := io.Copy(f, reader)
+	err = errors.Join(copyErr, f.Close())
+	if err != nil {
+		_ = os.Remove(f.Name())
+		return "", err
+	}
+	return f.Name(), nil
 }
 
 // ExportContainer exports a container's filesystem to a compressed tar.gz file.

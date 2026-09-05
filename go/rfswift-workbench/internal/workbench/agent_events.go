@@ -89,7 +89,7 @@ func (a *App) ReadAgentTerminalEvents(mission string, cursor int64) (AgentTermin
 	if !validWorkspaceName(mission) || cursor < 0 {
 		return AgentTerminalEvents{}, errors.New("invalid agent terminal event request")
 	}
-	path := filepath.Join(a.store.missionDir(a.ws, mission), "agent-workspace", agentTerminalEventsFile)
+	path := filepath.Join(a.store.missionDir(a.workspace(), mission), "agent-workspace", agentTerminalEventsFile)
 	file, err := os.Open(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return AgentTerminalEvents{Events: []AgentTerminalEvent{}, Cursor: 0}, nil

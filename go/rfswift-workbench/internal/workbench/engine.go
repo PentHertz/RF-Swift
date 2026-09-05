@@ -117,7 +117,16 @@ func (e *RemoteEngine) Exec(id, command string) (string, error) {
 }
 func (e *RemoteEngine) Create(req MissionCreate) (Mission, error) {
 	var out Mission
-	err := e.call("targets.create", req, &out)
+	ctx := req.Context
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	// Older agents silently ignored isolation/audio flags. A versioned method
+	// fails closed on those agents instead of creating an unprotected target.
+	err := remote.Control(ctx, e.Config, "targets.create.v2", req, &out)
+	if err != nil {
+		return out, fmt.Errorf("remote creation failed (requires an agent supporting targets.create.v2): %w", err)
+	}
 	return out, err
 }
 func (e *RemoteEngine) Delete(id string, nix, clean bool) error {

@@ -53,7 +53,7 @@ type NixEngineStatus struct {
 // and macOS; on Windows the WSL 2 distribution and what it offers.
 func (a *App) NixEngineStatus() NixEngineStatus {
 	st := NixEngineStatus{Host: "native", Missing: []string{}}
-	if _, ok := a.eng.(*LocalEngine); !ok {
+	if _, ok := a.engine().(*LocalEngine); !ok {
 		st.Detail = "engine status is only available for the local connection"
 		return st
 	}
@@ -217,7 +217,7 @@ type EngineStatus struct {
 // alias (DOCKER_HOST into the Lima socket) are still all reported here — the
 // list view dedupes, the status strip should not hide them.
 func (a *App) ContainerEngines() []EngineStatus {
-	if _, ok := a.eng.(*LocalEngine); !ok {
+	if _, ok := a.engine().(*LocalEngine); !ok {
 		return nil
 	}
 	resetEngineEnv()
@@ -268,7 +268,7 @@ func (a *App) ContainerEngines() []EngineStatus {
 // first use), Docker Desktop, or the Podman machine. Blocks until the engine
 // is reachable, so the GUI should call it asynchronously and show progress.
 func (a *App) StartContainerEngine(name string) error {
-	if _, ok := a.eng.(*LocalEngine); !ok {
+	if _, ok := a.engine().(*LocalEngine); !ok {
 		return fmt.Errorf("engine control is only available for the local connection")
 	}
 	eng := engineByType(rfdock.EngineType(strings.ToLower(strings.TrimSpace(name))))
@@ -282,7 +282,7 @@ func (a *App) StartContainerEngine(name string) error {
 // StopContainerEngine stops the Lima VM (and with it the containers inside).
 // Docker and Podman daemons are left to their own lifecycle managers.
 func (a *App) StopContainerEngine(name string) error {
-	if _, ok := a.eng.(*LocalEngine); !ok {
+	if _, ok := a.engine().(*LocalEngine); !ok {
 		return fmt.Errorf("engine control is only available for the local connection")
 	}
 	if !strings.EqualFold(strings.TrimSpace(name), "lima") {

@@ -40,6 +40,19 @@ func TestEndpointSchemeNormalization(t *testing.T) {
 	}
 }
 
+func TestAgentDefaultPortIsConsistent(t *testing.T) {
+	for _, endpoint := range []string{"agent.example", "https://agent.example", "rfswifts://agent.example", "https://[::1]"} {
+		u, err := normalizeEndpoint(endpoint)
+		if err != nil || u.Port() != "8443" {
+			t.Fatalf("wrong default port for %s: %v %v", endpoint, u, err)
+		}
+	}
+	u, err := normalizeEndpoint("https://agent.example:443")
+	if err != nil || u.Port() != "443" {
+		t.Fatalf("explicit port lost: %v %v", u, err)
+	}
+}
+
 func TestEndpointRejectsNonOriginComponents(t *testing.T) {
 	for _, ep := range []string{
 		"https://user:pass@example.test",

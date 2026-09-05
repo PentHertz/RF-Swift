@@ -18,6 +18,7 @@ import (
 type App struct {
 	ctx             context.Context
 	store           *Store
+	stateMu         sync.RWMutex // guards the selected workspace and engine
 	eng             Engine
 	ws              string // current workspace
 	termMu          sync.Mutex
@@ -26,6 +27,8 @@ type App struct {
 	createCancel    context.CancelFunc
 	creationContext context.Context
 	createName      string
+	createWorkspace string
+	createEngine    Engine
 	secretStore     remote.SecretStore
 	chefMu          sync.Mutex
 	chefServer      *http.Server
@@ -36,6 +39,27 @@ type App struct {
 	usbAttached     map[string]bool // QMP device IDs we forwarded into the Lima VM this session
 }
 
+func (a *App) currentScope() (string, Engine) {
+	a.stateMu.RLock()
+	defer a.stateMu.RUnlock()
+	return a.ws, a.eng
+}
+
+func (a *App) workspace() string { ws, _ := a.currentScope(); return ws }
+func (a *App) engine() Engine    { _, eng := a.currentScope(); return eng }
+
+func (a *App) setWorkspace(ws string) {
+	a.stateMu.Lock()
+	defer a.stateMu.Unlock()
+	a.ws = ws
+}
+
+func (a *App) setEngine(eng Engine) {
+	a.stateMu.Lock()
+	defer a.stateMu.Unlock()
+	a.eng = eng
+}
+
 // GetAppVersion exposes the CLI's canonical version to the Workbench so both
 // binaries are changed from one declaration in common.Version.
 func (a *App) GetAppVersion() string { return common.Version }
@@ -44,7 +68,7 @@ func (a *App) requireMission(id string) error {
 	if !validWorkspaceName(id) {
 		return errors.New("invalid mission scope")
 	}
-	missions, err := a.store.ListMissions(a.ws)
+	missions, err := a.store.ListMissions(a.workspace())
 	if err != nil {
 		return err
 	}
@@ -76,7 +100,7 @@ func NewApp(assetFS ...fs.FS) *App {
 func (a *App) Startup(ctx context.Context) {
 	a.ctx = ctx
 	// Ensure the default workspace exists so the UI has somewhere to write.
-	_ = a.store.CreateWorkspace(a.ws)
+	_ = a.store.CreateWorkspace(a.workspace())
 	_ = a.store.SecurePermissions()
 	// Surface container-engine lifecycle state (e.g. a Lima VM booting) in the
 	// GUI. Without this, starting a stopped Lima VM during mission creation is

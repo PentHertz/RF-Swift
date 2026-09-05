@@ -28,7 +28,7 @@ func (a *App) USBAccessCheck(devices, bindings, cgroupRules []string, privileged
 // VM). Advisory only: the form offers to remove them. Remote agents are not
 // checked (scope "none").
 func (a *App) DeviceMappingCheck(engine string, devices, bindings []string) rfdock.DeviceCheck {
-	if _, remote := a.eng.(*RemoteEngine); remote || engine == "nix" {
+	if _, remote := a.engine().(*RemoteEngine); remote || engine == "nix" {
 		return rfdock.DeviceCheck{Engine: engine, Scope: "none", Issues: []rfdock.DeviceIssue{}}
 	}
 	return rfdock.CheckDeviceMappings(engine, devices, bindings)
@@ -86,7 +86,7 @@ func usbDevID(vendorID, productID string) string {
 // USB passthrough does not apply (Linux passes devices at creation; remote
 // engines are not driven from this process).
 func (a *App) usbBackend() string {
-	if _, ok := a.eng.(*LocalEngine); !ok {
+	if _, ok := a.engine().(*LocalEngine); !ok {
 		return ""
 	}
 	switch runtime.GOOS {

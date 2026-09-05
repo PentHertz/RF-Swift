@@ -52,7 +52,7 @@ func (a *App) transferProgress(operation, kind, target string, percent int, stag
 // are running together: it points the legacy transfer helper at the daemon
 // that actually owns the selected container.
 func (a *App) ExportTarget(id, engine, password string) (string, error) {
-	if _, local := a.eng.(*LocalEngine); !local {
+	if _, local := a.engine().(*LocalEngine); !local {
 		return "", errors.New("target export is currently available for local targets only")
 	}
 	id = strings.TrimSpace(id)
@@ -160,7 +160,7 @@ type ContainerImportResult struct {
 }
 
 func (a *App) ImportContainerArchive(engine, imageName, password string) (ContainerImportResult, error) {
-	if _, local := a.eng.(*LocalEngine); !local {
+	if _, local := a.engine().(*LocalEngine); !local {
 		return ContainerImportResult{}, errors.New("container import is currently available for local targets only")
 	}
 	engine = strings.ToLower(strings.TrimSpace(engine))
@@ -214,7 +214,7 @@ type PortableImportResult struct {
 }
 
 func (a *App) ImportNixEnvironment(name, password string) (PortableImportResult, error) {
-	if _, local := a.eng.(*LocalEngine); !local {
+	if _, local := a.engine().(*LocalEngine); !local {
 		return PortableImportResult{}, errors.New("Nix environment import is currently available for local targets only")
 	}
 	name = strings.TrimSpace(name)
@@ -257,7 +257,7 @@ func (a *App) ImportNixEnvironment(name, password string) (PortableImportResult,
 // Preserved metadata from a previously removed Nix environment is allowed so
 // importing its archive can intentionally restore that mission.
 func (a *App) ensureNixImportNameAvailable(target string) error {
-	live, err := a.eng.ListTargets()
+	live, err := a.engine().ListTargets()
 	if err != nil {
 		return fmt.Errorf("could not check existing mission names: %w", err)
 	}
@@ -266,7 +266,7 @@ func (a *App) ensureNixImportNameAvailable(target string) error {
 			return fmt.Errorf("mission name %q is already used by a live %s target", target, mission.Engine)
 		}
 	}
-	saved, err := a.store.ListMissions(a.ws)
+	saved, err := a.store.ListMissions(a.workspace())
 	if err != nil {
 		return fmt.Errorf("could not check saved mission names: %w", err)
 	}

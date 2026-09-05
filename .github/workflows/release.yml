@@ -6,9 +6,26 @@ on:
 
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
+  modules:
+    strategy:
+      matrix:
+        module: [go/rfswift, go/rfswift-workbench]
+    uses: ./.github/workflows/modules-audit.yml
+    with:
+      module: ${{ matrix.module }}
+
+  security:
+    permissions:
+      contents: read
+      security-events: write
+    uses: ./.github/workflows/security.yml
+
+  regression:
+    uses: ./.github/workflows/regression.yml
+
   workbench-linux:
     name: Workbench Linux
     runs-on: ubuntu-latest
@@ -16,8 +33,8 @@ jobs:
       run:
         working-directory: go/rfswift-workbench
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go/rfswift-workbench/go.mod
           cache-dependency-path: go/rfswift-workbench/go.sum
@@ -64,7 +81,7 @@ jobs:
           appimage=$(find . -maxdepth 2 -type f -name '*.AppImage' ! -path './build/appimage-tools/*' -print -quit)
           test -n "$appimage"
           mv "$appimage" build/bin/rfswift-workbench_Linux_x86_64.AppImage
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: rfswift-workbench-linux-amd64
           path: |
@@ -81,8 +98,8 @@ jobs:
       run:
         working-directory: go/rfswift-workbench
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go/rfswift-workbench/go.mod
           cache-dependency-path: go/rfswift-workbench/go.sum
@@ -98,7 +115,7 @@ jobs:
         run: |
           Compress-Archive build/bin/rfswift-workbench_windows_amd64.exe build/bin/rfswift-workbench_Windows_x86_64.zip
           Compress-Archive build/bin/rfswift-workbench_windows_arm64.exe build/bin/rfswift-workbench_Windows_arm64.zip
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: rfswift-workbench-windows
           path: go/rfswift-workbench/build/bin/rfswift-workbench_Windows_*.zip
@@ -110,8 +127,8 @@ jobs:
       run:
         working-directory: go/rfswift-workbench
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go/rfswift-workbench/go.mod
           cache-dependency-path: go/rfswift-workbench/go.sum
@@ -159,7 +176,7 @@ jobs:
           appimage=$(find . -maxdepth 2 -type f -name '*.AppImage' ! -path './build/appimage-tools/*' -print -quit)
           test -n "$appimage"
           mv "$appimage" build/bin/rfswift-workbench_Linux_arm64.AppImage
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: rfswift-workbench-linux-arm64
           path: |
@@ -176,8 +193,8 @@ jobs:
       run:
         working-directory: go/rfswift-workbench
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go/rfswift-workbench/go.mod
           cache-dependency-path: go/rfswift-workbench/go.sum
@@ -188,14 +205,14 @@ jobs:
           make darwin_universal
           cd build/bin
           ditto -c -k --sequesterRsrc --keepParent rfswift-workbench.app rfswift-workbench_Darwin_universal.zip
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: rfswift-workbench-macos
           path: go/rfswift-workbench/build/bin/rfswift-workbench_Darwin_universal.zip
 
   generate-artifacts:
     name: Build CLI/TUI release archives
-    needs: [workbench-linux, workbench-linux-arm64, workbench-windows, workbench-macos]
+    needs: [modules, security, regression, workbench-linux, workbench-linux-arm64, workbench-windows, workbench-macos]
     runs-on: ubuntu-latest
     permissions:
       contents: write      # create the GitHub release (goreleaser)
@@ -245,7 +262,7 @@ jobs:
       attestations: write
     steps:
       - name: Download Workbench artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           pattern: rfswift-workbench-*
           path: release-assets

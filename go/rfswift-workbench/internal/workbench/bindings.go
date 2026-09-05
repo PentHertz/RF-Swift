@@ -31,12 +31,12 @@ import (
 // --- workspaces ---
 
 func (a *App) Workspaces() ([]string, error) { return a.store.ListWorkspaces() }
-func (a *App) CurrentWorkspace() string      { return a.ws }
+func (a *App) CurrentWorkspace() string      { return a.workspace() }
 func (a *App) OpenWorkspace(name string) error {
 	if err := a.store.CreateWorkspace(name); err != nil {
 		return err
 	}
-	a.ws = name
+	a.setWorkspace(name)
 	return nil
 }
 
@@ -45,12 +45,12 @@ func (a *App) CloseWorkspace() (string, error) {
 	if err := a.store.CreateWorkspace(fallback); err != nil {
 		return "", err
 	}
-	a.ws = fallback
+	a.setWorkspace(fallback)
 	return fallback, nil
 }
 
 func (a *App) DeleteWorkspace(name string) error {
-	if name == a.ws {
+	if name == a.workspace() {
 		return errors.New("close or switch away from the project before deleting it")
 	}
 	missions, err := a.store.ListMissions(name)
@@ -77,11 +77,11 @@ func (a *App) DeleteWorkspace(name string) error {
 // engine + Nix environments). Per-mission notes/findings/captures are stored by
 // mission ID in the workspace.
 func (a *App) Missions() ([]Mission, error) {
-	live, err := a.eng.ListTargets()
+	live, err := a.engine().ListTargets()
 	if err != nil {
 		return nil, err
 	}
-	saved, _ := a.store.ListMissions(a.ws)
+	saved, _ := a.store.ListMissions(a.workspace())
 	byID := make(map[string]Mission, len(saved))
 	for _, m := range saved {
 		byID[m.ID] = m
@@ -98,11 +98,11 @@ func (a *App) Missions() ([]Mission, error) {
 				live[i].EnvironmentAudit = m.Posture // migrate legacy audit counters
 			}
 		}
-		findings, _ := a.store.LoadFindings(a.ws, live[i].ID)
+		findings, _ := a.store.LoadFindings(a.workspace(), live[i].ID)
 		live[i].FindingSummary = summarizeFindings(findings)
-		auditPath := filepath.Join(a.store.missionDir(a.ws, live[i].ID), "environment-audits", "latest.json")
+		auditPath := filepath.Join(a.store.missionDir(a.workspace(), live[i].ID), "environment-audits", "latest.json")
 		if _, statErr := os.Stat(auditPath); errors.Is(statErr, os.ErrNotExist) {
-			auditPath = filepath.Join(a.store.missionDir(a.ws, live[i].ID), "audits", "latest.json")
+			auditPath = filepath.Join(a.store.missionDir(a.workspace(), live[i].ID), "audits", "latest.json")
 		}
 		if _, statErr := os.Stat(auditPath); statErr == nil {
 			result := parseAuditFile(auditPath)
@@ -112,7 +112,7 @@ func (a *App) Missions() ([]Mission, error) {
 			}
 		}
 		live[i].Posture = Posture{}
-		_ = a.store.SaveMission(a.ws, live[i])
+		_ = a.store.SaveMission(a.workspace(), live[i])
 	}
 	return live, nil
 }
@@ -137,7 +137,7 @@ func summarizeFindings(findings []Finding) Posture {
 }
 
 func (a *App) MissionStatuses() (map[string]string, error) {
-	targets, err := a.eng.ListTargets()
+	targets, err := a.engine().ListTargets()
 	if err != nil {
 		return nil, err
 	}
@@ -161,7 +161,7 @@ func (a *App) MissionTemplates() ([]MissionTemplate, error) {
 }
 
 func (a *App) ContainerProfiles() []MissionProfile {
-	if remoteEngine, ok := a.eng.(*RemoteEngine); ok {
+	if remoteEngine, ok := a.engine().(*RemoteEngine); ok {
 		var out []MissionProfile
 		if err := remoteEngine.call("profiles.list", map[string]any{}, &out); err == nil {
 			return out
@@ -201,7 +201,7 @@ func (a *App) ContainerProfiles() []MissionProfile {
 }
 
 func (a *App) ContainerDefaults() (ContainerDefaults, error) {
-	if remoteEngine, ok := a.eng.(*RemoteEngine); ok {
+	if remoteEngine, ok := a.engine().(*RemoteEngine); ok {
 		var out ContainerDefaults
 		err := remoteEngine.call("profiles.defaults", map[string]any{}, &out)
 		return out, err
@@ -277,12 +277,13 @@ func (a *App) OpenExternalURL(raw string) error {
 }
 
 func (a *App) BeginMissionCreation(name string) error {
+	ws, eng := a.currentScope()
 	if !validWorkspaceName(name) {
 		return errors.New("mission name must be a single safe path component")
 	}
-	if _, err := os.Stat(a.store.missionDir(a.ws, name)); err == nil {
+	if _, err := os.Stat(a.store.missionDir(ws, name)); err == nil {
 		var existing Mission
-		if readErr := readJSON(filepath.Join(a.store.missionDir(a.ws, name), "mission.json"), &existing); readErr != nil || existing.Engine != "nix" {
+		if readErr := readJSON(filepath.Join(a.store.missionDir(ws, name), "mission.json"), &existing); readErr != nil || existing.Engine != "nix" {
 			return errors.New("a mission with this name already exists in the current project; choose another name or remove the preserved mission data first")
 		}
 	} else if !os.IsNotExist(err) {
@@ -297,6 +298,7 @@ func (a *App) BeginMissionCreation(name string) error {
 	a.createCancel = cancel
 	a.creationContext = ctx
 	a.createName = name
+	a.createWorkspace, a.createEngine = ws, eng
 	return nil
 }
 
@@ -322,31 +324,30 @@ func (a *App) FinishMissionCreation(name string) {
 	a.createCancel = nil
 	a.creationContext = nil
 	a.createName = ""
+	a.createWorkspace, a.createEngine = "", nil
 }
 
 func (a *App) CreateMission(req MissionCreate) (Mission, error) {
+	ws, eng := a.currentScope()
+	a.createMu.Lock()
+	if a.createName == req.Name && a.createCancel != nil {
+		req.Context = a.creationContext
+		ws, eng = a.createWorkspace, a.createEngine
+	}
+	a.createMu.Unlock()
 	if !validWorkspaceName(req.Name) {
 		return Mission{}, errors.New("mission name must be a single safe path component")
 	}
-	if _, err := os.Stat(a.store.missionDir(a.ws, req.Name)); err == nil {
+	if _, err := os.Stat(a.store.missionDir(ws, req.Name)); err == nil {
 		var existing Mission
-		if readErr := readJSON(filepath.Join(a.store.missionDir(a.ws, req.Name), "mission.json"), &existing); readErr != nil || existing.Engine != "nix" || req.Engine != "nix" {
+		if readErr := readJSON(filepath.Join(a.store.missionDir(ws, req.Name), "mission.json"), &existing); readErr != nil || existing.Engine != "nix" || req.Engine != "nix" {
 			return Mission{}, errors.New("a mission with this name already exists in the current project")
 		}
 	} else if !os.IsNotExist(err) {
 		return Mission{}, fmt.Errorf("could not check the mission name: %w", err)
 	}
-	a.createMu.Lock()
-	ctx := context.Context(nil)
-	if a.createName == req.Name && a.createCancel != nil {
-		ctx = a.creationContext
-	}
-	a.createMu.Unlock()
-	if ctx != nil {
-		req.Context = ctx
-	}
 	a.emitOperationProgress("mission-create", req.Name, 55, "Creating target")
-	m, err := a.eng.Create(req)
+	m, err := eng.Create(req)
 	if err != nil {
 		return Mission{}, err
 	}
@@ -355,7 +356,7 @@ func (a *App) CreateMission(req MissionCreate) (Mission, error) {
 	warnings := m.Warnings
 	m.Warnings = nil
 	m.HostAudioOff = req.NoAudio && req.Engine != "nix"
-	if err := a.store.SaveMission(a.ws, m); err != nil {
+	if err := a.store.SaveMission(ws, m); err != nil {
 		return Mission{}, err
 	}
 	m.Warnings = warnings
@@ -396,7 +397,7 @@ func (a *App) pullMissionImage(ctx context.Context, engine, image string) (strin
 	if strings.TrimSpace(image) == "" {
 		return "", errors.New("image name is required")
 	}
-	if remoteEngine, ok := a.eng.(*RemoteEngine); ok {
+	if remoteEngine, ok := a.engine().(*RemoteEngine); ok {
 		var resolved string
 		if err := remoteEngine.callContext(ctx, "images.pull", map[string]string{"engine": engine, "image": image}, &resolved); err != nil {
 			return "", err
@@ -428,7 +429,7 @@ func (a *App) CheckMissionImage(engine, image string) (rfdock.ImageAvailability,
 	if strings.TrimSpace(image) == "" {
 		return rfdock.ImageAvailability{}, errors.New("image name is required")
 	}
-	if remoteEngine, ok := a.eng.(*RemoteEngine); ok {
+	if remoteEngine, ok := a.engine().(*RemoteEngine); ok {
 		var availability rfdock.ImageAvailability
 		err := remoteEngine.call("images.check", map[string]string{"engine": engine, "image": image}, &availability)
 		return availability, err
@@ -442,14 +443,14 @@ func (a *App) InspectMission(id string) (Mission, error) {
 	if err := a.requireMission(id); err != nil {
 		return Mission{}, err
 	}
-	return a.eng.Inspect(id)
+	return a.engine().Inspect(id)
 }
 
 func (a *App) SaveMission(m Mission) error {
 	if !validWorkspaceName(strings.TrimSpace(m.ID)) {
 		return errors.New("mission id must be a single non-empty path component")
 	}
-	return a.store.SaveMission(a.ws, m)
+	return a.store.SaveMission(a.workspace(), m)
 }
 
 // StartMission / StopMission start or stop the underlying container. Nix
@@ -461,13 +462,13 @@ func (a *App) StartMission(id string) error {
 	// Like the CLI's run: make sure the host audio server the container's
 	// PULSE_SERVER points at is listening before the tools start. Best effort.
 	a.ensureMissionHostAudio(id)
-	return a.eng.Start(id)
+	return a.engine().Start(id)
 }
 func (a *App) StopMission(id string) error {
 	if err := a.requireMission(id); err != nil {
 		return err
 	}
-	return a.eng.Stop(id)
+	return a.engine().Stop(id)
 }
 
 func (a *App) ConfigureContainer(id string, change ContainerChange) error {
@@ -475,7 +476,7 @@ func (a *App) ConfigureContainer(id string, change ContainerChange) error {
 		return err
 	}
 	value := strings.TrimSpace(change.Value)
-	if remoteEngine, ok := a.eng.(*RemoteEngine); ok {
+	if remoteEngine, ok := a.engine().(*RemoteEngine); ok {
 		return remoteEngine.Configure(id, change)
 	}
 	a.routeLocalMission(id)
@@ -518,7 +519,7 @@ func (a *App) DeleteContainer(id string) error {
 	if err := a.requireMission(id); err != nil {
 		return err
 	}
-	if remoteEngine, ok := a.eng.(*RemoteEngine); ok {
+	if remoteEngine, ok := a.engine().(*RemoteEngine); ok {
 		return remoteEngine.Delete(id, false, false)
 	}
 	a.routeLocalMission(id)
@@ -529,7 +530,7 @@ func (a *App) DeleteContainer(id string) error {
 // mission before helpers that operate on the global engine (configure,
 // install scripts, removal) — the container may live inside the Lima VM.
 func (a *App) routeLocalMission(id string) {
-	if local, ok := a.eng.(*LocalEngine); ok {
+	if local, ok := a.engine().(*LocalEngine); ok {
 		local.RouteMission(id)
 	}
 }
@@ -538,7 +539,7 @@ func (a *App) DeleteNixEnvironment(id string, cleanStore bool) error {
 	if err := a.requireMission(id); err != nil {
 		return err
 	}
-	if remoteEngine, ok := a.eng.(*RemoteEngine); ok {
+	if remoteEngine, ok := a.engine().(*RemoteEngine); ok {
 		return remoteEngine.Delete(id, true, cleanStore)
 	}
 	// An environment removed earlier ("Remove environment", the CLI) is not
@@ -584,7 +585,7 @@ func (a *App) UpdateNixEnvironment(id string) error {
 	if err := a.requireMission(id); err != nil {
 		return err
 	}
-	if _, ok := a.eng.(*RemoteEngine); ok {
+	if _, ok := a.engine().(*RemoteEngine); ok {
 		return errors.New("updating a Nix environment over a remote connection is not supported yet")
 	}
 	if _, err := rfnix.GetEnvironment(id); err != nil {
@@ -606,7 +607,7 @@ func (a *App) RebuildNixEnvironment(id string) error {
 	if err := a.requireMission(id); err != nil {
 		return err
 	}
-	if _, ok := a.eng.(*RemoteEngine); ok {
+	if _, ok := a.engine().(*RemoteEngine); ok {
 		return errors.New("rebuilding a Nix environment over a remote connection is not supported yet")
 	}
 	if _, err := rfnix.GetEnvironment(id); err != nil {
@@ -627,7 +628,7 @@ func (a *App) CheckNixEnvironmentUpdate(id string) (string, error) {
 	if err := a.requireMission(id); err != nil {
 		return "", err
 	}
-	if _, ok := a.eng.(*RemoteEngine); ok {
+	if _, ok := a.engine().(*RemoteEngine); ok {
 		return "", errors.New("checking a Nix environment over a remote connection is not supported yet")
 	}
 	if _, err := rfnix.GetEnvironment(id); err != nil {
@@ -642,7 +643,7 @@ func (a *App) ListNixGenerations(id string) ([]rfnix.Generation, error) {
 	if err := a.requireMission(id); err != nil {
 		return nil, err
 	}
-	if _, ok := a.eng.(*RemoteEngine); ok {
+	if _, ok := a.engine().(*RemoteEngine); ok {
 		return nil, errors.New("listing Nix generations over a remote connection is not supported yet")
 	}
 	return rfnix.ListGenerations(id)
@@ -655,7 +656,7 @@ func (a *App) RollbackNixEnvironment(id, generation string) error {
 	if err := a.requireMission(id); err != nil {
 		return err
 	}
-	if _, ok := a.eng.(*RemoteEngine); ok {
+	if _, ok := a.engine().(*RemoteEngine); ok {
 		return errors.New("rolling back a Nix environment over a remote connection is not supported yet")
 	}
 	if _, err := rfnix.GetEnvironment(id); err != nil {
@@ -671,7 +672,7 @@ func (a *App) ListMissionTools(mission string) ([]ToolCandidate, error) {
 	if err := a.requireMission(mission); err != nil {
 		return nil, err
 	}
-	if _, ok := a.eng.(*RemoteEngine); ok {
+	if _, ok := a.engine().(*RemoteEngine); ok {
 		return nil, errors.New("listing tools over a remote connection is not supported yet")
 	}
 	if _, err := rfnix.GetEnvironment(mission); err != nil {
@@ -703,7 +704,7 @@ func (a *App) UpdateMissionTool(mission, name string) error {
 	if strings.TrimSpace(name) == "" {
 		return errors.New("tool name is required")
 	}
-	if _, ok := a.eng.(*RemoteEngine); ok {
+	if _, ok := a.engine().(*RemoteEngine); ok {
 		return errors.New("updating tools over a remote connection is not supported yet")
 	}
 	if _, err := rfnix.GetEnvironment(mission); err != nil {
@@ -728,11 +729,11 @@ func (a *App) DeleteMissionCompletely(id, engine string, deleteWorkspace bool) e
 	}
 	workspace := ""
 	if deleteWorkspace {
-		if _, remote := a.eng.(*RemoteEngine); remote {
+		if _, remote := a.engine().(*RemoteEngine); remote {
 			return errors.New("deleting the workspace directory is only available on the local connection")
 		}
 		// Read it now: removing a Nix environment takes its manifest away.
-		m, err := a.eng.Inspect(id)
+		m, err := a.engine().Inspect(id)
 		if err != nil {
 			return err
 		}
@@ -752,7 +753,7 @@ func (a *App) DeleteMissionCompletely(id, engine string, deleteWorkspace bool) e
 	} else {
 		return errors.New("unsupported mission engine")
 	}
-	if err := a.store.DeleteMission(a.ws, id); err != nil {
+	if err := a.store.DeleteMission(a.workspace(), id); err != nil {
 		return err
 	}
 	if workspace != "" {
@@ -766,7 +767,7 @@ func (a *App) Exec(missionID, cmd string) (string, error) {
 	if err := a.requireMission(missionID); err != nil {
 		return "", err
 	}
-	out, err := a.eng.Exec(missionID, cmd)
+	out, err := a.engine().Exec(missionID, cmd)
 	if err != nil && strings.TrimSpace(out) != "" {
 		// Wails rejects the Promise when err is non-nil and otherwise discards the
 		// Go return value. Preserve stderr/stdout in the rejection so the console
@@ -780,12 +781,12 @@ func (a *App) SearchMissionTools(mission, query string, allNixpkgs bool) ([]Tool
 	if err := a.requireMission(mission); err != nil {
 		return nil, err
 	}
-	if remoteEngine, ok := a.eng.(*RemoteEngine); ok {
+	if remoteEngine, ok := a.engine().(*RemoteEngine); ok {
 		var out []ToolCandidate
 		err := remoteEngine.call("tools.search", map[string]any{"mission": mission, "query": query, "allNixpkgs": allNixpkgs}, &out)
 		return out, err
 	}
-	m, err := a.eng.Inspect(mission)
+	m, err := a.engine().Inspect(mission)
 	if err != nil {
 		return nil, err
 	}
@@ -828,7 +829,7 @@ func (a *App) InstallMissionTool(mission, name string) error {
 	if strings.TrimSpace(name) == "" {
 		return errors.New("tool name is required")
 	}
-	if remoteEngine, ok := a.eng.(*RemoteEngine); ok {
+	if remoteEngine, ok := a.engine().(*RemoteEngine); ok {
 		a.emitOperationProgress("package-install", mission, 10, "Starting remote installation")
 		err := remoteEngine.call("tools.install", map[string]string{"mission": mission, "name": name}, nil)
 		if err == nil {
@@ -904,10 +905,10 @@ func (a *App) emitOperationProgress(operation, target string, percent int, stage
 // --- notebook ---
 
 func (a *App) GetNote(mission, name string) (string, error) {
-	return a.store.GetNote(a.ws, mission, name)
+	return a.store.GetNote(a.workspace(), mission, name)
 }
 func (a *App) SaveNote(mission, name, body string) error {
-	if err := a.store.SaveNote(a.ws, mission, name, body); err != nil {
+	if err := a.store.SaveNote(a.workspace(), mission, name, body); err != nil {
 		return err
 	}
 	// A managed recording embedded in an AI-readable mission note is evidence,
@@ -933,7 +934,9 @@ func (a *App) approveReferencedTerminalRecordings(mission, body string) {
 		_, _ = a.RegisterTerminalRecordingEvidence(mission, name)
 	}
 }
-func (a *App) ListNotes(mission string) ([]string, error) { return a.store.ListNotes(a.ws, mission) }
+func (a *App) ListNotes(mission string) ([]string, error) {
+	return a.store.ListNotes(a.workspace(), mission)
+}
 
 type NoteImage struct {
 	Path    string `json:"path"`
@@ -958,7 +961,7 @@ func (a *App) saveNoteImage(mission, name string, data []byte) (NoteImage, error
 	}
 	fileName := fmt.Sprintf("%s-%s%s", base, time.Now().Format("20060102-150405.000"), ext)
 	rel := filepath.ToSlash(filepath.Join("assets", fileName))
-	path := filepath.Join(a.store.notesDir(a.ws, mission), filepath.FromSlash(rel))
+	path := filepath.Join(a.store.notesDir(a.workspace(), mission), filepath.FromSlash(rel))
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return NoteImage{}, err
 	}
@@ -1058,11 +1061,11 @@ func (a *App) ReadNoteImage(mission, rel string) (string, error) {
 	if clean == "." || filepath.IsAbs(clean) || strings.HasPrefix(clean, ".."+string(filepath.Separator)) || filepath.Dir(clean) != "assets" {
 		return "", errors.New("image is outside the mission note assets")
 	}
-	assetsRoot, err := filepath.EvalSymlinks(filepath.Join(a.store.notesDir(a.ws, mission), "assets"))
+	assetsRoot, err := filepath.EvalSymlinks(filepath.Join(a.store.notesDir(a.workspace(), mission), "assets"))
 	if err != nil {
 		return "", err
 	}
-	resolved, err := filepath.EvalSymlinks(filepath.Join(a.store.notesDir(a.ws, mission), clean))
+	resolved, err := filepath.EvalSymlinks(filepath.Join(a.store.notesDir(a.workspace(), mission), clean))
 	if err != nil {
 		return "", err
 	}
@@ -1130,13 +1133,13 @@ func (a *App) RegisteredTerminalRecordingPath(mission, name string) (string, err
 	if !strings.EqualFold(filepath.Ext(name), ".cast") {
 		return "", errors.New("registered capture is not a terminal recording")
 	}
-	captures, err := a.store.ListCaptures(a.ws, mission)
+	captures, err := a.store.ListCaptures(a.workspace(), mission)
 	if err != nil {
 		return "", err
 	}
 	for _, capture := range captures {
 		if capture.Name == name {
-			path := filepath.Join(a.store.capturesDir(a.ws, mission), name)
+			path := filepath.Join(a.store.capturesDir(a.workspace(), mission), name)
 			if info, err := os.Stat(path); err != nil || !info.Mode().IsRegular() {
 				return "", errors.New("registered terminal recording file is unavailable")
 			}
@@ -1165,7 +1168,7 @@ func (a *App) RegisterTerminalRecordingEvidence(mission, name string) (Capture, 
 	if filepath.Base(name) != name || strings.ToLower(filepath.Ext(name)) != ".cast" {
 		return Capture{}, errors.New("invalid terminal recording name")
 	}
-	source := filepath.Join(a.store.missionDir(a.ws, mission), "recordings", name)
+	source := filepath.Join(a.store.missionDir(a.workspace(), mission), "recordings", name)
 	info, err := os.Stat(source)
 	if err != nil {
 		return Capture{}, err
@@ -1204,7 +1207,7 @@ func (a *App) RegisterTerminalRecordingEvidence(mission, name string) (Capture, 
 			"AI content access": "approved",
 		},
 	}
-	if err := a.store.ImportCapture(a.ws, mission, &c); err != nil {
+	if err := a.store.ImportCapture(a.workspace(), mission, &c); err != nil {
 		if os.IsExist(err) {
 			if accessErr := a.SetArtifactAIContentAccess(mission, name, true); accessErr != nil {
 				return Capture{}, errors.New("recording evidence is already registered")
@@ -1222,7 +1225,7 @@ func (a *App) ListTerminalRecordings(mission string) ([]TerminalRecordingInfo, e
 	if err := a.requireMission(mission); err != nil {
 		return nil, err
 	}
-	dir := filepath.Join(a.store.missionDir(a.ws, mission), "recordings")
+	dir := filepath.Join(a.store.missionDir(a.workspace(), mission), "recordings")
 	entries, err := os.ReadDir(dir)
 	if errors.Is(err, os.ErrNotExist) {
 		return []TerminalRecordingInfo{}, nil
@@ -1261,7 +1264,7 @@ func (a *App) RenameTerminalRecording(mission, oldName, newName string) (Termina
 	if filepath.Base(newName) != newName || strings.ToLower(filepath.Ext(newName)) != ".cast" || newName == ".cast" {
 		return TerminalRecordingInfo{}, errors.New("recording name must be a single .cast filename")
 	}
-	dir := filepath.Join(a.store.missionDir(a.ws, mission), "recordings")
+	dir := filepath.Join(a.store.missionDir(a.workspace(), mission), "recordings")
 	oldPath, newPath := filepath.Join(dir, oldName), filepath.Join(dir, newName)
 	a.termMu.Lock()
 	for _, session := range a.terminals {
@@ -1279,11 +1282,11 @@ func (a *App) RenameTerminalRecording(mission, oldName, newName string) (Termina
 	if err := os.Rename(oldPath, newPath); err != nil {
 		return TerminalRecordingInfo{}, err
 	}
-	notes, _ := a.store.ListNotes(a.ws, mission)
+	notes, _ := a.store.ListNotes(a.workspace(), mission)
 	for _, name := range notes {
-		body, err := a.store.GetNote(a.ws, mission, name)
+		body, err := a.store.GetNote(a.workspace(), mission, name)
 		if err == nil && strings.Contains(body, oldPath) {
-			_ = a.store.SaveNote(a.ws, mission, name, strings.ReplaceAll(body, oldPath, newPath))
+			_ = a.store.SaveNote(a.workspace(), mission, name, strings.ReplaceAll(body, oldPath, newPath))
 		}
 	}
 	info, err := os.Stat(newPath)
@@ -1296,12 +1299,12 @@ func (a *App) RenameTerminalRecording(mission, oldName, newName string) (Termina
 // --- findings (pwndoc-style) ---
 
 func (a *App) ListFindings(mission string) ([]Finding, error) {
-	return a.store.LoadFindings(a.ws, mission)
+	return a.store.LoadFindings(a.workspace(), mission)
 }
 
 // SaveFinding upserts a finding (by ID) and returns it with an ID assigned.
 func (a *App) SaveFinding(mission string, f Finding) (Finding, error) {
-	fs, err := a.store.LoadFindings(a.ws, mission)
+	fs, err := a.store.LoadFindings(a.workspace(), mission)
 	if err != nil {
 		return f, err
 	}
@@ -1321,11 +1324,11 @@ func (a *App) SaveFinding(mission string, f Finding) (Finding, error) {
 			fs = append(fs, f)
 		}
 	}
-	return f, a.store.SaveFindings(a.ws, mission, fs)
+	return f, a.store.SaveFindings(a.workspace(), mission, fs)
 }
 
 func (a *App) DeleteFinding(mission, id string) error {
-	fs, err := a.store.LoadFindings(a.ws, mission)
+	fs, err := a.store.LoadFindings(a.workspace(), mission)
 	if err != nil {
 		return err
 	}
@@ -1335,13 +1338,13 @@ func (a *App) DeleteFinding(mission, id string) error {
 			out = append(out, f)
 		}
 	}
-	return a.store.SaveFindings(a.ws, mission, out)
+	return a.store.SaveFindings(a.workspace(), mission, out)
 }
 
 // --- captures ---
 
 func (a *App) ListCaptures(mission string) ([]Capture, error) {
-	return a.store.ListCaptures(a.ws, mission)
+	return a.store.ListCaptures(a.workspace(), mission)
 }
 
 func (a *App) AddCapture(mission string, c Capture) error {
@@ -1349,7 +1352,7 @@ func (a *App) AddCapture(mission string, c Capture) error {
 		c.Type = ClassifyCapture(c.Name)
 	}
 	c.Mission = mission
-	return a.store.AddCapture(a.ws, mission, c)
+	return a.store.AddCapture(a.workspace(), mission, c)
 }
 
 // ImportCaptureDialog selects a real artifact, copies it into the current
@@ -1368,7 +1371,7 @@ func (a *App) ImportCaptureDialog(mission string) (Capture, error) {
 		Type:    ClassifyCapture(path),
 		Tool:    "import",
 	}
-	if err := a.store.ImportCapture(a.ws, mission, &c); err != nil {
+	if err := a.store.ImportCapture(a.workspace(), mission, &c); err != nil {
 		return Capture{}, err
 	}
 	return c, nil
@@ -1377,9 +1380,11 @@ func (a *App) ImportCaptureDialog(mission string) (Capture, error) {
 func (a *App) ClassifyCapture(filename string) string { return ClassifyCapture(filename) }
 
 func (a *App) BuiltinCaptureTypes() []CaptureType { return BuiltinCaptureTypes() }
-func (a *App) CustomCaptureTypes() []CaptureType  { return a.store.LoadCustomCaptureTypes(a.ws) }
+func (a *App) CustomCaptureTypes() []CaptureType {
+	return a.store.LoadCustomCaptureTypes(a.workspace())
+}
 func (a *App) SaveCaptureType(c CaptureType) error {
-	return a.store.SaveCustomCaptureType(a.ws, c)
+	return a.store.SaveCustomCaptureType(a.workspace(), c)
 }
 
 // --- audit ---
@@ -1387,14 +1392,14 @@ func (a *App) SaveCaptureType(c CaptureType) error {
 // Audit returns only the execution-environment audit summary. Assessment
 // findings are stored and counted independently in findings.json.
 func (a *App) Audit(mission string) (Posture, error) {
-	p, err := a.eng.Audit(mission)
+	p, err := a.engine().Audit(mission)
 	if err == nil {
-		if ms, listErr := a.store.ListMissions(a.ws); listErr == nil {
+		if ms, listErr := a.store.ListMissions(a.workspace()); listErr == nil {
 			for _, m := range ms {
 				if m.ID == mission {
 					m.EnvironmentAudit = p
 					m.Posture = Posture{}
-					_ = a.store.SaveMission(a.ws, m)
+					_ = a.store.SaveMission(a.workspace(), m)
 					break
 				}
 			}
@@ -1402,7 +1407,7 @@ func (a *App) Audit(mission string) (Posture, error) {
 		return p, nil
 	}
 	if errors.Is(err, ErrNotWired) {
-		ms, _ := a.store.ListMissions(a.ws)
+		ms, _ := a.store.ListMissions(a.workspace())
 		for _, m := range ms {
 			if m.ID == mission {
 				return m.EnvironmentAudit, nil
@@ -1421,8 +1426,8 @@ func (a *App) AuditDetailed(mission string) (AuditResult, error) {
 		wruntime.EventsEmit(a.ctx, "rfswift:audit-progress", map[string]any{"mission": mission, "percent": percent, "stage": stage})
 	}
 	emit(5, "Preparing audit")
-	local, localOK := a.eng.(*LocalEngine)
-	remoteEngine, remoteOK := a.eng.(*RemoteEngine)
+	local, localOK := a.engine().(*LocalEngine)
+	remoteEngine, remoteOK := a.engine().(*RemoteEngine)
 	if !localOK && !remoteOK {
 		return AuditResult{}, errors.New("detailed audit is unavailable for this engine")
 	}
@@ -1457,16 +1462,16 @@ func (a *App) AuditDetailed(mission string) (AuditResult, error) {
 		return AuditResult{}, err
 	}
 	emit(90, "Normalizing environment vulnerabilities")
-	dir := filepath.Join(a.store.missionDir(a.ws, mission), "environment-audits")
+	dir := filepath.Join(a.store.missionDir(a.workspace(), mission), "environment-audits")
 	if err := os.MkdirAll(dir, 0o700); err == nil && len(result.Raw) > 0 {
 		_ = writePrivateFile(filepath.Join(dir, "latest.json"), result.Raw)
 	}
-	if missions, loadErr := a.store.ListMissions(a.ws); loadErr == nil {
+	if missions, loadErr := a.store.ListMissions(a.workspace()); loadErr == nil {
 		for _, m := range missions {
 			if m.ID == mission {
 				m.EnvironmentAudit = result.Posture
 				m.Posture = Posture{}
-				_ = a.store.SaveMission(a.ws, m)
+				_ = a.store.SaveMission(a.workspace(), m)
 				break
 			}
 		}
@@ -1478,13 +1483,13 @@ func (a *App) AuditDetailed(mission string) (AuditResult, error) {
 // --- report + pwndoc ---
 
 func (a *App) gather(mission string) (Mission, []Finding, string, []Capture) {
-	m, err := a.eng.Inspect(mission)
+	m, err := a.engine().Inspect(mission)
 	if err != nil || m.ID == "" {
 		m = Mission{ID: mission}
 	}
-	fs, _ := a.store.LoadFindings(a.ws, mission)
-	note, _ := a.store.GetNote(a.ws, mission, "note.md")
-	caps, _ := a.store.ListCaptures(a.ws, mission)
+	fs, _ := a.store.LoadFindings(a.workspace(), mission)
+	note, _ := a.store.GetNote(a.workspace(), mission, "note.md")
+	caps, _ := a.store.ListCaptures(a.workspace(), mission)
 	return m, fs, note, caps
 }
 
@@ -1498,7 +1503,7 @@ func (a *App) ReportMarkdown(mission string) (string, error) {
 // and returns the path.
 func (a *App) SaveReportToWorkspace(mission string) (string, error) {
 	md, _ := a.ReportMarkdown(mission)
-	return a.store.SaveReport(a.ws, mission, "report-"+mission+".md", []byte(md))
+	return a.store.SaveReport(a.workspace(), mission, "report-"+mission+".md", []byte(md))
 }
 
 // SaveFileDialog offers content to the user through the native save dialog and
@@ -1530,12 +1535,12 @@ func (a *App) ImportPwndoc(mission, data string) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	fs, _ := a.store.LoadFindings(a.ws, mission)
+	fs, _ := a.store.LoadFindings(a.workspace(), mission)
 	for _, f := range imported {
 		f.ID = "F-" + strconv.FormatInt(time.Now().UnixNano(), 36)
 		fs = append(fs, f)
 	}
-	if err := a.store.SaveFindings(a.ws, mission, fs); err != nil {
+	if err := a.store.SaveFindings(a.workspace(), mission, fs); err != nil {
 		return 0, err
 	}
 	return len(imported), nil
@@ -1558,7 +1563,7 @@ func (a *App) MCPCommand(mission string) (string, error) {
 	if !cfg.Enabled {
 		return "", errors.New("enable the mission-scoped MCP bridge first")
 	}
-	args := []string{"--mcp", "--workspace", a.ws, "--mission", mission}
+	args := []string{"--mcp", "--workspace", a.workspace(), "--mission", mission}
 	if cfg.AllowWrite {
 		args = append(args, "--mcp-write")
 	}
@@ -1592,7 +1597,7 @@ func (a *App) SelectConnection(id string) error {
 	if id != "local" {
 		return fmt.Errorf("connect with the agent credentials before selecting %q", id)
 	}
-	a.eng = NewLocalEngine()
+	a.setEngine(NewLocalEngine())
 	return nil
 }
 

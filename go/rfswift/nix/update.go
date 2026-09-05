@@ -496,7 +496,14 @@ func archiveCurrentProfile(name string) error {
 		return err
 	}
 	stamp := time.Now().UTC().Format("20060102T150405.000000000Z")
-	return os.Symlink(storePath, filepath.Join(dir, stamp))
+	// Let Nix create and register the indirect root before moving the active
+	// profile. An ordinary symlink outside Nix's gcroots is not a GC root.
+	link := filepath.Join(dir, stamp)
+	args := append(experimentalArgs(), "build", "--out-link", link, storePath)
+	if out, err := nixCommand(args...).CombinedOutput(); err != nil {
+		return fmt.Errorf("register rollback generation: %w: %s", err, strings.TrimSpace(string(out)))
+	}
+	return nil
 }
 
 func ListGenerations(name string) ([]Generation, error) {

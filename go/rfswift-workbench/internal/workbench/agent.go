@@ -139,14 +139,14 @@ func (a *App) agentLaunchSpec(mission, requestedClient string) (AgentConnectResu
 	if err != nil {
 		return AgentConnectResult{}, "", nil, err
 	}
-	args := []string{"--mcp", "--workspace", a.ws, "--mission", mission}
+	args := []string{"--mcp", "--workspace", a.workspace(), "--mission", mission}
 	if cfg.AllowWrite {
 		args = append(args, "--mcp-write")
 	}
 	if cfg.AllowExec {
 		args = append(args, "--mcp-exec")
 	}
-	agentDir := filepath.Join(a.store.missionDir(a.ws, mission), "agent-workspace")
+	agentDir := filepath.Join(a.store.missionDir(a.workspace(), mission), "agent-workspace")
 	if err := os.MkdirAll(agentDir, 0o700); err != nil {
 		return AgentConnectResult{}, "", nil, err
 	}

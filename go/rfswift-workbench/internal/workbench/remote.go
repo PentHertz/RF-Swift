@@ -53,7 +53,7 @@ func (a *App) ConnectRemoteAgent(req RemoteConnectRequest) (Connection, error) {
 	if err != nil {
 		return Connection{}, err
 	}
-	a.eng = &RemoteEngine{Config: cfg}
+	a.setEngine(&RemoteEngine{Config: cfg})
 	return Connection{ID: "remote-" + strings.ToLower(strings.ReplaceAll(p.Info.Name, " ", "-")), Name: p.Info.Name, Host: req.Endpoint, Kind: "remote", TLS: p.TLS, Cipher: p.Cipher, Cert: p.Fingerprint, CertDays: p.CertDays, CertPin: true, Auth: []string{"mTLS client certificate"}, Bind: p.Info.Exposure, RateLimit: p.Info.RateLimit, Version: "up-to-date"}, nil
 }
 

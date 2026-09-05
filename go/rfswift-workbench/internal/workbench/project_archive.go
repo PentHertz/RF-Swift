@@ -18,18 +18,18 @@ const maxProjectExpandedSize int64 = 20 << 30
 // ExportWorkbenchProject writes the complete persisted workspace to a portable
 // archive. Runtime images and Nix store paths remain references in mission.json.
 func (a *App) ExportWorkbenchProject() (string, error) {
-	if !validWorkspaceName(a.ws) {
+	if !validWorkspaceName(a.workspace()) {
 		return "", errors.New("invalid current workspace")
 	}
 	destination, err := wruntime.SaveFileDialog(a.ctx, wruntime.SaveDialogOptions{
 		Title:           "Export RF Swift Workbench project",
-		DefaultFilename: a.ws + ".rfswift-workbench.zip",
+		DefaultFilename: a.workspace() + ".rfswift-workbench.zip",
 		Filters:         []wruntime.FileFilter{{DisplayName: "RF Swift Workbench project", Pattern: "*.rfswift-workbench.zip"}},
 	})
 	if err != nil || destination == "" {
 		return "", err
 	}
-	if err := writeProjectArchive(a.store.wsDir(a.ws), destination); err != nil {
+	if err := writeProjectArchive(a.store.wsDir(a.workspace()), destination); err != nil {
 		return "", err
 	}
 	return destination, nil
@@ -106,7 +106,7 @@ func (a *App) ImportWorkbenchProject() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	a.ws = name
+	a.setWorkspace(name)
 	return name, nil
 }
 

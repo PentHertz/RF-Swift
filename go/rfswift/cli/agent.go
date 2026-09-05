@@ -13,7 +13,7 @@ import (
 	"penthertz/rfswift/remote"
 )
 
-const maxAgentCommandOutput = 16 << 20
+const maxAgentCommandOutput = remote.MaxCommandOutput
 
 type cappedAgentOutput struct {
 	mu        sync.Mutex

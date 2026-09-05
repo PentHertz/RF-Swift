@@ -8,6 +8,17 @@ import (
 )
 
 func TestGenerationArchiveAndRollback(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("generation operations run inside WSL; fixture uses a POSIX fake nix")
+	}
+	fake := filepath.Join(t.TempDir(), "nix")
+	// Assert the real rooting command, then emulate its link without touching
+	// the host Nix store. Store-level coverage lives in the integration test.
+	script := "#!/bin/sh\nwhile [ $# -gt 0 ]; do\nif [ \"$1\" = build ]; then shift; break; fi\nshift\ndone\n[ \"$1\" = --out-link ] && [ $# -eq 3 ] || exit 42\nln -s \"$3\" \"$2\"\n"
+	if err := os.WriteFile(fake, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("RFSWIFT_NIX_BIN", fake)
 	t.Setenv("RFSWIFT_NIX_HOME", t.TempDir())
 	name := "radio"
 	oldStore := filepath.Join(t.TempDir(), "old-store")

@@ -22,6 +22,16 @@ import (
 
 const Protocol = "rfswift-agent/v1"
 
+// Limits distinguish raw data from its encoded JSON representation. JSON can
+// expand one raw byte to six bytes (for example, a NUL becomes \\u0000).
+const (
+	MaxCommandOutput   = 16 << 20
+	MaxArtifactBytes   = 16 << 20
+	MaxTerminalOutput  = 4 << 20
+	maxCommandResponse = 6*MaxCommandOutput + (64 << 10)
+	maxControlResponse = max(4*((MaxArtifactBytes+2)/3), 6*MaxTerminalOutput) + (1 << 20)
+)
+
 // AuthPolicy is deliberately small: a verified client certificate is the sole
 // network authentication mechanism. Its private key remains encrypted at rest.
 type AuthPolicy struct {
@@ -82,7 +92,12 @@ func NewClient(c ClientConfig, allowUnpinned bool) (*http.Client, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &http.Client{Timeout: 8 * time.Second, Transport: &http.Transport{TLSClientConfig: tc}}, nil
+	return &http.Client{Timeout: 8 * time.Second, Transport: &http.Transport{
+		TLSClientConfig:     tc,
+		DialContext:         (&net.Dialer{Timeout: 8 * time.Second, KeepAlive: 30 * time.Second}).DialContext,
+		TLSHandshakeTimeout: 8 * time.Second,
+		IdleConnTimeout:     30 * time.Second,
+	}}, nil
 }
 
 // normalizeEndpoint canonicalizes an agent endpoint to an https:// URL and
@@ -108,6 +123,10 @@ func normalizeEndpoint(endpoint string) (*url.URL, error) {
 	}
 	if u.User != nil || (u.Path != "" && u.Path != "/") || u.RawQuery != "" || u.Fragment != "" {
 		return nil, errors.New("agent endpoint must be an https origin without credentials, path, query, or fragment")
+	}
+	// Probing and HTTP operations must use the same default agent port.
+	if u.Port() == "" {
+		u.Host = net.JoinHostPort(u.Hostname(), "8443")
 	}
 	return u, nil
 }
@@ -198,6 +217,7 @@ func ProbeAgent(ctx context.Context, c ClientConfig, allowUnpinned bool) (Probe,
 	if e != nil {
 		return Probe{}, e
 	}
+	defer client.CloseIdleConnections()
 	endpoint := strings.TrimSuffix(u.String(), "/")
 	req, e := http.NewRequestWithContext(ctx, http.MethodGet, endpoint+"/v1/info", nil)
 	if e != nil {
@@ -357,6 +377,7 @@ func Control(ctx context.Context, c ClientConfig, method string, params, result 
 	// Long operations (Nix builds and image pulls) are bounded by the caller's
 	// context, not the short probe timeout used by NewClient.
 	client.Timeout = 0
+	defer client.CloseIdleConnections()
 	raw, err := json.Marshal(params)
 	if err != nil {
 		return err
@@ -384,7 +405,7 @@ func Control(ctx context.Context, c ClientConfig, method string, params, result 
 		return fmt.Errorf("agent control returned %s", resp.Status)
 	}
 	var envelope ControlResult
-	if err = json.NewDecoder(io.LimitReader(resp.Body, 18<<20)).Decode(&envelope); err != nil {
+	if err = decodeResponse(resp.Body, maxControlResponse, &envelope); err != nil {
 		return err
 	}
 	if envelope.Error != "" {
@@ -401,6 +422,8 @@ func RunCommand(ctx context.Context, c ClientConfig, args []string) (CommandResu
 	if err != nil {
 		return CommandResult{}, err
 	}
+	client.Timeout = 0 // execution is bounded by the caller, not the probe timeout
+	defer client.CloseIdleConnections()
 	body, err := json.Marshal(CommandRequest{Args: args})
 	if err != nil {
 		return CommandResult{}, err
@@ -425,10 +448,21 @@ func RunCommand(ctx context.Context, c ClientConfig, args []string) (CommandResu
 		return CommandResult{}, fmt.Errorf("agent command returned %s: %s", resp.Status, strings.TrimSpace(string(b)))
 	}
 	var result CommandResult
-	if err = json.NewDecoder(io.LimitReader(resp.Body, 16<<20)).Decode(&result); err != nil {
+	if err = decodeResponse(resp.Body, maxCommandResponse, &result); err != nil {
 		return CommandResult{}, err
 	}
 	return result, nil
+}
+
+func decodeResponse(r io.Reader, limit int64, result any) error {
+	b, err := io.ReadAll(io.LimitReader(r, limit+1))
+	if err != nil {
+		return err
+	}
+	if int64(len(b)) > limit {
+		return fmt.Errorf("agent response exceeds the %d-byte wire limit", limit)
+	}
+	return json.Unmarshal(b, result)
 }
 
 func closeWithoutResponse(w http.ResponseWriter) {

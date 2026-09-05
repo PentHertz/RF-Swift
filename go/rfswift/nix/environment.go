@@ -962,6 +962,15 @@ if [ -n "${RFSWIFT_USER_ZDOTDIR:-}" ]; then export ZDOTDIR="$RFSWIFT_USER_ZDOTDI
 # the environment's state dir.
 if [ "${HISTFILE:-}" = %q ]; then HISTFILE="$_rfx_zdotdir/.zsh_history"; fi
 unset _rfx_zdotdir RFSWIFT_USER_ZDOTDIR
+# Accept modified arrow sequences emitted by xterm and macOS terminal hosts.
+# Keep the user's editing mode; bind both standard editing keymaps.
+for _rfx_keymap in emacs viins; do
+  bindkey -M "$_rfx_keymap" $'\e[1;3D' backward-word
+  bindkey -M "$_rfx_keymap" $'\e[1;3C' forward-word
+  bindkey -M "$_rfx_keymap" $'\eb' backward-word
+  bindkey -M "$_rfx_keymap" $'\ef' forward-word
+done
+unset _rfx_keymap
 %sexport RFSWIFT_NIX_ENV=%q
 PROMPT="(rfswift:%s) $PROMPT"
 # Run an environment tool as root: sudo resets the environment, so pass PATH,

@@ -27,7 +27,7 @@ import (
 // hostAudioApplies reports whether this App can act on the host audio server
 // at all (local engine, not Windows).
 func (a *App) hostAudioApplies() bool {
-	if _, ok := a.eng.(*LocalEngine); !ok {
+	if _, ok := a.engine().(*LocalEngine); !ok {
 		return false
 	}
 	return runtime.GOOS == "linux" || runtime.GOOS == "darwin"
@@ -36,7 +36,7 @@ func (a *App) hostAudioApplies() bool {
 // HostAudioStatus reports the host audio server state for the GUI. Never
 // starts or changes anything.
 func (a *App) HostAudioStatus() rfutils.HostAudioStatus {
-	if _, ok := a.eng.(*LocalEngine); !ok {
+	if _, ok := a.engine().(*LocalEngine); !ok {
 		return rfutils.HostAudioStatus{Server: rfdock.PulseServer(), Detail: "host audio is managed on the remote host"}
 	}
 	return rfutils.GetHostAudioStatus(rfdock.PulseServer())
@@ -98,14 +98,14 @@ func (a *App) SetMissionHostAudio(id string, enable bool) (rfutils.HostAudioStat
 // setMissionHostAudioOff stores the per-mission preference without touching
 // the other saved fields (title, notes, audit counters).
 func (a *App) setMissionHostAudioOff(id string, off bool) error {
-	saved, err := a.store.ListMissions(a.ws)
+	saved, err := a.store.ListMissions(a.workspace())
 	if err != nil {
 		return err
 	}
 	for _, m := range saved {
 		if m.ID == id {
 			m.HostAudioOff = off
-			return a.store.SaveMission(a.ws, m)
+			return a.store.SaveMission(a.workspace(), m)
 		}
 	}
 	return fmt.Errorf("mission %q is not recorded in this project", id)
@@ -119,7 +119,7 @@ func (a *App) ensureMissionHostAudio(id string) {
 	if !a.hostAudioApplies() || isNixEnv(id) {
 		return
 	}
-	if saved, err := a.store.ListMissions(a.ws); err == nil {
+	if saved, err := a.store.ListMissions(a.workspace()); err == nil {
 		for _, m := range saved {
 			if m.ID == id && m.HostAudioOff {
 				return

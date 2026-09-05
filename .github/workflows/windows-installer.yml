@@ -72,7 +72,7 @@ jobs:
           cache-dependency-path: go/rfswift/go.sum
 
       - name: Set up .NET (for the WiX dotnet tool)
-        uses: actions/setup-dotnet@v4
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
           dotnet-version: "8.0.x"
 
@@ -99,7 +99,7 @@ jobs:
           Pop-Location
 
       - name: Download Workbench Windows binaries
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: rfswift-workbench-windows
           path: workbench-zips
@@ -156,7 +156,7 @@ jobs:
             release-assets/RFSwift-Setup-*.exe
 
       - name: Upload installer as workflow artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: rfswift-windows-installer-${{ matrix.arch }}
           path: release-assets/*
