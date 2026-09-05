@@ -67,6 +67,7 @@ func RunDoctor() {
 	checkUSBDevices(report)
 	checkHostUdevRules(report)
 	checkNixEngine(report)
+	checkIsolation(report)
 	checkConfigFile(report)
 	checkKernelModules(report)
 
@@ -284,6 +285,27 @@ func checkHostUdevRules(report *DoctorReport) {
 		report.add(CheckResult{"udev rules", "warn", st.Detail})
 	default:
 		report.add(CheckResult{"udev rules", "warn", st.Detail + " - install with 'rfswift host udev' (or 'rfswift host setup')"})
+	}
+}
+
+// checkIsolation reports whether the Nix engine's --isolate jail (bubblewrap)
+// can be created by this user. Ubuntu 24.04+ lets only the AppArmor-profiled
+// /usr/bin/bwrap create user namespaces, so a missing profile (or a bwrap from
+// a Nix profile) blocks the jail; 'rfswift host isolate' applies the fix.
+func checkIsolation(report *DoctorReport) {
+	if runtime.GOOS != "linux" {
+		return
+	}
+	st := hostsetup.GetIsolationStatus()
+	switch {
+	case st.Ready:
+		report.add(CheckResult{"Nix jail (--isolate)", "ok", st.Detail})
+	case st.Cause == hostsetup.IsolationNoBwrap && !st.AppArmorRestricted:
+		report.add(CheckResult{"Nix jail (--isolate)", "skip", "bubblewrap not installed (optional: --isolate builds it from nixpkgs at first use; 'rfswift host isolate' installs the package)"})
+	case st.CanFix:
+		report.add(CheckResult{"Nix jail (--isolate)", "warn", st.Detail + " - fix with 'rfswift host isolate'"})
+	default:
+		report.add(CheckResult{"Nix jail (--isolate)", "warn", st.Detail})
 	}
 }
 

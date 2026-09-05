@@ -26,6 +26,7 @@ UDEV_RULES="${RFSWIFT_UDEV:-}"
 ENGINE_PREF="${RFSWIFT_ENGINE:-}"
 NIX_PREF="${RFSWIFT_NIX:-}"
 ISOLATE_PREF="${RFSWIFT_ISOLATE:-}"  # 1|0: install bubblewrap for the Nix engine's --isolate jail (Linux)
+ATTEST_PREF="${RFSWIFT_ATTEST:-}"    # 1|0: verify GitHub build attestations with a logged-in gh (when available)
 BWRAP_CHECKED=0
 # Tarball flow: install directory (absolute path, e.g. /usr/local/bin or
 # ~/.rfswift/bin); empty = ask.
@@ -2129,25 +2130,67 @@ native_fetch_one() {
   [ -f "${TMP_DIR}/$1" ] || return 1
 }
 
-# Same opt-in, fail-closed attestation gate as the tarball flow: skipping is a
-# user choice, a failed verification is fatal. Packages install as root, so
-# they get the identical provenance treatment the tarballs get.
-native_verify_attestations() {
-  if ! command_exists gh; then
-    color_echo "yellow" "ℹ️  Install the GitHub CLI (gh) to cryptographically verify build attestations."
-    return 0
-  fi
-  prompt_yes_no "Verify GitHub build attestations for downloaded packages (recommended)?" "y" || return 0
+# GitHub build-provenance attestations (Sigstore) prove a downloaded file was
+# built by RF Swift's release workflow from the tagged commit, not swapped
+# afterwards. Checking them needs the GitHub CLI 2.49+ (the `attestation`
+# command; Ubuntu 24.04's packaged gh is 2.45) AND a logged-in gh, since the
+# attestations API is not reachable anonymously. Only then is the check
+# offered. Otherwise the install goes on - the SHA-256 of every file was
+# already verified against the release manifest - with one hint. The installer
+# never sends anyone to `gh auth login`: that wizard generates and uploads an
+# SSH key by default, which is not this script's business.
+#
+# Returns 0 ready, 1 no gh, 2 gh too old, 3 gh not logged in.
+gh_attestation_ready() {
+  command_exists gh || return 1
+  gh attestation --help >/dev/null 2>&1 || return 2
+  gh auth status >/dev/null 2>&1 || return 3
+  return 0
+}
+
+# Verify the given files' attestations when possible and wanted. A check that
+# RAN and failed is fatal by default (the file may have been swapped); since
+# the SHA-256 already matched, the user may choose to go on. Without a
+# terminal that question defaults to no, so scripts stay fail-closed.
+verify_attestations() {
+  ready=0
+  gh_attestation_ready || ready=$?   # plain call: a non-zero return would trip set -e
+  case "$ready" in
+    1) color_echo "cyan" "ℹ️  Optional: with the GitHub CLI (https://cli.github.com) you can also check each file's build provenance: gh attestation verify <file> --repo ${GITHUB_REPO}"; return 0 ;;
+    2) color_echo "cyan" "ℹ️  Your gh has no 'attestation' command (needs 2.49+), so the optional build-provenance check is skipped; the SHA-256 checksums were verified."; return 0 ;;
+    3) color_echo "cyan" "ℹ️  gh is not logged in, so the optional build-provenance check is skipped; the SHA-256 checksums were verified. Later: gh attestation verify <file> --repo ${GITHUB_REPO}"; return 0 ;;
+  esac
+  case "$ATTEST_PREF" in
+    1|yes|true) color_echo "cyan" "   RFSWIFT_ATTEST=${ATTEST_PREF}" ;;
+    0|no|false) return 0 ;;
+    *) prompt_yes_no "Also verify the files' GitHub build attestations with gh (recommended)?" "y" || return 0 ;;
+  esac
   color_echo "blue" "🔏 Verifying build provenance with 'gh attestation verify'..."
-  for pkg in "${TMP_DIR}"/rfswift*; do
-    [ -f "$pkg" ] || continue
-    gh attestation verify "$pkg" --repo "$GITHUB_REPO" || {
-      color_echo "red" "🚨 Attestation verification failed for $(basename "$pkg")."
-      rm -rf "$TMP_DIR"
-      exit 1
-    }
+  for f in "$@"; do
+    [ -f "$f" ] || continue
+    if out=$(gh attestation verify "$f" --repo "$GITHUB_REPO" 2>&1); then
+      # gh prints "Build workflow:. .github/workflows/x.yml@ref": drop the label and
+      # its dotted filler, keep the leading dot of the path.
+      wf=$(printf '%s\n' "$out" | grep -m1 'Build workflow' | sed 's/.*Build workflow:\.* *//')
+      color_echo "green" "✅ $(basename "$f"): built by ${GITHUB_REPO} ${wf}"
+      continue
+    fi
+    printf '%s\n' "$out" | tail -n 8
+    color_echo "red" "🚨 Attestation verification failed for $(basename "$f")."
+    color_echo "yellow" "   Its SHA-256 matched the release manifest, but its build provenance could not be confirmed (a network/API problem, or a swapped file)."
+    if prompt_yes_no "Continue the installation anyway?" "n"; then
+      color_echo "yellow" "   Continuing at your request."
+      return 0
+    fi
+    rm -rf "$TMP_DIR"
+    exit 1
   done
-  color_echo "green" "✅ Build provenance verified for ${GITHUB_REPO}."
+}
+
+# Packages install as root, so they get the same provenance treatment as the
+# tarballs.
+native_verify_attestations() {
+  verify_attestations "${TMP_DIR}"/rfswift*
 }
 
 # Prefer native packages (man pages, shell completions, dependency handling,
@@ -2341,35 +2384,10 @@ download_files() {
   RELEASE_PAGE_URL="https://github.com/${GITHUB_REPO}/releases/tag/v${VERSION}"
   color_echo "yellow" "If needed, verify the checksum by visiting the GitHub release page: ${RELEASE_PAGE_URL}"
 
-  # Optional: verify GitHub build provenance attestation (Sigstore-backed).
-  # Proves the binary was built by the official RF-Swift release workflow and not
-  # swapped afterwards - same mechanism as LUKSbox.
-  if command_exists gh; then
-    if prompt_yes_no "Verify GitHub build attestations for downloaded artifacts (recommended)?" "y"; then
-      color_echo "blue" "🔏 Verifying build provenance with 'gh attestation verify'..."
-      for downloaded in "${TMP_DIR}"/rfswift*.tar.gz "${TMP_DIR}"/rfswift*.zip "${TMP_DIR}"/rfswift*.AppImage; do
-        [ -f "$downloaded" ] || continue
-        gh attestation verify "$downloaded" --repo "$GITHUB_REPO" || {
-          color_echo "red" "🚨 Attestation verification failed for $(basename "$downloaded")."
-          rm -rf "$TMP_DIR"
-          exit 1
-        }
-      done
-      color_echo "green" "✅ Build provenance verified for ${GITHUB_REPO}."
-    fi
-  else
-    color_echo "yellow" "ℹ️  Install the GitHub CLI (gh) to cryptographically verify build attestations:"
-    color_echo "yellow" "   https://cli.github.com"
-  fi
-  
-  # Ask to continue
-  if ! prompt_yes_no "Continue with installation?" "y"; then
-    color_echo "red" "🚨 Installation aborted by user."
-    rm -rf "${TMP_DIR}"
-    exit 1
-  fi
-  
-  # If we got here, continue with installation
+  # Optional: verify the GitHub build-provenance attestations (Sigstore) when a
+  # logged-in, recent gh is at hand; see verify_attestations. The checksums
+  # above already gate the install, so no extra "continue?" question here.
+  verify_attestations "${TMP_DIR}"/rfswift*.tar.gz "${TMP_DIR}"/rfswift*.zip "${TMP_DIR}"/rfswift*.AppImage
   return 0
 }
 
@@ -3429,7 +3447,7 @@ check_userns() {
   fi
   # Defaults to no: without a terminal the installer must not weaken the host.
   if ! prompt_yes_no "Enable unprivileged user namespaces for every program (sysctl, persisted)? This weakens the host's hardening" "n"; then
-    color_echo "yellow" "   Skipped. --isolate needs unprivileged user namespaces enabled or a setuid bubblewrap."
+    color_echo "yellow" "   Skipped. --isolate needs unprivileged user namespaces enabled or a setuid bubblewrap; 'rfswift host isolate' offers these fixes again any time."
     return 0
   fi
   # Only knobs this kernel has: an unknown key in sysctl.d makes every boot
@@ -3450,7 +3468,7 @@ check_userns() {
   if bwrap_sandbox_works "$bw"; then
     color_echo "green" "✅ Unprivileged user namespaces enabled - --isolate is ready."
   else
-    color_echo "yellow" "   Still restricted; a reboot or an AppArmor policy change may be required."
+    color_echo "yellow" "   Still restricted; a reboot or an AppArmor policy change may be required. 'rfswift host isolate --status' shows what the CLI sees."
   fi
 }
 

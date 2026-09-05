@@ -6,6 +6,8 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"penthertz/rfswift/hostsetup"
 )
 
 // hasPair reports whether args contains a b as consecutive elements.
@@ -131,56 +133,89 @@ func contains(xs []string, s string) bool {
 	return false
 }
 
-// fakeSysctls makes readProcSysctl answer from a map for the test's duration.
-func fakeSysctls(t *testing.T, values map[string]string) {
+// isolationHost points hostsetup's host paths (bubblewrap locations, sysctl
+// tree, AppArmor directories) at a temporary tree with the given sysctl knobs,
+// so the preflight's diagnosis does not depend on the machine running the
+// tests. Returns the fake distribution bwrap path (not created).
+func isolationHost(t *testing.T, knobs map[string]string) string {
 	t.Helper()
-	orig := readProcSysctl
-	readProcSysctl = func(path string) string { return values[path] }
-	t.Cleanup(func() { readProcSysctl = orig })
+	dir := t.TempDir()
+	saved := []string{hostsetup.DistroBwrap, hostsetup.NixOSBwrapWrapper, hostsetup.ProcSys, hostsetup.AppArmorDir, hostsetup.AppArmorExtraDir}
+	t.Cleanup(func() {
+		hostsetup.DistroBwrap, hostsetup.NixOSBwrapWrapper, hostsetup.ProcSys, hostsetup.AppArmorDir, hostsetup.AppArmorExtraDir = saved[0], saved[1], saved[2], saved[3], saved[4]
+	})
+	hostsetup.DistroBwrap = filepath.Join(dir, "usr/bin/bwrap")
+	hostsetup.NixOSBwrapWrapper = filepath.Join(dir, "run/wrappers/bin/bwrap")
+	hostsetup.ProcSys = filepath.Join(dir, "proc/sys")
+	hostsetup.AppArmorDir = filepath.Join(dir, "etc/apparmor.d")
+	hostsetup.AppArmorExtraDir = filepath.Join(dir, "usr/share/apparmor/extra-profiles")
+	for name, value := range knobs {
+		p := filepath.Join(hostsetup.ProcSys, name)
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(value+"\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return hostsetup.DistroBwrap
 }
 
-func TestBwrapPreflightExplainsUserns(t *testing.T) {
-	dir := t.TempDir()
-	fake := dir + "/bwrap"
-	// A fake bwrap that fails the way a userns-restricted host does.
-	if err := os.WriteFile(fake, []byte("#!/bin/sh\necho 'bwrap: setting up uid map: Permission denied' >&2\nexit 1\n"), 0o755); err != nil {
+func writeScript(t *testing.T, p, body string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.WriteFile(p, []byte(body), 0o755); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// A fake bwrap that fails the way a userns-restricted host does.
+const deniedBwrap = "#!/bin/sh\necho 'bwrap: setting up uid map: Permission denied' >&2\nexit 1\n"
+
+func TestBwrapPreflightExplainsUserns(t *testing.T) {
 	cases := []struct {
-		name    string
-		sysctls map[string]string
-		want    []string
-		absent  []string
+		name   string
+		knobs  map[string]string
+		extra  bool // the packaged AppArmor profile is available
+		want   []string
+		absent []string
 	}{
 		{
-			// Ubuntu 24.04+: AppArmor lets only the profiled /usr/bin/bwrap create
-			// user namespaces; a Nix-built bwrap is unconfined and blocked. Point
-			// at the distro package and the profile first, the sysctl last.
-			name:    "apparmor restriction, non-distro bwrap",
-			sysctls: map[string]string{sysctlAppArmorUserns: "1", sysctlUsernsClone: "1"},
-			want: []string{"user namespace", "AppArmor", "profile", "/usr/bin/bwrap", fake,
-				"apt install bubblewrap", "apparmor-profiles", "bwrap-userns-restrict", "apparmor_parser",
-				"sysctl -w kernel.apparmor_restrict_unprivileged_userns=0", "last resort"},
+			// Ubuntu 24.04: AppArmor lets only the profiled /usr/bin/bwrap create
+			// user namespaces and the profile is not enabled. The fix is the one
+			// command, with the steps it runs; the global sysctl is not suggested.
+			name:  "apparmor restriction, profile not enabled",
+			knobs: map[string]string{"kernel/apparmor_restrict_unprivileged_userns": "1", "kernel/unprivileged_userns_clone": "1"},
+			extra: true,
+			want: []string{"Cause: AppArmor restricts unprivileged user namespaces", "bwrap-userns-restrict",
+				"Fix:   rfswift host isolate", "It will:", "enable the packaged AppArmor profile", "apparmor_parser", "Engine doctor", "without --isolate"},
+			absent: []string{"sysctl -w", "none RF Swift can apply"},
 		},
 		{
 			// Debian kernel with the knob switched off: nothing to do with AppArmor.
-			name:    "userns_clone disabled",
-			sysctls: map[string]string{sysctlUsernsClone: "0"},
-			want:    []string{"user namespace", "sysctl -w kernel.unprivileged_userns_clone=1"},
-			absent:  []string{"apparmor_restrict_unprivileged_userns=0", "apparmor-profiles"},
+			name:   "userns_clone disabled",
+			knobs:  map[string]string{"kernel/unprivileged_userns_clone": "0"},
+			want:   []string{"Cause: unprivileged user namespaces are disabled", "Fix:   rfswift host isolate", "kernel.unprivileged_userns_clone=1"},
+			absent: []string{"AppArmor", "apparmor-profiles"},
 		},
 		{
 			// Neither knob explains it (stock Debian has no AppArmor restriction):
-			// name both knobs to check, do not tell the user to flip either.
-			name:    "unknown cause",
-			sysctls: map[string]string{},
-			want:    []string{"user namespace", "sysctl kernel.apparmor_restrict_unprivileged_userns", "sysctl kernel.unprivileged_userns_clone", "without --isolate"},
-			absent:  []string{"sysctl -w"},
+			// say so, point at --status, do not tell the user to flip anything.
+			name:   "unknown cause",
+			knobs:  map[string]string{},
+			want:   []string{"neither sysctl explains it", "none RF Swift can apply automatically", "rfswift host isolate --status", "without --isolate"},
+			absent: []string{"sysctl -w", "It will:"},
 		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			fakeSysctls(t, tc.sysctls)
+			fake := isolationHost(t, tc.knobs)
+			writeScript(t, fake, deniedBwrap)
+			if tc.extra {
+				writeScript(t, filepath.Join(hostsetup.AppArmorExtraDir, hostsetup.BwrapProfile), "# profile\n")
+			}
 			err := bwrapPreflight(fake)
 			if err == nil {
 				t.Fatal("expected preflight to fail")
@@ -210,20 +245,10 @@ func TestResolveBwrapPrefersDistroBinaryOverPath(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skip("bubblewrap is Linux-only")
 	}
-	dir := t.TempDir()
-	distro := dir + "/distro/bwrap"
-	onPath := dir + "/nixprofile/bwrap"
-	for _, p := range []string{distro, onPath} {
-		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(p, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
-			t.Fatal(err)
-		}
-	}
-	orig := distroBwrap
-	distroBwrap = distro
-	t.Cleanup(func() { distroBwrap = orig })
+	distro := isolationHost(t, nil)
+	onPath := filepath.Join(t.TempDir(), "nixprofile", "bwrap")
+	writeScript(t, distro, "#!/bin/sh\nexit 0\n")
+	writeScript(t, onPath, "#!/bin/sh\nexit 0\n")
 	t.Setenv("PATH", filepath.Dir(onPath))
 
 	got, err := resolveBwrap()
@@ -235,7 +260,9 @@ func TestResolveBwrapPrefersDistroBinaryOverPath(t *testing.T) {
 	}
 
 	// Without the distribution package, the PATH one is still used.
-	distroBwrap = dir + "/missing/bwrap"
+	if err := os.Remove(distro); err != nil {
+		t.Fatal(err)
+	}
 	got, err = resolveBwrap()
 	if err != nil {
 		t.Fatal(err)

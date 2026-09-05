@@ -19,6 +19,7 @@ func TestCommandPathsRemainCompatible(t *testing.T) {
 		{"remove"}, {"rm"}, {"images"}, {"image"}, {"nix"}, {"env"},
 		{"agent"}, {"remote"}, {"config", "ports", "bind"}, {"ports", "bind"},
 		{"system", "doctor"}, {"doctor"}, {"system", "cleanup", "images"}, {"cleanup", "images"},
+		{"host", "setup"}, {"host", "udev"}, {"host", "docker-access"}, {"host", "isolate"},
 	}
 	for _, path := range paths {
 		command, remaining, err := rootCmd.Find(path)

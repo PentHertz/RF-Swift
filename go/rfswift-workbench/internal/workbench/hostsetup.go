@@ -58,6 +58,34 @@ func (a *App) HostUdevRemove() (hostsetup.UdevStatus, error) {
 	return hostsetup.GetUdevStatus(), nil
 }
 
+// IsolationStatus reports whether the Nix engine's --isolate jail (bubblewrap)
+// can be created on this host, and if not why and what would fix it. Never
+// changes anything.
+func (a *App) IsolationStatus() hostsetup.IsolationStatus {
+	if !a.hostSetupApplies() {
+		return hostsetup.IsolationStatus{Detail: "the bubblewrap jail is managed on local Linux hosts only"}
+	}
+	return hostsetup.GetIsolationStatus()
+}
+
+// IsolationEnable applies the targeted fix for the jail after a polkit prompt:
+// the distribution's bubblewrap package and/or Ubuntu's AppArmor profile that
+// lets /usr/bin/bwrap create user namespaces (the restriction stays in force
+// for every other program), or kernel.unprivileged_userns_clone=1 where that
+// knob is off. sysctl lifts Ubuntu's restriction for every program instead -
+// the last resort. Mirrors `rfswift host isolate`.
+func (a *App) IsolationEnable(sysctl bool) (hostsetup.IsolationReport, error) {
+	if !a.hostSetupApplies() {
+		return hostsetup.IsolationReport{}, errors.New("the bubblewrap jail can only be set up on a local Linux host")
+	}
+	st := hostsetup.GetIsolationStatus()
+	plan, err := hostsetup.PlanIsolationFix(st, sysctl)
+	if err != nil {
+		return hostsetup.IsolationReport{Status: st}, err
+	}
+	return hostsetup.EnableIsolation(plan)
+}
+
 // DockerAccessStatus reports whether the user can use the Docker socket, now
 // and permanently. Never changes anything.
 func (a *App) DockerAccessStatus() hostsetup.DockerAccess {

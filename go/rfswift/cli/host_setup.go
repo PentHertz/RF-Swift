@@ -33,7 +33,7 @@ func maybeOfferPackagedHostSetup(cmd *cobra.Command) {
 		return
 	}
 	for c := cmd; c != nil; c = c.Parent() {
-		if c == hostSetupCmd || c == hostUdevCmd || c == hostDockerAccessCmd {
+		if c == hostSetupCmd || c == hostUdevCmd || c == hostDockerAccessCmd || c == hostIsolateCmd {
 			return
 		}
 	}
@@ -290,6 +290,146 @@ Examples:
 	},
 }
 
+// printIsolationStatus renders hostsetup.IsolationStatus for a terminal.
+func printIsolationStatus(st hostsetup.IsolationStatus) {
+	bwrap := st.Bwrap
+	switch {
+	case bwrap == "":
+		bwrap = "none installed (--isolate builds one from nixpkgs at first use)"
+	case st.Setuid:
+		bwrap += " (setuid-root)"
+	}
+	fmt.Printf("  %-22s %s\n", "bubblewrap:", bwrap)
+	fmt.Printf("  %-22s %v\n", "sandbox works:", st.Ready)
+	if st.AppArmorRestricted {
+		profile := "not enabled"
+		switch {
+		case st.Ready && st.Bwrap == hostsetup.DistroBwrap:
+			profile = "active"
+		case st.ProfileInstalled:
+			profile = "installed in " + hostsetup.AppArmorDir + ", not loaded"
+		case st.ProfileAvailable:
+			profile = "available in " + hostsetup.AppArmorExtraDir + ", not enabled"
+		}
+		fmt.Printf("  %-22s %s\n", "AppArmor userns:", "restricted to profiled programs (Ubuntu 24.04+); "+hostsetup.BwrapProfile+" "+profile)
+	}
+	if st.UsernsClone != "" {
+		fmt.Printf("  %-22s kernel.unprivileged_userns_clone=%s\n", "user namespaces:", st.UsernsClone)
+	}
+	if st.Error != "" && !st.Ready {
+		fmt.Printf("  %-22s %s\n", "bwrap said:", st.Error)
+	}
+	fmt.Printf("  %-22s %s\n", "summary:", st.Detail)
+}
+
+// hostIsolateFix applies the targeted fix for the Nix jail after confirmation
+// (unless yes) - or, with sysctl, the last-resort sysctl - and returns whether
+// it ran.
+func hostIsolateFix(st hostsetup.IsolationStatus, yes, sysctl bool) (bool, error) {
+	if !st.Supported {
+		common.PrintInfoMessage(st.Detail)
+		return false, nil
+	}
+	if st.Ready {
+		common.PrintSuccessMessage("The bubblewrap sandbox works: 'rfswift run --engine nix --isolate' is ready.")
+		return false, nil
+	}
+	if !st.CanFix && !sysctl {
+		if st.AppArmorRestricted {
+			common.PrintWarningMessage(st.Detail + ". No packaged AppArmor profile to enable here; --sysctl lifts the restriction for every program instead (it weakens the host).")
+		} else {
+			common.PrintWarningMessage(st.Detail + ". Nothing RF Swift can apply automatically.")
+		}
+		return false, nil
+	}
+	plan, err := hostsetup.PlanIsolationFix(st, sysctl)
+	if err != nil {
+		return false, err
+	}
+	if plan.Distro.Name != "" {
+		fmt.Printf("  %-22s %s (%s)\n", "host:", plan.Distro.Name, plan.Distro.PackageManager)
+	}
+	for i, step := range plan.Steps {
+		fmt.Printf("  %-22s %s\n", fmt.Sprintf("step %d:", i+1), step)
+	}
+	if !yes {
+		if !tui.IsInteractive() {
+			common.PrintInfoMessage("Re-run with --yes to run these steps without a prompt.")
+			return false, nil
+		}
+		question := "Run these steps now? (one sudo password prompt; the script is exactly what is listed)"
+		if plan.Sysctl {
+			question = "Lift the user-namespace restriction for EVERY program on this host? This weakens its hardening; the AppArmor profile route is preferred when available (one sudo password prompt)"
+		}
+		if !tui.ConfirmDefault(question, !plan.Sysctl) {
+			return false, nil
+		}
+	}
+	report, err := hostsetup.EnableIsolation(plan)
+	if err != nil {
+		return false, err
+	}
+	if report.Status.Ready {
+		common.PrintSuccessMessage(report.Detail + ".")
+	} else {
+		common.PrintWarningMessage(report.Detail + ".")
+	}
+	return true, nil
+}
+
+var hostIsolateCmd = &cobra.Command{
+	Use:   "isolate",
+	Short: "Make the Nix engine's --isolate jail (bubblewrap) work on this host (Linux)",
+	Long: `'rfswift run --engine nix --isolate' hides your $HOME and the host filesystem
+from a Nix environment with a bubblewrap jail. bubblewrap must be able to
+create a user namespace as your user, and Ubuntu 24.04+ restricts that with
+AppArmor: only a profiled bubblewrap may, and the profile
+(bwrap-userns-restrict) is attached to /usr/bin/bwrap. Without it the jail
+fails with "bwrap: setting up uid map: Permission denied".
+
+This command shows what is in the way and applies the targeted fix in one sudo
+call, after asking: the distribution's bubblewrap package when the bwrap in
+use is another one (a Nix profile's, a nixpkgs build), then the AppArmor
+profile (loaded from /etc/apparmor.d, else copied from apparmor-profiles'
+extra profiles). The restriction stays in force for every other program. A
+Debian kernel with kernel.unprivileged_userns_clone=0 gets the distribution
+default back. --sysctl is the last resort: it lifts Ubuntu's restriction for
+EVERY program (kernel.apparmor_restrict_unprivileged_userns=0, persisted
+under /etc/sysctl.d), which weakens the host.
+
+Examples:
+  rfswift host isolate            # show the state, offer the fix
+  rfswift host isolate --status   # only show
+  rfswift host isolate --yes      # apply without asking (scripts)
+  rfswift host isolate --sysctl   # last resort, see above`,
+	Run: func(cmd *cobra.Command, args []string) {
+		statusOnly, _ := cmd.Flags().GetBool("status")
+		yes, _ := cmd.Flags().GetBool("yes")
+		sysctl, _ := cmd.Flags().GetBool("sysctl")
+		asJSON, _ := cmd.Flags().GetBool("json")
+		if runtime.GOOS != "linux" {
+			common.PrintInfoMessage("The bubblewrap jail is a Linux mechanism; --isolate uses sandbox-exec on macOS and the WSL 2 distribution on Windows.")
+			return
+		}
+		st := hostsetup.GetIsolationStatus()
+		if asJSON {
+			if err := printJSON(st); err != nil {
+				common.PrintErrorMessage(err)
+				os.Exit(1)
+			}
+			return
+		}
+		printIsolationStatus(st)
+		if statusOnly {
+			return
+		}
+		if _, err := hostIsolateFix(st, yes, sysctl); err != nil {
+			common.PrintErrorMessage(err)
+			os.Exit(1)
+		}
+	},
+}
+
 // hostEngineInstall runs the engine selection and installation step of the
 // wizard. choice "ask" prompts; anything else is taken as given.
 func hostEngineInstall(choice string, yes bool) error {
@@ -409,10 +549,12 @@ before it runs and applied in one sudo call:
   3. Nix           install the native, daemon-backed Nix engine with flakes
   4. Docker access add you to the docker group AND make it effective in the
                    current session (socket ACL), so no logout is needed
+  5. isolation     make the Nix engine's --isolate jail work: bubblewrap and,
+                   on Ubuntu 24.04+, its AppArmor profile (rfswift host isolate)
 
 The deb/rpm packages install xhost and pactl automatically before this wizard.
-Scripts: --yes takes every recommended default; --udev, --engine, --nix and
---docker-access pin a single step (yes|no, docker|podman|both|none).
+Scripts: --yes takes every recommended default; --udev, --engine, --nix,
+--docker-access and --isolate pin a single step (yes|no, docker|podman|both|none).
 
 Examples:
   rfswift host setup
@@ -424,6 +566,7 @@ Examples:
 		engine, _ := cmd.Flags().GetString("engine")
 		nixChoice, _ := cmd.Flags().GetString("nix")
 		dockerAccess, _ := cmd.Flags().GetString("docker-access")
+		isolate, _ := cmd.Flags().GetString("isolate")
 		if runtime.GOOS != "linux" {
 			switch runtime.GOOS {
 			case "darwin":
@@ -433,7 +576,7 @@ Examples:
 			}
 			return
 		}
-		step := func(n int, title string) { fmt.Printf("\n[%d/4] %s\n", n, title) }
+		step := func(n int, title string) { fmt.Printf("\n[%d/5] %s\n", n, title) }
 		failed := false
 
 		step(1, "udev rules for RF / hardware-security devices")
@@ -479,6 +622,18 @@ Examples:
 			}
 		}
 
+		step(5, "isolation for Nix environments (--isolate, bubblewrap)")
+		if strings.EqualFold(isolate, "no") {
+			common.PrintInfoMessage("skipped (--isolate no)")
+		} else {
+			st := hostsetup.GetIsolationStatus()
+			printIsolationStatus(st)
+			if _, err := hostIsolateFix(st, yes || strings.EqualFold(isolate, "yes"), false); err != nil {
+				common.PrintErrorMessage(err)
+				failed = true
+			}
+		}
+
 		fmt.Println()
 		if failed {
 			common.PrintWarningMessage("Some steps failed; see above. 'rfswift doctor' shows the current state.")
@@ -489,7 +644,11 @@ Examples:
 }
 
 func registerHostSetupCommands() {
-	HostCmd.AddCommand(hostSetupCmd, hostUdevCmd, hostDockerAccessCmd)
+	HostCmd.AddCommand(hostSetupCmd, hostUdevCmd, hostDockerAccessCmd, hostIsolateCmd)
+	hostIsolateCmd.Flags().Bool("status", false, "only show the state")
+	hostIsolateCmd.Flags().BoolP("yes", "y", false, "apply without asking")
+	hostIsolateCmd.Flags().Bool("sysctl", false, "last resort: lift Ubuntu's user-namespace restriction for every program (weakens the host)")
+	hostIsolateCmd.Flags().Bool("json", false, "print the state as JSON")
 	hostUdevCmd.Flags().Bool("list", false, "only show the state")
 	hostUdevCmd.Flags().Bool("remove", false, "remove the rules RF Swift installed")
 	hostUdevCmd.Flags().BoolP("yes", "y", false, "install without asking")
@@ -497,7 +656,8 @@ func registerHostSetupCommands() {
 	hostDockerAccessCmd.Flags().Bool("status", false, "only show the state")
 	hostDockerAccessCmd.Flags().BoolP("yes", "y", false, "grant without asking")
 	hostDockerAccessCmd.Flags().Bool("json", false, "print the state as JSON")
-	hostSetupCmd.Flags().BoolP("yes", "y", false, "take every recommended default without asking (udev yes, Docker access yes, engine only with --engine)")
+	hostSetupCmd.Flags().BoolP("yes", "y", false, "take every recommended default without asking (udev yes, Docker access yes, isolation yes, engine only with --engine)")
+	hostSetupCmd.Flags().String("isolate", "ask", "Nix jail step (bubblewrap + AppArmor profile): ask, yes or no")
 	hostSetupCmd.Flags().String("udev", "ask", "udev rules step: ask, yes or no")
 	hostSetupCmd.Flags().String("engine", "ask", "engine step: ask, docker, podman, both or none")
 	hostSetupCmd.Flags().String("nix", "ask", "Nix step: ask, yes or no")

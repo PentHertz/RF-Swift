@@ -12,6 +12,22 @@ branch.
 
 ### Added
 
+- `rfswift host isolate`: one command that makes the Nix engine's `--isolate`
+  jail work on a host where bubblewrap cannot create its user namespace. It
+  shows the cause (Ubuntu 24.04+ lets only the AppArmor-profiled
+  `/usr/bin/bwrap` create one; a Debian kernel may have
+  `kernel.unprivileged_userns_clone=0`) and applies the targeted fix in one
+  sudo call after asking: the distribution's bubblewrap package when the bwrap
+  in use is a Nix profile's or a nixpkgs build, then the
+  `bwrap-userns-restrict` AppArmor profile (loaded from `/etc/apparmor.d`,
+  else copied from `apparmor-profiles`), leaving the restriction in force for
+  every other program. `--sysctl` is the explicit last resort that lifts it
+  for everything. The jail's own error now names the command and lists the
+  steps it will run instead of three sudo lines to type; `rfswift doctor`
+  gained a "Nix jail (--isolate)" check; `rfswift host setup` runs it as its
+  fifth step (`--isolate ask|yes|no`); the Workbench's Engine doctor shows the
+  state with an "Enable sandbox" button behind a polkit prompt, and a terminal
+  that fails to connect for this reason offers the same fix and reconnects.
 - `get_rfswift.sh` checks the `--isolate` jail's host mechanism on every
   install, not only when Nix is being set up in the same run: bubblewrap on
   Linux (offered when missing, `RFSWIFT_ISOLATE=1|0` answers up front, then
@@ -54,10 +70,8 @@ branch.
   attached to `/usr/bin/bwrap`, so the bubblewrap RF Swift built from nixpkgs
   (or found first on PATH from a Nix profile) was unconfined and blocked. RF
   Swift now prefers the distribution's `/usr/bin/bwrap` over any other bwrap
-  on PATH, and the error explains the actual cause with the targeted fix
-  first: install the distribution's bubblewrap package, and on Ubuntu 24.04
-  enable its `bwrap-userns-restrict` profile (`apparmor-profiles`), before
-  the last-resort sysctl that lifts the restriction for every program. The
+  on PATH, and the error explains the actual cause and points at
+  `rfswift host isolate` (see Added) instead of a list of sudo commands. The
   message no longer claims Debian restricts user namespaces (stock Debian
   kernels do not; a `kernel.unprivileged_userns_clone=0` host gets its own
   hint). `get_rfswift.sh` tests the sandbox even when bubblewrap is already
@@ -65,6 +79,20 @@ branch.
   distribution package and the AppArmor profile before the sysctl, and only
   persists the sysctl keys the running kernel has (a key it lacks made every
   boot log an error).
+- `get_rfswift.sh`, build-provenance step: answering "yes" to the attestation
+  check ended the whole install whenever `gh attestation verify` could not
+  run - a gh that is not logged in (the attestations API needs a token) or
+  too old for the command (Ubuntu 24.04 packages gh 2.45; `attestation`
+  arrived in 2.49) - and the hint sent people through `gh auth login`, whose
+  wizard generates and uploads an SSH key by default. The check is now only
+  offered when a recent, logged-in gh is present; otherwise one line says how
+  to verify later and the install goes on, since every file's SHA-256 was
+  already verified against the release manifest. A check that ran and failed
+  is still fatal by default (no terminal: always), with a question on a
+  terminal since the checksum matched. gh's verbose policy output is replaced
+  by one line per file naming the build workflow, `RFSWIFT_ATTEST=1|0`
+  answers up front, and the redundant "Continue with installation?" prompt
+  after the checksums is gone.
 - Workbench: a multi-line error from the engine (such as the bubblewrap
   guidance above) rendered as a staircase in the terminal panel, each line
   starting where the previous one ended, because the terminal does not

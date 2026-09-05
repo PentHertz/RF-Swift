@@ -344,4 +344,48 @@ if [ "$(uname -s)" = Linux ]; then
   . "$ROOT/get_rfswift.sh"
 fi
 
+# --- Build-provenance attestations: never a wall for basic users -------------
+# The check is only offered with a recent, logged-in gh; otherwise one hint
+# and the install goes on (the SHA-256 checksums already gate it). A check that
+# ran and failed stays fatal without a terminal, and is a question with one.
+ghbin="$tmp/ghbin"; mkdir -p "$ghbin"
+TMP_DIR="$tmp/attest"; mkdir -p "$TMP_DIR"; printf 'x' > "$TMP_DIR/rfswift_test.tar.gz"
+asked="$tmp/attest-asked"; : > "$asked"
+prompt_yes_no() { echo "$1" >> "$asked"; return 0; }
+old_path=$PATH
+# 1. no gh at all: no question.
+command_exists() { [ "$1" = gh ] && return 1; command -v "$1" >/dev/null 2>&1; }
+verify_attestations "$TMP_DIR"/rfswift* >/dev/null || { echo "no gh: verify_attestations failed" >&2; exit 1; }
+[ -s "$asked" ] && { echo "no gh: a prompt was shown" >&2; exit 1; }
+command_exists() { command -v "$1" >/dev/null 2>&1; }
+# 2. gh too old for 'attestation' (Ubuntu 24.04 ships 2.45): no question.
+PATH="$ghbin:$old_path"; hash -r
+printf '#!/bin/sh\ncase "$1" in attestation) echo "unknown command \\"attestation\\" for \\"gh\\"" >&2; exit 1;; auth) exit 0;; esac\n' > "$ghbin/gh"; chmod +x "$ghbin/gh"
+verify_attestations "$TMP_DIR"/rfswift* >/dev/null || { echo "old gh: verify_attestations failed" >&2; exit 1; }
+[ -s "$asked" ] && { echo "old gh: a prompt was shown" >&2; exit 1; }
+# 3. recent gh, not logged in: no question, and never 'gh auth login'.
+printf '#!/bin/sh\ncase "$1" in attestation) [ "$2" = --help ] && exit 0; echo "You are not logged into any GitHub hosts" >&2; exit 4;; auth) [ "$2" = login ] && { echo "gh auth login was run" >&2; exit 9; }; exit 1;; esac\n' > "$ghbin/gh"; chmod +x "$ghbin/gh"
+verify_attestations "$TMP_DIR"/rfswift* >/dev/null || { echo "logged-out gh: verify_attestations failed" >&2; exit 1; }
+[ -s "$asked" ] && { echo "logged-out gh: a prompt was shown" >&2; exit 1; }
+# 4. logged in, verification succeeds: one question, one summary line per file.
+printf '#!/bin/sh\ncase "$1" in attestation) [ "$2" = --help ] && exit 0; echo "  - Build workflow:. .github/workflows/release.yml@refs/tags/v9.9.9"; exit 0;; auth) exit 0;; esac\n' > "$ghbin/gh"; chmod +x "$ghbin/gh"
+out=$(verify_attestations "$TMP_DIR"/rfswift*) || { echo "successful verification returned failure" >&2; exit 1; }
+grep -q "Also verify" "$asked" || { echo "ready gh: the check was not offered" >&2; exit 1; }
+echo "$out" | grep -q "rfswift_test.tar.gz: built by .*/release.yml@refs/tags/v9.9.9" || { echo "no per-file summary: $out" >&2; exit 1; }
+# RFSWIFT_ATTEST answers without a prompt.
+: > "$asked"
+ATTEST_PREF=0 verify_attestations "$TMP_DIR"/rfswift* >/dev/null
+[ -s "$asked" ] && { echo "RFSWIFT_ATTEST=0 still prompted" >&2; exit 1; }
+# 5. logged in, the check RUNS and fails: fatal without a terminal (default
+# no), a question with one.
+printf '#!/bin/sh\ncase "$1" in attestation) [ "$2" = --help ] && exit 0; echo "Error: verification failed" >&2; exit 1;; auth) exit 0;; esac\n' > "$ghbin/gh"; chmod +x "$ghbin/gh"
+prompt_yes_no() { case "$1" in *anyway*) return 1;; esac; return 0; }
+( ATTEST_PREF=1 verify_attestations "$TMP_DIR"/rfswift* >/dev/null 2>&1 ) && { echo "a failed verification did not stop the install" >&2; exit 1; }
+mkdir -p "$TMP_DIR"; printf 'x' > "$TMP_DIR/rfswift_test.tar.gz"
+prompt_yes_no() { return 0; }
+ATTEST_PREF=1 verify_attestations "$TMP_DIR"/rfswift* >/dev/null 2>&1 || { echo "continuing after a failed verification was refused" >&2; exit 1; }
+PATH=$old_path; hash -r
+unset -f prompt_yes_no
+. "$ROOT/get_rfswift.sh"
+
 echo "installer security, development-channel and native-package tests: ok"

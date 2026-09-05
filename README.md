@@ -293,6 +293,7 @@ The packages pull in the two host tools every container needs, `xhost` (X11 auth
 rfswift host setup                 # asks each step; --yes takes the defaults
 rfswift host udev                  # RF Swift's udev rules only (SDR/RF hardware without root)
 rfswift host docker-access         # docker group + socket ACL, works without logging out
+rfswift host isolate               # Nix jail (--isolate): bubblewrap and, on Ubuntu 24.04+, its AppArmor profile
 ```
 
 The udev rules ship as a reference copy in `/usr/share/rfswift/udev/70-rfswift.rules` (and inside the binary). Rootless Podman and Nix environments run tools as your user and need them; Docker runs as root and does not. They grant group `plugdev` plus the logged-in user's seat ACL, never world-writable device nodes, and udev is reloaded on the spot. The setup wizard also offers to install Docker and/or Podman from your distribution's repositories, or to skip that and use the Nix engine. `get_rfswift.sh` asks the same questions (`RFSWIFT_UDEV=1|0`, `RFSWIFT_ENGINE=docker|podman|both|skip`, `RFSWIFT_NIX=1|0`, `RFSWIFT_ISOLATE=1|0` and `RFSWIFT_INSTALL_DIR=<dir>` answer up front), and the Workbench's **Engine doctor** has the same buttons behind a polkit prompt. They install `rfswift` in `/usr/bin`; the installer removes the copies an earlier tarball install left in `/usr/local/bin` or `~/.rfswift/bin` (and the shell alias pointing at them) when you agree, since those would shadow the packaged binary. A packaged `rfswift` is upgraded with the next package (or by re-running the installer), and `rfswift update` says so instead of overwriting it.
@@ -304,7 +305,7 @@ brew install --cask penthertz/rfswift/rfswift
 curl -fsSL "https://raw.githubusercontent.com/PentHertz/RF-Swift/main/scripts/setup-macos.sh" | bash
 ```
 
-> **Verifying downloads**: The installer offers to check each binary's Sigstore-backed **build provenance attestation** automatically. To verify manually with the [GitHub CLI](https://cli.github.com): `gh attestation verify <downloaded.tar.gz> --repo PentHertz/RF-Swift`. This proves the artifact was built by the official RF Swift release workflow from a specific commit - not swapped afterwards.
+> **Verifying downloads**: The installer verifies every file's SHA-256 against the release manifest, always. When a recent, logged-in [GitHub CLI](https://cli.github.com) is present it also offers to check each file's Sigstore-backed **build provenance attestation** (`RFSWIFT_ATTEST=1|0` answers up front); without gh, or with gh not logged in, it prints the manual command and moves on rather than sending you through `gh auth login`. To verify by hand: `gh attestation verify <downloaded.tar.gz> --repo PentHertz/RF-Swift`. This proves the artifact was built by the official RF Swift release workflow from a specific commit - not swapped afterwards.
 
 > **Note**: Rootless Podman runs containers as your user, so USB devices are only reachable once the host grants you access: install RF Swift's udev rules with `rfswift host udev` (rules inside a container are never evaluated). Root-only device nodes and realtime limits are dropped automatically with a notice; see the [documentation](https://rfswift.io/docs/guide/) for details.
 
