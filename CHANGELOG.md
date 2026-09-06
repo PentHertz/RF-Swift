@@ -106,6 +106,14 @@ branch.
   and the reason it cannot use one (a Docker socket its user cannot open, for
   instance); the Workbench engine doctor shows that report while a remote
   connection is active instead of describing the Workbench's own machine.
+- The Connection & security dialog no longer closes when you click beside it,
+  so a click outside cannot discard a half-filled agent form; Close and Escape
+  still do, and Escape is ignored while the agent setup form is open.
+- The free-form "RF Swift command" box in the connection panel is gone. Every
+  remote workflow (missions, terminals, tools, the engine doctor) goes through
+  typed agent calls, and the box showed raw CLI output with banner and colour
+  codes. The agent now runs the CLI with `-q` for the mission exec calls the
+  Workbench still makes, so their output carries no banner or release check.
 - The Workbench connection audit no longer warns "No rate limiting" for an
   agent authenticated with a CA-verified client certificate: there is no
   password to guess or account to lock out, so the check reports not

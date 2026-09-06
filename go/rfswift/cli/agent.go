@@ -142,7 +142,9 @@ func runAgentCommand(ctx context.Context, args []string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	cmd := exec.CommandContext(ctx, exe, args...)
+	// -q keeps the banner and the release check out of output the Workbench
+	// shows or parses (mission exec, tool search and install).
+	cmd := exec.CommandContext(ctx, exe, append([]string{"-q"}, args...)...)
 	out := &cappedAgentOutput{}
 	cmd.Stdout, cmd.Stderr = out, out
 	err = cmd.Run()

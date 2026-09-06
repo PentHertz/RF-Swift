@@ -49,10 +49,6 @@ type RemoteIssueRequest struct {
 	Passphrase      string `json:"passphrase"`
 	Server          bool   `json:"server"`
 }
-type RemoteCommandRequest struct {
-	Endpoint, Fingerprint, CredentialDirectory string
-	Args                                       []string
-}
 
 func (a *App) SelectRemoteCertificateDirectory() (string, error) {
 	return wruntime.OpenDirectoryDialog(a.ctx, wruntime.OpenDialogOptions{Title: "Select parent folder for the new certificate bundle"})
@@ -160,16 +156,6 @@ func (a *App) PingRemoteAgent(req RemoteConnectRequest) error {
 	defer cancel()
 	_, err = remote.ProbeAgent(ctx, cfg, false)
 	return err
-}
-
-func (a *App) RunRemoteRFSwift(req RemoteCommandRequest) (remote.CommandResult, error) {
-	cfg, err := remote.ClientConfigFromDirectory(req.Endpoint, req.Fingerprint, req.CredentialDirectory)
-	if err != nil {
-		return remote.CommandResult{}, err
-	}
-	ctx, cancel := context.WithTimeout(a.ctx, 5*time.Minute)
-	defer cancel()
-	return remote.RunCommand(ctx, cfg, req.Args)
 }
 
 // GenerateRemoteCertificates uses the same core as the rfswift CLI. Secrets go

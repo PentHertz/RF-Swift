@@ -207,9 +207,11 @@ Enter:
 
 Workbench derives the vault reference from the selected directory; users do not
 need to open or select `bundle.json`. Select **Connect**. Workbench validates TLS
-1.3, the pin, CA, client certificate, and encrypted private-key loading. Success
-opens an authenticated RF Swift command panel. Commands are sent as argument
-arrays to the remote `rfswift` binary rather than interpolated into a shell.
+1.3, the pin, CA, client certificate, and encrypted private-key loading. On
+success the connection panel confirms the mTLS session and offers Disconnect;
+everything else happens through the normal mission views. Requests to the agent
+are typed control calls or argument arrays for the remote `rfswift` binary,
+never text interpolated into a shell.
 
 After authentication, Workbench switches to the remote engine. The engine
 doctor (the Engines chip) then describes the agent host instead of this
