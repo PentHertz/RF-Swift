@@ -115,6 +115,7 @@ func runNixEnvironment(cmd *cobra.Command) error {
 	isolate, _ := cmd.Flags().GetBool("isolate")
 	flakeRef, _ := cmd.Flags().GetString("flake")
 	createOnly, _ := cmd.Flags().GetBool("create-only")
+	progressJSON, _ := cmd.Flags().GetBool("progress-json")
 
 	// Resolve the workspace selection into the value RunEnvironment expects.
 	workspace := ""
@@ -174,18 +175,30 @@ func runNixEnvironment(cmd *cobra.Command) error {
 	}
 
 	return rfnix.RunEnvironment(rfnix.RunOptions{
-		Name:       name,
-		Image:      image,
-		Command:    command,
-		Workspace:  workspace,
-		FlakeRef:   flakeRef,
-		Rebuild:    rebuild,
-		Pure:       pure,
-		Lazy:       lazy,
-		Isolate:    isolate,
-		CreateOnly: createOnly,
-		PreEnter:   offerUdevRules,
+		Name:         name,
+		Image:        image,
+		Command:      command,
+		Workspace:    workspace,
+		FlakeRef:     flakeRef,
+		Rebuild:      rebuild,
+		Pure:         pure,
+		Lazy:         lazy,
+		Isolate:      isolate,
+		CreateOnly:   createOnly,
+		PreEnter:     offerUdevRules,
+		BuildOptions: nixCLIBuildOptions(progressJSON),
 	})
+}
+
+// nixCLIBuildOptions: with --progress-json (the Windows Workbench driving this
+// CLI inside WSL) the build's progress snapshots and log lines go to stdout as
+// text, one snapshot per rfnix.ProgressLinePrefix line; otherwise the terminal
+// sees Nix's own output.
+func nixCLIBuildOptions(progressJSON bool) rfnix.BuildOptions {
+	if !progressJSON {
+		return rfnix.BuildOptions{}
+	}
+	return rfnix.BuildOptions{Progress: rfnix.JSONProgressObserver(os.Stdout), BuildLog: os.Stdout}
 }
 
 // printJSON writes v as indented JSON on stdout (the --json outputs of the nix
@@ -1616,5 +1629,7 @@ func registerNixCommands() {
 	runCmd.Flags().Bool("lazy", false, "Nix engine: build each tool on first call instead of all up front")
 	runCmd.Flags().Bool("isolate", false, "Nix engine (Linux): enter inside a bubblewrap jail - hides $HOME and the host filesystem, private PID/IPC/tmp, while keeping USB/serial devices, the display and the network")
 	runCmd.Flags().Bool("create-only", false, "Nix engine: create and realise the environment without entering it (scripts, the Workbench)")
+	runCmd.Flags().Bool("progress-json", false, "Nix engine: print build progress as machine-readable lines on stdout (the Workbench on Windows uses it)")
+	_ = runCmd.Flags().MarkHidden("progress-json")
 	runCmd.Flags().String("flake", "", "Nix engine: flake reference (default: local RF-Swift-nix checkout or github:PentHertz/RF-Swift-nix)")
 }

@@ -100,7 +100,7 @@ func envStorePath(env *Environment) (string, error) {
 	}
 	defer os.RemoveAll(tmp)
 	link := filepath.Join(tmp, "result")
-	if err := buildProfile(env.FlakeRef, env.Image, link); err != nil {
+	if err := buildProfile(BuildOptions{}, env.FlakeRef, env.Image, link); err != nil {
 		return "", err
 	}
 	return filepath.EvalSymlinks(link)

@@ -93,6 +93,16 @@ func RunEnvironment(opts RunOptions) error {
 		return fmt.Errorf("failed to create environment dir: %w", err)
 	}
 
+	// A front end following the build also gets the full log on disk, next to
+	// the manifest, for when the environment fails to build.
+	build := opts.BuildOptions
+	if build.observed() {
+		if f, err := os.Create(BuildLogPath(opts.Name)); err == nil {
+			defer f.Close()
+			build.BuildLog = multiWriter(f, opts.BuildLog)
+		}
+	}
+
 	// Resolve and prepare the workspace (working directory).
 	workspace := resolveWorkspace(opts.Name, opts.Workspace)
 	if workspace != "" {
@@ -131,7 +141,7 @@ func RunEnvironment(opts RunOptions) error {
 			common.PrintInfoMessage(fmt.Sprintf("Pinned to %s (move it with: rfswift env update %s).", shortRev(pinned), opts.Name))
 		}
 		common.PrintInfoMessage(fmt.Sprintf("Preparing on-demand environment '%s' (%s). Tools build the first time you call them.", entry.Name, opts.Image))
-		if err := buildPrerequisites(flakeRef, entry.Name, entry.Prerequisites, prerequisitesLink(opts.Name)); err != nil {
+		if err := buildPrerequisites(build, flakeRef, entry.Name, entry.Prerequisites, prerequisitesLink(opts.Name)); err != nil {
 			return err
 		}
 		env.Commands = resolveCommands(flakeRef, entry.Packages)
@@ -149,7 +159,7 @@ func RunEnvironment(opts RunOptions) error {
 		// Pure mode does not use a prebuilt profile; it evaluates the devShell
 		// fresh each time with a clean environment.
 		env.ProfilePath = ""
-		if err := buildPrerequisites(flakeRef, entry.Name, entry.Prerequisites, prerequisitesLink(opts.Name)); err != nil {
+		if err := buildPrerequisites(build, flakeRef, entry.Name, entry.Prerequisites, prerequisitesLink(opts.Name)); err != nil {
 			return err
 		}
 	default:
@@ -159,12 +169,12 @@ func RunEnvironment(opts RunOptions) error {
 		// nothing changed this is a fast no-op against the Nix cache. Use `exec`
 		// to re-enter without rebuilding.
 		profile := profileLink(opts.Name)
-		if err := buildPrerequisites(flakeRef, entry.Name, entry.Prerequisites, prerequisitesLink(opts.Name)); err != nil {
+		if err := buildPrerequisites(build, flakeRef, entry.Name, entry.Prerequisites, prerequisitesLink(opts.Name)); err != nil {
 			return err
 		}
 		common.PrintInfoMessage(fmt.Sprintf("Realising environment '%s' (%s) from %s ...", entry.Name, opts.Image, flakeRef))
 		common.PrintInfoMessage("First build fetches and compiles; refreshing an unchanged env is near-instant.")
-		if err := buildProfile(flakeRef, entry.Name, profile); err != nil {
+		if err := buildProfile(build, flakeRef, entry.Name, profile); err != nil {
 			return err
 		}
 		env.ProfilePath = profile
@@ -221,7 +231,7 @@ func ExecEnvironment(name, command string) error {
 		// after the gcroot was removed, or copied the manifest between machines).
 		if !pathExists(env.ProfilePath) {
 			common.PrintInfoMessage(fmt.Sprintf("Environment '%s' not realised yet, building ...", name))
-			if err := buildProfile(env.FlakeRef, env.Image, env.ProfilePath); err != nil {
+			if err := buildProfile(BuildOptions{}, env.FlakeRef, env.Image, env.ProfilePath); err != nil {
 				return err
 			}
 		}
@@ -376,20 +386,17 @@ func RemoveWorkspaceDir(path string) error {
 // ---------------------------------------------------------------------------
 
 // buildProfile realises packages.<currentSystem>.<image> into a gcroot symlink.
-func buildProfile(flakeRef, image, outLink string) error {
+// build carries a front end's progress observer and cancellation (progress.go);
+// the zero value streams Nix's output to the terminal.
+func buildProfile(build BuildOptions, flakeRef, image, outLink string) error {
 	installable := fmt.Sprintf("%s#%s", flakeRef, image)
-	args := append(experimentalArgs(),
-		"build", installable,
-		"--out-link", outLink,
-		"--print-build-logs",
-	)
-	cmd := nixCommand(args...)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	cmd.Stdin = os.Stdin
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("nix build failed for %s: %w\n"+
-			"  If this is a hash-mismatch on a source package, pin it (see RF-Swift-nix/pkgs/README.md).", installable, err)
+	args := append(experimentalArgs(), "build", installable, "--out-link", outLink)
+	if err := runNixBuild(build, "environment", installable, args...); err != nil {
+		if build.observed() {
+			return err
+		}
+		return fmt.Errorf("%w\n"+
+			"  If this is a hash-mismatch on a source package, pin it (see RF-Swift-nix/pkgs/README.md).", err)
 	}
 	return nil
 }
@@ -399,7 +406,7 @@ func buildProfile(flakeRef, image, outLink string) error {
 // this extra phase primarily guarantees separately packaged runtime plugins
 // (for example SoapySDR modules) are present before GUI tools start probing.
 // outLink pins the layer (its udev rules are read from there); "" for no link.
-func buildPrerequisites(flakeRef, image string, prerequisites []string, outLink string) error {
+func buildPrerequisites(build BuildOptions, flakeRef, image string, prerequisites []string, outLink string) error {
 	if len(prerequisites) == 0 {
 		return nil
 	}
@@ -411,11 +418,8 @@ func buildPrerequisites(flakeRef, image string, prerequisites []string, outLink 
 	}
 	args := append(experimentalArgs(), "build", installable)
 	args = append(args, link...)
-	args = append(args, "--print-build-logs")
-	cmd := nixCommand(args...)
-	cmd.Stdout, cmd.Stderr, cmd.Stdin = os.Stdout, os.Stderr, os.Stdin
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("nix prerequisite build failed for %s: %w", installable, err)
+	if err := runNixBuild(build, "prerequisites", installable, args...); err != nil {
+		return fmt.Errorf("prerequisite %w", err)
 	}
 	return nil
 }

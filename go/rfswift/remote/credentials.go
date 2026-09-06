@@ -43,7 +43,7 @@ func (OSSecretStore) Delete(ref string) error { return keyring.Delete(credential
 
 func loadEncryptedKeyPair(certFile, keyFile, secretRef string, store SecretStore) (tls.Certificate, error) {
 	if secretRef == "" {
-		return tls.Certificate{}, errors.New("encrypted private key requires a secure-store reference")
+		return tls.Certificate{}, errors.New("encrypted private key requires a secure-store reference (the KeyRef recorded in the bundle.json next to it)")
 	}
 	certPEM, err := os.ReadFile(certFile)
 	if err != nil {
@@ -55,7 +55,7 @@ func loadEncryptedKeyPair(certFile, keyFile, secretRef string, store SecretStore
 	}
 	password, err := store.Get(secretRef)
 	if err != nil {
-		return tls.Certificate{}, err
+		return tls.Certificate{}, fmt.Errorf("%w (reference %s for %s)", err, secretRef, keyFile)
 	}
 	defer wipe(password)
 	plain, err := decryptPrivateKeyPEM(keyPEM, password)

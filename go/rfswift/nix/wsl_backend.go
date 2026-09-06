@@ -78,7 +78,34 @@ func wslRunEnvironment(opts RunOptions) error {
 	if strings.TrimSpace(opts.Image) == "" {
 		return fmt.Errorf("an environment image is required (use -i, e.g. -i sdr_light)")
 	}
+	if opts.observed() {
+		return wslRunEnvironmentObserved(opts)
+	}
 	return runInteractive(rfswiftCommand(wslRunArgs(opts)...))
+}
+
+// wslRunEnvironmentObserved drives the Linux CLI with --progress-json and turns
+// its stdout back into the progress snapshots and log lines a front end
+// follows (progress.go), the same shape the native path produces.
+func wslRunEnvironmentObserved(opts RunOptions) error {
+	args := append(wslRunArgs(opts), "--progress-json")
+	cmd := rfswiftCommand(args...)
+	captured := &tailWriter{max: 64 << 10}
+	stream := ProgressStreamWriter(opts.Progress, opts.BuildLog)
+	errs := ProgressStreamWriter(nil, opts.BuildLog)
+	cmd.Stdin = nil
+	cmd.Stdout = multiWriter(stream, captured)
+	cmd.Stderr = multiWriter(errs, captured)
+	err := runWithContext(opts.Context, cmd)
+	stream.Flush()
+	errs.Flush()
+	if err == nil {
+		return nil
+	}
+	if opts.Context != nil && opts.Context.Err() != nil {
+		return fmt.Errorf("creation of environment '%s' cancelled", opts.Name)
+	}
+	return wslCommandError(args, captured.String(), err)
 }
 
 // wslExecEnvironment re-enters an environment (or runs a command in it).

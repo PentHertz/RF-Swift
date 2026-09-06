@@ -28,7 +28,7 @@ func InteractiveCommand(name, requestedShell string) (*exec.Cmd, error) {
 		}
 	}
 	if !env.Lazy && env.ProfilePath != "" && !pathExists(env.ProfilePath) {
-		if err := buildProfile(env.FlakeRef, env.Image, env.ProfilePath); err != nil {
+		if err := buildProfile(BuildOptions{}, env.FlakeRef, env.Image, env.ProfilePath); err != nil {
 			return nil, err
 		}
 	}

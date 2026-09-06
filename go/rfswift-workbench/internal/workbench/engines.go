@@ -15,6 +15,7 @@ import (
 	common "penthertz/rfswift/common"
 	rfdock "penthertz/rfswift/dock"
 	rfnix "penthertz/rfswift/nix"
+	"penthertz/rfswift/remote"
 	rfutils "penthertz/rfswift/rfutils"
 )
 
@@ -53,6 +54,15 @@ type NixEngineStatus struct {
 // and macOS; on Windows the WSL 2 distribution and what it offers.
 func (a *App) NixEngineStatus() NixEngineStatus {
 	st := NixEngineStatus{Host: "native", Missing: []string{}}
+	if remoteEngine, ok := a.engine().(*RemoteEngine); ok {
+		report, err := remoteEngine.EngineReport()
+		if err != nil {
+			st.Host = "agent"
+			st.Detail = "the agent did not report its engines: " + err.Error()
+			return st
+		}
+		return nixStatusFromReport(report)
+	}
 	if _, ok := a.engine().(*LocalEngine); !ok {
 		st.Detail = "engine status is only available for the local connection"
 		return st
@@ -209,6 +219,36 @@ type EngineStatus struct {
 	Socket    string `json:"socket"`             //
 	Instance  string `json:"instance,omitempty"` // Lima VM instance name
 	VM        bool   `json:"vm"`                 // lifecycle is GUI-controllable (Lima)
+	// Remote engines (reported by a connected agent about its own host) are
+	// shown, not managed: Detail explains an engine the agent cannot use and
+	// Containers counts the RF Swift containers it can list (-1: unknown).
+	Remote     bool   `json:"remote"`
+	Detail     string `json:"detail,omitempty"`
+	Containers int    `json:"containers"`
+}
+
+// engineStatusFromReport turns an agent's report into the doctor's rows.
+func engineStatusFromReport(r remote.EngineReport) []EngineStatus {
+	out := []EngineStatus{}
+	for _, e := range r.Engines {
+		if !e.Available {
+			continue
+		}
+		out = append(out, EngineStatus{Name: e.Name, Label: e.Label, Available: e.Available, Running: e.Running, State: e.State, Active: e.Active, Socket: e.Socket, Remote: true, Detail: e.Detail, Containers: e.Containers})
+	}
+	return out
+}
+
+// nixStatusFromReport is the agent host's Nix engine for the doctor.
+func nixStatusFromReport(r remote.EngineReport) NixEngineStatus {
+	st := NixEngineStatus{Host: "agent", Ready: r.Nix.Available, NixVersion: r.Nix.Version, Detail: r.Nix.Detail, Missing: []string{}}
+	if !r.Nix.Available {
+		st.Missing = []string{"nix"}
+	}
+	if r.Host != "" {
+		st.Distro = r.Host
+	}
+	return st
 }
 
 // ContainerEngines reports every container engine relevant on this host with
@@ -217,6 +257,13 @@ type EngineStatus struct {
 // alias (DOCKER_HOST into the Lima socket) are still all reported here — the
 // list view dedupes, the status strip should not hide them.
 func (a *App) ContainerEngines() []EngineStatus {
+	if remoteEngine, ok := a.engine().(*RemoteEngine); ok {
+		report, err := remoteEngine.EngineReport()
+		if err != nil {
+			return []EngineStatus{{Name: "agent", Label: "Agent", Available: true, State: "unreachable", Remote: true, Detail: "the agent did not report its engines: " + err.Error(), Containers: -1}}
+		}
+		return engineStatusFromReport(report)
+	}
 	if _, ok := a.engine().(*LocalEngine); !ok {
 		return nil
 	}

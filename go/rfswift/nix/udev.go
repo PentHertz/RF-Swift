@@ -348,5 +348,5 @@ func RealisePrerequisites(env *Environment) error {
 	if pathExists(prerequisitesLink(env.Name)) {
 		return nil
 	}
-	return buildPrerequisites(env.FlakeRef, env.Image, env.Prerequisites, prerequisitesLink(env.Name))
+	return buildPrerequisites(BuildOptions{}, env.FlakeRef, env.Image, env.Prerequisites, prerequisitesLink(env.Name))
 }

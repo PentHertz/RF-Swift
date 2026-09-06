@@ -37,6 +37,10 @@ type App struct {
 	assets          fs.FS
 	usbMu           sync.Mutex
 	usbAttached     map[string]bool // QMP device IDs we forwarded into the Lima VM this session
+
+	// Live Nix build status for the UI (nix_build_events.go).
+	nixBuildOps sync.Map // mission -> operation whose progress bar the build drives
+	nixBuildLog nixBuildLogBatch
 }
 
 func (a *App) currentScope() (string, Engine) {
@@ -57,6 +61,7 @@ func (a *App) setWorkspace(ws string) {
 func (a *App) setEngine(eng Engine) {
 	a.stateMu.Lock()
 	defer a.stateMu.Unlock()
+	a.hookLocalEngine(eng)
 	a.eng = eng
 }
 
@@ -93,6 +98,7 @@ func NewApp(assetFS ...fs.FS) *App {
 	if len(assetFS) > 0 {
 		app.assets = assetFS[0]
 	}
+	app.hookLocalEngine(app.eng)
 	return app
 }
 

@@ -10,14 +10,17 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"sync"
 	"time"
 	"unicode/utf8"
 
+	"github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/client"
 	rfdock "penthertz/rfswift/dock"
+	"penthertz/rfswift/hostsetup"
 	rfnix "penthertz/rfswift/nix"
 	"penthertz/rfswift/ptyx"
 	"penthertz/rfswift/remote"
@@ -70,6 +73,8 @@ func agentControl(ctx context.Context, req remote.ControlRequest) (any, error) {
 	switch req.Method {
 	case "targets.list":
 		return agentListTargets()
+	case "engines.status":
+		return agentEngineReport(), nil
 	case "targets.inspect":
 		var p struct{ ID string }
 		if err := decode(&p); err != nil {
@@ -261,12 +266,125 @@ func agentAudit(id string) (map[string]string, error) {
 	return map[string]string{"data": base64.StdEncoding.EncodeToString(data)}, nil
 }
 
+// agentEngines lists the container engines installed on this host, the
+// active one first, the way the Workbench enumerates them locally.
+func agentEngines() []rfdock.ContainerEngine {
+	candidates := []rfdock.ContainerEngine{rfdock.GetEngine(), &rfdock.DockerEngine{}, &rfdock.PodmanEngine{}}
+	if rfdock.IsLimaEngineCandidate() {
+		candidates = append(candidates, &rfdock.LimaEngine{})
+	}
+	var out []rfdock.ContainerEngine
+	seen := map[rfdock.EngineType]bool{}
+	for _, eng := range candidates {
+		if eng == nil || seen[eng.Type()] || !eng.IsAvailable() {
+			continue
+		}
+		seen[eng.Type()] = true
+		out = append(out, eng)
+	}
+	return out
+}
+
+// agentContainers lists this host's RF Swift containers on one engine. The
+// error says why the engine could not be used (typically the socket is not
+// accessible to the agent's user), instead of an empty list that looks like
+// "no containers".
+func agentContainers(eng rfdock.ContainerEngine) ([]container.Summary, error) {
+	cli, err := eng.GetClient()
+	if err != nil {
+		return nil, err
+	}
+	defer cli.Close()
+	filters := make(client.Filters)
+	filters.Add("label", "org.container.project=rfswift")
+	res, err := cli.ContainerList(context.Background(), client.ContainerListOptions{All: true, Filters: filters})
+	if err != nil {
+		return nil, err
+	}
+	return res.Items, nil
+}
+
+// agentEngineReport describes the engines of this host for the Workbench's
+// engine doctor.
+func agentEngineReport() remote.EngineReport {
+	host, _ := os.Hostname()
+	report := remote.EngineReport{Host: host, OS: runtime.GOOS, Engines: []remote.EngineState{}}
+	active := rfdock.GetEngine().Type()
+	candidates := []rfdock.ContainerEngine{&rfdock.DockerEngine{}, &rfdock.PodmanEngine{}}
+	if rfdock.IsLimaEngineCandidate() || active == rfdock.EngineLima {
+		candidates = append(candidates, &rfdock.LimaEngine{})
+	}
+	for _, eng := range candidates {
+		st := remote.EngineState{Name: string(eng.Type()), Label: eng.Name(), Available: eng.IsAvailable(), Active: eng.Type() == active, Containers: -1}
+		if !st.Available {
+			st.State = "not installed"
+			report.Engines = append(report.Engines, st)
+			continue
+		}
+		st.Socket = eng.GetSocketPath()
+		st.Running = eng.IsServiceRunning()
+		if !st.Running {
+			st.State = "stopped"
+			if eng.Type() == rfdock.EngineDocker && runtime.GOOS == "linux" {
+				if access := hostsetup.GetDockerAccess(); access.SocketFound && !access.Accessible {
+					st.State = "unreachable"
+					st.Detail = access.Detail
+				}
+			}
+			report.Engines = append(report.Engines, st)
+			continue
+		}
+		st.State = "running"
+		if containers, err := agentContainers(eng); err != nil {
+			st.State = "unreachable"
+			st.Detail = err.Error()
+		} else {
+			st.Containers = len(containers)
+		}
+		report.Engines = append(report.Engines, st)
+	}
+	if rfnix.IsAvailable() {
+		report.Nix.Available = true
+		if v, err := rfnix.Version(); err == nil {
+			report.Nix.Version = v
+		}
+		report.Nix.Detail = report.Nix.Version
+		if report.Nix.Detail == "" {
+			report.Nix.Detail = "nix available"
+		}
+	} else {
+		report.Nix.Detail = "nix is not installed on the agent host"
+	}
+	return report
+}
+
 func agentListTargets() ([]agentTarget, error) {
 	var out []agentTarget
-	eng := string(rfdock.GetEngine().Type())
-	for _, c := range rfdock.ListContainers("org.container.project", "rfswift") {
-		n := strings.TrimPrefix(c.Name, "/")
-		out = append(out, agentTarget{ID: n, Title: n, Engine: eng, Image: c.Image, Status: agentState(c.State)})
+	seen := map[string]bool{}
+	for _, eng := range agentEngines() {
+		if !eng.IsServiceRunning() {
+			continue
+		}
+		containers, err := agentContainers(eng)
+		if err != nil {
+			continue
+		}
+		for _, c := range containers {
+			n := c.ID
+			if len(n) > 12 {
+				n = n[:12]
+			}
+			if len(c.Names) > 0 {
+				n = strings.TrimPrefix(c.Names[0], "/")
+			}
+			// A container of the same name on a second engine stays hidden
+			// until the first one is gone: mission IDs are names.
+			if seen[n] {
+				continue
+			}
+			seen[n] = true
+			out = append(out, agentTarget{ID: n, Title: n, Engine: string(eng.Type()), Image: c.Image, Status: agentState(string(c.State))})
+		}
 	}
 	envs, err := rfnix.ListEnvironments()
 	if err == nil {

@@ -29,6 +29,26 @@ type RemoteProbeRequest struct {
 }
 
 type RemoteConnectRequest struct{ Endpoint, Fingerprint, CredentialDirectory string }
+
+// RemoteImportRequest installs a credential file (remote.RoleFile) written on
+// another machine. Directory empty: next to the file, named after it.
+type RemoteImportRequest struct {
+	File       string `json:"file"`
+	Directory  string `json:"directory"`
+	Passphrase string `json:"passphrase"`
+}
+
+// RemoteIssueRequest issues client credentials from a bundle for a machine
+// elsewhere (Out empty: <bundle>/clients/<name>-client.json), or exports the
+// bundle's server side when ClientName is empty and Server is set.
+type RemoteIssueRequest struct {
+	BundleDirectory string `json:"bundleDirectory"`
+	ClientName      string `json:"clientName"`
+	Endpoint        string `json:"endpoint"`
+	Out             string `json:"out"`
+	Passphrase      string `json:"passphrase"`
+	Server          bool   `json:"server"`
+}
 type RemoteCommandRequest struct {
 	Endpoint, Fingerprint, CredentialDirectory string
 	Args                                       []string
@@ -40,6 +60,78 @@ func (a *App) SelectRemoteCertificateDirectory() (string, error) {
 
 func (a *App) SelectRemoteBundle() (string, error) {
 	return wruntime.OpenDirectoryDialog(a.ctx, wruntime.OpenDialogOptions{Title: "Select client credential directory"})
+}
+
+func (a *App) SelectRemoteCredentialFile() (string, error) {
+	return wruntime.OpenFileDialog(a.ctx, wruntime.OpenDialogOptions{Title: "Select an RF Swift credential file", Filters: []wruntime.FileFilter{{DisplayName: "RF Swift credentials (*.json)", Pattern: "*.json"}}})
+}
+
+func (a *App) SelectRemoteCredentialSavePath(suggested string) (string, error) {
+	return wruntime.SaveFileDialog(a.ctx, wruntime.SaveDialogOptions{Title: "Save the credential file", DefaultFilename: suggested, Filters: []wruntime.FileFilter{{DisplayName: "RF Swift credentials (*.json)", Pattern: "*.json"}}})
+}
+
+// ImportRemoteCredentials installs a credential file from another machine:
+// the transfer passphrase (typed by the person, it is not a vault secret)
+// unlocks the key, which is re-encrypted under a fresh random password in
+// this user's vault. The result carries the endpoint, fingerprint and
+// directory the connection form needs.
+func (a *App) ImportRemoteCredentials(req RemoteImportRequest) (remote.ImportedCredentials, error) {
+	if strings.TrimSpace(req.File) == "" {
+		return remote.ImportedCredentials{}, errors.New("select a credential file")
+	}
+	file, err := remote.ReadRoleFile(req.File)
+	if err != nil {
+		return remote.ImportedCredentials{}, err
+	}
+	dir := strings.TrimSpace(req.Directory)
+	if dir == "" {
+		dir = strings.TrimSuffix(req.File, filepath.Ext(req.File))
+	}
+	return remote.ImportCredentials(file, dir, []byte(req.Passphrase), remote.OSSecretStore{})
+}
+
+// IssueRemoteCredentials writes a credential file for another machine from a
+// bundle generated here: a newly signed client (default) or this agent's own
+// server side (req.Server). Returns the file's path.
+func (a *App) IssueRemoteCredentials(req RemoteIssueRequest) (string, error) {
+	bundle := strings.TrimSpace(req.BundleDirectory)
+	if bundle == "" {
+		return "", errors.New("select the bundle folder written by Generate or by rfswift agent certs init")
+	}
+	var file remote.RoleFile
+	var err error
+	out := strings.TrimSpace(req.Out)
+	if req.Server {
+		file, err = remote.ExportServerCredentials(bundle, []byte(req.Passphrase), remote.OSSecretStore{})
+		if out == "" {
+			out = filepath.Join(bundle, "server-credentials.json")
+		}
+	} else {
+		name := strings.TrimSpace(req.ClientName)
+		if name == "" {
+			name = "workbench"
+		}
+		file, err = remote.IssueClientCredentials(bundle, name, req.Endpoint, []byte(req.Passphrase), remote.OSSecretStore{})
+		if out == "" {
+			out = filepath.Join(bundle, "clients", slugify(name)+"-client.json")
+		}
+	}
+	if err != nil {
+		return "", err
+	}
+	if err := remote.WriteRoleFile(out, file); err != nil {
+		return "", err
+	}
+	return out, nil
+}
+
+func slugify(name string) string {
+	return strings.Map(func(r rune) rune {
+		if r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '-' || r == '_' {
+			return r
+		}
+		return '-'
+	}, name)
 }
 
 func (a *App) ConnectRemoteAgent(req RemoteConnectRequest) (Connection, error) {
@@ -91,12 +183,7 @@ func (a *App) GenerateRemoteCertificates(req RemoteCertificateRequest) (remote.C
 	if name == "" {
 		name = "rfswift-agent"
 	}
-	slug := strings.Map(func(r rune) rune {
-		if r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '-' || r == '_' {
-			return r
-		}
-		return '-'
-	}, name)
+	slug := slugify(name)
 	destination := filepath.Join(req.Directory, slug)
 	if _, err := os.Stat(destination); err == nil {
 		destination = filepath.Join(req.Directory, fmt.Sprintf("%s-%s", slug, time.Now().Format("20060102-150405")))

@@ -92,6 +92,18 @@ bundle.json        paths, fingerprints, and vault references (0600)
 
 ### 3. Start the agent
 
+Point the agent at the bundle directory. Its `bundle.json` supplies the server
+certificate, the encrypted key, the key's vault reference and the client CA:
+
+```sh
+rfswift agent --bind 127.0.0.1:8443 --name lab-agent \
+  --bundle "$HOME/.config/rfswift/remote/lab"
+```
+
+Every item can also be named explicitly, which is what `--bundle` expands to
+(`--key` alone is enough for the agent to read the vault reference and the CA
+from the `bundle.json` next to it):
+
 ```sh
 bundle="$HOME/.config/rfswift/remote/lab"
 server_key_ref="$(jq -r '.ServerKeyRef' "$bundle/bundle.json")"
@@ -105,7 +117,46 @@ rfswift agent \
   --client-ca "$bundle/ca.pem"
 ```
 
-The agent refuses to start without the client CA or with an unencrypted key.
+`bundle.json` lives in the directory given to `certs init`, not in the current
+directory. The agent refuses to start without the client CA or with an
+unencrypted key, and prints its "listening" line only once the key is decrypted
+and the socket is bound.
+
+### 4. Give a Workbench on another machine its credentials
+
+The keys in the bundle directory only open with the vault of the user who ran
+`certs init`; copying `client-key.pem` elsewhere does not work, and running
+`certs init` again on the other machine creates a different CA and server
+certificate, which the Workbench then reports as a changed pin. Issue a client
+credential file from the agent's bundle instead:
+
+```sh
+rfswift agent certs client --bundle "$HOME/.config/rfswift/remote/lab" --name laptop
+```
+
+It asks for a transfer passphrase (12 characters or more) and writes
+`clients/laptop-client.json`: one JSON file with the CA, a client certificate
+signed for `laptop`, that client's private key encrypted with the passphrase
+(PKCS#8, scrypt and AES-256-GCM), the agent address and the server fingerprint
+to pin. Move the file to the laptop and import it there, either in the
+Workbench (**Connection & security → Add agent → Import client credentials**,
+which fills the endpoint, fingerprint and secrets location) or on the command
+line:
+
+```sh
+rfswift agent certs import laptop-client.json --dir "$HOME/.config/rfswift/remote/lab-client"
+```
+
+Import checks the certificate against the CA, decrypts the key with the
+passphrase and re-encrypts it under a random password in that machine's vault;
+the passphrase is not kept. Each machine gets its own certificate, so one can
+be recognised by its fingerprint and replaced without touching the others.
+
+The reverse direction exists for a bundle generated in the Workbench:
+`rfswift agent certs export --bundle DIR` writes `server-credentials.json`
+(server certificate, its key under a passphrase, and the CA that verifies
+clients); on the agent host `rfswift agent certs import server-credentials.json
+--dir DIR` installs it and `rfswift agent --bundle DIR` starts the agent.
 
 ### 4. Optional SSH tunnel
 
@@ -127,9 +178,23 @@ Open **Connection & security → Add agent**.
 1. Enter the agent name and DNS name/IP.
 2. Select a private output directory.
 3. Select **Generate encrypted bundle**.
-4. Workbench calls the shared Go generator directly; passwords never cross the
-   JavaScript bridge.
-5. Start the agent using the command displayed by Workbench.
+4. Workbench calls the shared Go generator directly; vault passwords never
+   cross the JavaScript bridge.
+5. Start the agent using the command displayed by Workbench
+   (`rfswift agent --bundle DIR`) when it runs on this machine.
+
+### Credentials for another machine
+
+Under the bundle form, **Credentials for another machine** writes a credential
+file from a bundle folder: **Issue client file** signs a new client certificate
+for a named machine and **Export server file** packs this agent's own side.
+Both ask for a transfer passphrase and save one JSON file holding every
+certificate that side needs and its private key encrypted with the
+passphrase. On the other machine, import it: **Import client credentials** in
+the connection form (it fills the endpoint, the pinned fingerprint and the
+secrets location, then press **Connect**), or `rfswift agent certs import` for
+a server file. The transfer passphrase is typed into a Workbench dialog and
+handed to the Go side once; it is not stored.
 
 ### Verify an existing agent
 
@@ -146,7 +211,12 @@ need to open or select `bundle.json`. Select **Connect**. Workbench validates TL
 opens an authenticated RF Swift command panel. Commands are sent as argument
 arrays to the remote `rfswift` binary rather than interpolated into a shell.
 
-After authentication, Workbench switches to the remote engine. Mission listing,
+After authentication, Workbench switches to the remote engine. The engine
+doctor (the Engines chip) then describes the agent host instead of this
+machine: every installed engine with its state, the number of RF Swift
+containers the agent can list on it, and the agent's reason when it cannot use
+one, plus whether Nix is installed there. Engines are managed on the agent
+host itself; the doctor only shows them. Mission listing,
 inspection, container/Nix creation, image checks and pulls, start/stop, deletion,
 container configuration, interactive terminals, and mission-workspace artifacts
 are routed to the agent. There is no fallback to the GUI host. Use **Disconnect**
@@ -165,8 +235,15 @@ individual transfers are limited to 16 MiB.
 
 ## Cross-machine enrollment
 
-Never push the client private key to the agent. Generate it on the client and
-send only a certificate signing request:
+The supported way to enrol another machine is the credential file above: the
+agent's CA signs a fresh client certificate, and only that client's key travels,
+under a passphrase, to be re-wrapped into the destination vault. A pin mismatch
+("agent certificate pin changed") on connect means the client file came from a
+different bundle than the one the agent runs with, or that the agent's bundle
+was regenerated; issue a new client file from the agent's current bundle.
+
+A CSR flow, where the client's private key is generated on the client and only
+a signing request travels, remains the stricter option for the future:
 
 ```mermaid
 sequenceDiagram
@@ -180,9 +257,10 @@ sequenceDiagram
     W->>K: Retain private key/password locally
 ```
 
-The CSR endpoint is pending. Until implemented, the initial client certificate
-is usable only by the OS account/vault that generated it. Copying
-`client-key.pem` without securely re-wrapping its vault password will not work.
+The CSR endpoint is pending. The initial client certificate of a bundle is
+usable only by the OS account/vault that generated it; copying `client-key.pem`
+without re-wrapping its vault password will not work, which is what the
+credential file and `certs import` do for you.
 
 ## Windows
 
@@ -223,7 +301,13 @@ certificate subjects.
 | Error | Action |
 | --- | --- |
 | `secure store: ...` | Unlock/start the current non-root user's native vault. |
-| `secret not found in keyring` | Use the matching reference from `bundle.json`. |
+| `secret not found in keyring` | Use the matching reference from `bundle.json`; the error names the reference and key file it tried. |
+| `encrypted private key requires a secure-store reference` | `--key-ref` was empty (often a `jq` line that could not find `bundle.json`). Pass `--bundle DIR` instead, or read the reference from `DIR/bundle.json`. |
+| `agent certificate pin changed` | The pinned fingerprint belongs to another bundle's server certificate. Pin the one printed by `certs init` on the agent host, or import a client file issued from the agent's bundle (`certs client`). |
+| `wrong passphrase, or the credential file is damaged` | The transfer passphrase typed at import differs from the one chosen at issue time. Issue a new file if it was lost. |
+| `read client CA ... no such file` | `--client-ca` must be the bundle's `ca.pem` file, not a vault reference. |
+| `missing --cert, --key, ...` | Pass `--bundle DIR`, or every file and the reference explicitly. |
+| Connected, but no containers are listed | Open the engine doctor (Engines chip): while connected it shows the agent host's engines as the agent's own user sees them, with the reason an engine is unreachable. A Docker socket the agent's user cannot open ("permission denied") means the user joined the `docker` group after the agent's session started: log that user out and in (or `newgrp docker`) and restart the agent. Only containers carrying the `org.container.project=rfswift` label (every container RF Swift creates) are listed. |
 | `private key must be ... encrypted PKCS#8` | Use a generated encrypted key; plaintext/legacy PEM is rejected. |
 | `cannot decrypt private key` | Match the key file with its original vault reference. |
 | `client CA is required` | Pass `ca.pem` using `--client-ca`. |

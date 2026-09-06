@@ -120,4 +120,7 @@ type RunOptions struct {
 	// is entered (not for CreateOnly). The CLI uses it to offer the host-side
 	// setup that needs a terminal, such as installing udev rules.
 	PreEnter func(env *Environment)
+	// BuildOptions: a front end's live progress and cancellation of the
+	// realisation (zero value: the terminal sees Nix's own output).
+	BuildOptions
 }

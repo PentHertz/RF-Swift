@@ -12,6 +12,19 @@ branch.
 
 ### Added
 
+- Workbench: creating a Nix mission now shows the build as it happens. The
+  create dialog follows Nix's own progress stream (`--log-format
+  internal-json`, what Nix's terminal progress bar is drawn from) and shows
+  how many derivations are built and how many remain, how many store paths
+  are fetched from the binary cache with the download size, what is being
+  compiled right now with its phase and elapsed time, the number of tasks
+  left, and the build log tail. A failed build opens the log and the error
+  carries Nix's own reason instead of "exit status 1"; the full log is kept
+  at `~/.rfswift/nix/environments/<name>/build.log`. "Stop & clean" now
+  interrupts the running `nix build` instead of letting it finish in the
+  background. Environment updates and rebuilds report through the same
+  channel. On Windows the Linux CLI inside WSL streams the same data
+  (`rfswift run --progress-json`, hidden).
 - `rfswift host isolate`: one command that makes the Nix engine's `--isolate`
   jail work on a host where bubblewrap cannot create its user namespace. It
   shows the cause (Ubuntu 24.04+ lets only the AppArmor-profiled
@@ -72,6 +85,40 @@ branch.
 
 ### Fixed
 
+- Remote agent credentials can now move between machines. `rfswift agent
+  certs client --bundle DIR --name laptop` signs a new client certificate with
+  the bundle's CA and writes one JSON file with everything that client needs
+  (CA, certificate, private key encrypted under a passphrase you choose with
+  scrypt and AES-256-GCM, agent address, server fingerprint to pin);
+  `certs export` does the same for the agent's own side, and `certs import`
+  installs either on the destination, re-encrypting the key under a random
+  password in that machine's vault. The Workbench offers the same three
+  actions in Connection & security (Issue client file, Export server file,
+  Import client credentials, which fills the connection form). Before, the
+  only client certificate lived in the bundle's own vault, so a second
+  `certs init` on the Workbench machine produced a different CA and server
+  certificate and every connection failed with "pin changed"; that error now
+  says so. `bundle.json` records the agent name and host.
+- Remote agents now list every RF Swift container on every engine of their
+  host (Docker, Podman, Lima), not only the auto-detected one, and the
+  previous cap of 15 containers is gone. A new `engines.status` agent method
+  reports each engine's state, the number of containers the agent can list
+  and the reason it cannot use one (a Docker socket its user cannot open, for
+  instance); the Workbench engine doctor shows that report while a remote
+  connection is active instead of describing the Workbench's own machine.
+- The Workbench connection audit no longer warns "No rate limiting" for an
+  agent authenticated with a CA-verified client certificate: there is no
+  password to guess or account to lock out, so the check reports not
+  applicable. The same rule applies in the Go-side audit.
+- `rfswift agent` no longer prints "listening on ..." before it has decrypted
+  its key and bound the socket, so a start-up failure is not preceded by a line
+  saying it worked. `--key-ref` and `--client-ca` are no longer needed by hand:
+  `--bundle DIR` (the directory `certs init` wrote) supplies the certificate,
+  the key, its vault reference and the client CA, and `--key` alone reads the
+  reference and CA from the `bundle.json` next to it. Missing items are listed
+  by flag name, a wrong `--client-ca` says it must be `ca.pem`, and a vault
+  miss names the reference and key file it tried. `certs init` ends with the
+  command that starts the agent.
 - Remote creation now shares its request schema with the agent, forwards Nix
   isolation and container audio/cancellation settings, and uses
   `targets.create.v2`. Upgrade the remote agent alongside Workbench: older

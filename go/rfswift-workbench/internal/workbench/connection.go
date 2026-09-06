@@ -95,9 +95,15 @@ func AuditConnection(c Connection) ConnAudit {
 	default:
 		ch = append(ch, Check{"warn", "Network exposure", "Unknown network exposure.", "Restrict the agent to loopback + VPN."})
 	}
-	if c.RateLimit {
+	// Guessing attacks need something guessable. A CA-verified client
+	// certificate offers no password or token to try, so rate limiting and
+	// lockout only matter for connections authenticated another way.
+	switch {
+	case c.Kind == "local" || strong:
+		ch = append(ch, Check{"ok", "Brute-force protection", "Not applicable: the client certificate cannot be guessed and there is no account to lock out.", ""})
+	case c.RateLimit:
 		ch = append(ch, Check{"ok", "Brute-force protection", "Auth rate limiting / lockout enabled.", ""})
-	} else {
+	default:
 		ch = append(ch, Check{"warn", "Brute-force protection", "No rate limiting.", "Enable auth rate limiting and account lockout."})
 	}
 	if c.Version == "up-to-date" {

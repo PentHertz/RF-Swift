@@ -475,3 +475,12 @@ label.fld{display:flex;flex-direction:column;gap:4px;font-size:11.5px;color:var(
 .u134{display:flex;gap:7px;margin:7px 0 15px;}
 .u135{display:flex;gap:8px;border-top:1px solid var(--line);padding-top:13px;}
 .nixsetuplog{margin:0;max-height:220px;overflow:auto;font-family:var(--mono);font-size:11px;line-height:1.45;white-space:pre-wrap;word-break:break-word;color:var(--ink-2)}
+/* Live Nix build status in the create dialog (nix_build_events.go) */
+.nixbuild-stats{display:flex;flex-wrap:wrap;gap:4px 16px;margin-top:10px;font-size:12px;color:var(--ink-2)}
+.nixbuild-stats b{color:var(--ink);font-weight:600}
+.nixbuild-stats .fail{color:var(--crit)}
+.nixbuild-now{margin-top:6px;font-family:var(--mono);font-size:11px;line-height:1.5;color:var(--ink-3);white-space:pre-wrap;word-break:break-word;max-height:84px;overflow:auto}
+.nixbuild-log{margin-top:8px}
+.nixbuild-log summary{font-size:12px;color:var(--ink-2);cursor:pointer}
+.nixbuild-log .nixsetuplog{margin-top:6px;padding:8px 10px;background:var(--panel-2);border-radius:8px;max-height:260px}
+.engdetail{margin:4px 0 2px;font-size:11px;line-height:1.45;color:var(--ink-2);white-space:pre-wrap;word-break:break-word}

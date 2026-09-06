@@ -63,6 +63,9 @@ type ServerConfig struct {
 	Authentication                                                 AuthPolicy
 	RunCommand                                                     func(context.Context, []string) (string, error)
 	Control                                                        func(context.Context, ControlRequest) (any, error)
+	// OnListen is called with the bound address once the credentials are
+	// loaded and the socket is open, i.e. when "listening" is true.
+	OnListen func(addr string)
 }
 
 type CommandRequest struct {
@@ -167,7 +170,7 @@ func newTLSConfig(c ClientConfig, allowUnpinned bool) (*tls.Config, error) {
 			}
 			got := Fingerprint(cs.PeerCertificates[0])
 			if c.Fingerprint != "" && !strings.EqualFold(strings.ReplaceAll(c.Fingerprint, ":", ""), got) {
-				return fmt.Errorf("agent certificate pin changed: got %s", got)
+				return fmt.Errorf("agent certificate pin changed: the agent presented %s. Pin the fingerprint of the agent's own server certificate (printed by `certs init` on the agent host, and carried by a client credential file issued from that bundle); a bundle generated on another machine has a different certificate", got)
 			}
 			leaf := cs.PeerCertificates[0]
 			now := time.Now()
@@ -271,11 +274,11 @@ func Serve(c ServerConfig) error {
 	if c.ClientCA != "" {
 		pem, e := os.ReadFile(c.ClientCA)
 		if e != nil {
-			return e
+			return fmt.Errorf("read client CA (--client-ca must be the bundle's ca.pem): %w", e)
 		}
 		pool := x509.NewCertPool()
 		if !pool.AppendCertsFromPEM(pem) {
-			return errors.New("invalid client CA")
+			return fmt.Errorf("invalid client CA: %s holds no certificate", c.ClientCA)
 		}
 		tc.ClientCAs = pool
 		tc.ClientAuth = tls.RequireAndVerifyClientCert
@@ -297,6 +300,9 @@ func Serve(c ServerConfig) error {
 	ln, e := tls.Listen("tcp", c.Bind, tc)
 	if e != nil {
 		return e
+	}
+	if c.OnListen != nil {
+		c.OnListen(ln.Addr().String())
 	}
 	return server.Serve(ln)
 }

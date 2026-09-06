@@ -23,6 +23,10 @@ type CertificateBundle struct {
 	Directory, CAFile, CAKey, ServerCert, ServerKey, ClientCert, ClientKey string
 	CAKeyRef, ServerKeyRef, ClientKeyRef                                   string
 	ServerFingerprint, ClientFingerprint                                   string
+	// Name is the agent's display name, Host the DNS name or IP the server
+	// certificate was issued for (empty in bundles written before they were
+	// recorded; readers fall back to the certificate).
+	Name, Host string `json:",omitempty"`
 }
 
 // GenerateCertificateBundle creates a private CA and mutually authenticated
@@ -72,7 +76,7 @@ func GenerateCertificateBundle(dir, name, host string, store SecretStore) (Certi
 	if err != nil {
 		return CertificateBundle{}, err
 	}
-	b := CertificateBundle{Directory: abs, CAFile: filepath.Join(abs, "ca.pem"), CAKey: filepath.Join(abs, "ca-key.pem"), ServerCert: filepath.Join(abs, "server.pem"), ServerKey: filepath.Join(abs, "server-key.pem"), ClientCert: filepath.Join(abs, "client.pem"), ClientKey: filepath.Join(abs, "client-key.pem")}
+	b := CertificateBundle{Directory: abs, Name: name, Host: host, CAFile: filepath.Join(abs, "ca.pem"), CAKey: filepath.Join(abs, "ca-key.pem"), ServerCert: filepath.Join(abs, "server.pem"), ServerKey: filepath.Join(abs, "server-key.pem"), ClientCert: filepath.Join(abs, "client.pem"), ClientKey: filepath.Join(abs, "client-key.pem")}
 	id := base64.RawURLEncoding.EncodeToString([]byte(abs))
 	b.CAKeyRef, b.ServerKeyRef, b.ClientKeyRef = "remote/"+id+"/ca-key", "remote/"+id+"/server-key", "remote/"+id+"/client-key"
 	caPass, err := randomSecret()
@@ -184,6 +188,50 @@ func writeEncryptedKey(path string, key any, password []byte) error {
 	}
 	defer wipe(der)
 	return writePEM(path, "ENCRYPTED PRIVATE KEY", der, 0600)
+}
+
+// LoadCertificateBundle reads the bundle.json GenerateCertificateBundle wrote
+// in dir, so a caller can name the directory instead of every file and vault
+// reference. The recorded file paths are absolute; when the directory was
+// moved since, they are rebased onto dir. The vault references stay as
+// recorded: they name the secure-store entries the keys were encrypted with.
+func LoadCertificateBundle(dir string) (CertificateBundle, error) {
+	abs, err := filepath.Abs(dir)
+	if err != nil {
+		return CertificateBundle{}, err
+	}
+	path := filepath.Join(abs, "bundle.json")
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return CertificateBundle{}, fmt.Errorf("not a certificate bundle directory (%w); run `rfswift agent certs init --dir %s` first", err, dir)
+	}
+	var b CertificateBundle
+	if err := json.Unmarshal(raw, &b); err != nil {
+		return CertificateBundle{}, fmt.Errorf("parse %s: %w", path, err)
+	}
+	// The server side is what every bundle must have; the CA key and the
+	// initial client exist only in the directory `certs init` wrote, not in
+	// one an imported server credential file was installed into.
+	if b.ServerKeyRef == "" || b.CAFile == "" || b.ServerCert == "" || b.ServerKey == "" {
+		return CertificateBundle{}, fmt.Errorf("%s is incomplete", path)
+	}
+	for _, p := range []*string{&b.CAFile, &b.CAKey, &b.ServerCert, &b.ServerKey, &b.ClientCert, &b.ClientKey} {
+		if *p == "" {
+			continue
+		}
+		if _, statErr := os.Stat(*p); statErr != nil {
+			if moved := filepath.Join(abs, filepath.Base(*p)); fileExists(moved) {
+				*p = moved
+			}
+		}
+	}
+	b.Directory = abs
+	return b, nil
+}
+
+func fileExists(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && !info.IsDir()
 }
 
 // ClientConfigFromDirectory resolves generated credential filenames and the

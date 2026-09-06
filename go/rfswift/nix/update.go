@@ -15,6 +15,8 @@ import (
 type UpdateOptions struct {
 	Check bool
 	Input string
+	// Build: a front end's live progress and cancellation of the rebuild.
+	Build BuildOptions
 }
 
 // localFlakePath resolves a writable filesystem flake reference. Updating a
@@ -320,7 +322,7 @@ func UpdateEnvironment(name string, opts UpdateOptions) error {
 			return fmt.Errorf("flake lock update failed: %w", err)
 		}
 	}
-	if err := rebuildEnvironment(env, opts.Input); err != nil {
+	if err := rebuildEnvironment(env, opts.Input, opts.Build); err != nil {
 		// A source update that does not build must not leave the project pinned to
 		// a broken lock. Restore the exact prior bytes (or remove a newly-created
 		// lock) while the active profile remains untouched.
@@ -414,7 +416,11 @@ func updateLazyEnvironment(env *Environment, input string) error {
 
 // RebuildEnvironment rebuilds against the currently pinned flake without
 // changing flake.lock.
-func RebuildEnvironment(name string) error {
+func RebuildEnvironment(name string) error { return RebuildEnvironmentWith(name, BuildOptions{}) }
+
+// RebuildEnvironmentWith is RebuildEnvironment with a front end's progress
+// observer and cancellation (progress.go).
+func RebuildEnvironmentWith(name string, build BuildOptions) error {
 	if useWSL() {
 		return wslRebuildEnvironment(name)
 	}
@@ -425,11 +431,11 @@ func RebuildEnvironment(name string) error {
 	if env.Lazy || env.ProfilePath == "" {
 		return fmt.Errorf("environment %q has no eager profile to rebuild", name)
 	}
-	return rebuildEnvironment(env, "")
+	return rebuildEnvironment(env, "", build)
 }
 
-func rebuildEnvironment(env *Environment, input string) error {
-	if err := buildPrerequisites(env.FlakeRef, env.Image, env.Prerequisites, prerequisitesLink(env.Name)); err != nil {
+func rebuildEnvironment(env *Environment, input string, build BuildOptions) error {
+	if err := buildPrerequisites(build, env.FlakeRef, env.Image, env.Prerequisites, prerequisitesLink(env.Name)); err != nil {
 		return err
 	}
 	tmpDir, err := os.MkdirTemp(EnvDir(env.Name), ".update-")
@@ -439,7 +445,7 @@ func rebuildEnvironment(env *Environment, input string) error {
 	defer os.RemoveAll(tmpDir)
 	candidate := filepath.Join(tmpDir, "profile")
 	common.PrintInfoMessage(fmt.Sprintf("Building updated environment %q without replacing the active generation...", env.Name))
-	if err := buildProfile(env.FlakeRef, env.Image, candidate); err != nil {
+	if err := buildProfile(build, env.FlakeRef, env.Image, candidate); err != nil {
 		return err
 	}
 	storePath, err := filepath.EvalSymlinks(candidate)

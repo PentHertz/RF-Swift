@@ -347,8 +347,13 @@ func (a *App) CreateMission(req MissionCreate) (Mission, error) {
 		return Mission{}, fmt.Errorf("could not check the mission name: %w", err)
 	}
 	a.emitOperationProgress("mission-create", req.Name, 55, "Creating target")
+	a.nixBuildOps.Store(req.Name, "mission-create")
 	m, err := eng.Create(req)
+	a.nixBuildOps.Delete(req.Name)
 	if err != nil {
+		if req.Engine == "nix" {
+			err = withNixBuildLogHint(req.Name, err)
+		}
 		return Mission{}, err
 	}
 	// Creation warnings are for the person creating the mission, not for the
@@ -592,7 +597,9 @@ func (a *App) UpdateNixEnvironment(id string) error {
 		return fmt.Errorf("%q is not a Nix environment", id)
 	}
 	a.emitOperationProgress("nix-update", id, 10, "Updating flake lock and rebuilding")
-	if err := rfnix.UpdateEnvironment(id, rfnix.UpdateOptions{}); err != nil {
+	a.nixBuildOps.Store(id, "nix-update")
+	defer a.nixBuildOps.Delete(id)
+	if err := rfnix.UpdateEnvironment(id, rfnix.UpdateOptions{Build: a.nixBuildOptions(id)}); err != nil {
 		return err
 	}
 	a.emitOperationProgress("nix-update", id, 100, "Environment updated")
@@ -614,7 +621,9 @@ func (a *App) RebuildNixEnvironment(id string) error {
 		return fmt.Errorf("%q is not a Nix environment", id)
 	}
 	a.emitOperationProgress("nix-update", id, 10, "Rebuilding environment")
-	if err := rfnix.RebuildEnvironment(id); err != nil {
+	a.nixBuildOps.Store(id, "nix-update")
+	defer a.nixBuildOps.Delete(id)
+	if err := rfnix.RebuildEnvironmentWith(id, a.nixBuildOptions(id)); err != nil {
 		return err
 	}
 	a.emitOperationProgress("nix-update", id, 100, "Environment rebuilt")

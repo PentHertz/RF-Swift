@@ -59,6 +59,13 @@ func (e *RemoteEngine) call(method string, params, result any) error {
 func (e *RemoteEngine) callContext(ctx context.Context, method string, params, result any) error {
 	return remote.Control(ctx, e.Config, method, params, result)
 }
+
+// EngineReport asks the agent about the engines on its host (engine doctor).
+func (e *RemoteEngine) EngineReport() (remote.EngineReport, error) {
+	var out remote.EngineReport
+	err := e.call("engines.status", map[string]any{}, &out)
+	return out, err
+}
 func (e *RemoteEngine) ListTargets() ([]Mission, error) {
 	var out []Mission
 	err := e.call("targets.list", map[string]any{}, &out)
@@ -229,6 +236,25 @@ func engineByType(t rfdock.EngineType) rfdock.ContainerEngine {
 type LocalEngine struct {
 	mu    sync.Mutex
 	route map[string]rfdock.EngineType
+	// NixBuild and NixBuildLog, when set, follow the Nix builds this engine
+	// starts (progress snapshots and log lines, keyed by mission); the
+	// Workbench turns them into UI events (nix_build_events.go). Nil for
+	// callers without a UI, such as the MCP server.
+	NixBuild    func(mission string, p rfnix.BuildProgress)
+	NixBuildLog func(mission, line string)
+}
+
+// nixBuildOptions wires a build's progress and log to the UI hooks and its
+// cancellation to ctx (the create dialog's "Stop & clean").
+func (e *LocalEngine) nixBuildOptions(mission string, ctx context.Context) rfnix.BuildOptions {
+	opts := rfnix.BuildOptions{Context: ctx}
+	if e.NixBuild != nil {
+		opts.Progress = func(p rfnix.BuildProgress) { e.NixBuild(mission, p) }
+	}
+	if e.NixBuildLog != nil {
+		opts.BuildLog = rfnix.NewLineWriter(func(line string) { e.NixBuildLog(mission, line) })
+	}
+	return opts
 }
 
 // rememberRoute records which engine hosts a container.
@@ -322,7 +348,8 @@ func (e *LocalEngine) Create(req MissionCreate) (Mission, error) {
 	var warnings []string
 	switch req.Engine {
 	case "nix":
-		if err := rfnix.RunEnvironment(rfnix.RunOptions{Name: req.Name, Image: req.Image, Workspace: req.Workspace, FlakeRef: req.FlakeRef, Lazy: req.Lazy, Pure: req.Pure, Isolate: req.Isolate, CreateOnly: true}); err != nil {
+		if err := rfnix.RunEnvironment(rfnix.RunOptions{Name: req.Name, Image: req.Image, Workspace: req.Workspace, FlakeRef: req.FlakeRef, Lazy: req.Lazy, Pure: req.Pure, Isolate: req.Isolate, CreateOnly: true,
+			BuildOptions: e.nixBuildOptions(req.Name, req.Context)}); err != nil {
 			return Mission{}, err
 		}
 		// Native Nix tools run as the user, so hardware needs the environment's

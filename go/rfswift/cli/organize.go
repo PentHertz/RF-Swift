@@ -133,7 +133,7 @@ func organizeCommands() {
 
 	runCmd.Example = "  rfswift create -n lab -i rfid\n  rfswift create --engine nix -n radio -i sdr_light"
 	execCmd.Example = "  rfswift shell -c lab -e /bin/zsh\n  rfswift --engine nix enter -c radio"
-	agentCmd.Example = "  rfswift agent certs init --dir ./agent-certs --host 127.0.0.1\n  rfswift agent --bind 127.0.0.1:8443 --cert agent-certs/server.pem --key agent-certs/server-key.pem --client-ca agent-certs/ca.pem"
+	agentCmd.Example = "  rfswift agent certs init --dir ./agent-certs --host 127.0.0.1\n  rfswift agent --bundle ./agent-certs\n  rfswift agent certs client --bundle ./agent-certs --name laptop   # credentials for a Workbench elsewhere\n  rfswift agent --bind 127.0.0.1:8443 --cert agent-certs/server.pem --key agent-certs/server-key.pem --key-ref \"$(jq -r .ServerKeyRef agent-certs/bundle.json)\" --client-ca agent-certs/ca.pem"
 
 	// New convenience parents. Re-register the SAME command objects under them
 	// (cobra resolves subcommands via each parent's list, so the original paths

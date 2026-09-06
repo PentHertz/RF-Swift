@@ -243,6 +243,18 @@ those download prebuilt and no local compilation is needed.
 | `--create-only` | Create and realise the environment without entering it (scripts, the Workbench) |
 | `--flake <ref>` | Use a specific flake reference instead of the default |
 
+In a terminal you watch Nix's own progress bar. The Workbench, which has no
+terminal, follows the same build through Nix's machine-readable log
+(`--log-format internal-json`, the stream that bar is drawn from) and shows it
+in the create dialog: derivations built and still to build, store paths fetched
+from the binary cache with the download size, what is being compiled right now
+with its phase and elapsed time, the number of tasks left, and the log tail. A
+build that fails opens the log and reports Nix's own reason; the full log of
+the last Workbench-driven build is kept at
+`~/.rfswift/nix/environments/<name>/build.log`, and "Stop & clean" interrupts
+the running `nix build`. On Windows the Linux CLI inside WSL streams the same
+data to the Workbench (`rfswift run --progress-json`, a hidden flag).
+
 ## Isolation (`--isolate`)
 
 By default the Nix engine runs tools **natively**, as your user, with full access
