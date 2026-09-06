@@ -1,16 +1,12 @@
 package workbench
 
 import (
-	"bytes"
-	"context"
 	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
-
-	"github.com/moby/moby/client"
 
 	rfdock "penthertz/rfswift/dock"
 	rfnix "penthertz/rfswift/nix"
@@ -32,31 +28,20 @@ func (a *App) requireLocal() (*LocalEngine, error) {
 
 // --- Nix ---
 
-// NixGarbageCollect runs `nix store gc`, freeing store paths not reachable from
-// a gcroot (RF Swift environments keep a gcroot, so they survive), and returns
-// nix's own "N store paths deleted, M freed" summary.
+// NixGarbageCollect runs `nix store gc` where the engine is: on this machine
+// (or inside the WSL 2 distribution on Windows), or on the agent host while a
+// remote connection is active. Returns nix's own "N store paths deleted, M
+// freed" summary.
 func (a *App) NixGarbageCollect() (string, error) {
+	if remoteEngine, ok := a.engine().(*RemoteEngine); ok {
+		return remoteEngine.NixGC()
+	}
 	if _, err := a.requireLocal(); err != nil {
 		return "", err
 	}
-	if !rfnix.IsAvailable() {
-		return "", fmt.Errorf("nix is not installed or not on PATH")
-	}
-	// NixCommand runs nix where the engine is: locally, or inside the WSL 2
-	// distribution on Windows.
-	cmd := rfnix.NixCommand("--extra-experimental-features", "nix-command", "store", "gc")
-	var buf bytes.Buffer
-	cmd.Stdout, cmd.Stderr = &buf, &buf
-	err := cmd.Run()
-	out := strings.TrimSpace(buf.String())
+	out, err := rfnix.StoreGC()
 	if err != nil {
-		if out != "" {
-			return "", fmt.Errorf("%s", lastLine(out))
-		}
 		return "", err
-	}
-	if out == "" {
-		out = "Nothing to collect; the store is already minimal."
 	}
 	if note := wslDiskNote(); note != "" {
 		out += "\n" + note
@@ -67,103 +52,25 @@ func (a *App) NixGarbageCollect() (string, error) {
 // --- Container engines: reclaim space ---
 
 // PruneSummary reports what a reclaim pass freed.
-type PruneSummary struct {
-	Reclaimed    uint64 `json:"reclaimed"` // bytes
-	ReclaimedStr string `json:"reclaimedStr"`
-	Images       int    `json:"images"`
-	CacheEntries int    `json:"cacheEntries"`
-	Volumes      int    `json:"volumes"`
-	Networks     int    `json:"networks"`
-	Detail       string `json:"detail"`
-}
+type PruneSummary = rfdock.PruneSummary
 
-// PruneEngine reclaims space on one container engine (docker/podman, or the
-// Docker daemon inside the Lima VM). `images` prunes dangling-only (untagged
-// layers — always safe); `unusedImages` prunes every image no container
-// references (reclaims tagged images left by deleted containers, so they must be
-// pulled again later). Build cache is pruned fully, volumes and networks only
-// when unused. Each target is best-effort — a daemon that does not support one
-// (e.g. Podman has no build-cache endpoint) does not fail the whole pass.
+// PruneEngine reclaims space on one container engine, on this machine or on
+// the agent host while a remote connection is active (rfdock.PruneEngine
+// documents the targets).
 func (a *App) PruneEngine(name string, images, unusedImages, buildCache, volumes, networks bool) (PruneSummary, error) {
-	var s PruneSummary
+	opts := rfdock.PruneOptions{Images: images, UnusedImages: unusedImages, BuildCache: buildCache, Volumes: volumes, Networks: networks}
+	if remoteEngine, ok := a.engine().(*RemoteEngine); ok {
+		return remoteEngine.Prune(name, opts)
+	}
 	if _, err := a.requireLocal(); err != nil {
-		return s, err
+		return PruneSummary{}, err
 	}
 	eng := engineByType(rfdock.EngineType(strings.ToLower(strings.TrimSpace(name))))
 	if eng == nil {
-		return s, fmt.Errorf("unknown engine %q", name)
+		return PruneSummary{}, fmt.Errorf("unknown engine %q", name)
 	}
 	resetEngineEnv()
-	if !eng.IsServiceRunning() {
-		return s, fmt.Errorf("%s is not running", name)
-	}
-	cli, err := eng.GetClient()
-	if err != nil {
-		return s, err
-	}
-	defer cli.Close()
-	ctx := context.Background()
-	var notes []string
-
-	if unusedImages || images {
-		opts := client.ImagePruneOptions{}
-		if unusedImages {
-			// dangling=false widens the prune to every image not used by a
-			// container (includes the dangling set), reclaiming tagged images
-			// left behind by deleted containers.
-			f := make(client.Filters)
-			f.Add("dangling", "false")
-			opts.Filters = f
-		}
-		if r, e := cli.ImagePrune(ctx, opts); e == nil {
-			s.Reclaimed += r.Report.SpaceReclaimed
-			s.Images += len(r.Report.ImagesDeleted)
-		} else {
-			notes = append(notes, "images: "+cleanPruneErr(e))
-		}
-	}
-	if buildCache {
-		if r, e := cli.BuildCachePrune(ctx, client.BuildCachePruneOptions{All: true}); e == nil {
-			s.Reclaimed += r.Report.SpaceReclaimed
-			s.CacheEntries += len(r.Report.CachesDeleted)
-		} else {
-			notes = append(notes, "build cache: "+cleanPruneErr(e))
-		}
-	}
-	if volumes {
-		if r, e := cli.VolumePrune(ctx, client.VolumePruneOptions{}); e == nil {
-			s.Reclaimed += r.Report.SpaceReclaimed
-			s.Volumes += len(r.Report.VolumesDeleted)
-		} else {
-			notes = append(notes, "volumes: "+cleanPruneErr(e))
-		}
-	}
-	if networks {
-		if r, e := cli.NetworkPrune(ctx, client.NetworkPruneOptions{}); e == nil {
-			s.Networks += len(r.Report.NetworksDeleted)
-		} else {
-			notes = append(notes, "networks: "+cleanPruneErr(e))
-		}
-	}
-	s.ReclaimedStr = humanBytes(s.Reclaimed)
-	parts := []string{fmt.Sprintf("reclaimed %s", s.ReclaimedStr)}
-	if s.Images > 0 {
-		parts = append(parts, fmt.Sprintf("%d image(s)", s.Images))
-	}
-	if s.CacheEntries > 0 {
-		parts = append(parts, fmt.Sprintf("%d cache entr(ies)", s.CacheEntries))
-	}
-	if s.Volumes > 0 {
-		parts = append(parts, fmt.Sprintf("%d volume(s)", s.Volumes))
-	}
-	if s.Networks > 0 {
-		parts = append(parts, fmt.Sprintf("%d network(s)", s.Networks))
-	}
-	s.Detail = strings.Join(parts, ", ")
-	if len(notes) > 0 {
-		s.Detail += " (skipped: " + strings.Join(notes, "; ") + ")"
-	}
-	return s, nil
+	return rfdock.PruneEngine(eng, opts)
 }
 
 // --- Lima VM lifecycle & sizing ---
@@ -335,17 +242,6 @@ func setTemplateVMType(path, vmType string) (string, error) {
 
 // --- helpers ---
 
-// cleanPruneErr turns "not supported" daemon errors (e.g. Podman has no
-// build-cache prune endpoint → "Not Found") into a readable note.
-func cleanPruneErr(e error) string {
-	msg := e.Error()
-	low := strings.ToLower(msg)
-	if strings.Contains(low, "not found") || strings.Contains(low, "not implemented") || strings.Contains(low, "404") {
-		return "not supported by this engine"
-	}
-	return msg
-}
-
 func unquoteYAML(s string) string {
 	s = strings.TrimSpace(s)
 	s = strings.Trim(s, `"'`)
@@ -355,17 +251,4 @@ func unquoteYAML(s string) string {
 func lastLine(s string) string {
 	lines := strings.Split(strings.TrimSpace(s), "\n")
 	return strings.TrimSpace(lines[len(lines)-1])
-}
-
-func humanBytes(b uint64) string {
-	const unit = 1024
-	if b < unit {
-		return fmt.Sprintf("%d B", b)
-	}
-	div, exp := uint64(unit), 0
-	for n := b / unit; n >= unit; n /= unit {
-		div *= unit
-		exp++
-	}
-	return fmt.Sprintf("%.1f %ciB", float64(b)/float64(div), "KMGTPE"[exp])
 }

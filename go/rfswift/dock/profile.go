@@ -7,6 +7,8 @@ package dock
 
 import (
 	"bufio"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
@@ -41,6 +43,55 @@ type Profile struct {
 	Cgroups      string `yaml:"cgroups,omitempty"`
 	GPUs         string `yaml:"gpus,omitempty"`
 	VPN          string `yaml:"vpn,omitempty"`
+	// Fingerprint identifies the built-in default a stored profile was
+	// written from: an unedited copy is refreshed when the default changes,
+	// an edited one is kept and reported.
+	Fingerprint string `yaml:"default_fingerprint,omitempty"`
+}
+
+// profileFingerprint is a short hash of a profile's content, fingerprint
+// excluded.
+func profileFingerprint(p Profile) string {
+	p.Fingerprint = ""
+	data, _ := yaml.Marshal(&p)
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:8])
+}
+
+// sameProfile compares two profiles, fingerprints excluded.
+func sameProfile(a, b Profile) bool {
+	a.Fingerprint, b.Fingerprint = "", ""
+	return a == b
+}
+
+// unmodifiedDefault reports whether a stored built-in profile is still what
+// RF Swift wrote: its content matches its own fingerprint, or, for a file
+// written before fingerprints existed, every field it sets equals the current
+// default's (a default that only gained fields is then safe to refresh).
+func unmodifiedDefault(stored, def Profile) bool {
+	if stored.Fingerprint != "" {
+		return profileFingerprint(stored) == stored.Fingerprint
+	}
+	str := func(s, d string) bool { return s == "" || s == d }
+	flag := func(s, d bool) bool { return !s || d }
+	return str(stored.Description, def.Description) && str(stored.Image, def.Image) && str(stored.Network, def.Network) &&
+		str(stored.ExposedPorts, def.ExposedPorts) && str(stored.PortBindings, def.PortBindings) &&
+		flag(stored.Desktop, def.Desktop) && flag(stored.DesktopSSL, def.DesktopSSL) && flag(stored.NoX11, def.NoX11) &&
+		flag(stored.Privileged, def.Privileged) && flag(stored.Realtime, def.Realtime) &&
+		str(stored.Devices, def.Devices) && str(stored.Bindings, def.Bindings) && str(stored.Caps, def.Caps) &&
+		str(stored.Cgroups, def.Cgroups) && str(stored.GPUs, def.GPUs) && str(stored.VPN, def.VPN)
+}
+
+func readProfileFile(path string) (Profile, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return Profile{}, err
+	}
+	var p Profile
+	if err := yaml.Unmarshal(data, &p); err != nil {
+		return Profile{}, err
+	}
+	return p, nil
 }
 
 // Building blocks shared by the default profiles.
@@ -182,17 +233,17 @@ func DefaultProfiles() []Profile {
 			Bindings:    usbTreeBinding,
 		},
 		{
-			// No /dev/ttyACM0 mapping on purpose: a Proxmark3 or other CDC-ACM
-			// reader is reached through the USB tree bind + cgroup rule below
-			// (hotplug-safe), while a fixed node mapping only exists when the
-			// device is plugged in at creation time and otherwise makes the
-			// container fail to start. Add it explicitly when a tool insists
-			// on the serial node (`--devices /dev/ttyACM0:/dev/ttyACM0`, or the
-			// Workbench's Proxmark shortcut).
+			// The Proxmark3 client script refuses to run unless /dev/tty0 is a
+			// device inside the container ("cannot access /dev/ttyXXX files"),
+			// so the console is mapped. The serial port itself is listed too:
+			// plugged in at creation it is mapped like any device, absent it is
+			// attached on demand (serialhotplug.go), so the mission is created
+			// either way and the reader works as soon as it is plugged in.
 			Name:        "rfid",
 			Description: "RFID/NFC tools (Proxmark3, libnfc) over USB",
 			Image:       officialImage("rfid"),
 			Network:     "host",
+			Devices:     "/dev/tty0:/dev/tty0,/dev/ttyACM0:/dev/ttyACM0",
 			Bindings:    usbTreeBinding,
 			Cgroups:     "c 189:* rwm",
 		},
@@ -403,18 +454,18 @@ func DeleteProfile(name string) error {
 //	out: int number of profiles left untouched
 //	out: []string names of untouched profiles whose content differs from the
 //	     current default (edited locally, or shipped by an older release)
-func InitDefaultProfiles(force bool) (created int, skipped int, stale []string) {
+func InitDefaultProfiles(force bool) (created, updated, skipped int, stale []string) {
 	dir := ProfilesDirByPlatform()
 	elevated := false
 
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		if !errors.Is(err, os.ErrPermission) {
 			common.PrintErrorMessage(fmt.Errorf("failed to create profiles directory: %w", err))
-			return 0, 0, nil
+			return 0, 0, 0, nil
 		}
 		if !promptProfileElevation("create profiles directory") {
 			common.PrintErrorMessage(fmt.Errorf("cannot create profiles directory %s: permission denied", dir))
-			return 0, 0, nil
+			return 0, 0, 0, nil
 		}
 		cmd := exec.Command("sudo", "mkdir", "-p", dir)
 		cmd.Stdin = os.Stdin
@@ -422,7 +473,7 @@ func InitDefaultProfiles(force bool) (created int, skipped int, stale []string) 
 		cmd.Stderr = os.Stderr
 		if err := cmd.Run(); err != nil {
 			common.PrintErrorMessage(fmt.Errorf("failed to create directory with sudo: %w", err))
-			return 0, 0, nil
+			return 0, 0, 0, nil
 		}
 		elevated = true
 	}
@@ -431,15 +482,27 @@ func InitDefaultProfiles(force bool) (created int, skipped int, stale []string) 
 		filename := profileFilename(p.Name)
 		path := filepath.Join(dir, filename)
 
+		// An existing file is kept when it matches the default or when the
+		// person edited it (reported as stale); an unedited copy of an older
+		// default is refreshed, so template fixes reach every machine.
+		refresh := false
 		if !force {
 			if _, err := os.Stat(path); err == nil {
-				skipped++
-				if differsFromDefault(path, p) {
+				stored, readErr := readProfileFile(path)
+				switch {
+				case readErr == nil && sameProfile(stored, p):
+					skipped++
+					continue
+				case readErr == nil && unmodifiedDefault(stored, p):
+					refresh = true
+				default:
+					skipped++
 					stale = append(stale, p.Name)
+					continue
 				}
-				continue
 			}
 		}
+		p.Fingerprint = profileFingerprint(p)
 
 		data, err := yaml.Marshal(&p)
 		if err != nil {
@@ -479,9 +542,13 @@ func InitDefaultProfiles(force bool) (created int, skipped int, stale []string) 
 				}
 			}
 		}
-		created++
+		if refresh {
+			updated++
+		} else {
+			created++
+		}
 	}
-	return created, skipped, stale
+	return created, updated, skipped, stale
 }
 
 // differsFromDefault reports whether the profile stored at path no longer
@@ -500,7 +567,7 @@ func differsFromDefault(path string, def Profile) bool {
 	if err := yaml.Unmarshal(data, &stored); err != nil {
 		return true
 	}
-	return stored != def
+	return !sameProfile(stored, def)
 }
 
 // GetProfileNames returns just the names of all available profiles.

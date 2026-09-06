@@ -188,7 +188,38 @@ func CreateContainer(opts CreateOptions) (string, error) {
 		warn = func(msg string) { common.PrintWarningMessage(msg) }
 	}
 	binds := append([]string(nil), opts.Bindings...)
-	devices, cgroupRules := normalizeCreationDevices(opts.Devices, binds, opts.CgroupRules)
+	// A device node listed under the bind mounts becomes a device mapping;
+	// a missing or stray one is dropped with an explanation (devbinds.go).
+	binds, devBinds, bindRules, devWarnings := SanitizeDeviceBinds(binds)
+	for _, w := range devWarnings {
+		if !IsSerialDevicePath(w.Path) {
+			warn(w.String())
+		}
+	}
+	deviceSpecs := append(append([]string(nil), opts.Devices...), devBinds...)
+	requestedRules := appendMissing(append([]string(nil), opts.CgroupRules...), bindRules...)
+	serialHotplug := runtime.GOOS == "linux" && SerialHotplugSupported(GetEngine())
+	var serialPorts []string
+	if serialHotplug {
+		// Serial ports are not mapped: the cgroup rules let the container open
+		// them and SyncSerialDevices creates their nodes as they come and go
+		// (serialhotplug.go). A port that is absent now is therefore fine.
+		// Every serial port named is recorded and granted through the cgroup;
+		// one that is absent right now is not mapped (it would fail the start)
+		// and gets its node on demand instead.
+		serialPorts = serialPortsIn(deviceSpecs)
+		for _, w := range devWarnings {
+			if IsSerialDevicePath(w.Path) {
+				serialPorts = appendMissing(serialPorts, w.Path)
+			}
+		}
+		_, deviceSpecs = serialSpecs(deviceSpecs)
+		if len(serialPorts) > 0 {
+			requestedRules = appendMissing(requestedRules, SerialCgroupRules...)
+		}
+		devWarnings = nil
+	}
+	devices, cgroupRules := normalizeCreationDevices(deviceSpecs, binds, requestedRules)
 	// Rootless Podman rejects device cgroup rules outright ("device cgroup
 	// rules are not supported in rootless mode or in a user namespace"), both
 	// the explicit ones and those inferred from /dev/bus/usb, /dev/snd, etc.
@@ -215,10 +246,17 @@ func CreateContainer(opts CreateOptions) (string, error) {
 			}
 			present = append(present, spec)
 		}
+		// A serial port the mission names is a requirement: stop here with
+		// the notice rather than create a mission that cannot reach it.
+		if err := RequiredDevicesError(devWarnings, missing); err != nil {
+			return "", err
+		}
 		if len(missing) > 0 {
 			warn(fmt.Sprintf("Skipped %d device(s) not present on this host: %s.", len(missing), strings.Join(missing, ", ")))
 		}
 		devices.nodes = present
+	} else if err := RequiredDevicesError(devWarnings, nil); err != nil {
+		return "", err
 	}
 	binds = devices.binds
 	configEnv := append([]string(nil), opts.Environment...)
@@ -403,7 +441,7 @@ func CreateContainer(opts CreateOptions) (string, error) {
 			Image: resolvedImage, Cmd: []string{opts.Shell},
 			OpenStdin: true, Tty: true, Env: configEnv, Entrypoint: entrypoint,
 			ExposedPorts: ParseExposedPorts(opts.ExposedPorts),
-			Labels:       map[string]string{"org.container.project": "rfswift"},
+			Labels:       creationLabels(serialPorts),
 		},
 		HostConfig:       hostConfig,
 		NetworkingConfig: networkingConfig,
@@ -434,8 +472,19 @@ func CreateContainer(opts CreateOptions) (string, error) {
 			}
 			return "", fmt.Errorf("container start failed and the partial container was removed: %w", err)
 		}
+		// Serial ports present now get their nodes inside right away.
+		syncSerialAfterStart(ctx, cli, resp.ID)
 	}
 	return resp.ID, nil
+}
+
+// creationLabels are the labels a new container carries.
+func creationLabels(serialPorts []string) map[string]string {
+	labels := map[string]string{"org.container.project": "rfswift"}
+	if len(serialPorts) > 0 {
+		labels[SerialPortsLabel] = strings.Join(serialPorts, ",")
+	}
+	return labels
 }
 
 type normalizedCreationDevices struct {
@@ -449,7 +498,7 @@ type normalizedCreationDevices struct {
 func normalizeCreationDevices(specs, binds, rules []string) (normalizedCreationDevices, []string) {
 	result := normalizedCreationDevices{binds: append([]string(nil), binds...)}
 	outRules := append([]string(nil), rules...)
-	majorRules := map[string]string{"/dev/bus/usb": "c 189:* rwm", "/dev/snd": "c 116:* rwm", "/dev/dri": "c 226:* rwm", "/dev/input": "c 13:* rwm", "/dev/vhci": "c 137:* rwm"}
+	majorRules := devTreeRules
 	contains := func(values []string, wanted string) bool {
 		for _, value := range values {
 			if strings.TrimSpace(value) == wanted {

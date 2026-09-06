@@ -5,12 +5,15 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
+	"penthertz/rfswift/hostsetup"
 	"regexp"
 	"runtime"
 	"sort"
@@ -402,20 +405,20 @@ func (a *App) pullMissionImage(ctx context.Context, engine, image string) (strin
 	if strings.TrimSpace(image) == "" {
 		return "", errors.New("image name is required")
 	}
-	if remoteEngine, ok := a.engine().(*RemoteEngine); ok {
-		var resolved string
-		if err := remoteEngine.callContext(ctx, "images.pull", map[string]string{"engine": engine, "image": image}, &resolved); err != nil {
-			return "", err
-		}
-		return resolved, nil
-	}
-	resetEngineEnv()
-	resolved, err := rfdock.PullImageContext(ctx, engine, image, func(p rfdock.PullProgress) {
+	report := func(p rfdock.PullProgress) {
 		wruntime.EventsEmit(a.ctx, "rfswift:image-pull", map[string]any{
 			"image": p.Image, "layer": p.Layer, "status": p.Status,
 			"current": p.Current, "total": p.Total,
 		})
-	})
+	}
+	var resolved string
+	var err error
+	if remoteEngine, ok := a.engine().(*RemoteEngine); ok {
+		resolved, err = remoteEngine.PullImage(ctx, engine, image, report)
+	} else {
+		resetEngineEnv()
+		resolved, err = rfdock.PullImageContext(ctx, engine, image, report)
+	}
 	if err != nil {
 		return "", err
 	}
@@ -485,40 +488,72 @@ func (a *App) ConfigureContainer(id string, change ContainerChange) error {
 		return remoteEngine.Configure(id, change)
 	}
 	a.routeLocalMission(id)
-	switch change.Kind {
-	case "volume", "device":
-		return rfdock.UpdateBinding(id, change.Kind, change.Source, change.Target, change.Add)
-	case "device-bind":
-		return rfdock.UpdateBinding(id, "volume", change.Source, change.Target, change.Add)
-	case "capability":
-		if value == "" {
-			return errors.New("capability is required")
-		}
-		return rfdock.UpdateCapability(id, value, change.Add)
-	case "cgroup":
-		if value == "" {
-			return errors.New("cgroup rule is required")
-		}
-		return rfdock.UpdateCgroupRule(id, value, change.Add)
-	case "gpu":
-		if value == "" {
-			return errors.New("GPU selection is required")
-		}
-		return rfdock.UpdateGPUs(id, value, change.Add)
-	case "exposed-port":
-		if value == "" {
-			return errors.New("port is required")
-		}
-		return rfdock.UpdateExposedPort(id, value, change.Add)
-	case "published-port":
-		if value == "" {
-			return errors.New("port binding is required")
-		}
-		return rfdock.UpdatePortBinding(id, value, change.Add)
-	default:
-		return fmt.Errorf("unsupported container setting %q", change.Kind)
+	c := rfdock.ConfigChange{Container: id, Kind: change.Kind, Source: change.Source, Target: change.Target, Value: value, Add: change.Add, Engine: string(rfdock.GetEngine().Type())}
+	if change.Recreate {
+		c.Mode = "recreate"
 	}
+	rfdock.SetConfigEditMode(c.EditMode())
+	// Refuse what cannot work before any password prompt.
+	if err := rfdock.ValidateConfigChange(c); err != nil {
+		return err
+	}
+	if rfdock.NeedsRootForConfigEdit() {
+		// Docker on Linux: the change rewrites files under /var/lib/docker and
+		// restarts the daemon. The Workbench runs itself headless as root
+		// through polkit (one password prompt) to apply it.
+		return applyContainerChangeAsRoot(c)
+	}
+	return rfdock.ApplyConfigChange(c)
 }
+
+// ApplyContainerChangeJSON is the headless entry point of the Workbench
+// binary run as root (main.go --apply-container-change).
+func ApplyContainerChangeJSON(raw string) error {
+	return rfdock.ApplyConfigChangeJSON(raw)
+}
+
+func applyContainerChangeAsRoot(c rfdock.ConfigChange) error {
+	exe, err := os.Executable()
+	if err != nil {
+		return err
+	}
+	payload, err := json.Marshal(c)
+	if err != nil {
+		return err
+	}
+	out, err := hostsetup.RunPrivilegedCommand(exe, "--apply-container-change", string(payload))
+	if err != nil {
+		log.Printf("configure %s as root failed: %v\n%s", c.Container, err, out)
+		msg := strings.TrimSpace(stripANSILines(out))
+		if msg == "" {
+			msg = err.Error()
+		}
+		if strings.Contains(msg, "Not authorized") || strings.Contains(err.Error(), "exit status 126") || strings.Contains(err.Error(), "exit status 127") {
+			return errors.New("the change was not authorised (the password prompt was cancelled or refused); nothing was changed")
+		}
+		return fmt.Errorf("the change could not be applied as root: %s", msg)
+	}
+	return nil
+}
+
+// stripANSILines keeps the last meaningful lines of a CLI-styled output.
+func stripANSILines(out string) string {
+	var keep []string
+	for _, line := range strings.Split(out, "\n") {
+		line = strings.TrimSpace(ansiRe.ReplaceAllString(line, ""))
+		line = strings.Trim(line, "│┌┐└┘├┤─ ")
+		if line == "" || strings.HasPrefix(line, "[i]") {
+			continue
+		}
+		keep = append(keep, line)
+	}
+	if len(keep) > 6 {
+		keep = keep[len(keep)-6:]
+	}
+	return strings.Join(keep, " ")
+}
+
+var ansiRe = regexp.MustCompile("\x1b\\[[0-9;?]*[ -/]*[@-~]")
 
 func (a *App) DeleteContainer(id string) error {
 	if err := a.requireMission(id); err != nil {

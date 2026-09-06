@@ -17,8 +17,10 @@
 package nix
 
 import (
+	"bytes"
 	"fmt"
 	"strconv"
+	"strings"
 )
 
 // GCOptions controls a store garbage collection pass.
@@ -33,6 +35,30 @@ type GCOptions struct {
 // GarbageCollect runs `nix store gc`, deleting every store path not reachable
 // from a gcroot. Output (including nix's "N store paths deleted, M freed"
 // summary) is streamed straight to the terminal.
+// StoreGC runs `nix store gc` and returns nix's own "N store paths deleted,
+// M freed" summary (RF Swift environments keep gcroots, so they survive).
+// For front ends: the output is captured, never attached to a console.
+func StoreGC() (string, error) {
+	if !IsAvailable() {
+		return "", fmt.Errorf("nix is not installed or not on PATH")
+	}
+	cmd := nixCommand(append(experimentalArgs(), "store", "gc")...)
+	var buf bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &buf, &buf
+	err := cmd.Run()
+	out := strings.TrimSpace(buf.String())
+	if err != nil {
+		if out != "" {
+			return "", fmt.Errorf("%s", lastNonEmptyLine(out))
+		}
+		return "", err
+	}
+	if out == "" {
+		out = "Nothing to collect; the store is already minimal."
+	}
+	return out, nil
+}
+
 func GarbageCollect(opts GCOptions) error {
 	if !IsAvailable() {
 		return fmt.Errorf("nix is not installed or not on PATH")

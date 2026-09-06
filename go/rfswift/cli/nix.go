@@ -19,6 +19,7 @@ import (
 
 	"github.com/spf13/cobra"
 	common "penthertz/rfswift/common"
+	"penthertz/rfswift/hostsetup"
 	rfnix "penthertz/rfswift/nix"
 	"penthertz/rfswift/tui"
 )
@@ -361,17 +362,44 @@ func renderNixSummary(env *rfnix.Environment) {
 	tui.RenderPropertySheet("🧪 Nix Environment Summary", tui.ColorPrimary, items)
 }
 
+// warnInaccessibleSerialDevices tells the user about serial ports (the usual
+// way to talk to a Proxmark3, a flasher, a modem) this session cannot open,
+// with the advice that fits the cause.
 func warnInaccessibleSerialDevices() {
 	paths, _ := filepath.Glob("/dev/ttyACM*")
 	serial, _ := filepath.Glob("/dev/ttyUSB*")
 	paths = append(paths, serial...)
 	for _, path := range paths {
-		accessible, group := serialDeviceAccess(path)
-		if accessible {
-			continue
+		if advice := deviceAccessAdvice(path, deviceAccess(path), hostsetup.GroupStatus); advice != "" {
+			common.PrintWarningMessage("Device access: " + advice)
 		}
-		common.PrintWarningMessage(fmt.Sprintf("Device access: %s needs group %s. Refresh with `newgrp %s` for this terminal, or fully log out/in before starting RF Swift or Workbench.", path, group, group))
 	}
+}
+
+// deviceAccessAdvice turns a device's state into one actionable sentence, or
+// "" when nothing is wrong. groupStatus is hostsetup.GroupStatus (injected
+// for tests): which of the groups do not exist, which the user is not in.
+func deviceAccessAdvice(path string, info deviceAccessInfo, groupStatus func([]string) (absent, notMember []string)) string {
+	switch info.Kind {
+	case "missing", "other":
+		return ""
+	case "directory":
+		return fmt.Sprintf("%s is an empty directory, not a device: a container was started while the device was unplugged and the engine created it. Remove it with `rfswift host devclean` (or `sudo rmdir %s`), then plug the device in again.", path, path)
+	}
+	if info.Accessible {
+		return ""
+	}
+	if !info.GroupAccess || info.Group == "root" || info.Group == "GID 0" {
+		return fmt.Sprintf("%s is owned by root with no group access: no udev rule grants it to your user. Install RF Swift's rules with `rfswift host udev` (Workbench: Engines > Install rules), then unplug and replug the device.", path)
+	}
+	group := info.Group
+	if groupStatus != nil {
+		absent, notMember := groupStatus([]string{group})
+		if len(absent) == 0 && len(notMember) > 0 {
+			return fmt.Sprintf("%s belongs to group %s and you are not in it: run `sudo usermod -aG %s %s`, then log out and in (`rfswift host udev` adds you to plugdev and dialout in one step).", path, group, group, hostsetup.InvokingUser())
+		}
+	}
+	return fmt.Sprintf("%s belongs to group %s, which this session does not have yet: run `newgrp %s` in this terminal, or log out and in before starting RF Swift or the Workbench.", path, group, group)
 }
 
 // nixWizard runs a short interactive flow to choose an environment to create.

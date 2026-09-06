@@ -198,6 +198,7 @@ func ContainerUpgrade(containerIdentifier string, repositoriesToPreserve string,
 				common.PrintErrorMessage(fmt.Errorf("failed to start container: %v", err))
 				return err
 			}
+			syncSerialAfterStart(ctx, cli, containerIdentifier)
 		}
 
 		// Copy data from old container to temp directory
@@ -309,6 +310,17 @@ func ContainerUpgrade(containerIdentifier string, repositoriesToPreserve string,
 	exposedPorts := ParseExposedPorts(props["ExposedPorts"])
 	bindedPorts := ParseBindedPorts(props["PortBindings"])
 	devices := getDeviceMappingsFromString(props["Devices"])
+	// Device nodes that were bind mounts become device mappings; a missing or
+	// stray one is dropped with an explanation (devbinds.go).
+	keptBinds, devBinds, bindRules, devWarnings := SanitizeDeviceBinds(bindingsToKeep)
+	bindingsToKeep = keptBinds
+	for _, w := range devWarnings {
+		common.PrintWarningMessage(w.String())
+	}
+	devices = append(devices, getDeviceMappingsFromString(strings.Join(devBinds, ","))...)
+	if len(bindRules) > 0 {
+		props["Cgroups"] = strings.Join(appendMissing(splitSummaryList(props["Cgroups"], ","), bindRules...), ",")
+	}
 
 	privileged := props["Privileged"] == "true"
 
@@ -333,6 +345,8 @@ func ContainerUpgrade(containerIdentifier string, repositoriesToPreserve string,
 		if props["Cgroups"] != "" {
 			hostConfig.DeviceCgroupRules = strings.Split(props["Cgroups"], ",")
 		}
+		// Serial ports are attached on demand where possible (serialhotplug.go).
+		props["SerialPorts"] = MergeSerialPorts(props["SerialPorts"], applySerialHotplug(hostConfig), nil)
 		if props["Seccomp"] != "" && props["Seccomp"] != "(Default)" {
 			hostConfig.SecurityOpt = []string{"seccomp=" + props["Seccomp"]}
 		}
@@ -352,9 +366,7 @@ func ContainerUpgrade(containerIdentifier string, repositoriesToPreserve string,
 		AttachStdout: true,
 		AttachStderr: true,
 		Tty:          true,
-		Labels: map[string]string{
-			"org.container.project": "rfswift",
-		},
+		Labels:       upgradeLabels(props),
 	}, HostConfig: hostConfig, NetworkingConfig: &network.NetworkingConfig{}, Name: containerName})
 
 	if err != nil {
@@ -400,6 +412,7 @@ func ContainerUpgrade(containerIdentifier string, repositoriesToPreserve string,
 		common.PrintErrorMessage(fmt.Errorf("failed to start new container: %v", err))
 		return err
 	}
+	syncSerialAfterStart(ctx, cli, resp.ID)
 	common.PrintSuccessMessage(fmt.Sprintf("Container '%s' started successfully", containerName))
 
 	preservationComplete = true
@@ -417,4 +430,13 @@ func ContainerUpgrade(containerIdentifier string, repositoriesToPreserve string,
 	common.PrintInfoMessage("═══════════════════════════════════════")
 
 	return nil
+}
+
+// upgradeLabels are the labels an upgraded container carries over.
+func upgradeLabels(props map[string]string) map[string]string {
+	labels := map[string]string{"org.container.project": "rfswift"}
+	if ports := props["SerialPorts"]; ports != "" {
+		labels[SerialPortsLabel] = ports
+	}
+	return labels
 }

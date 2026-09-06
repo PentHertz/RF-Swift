@@ -85,6 +85,9 @@ func (a *App) StartTerminal(missionID, shell string, record bool, recordingDir s
 		cli.Close()
 		return TerminalStartResult{}, err
 	}
+	// A serial port plugged in since the container started gets its node
+	// before the shell opens (serial hot-plug, rfdock.SyncSerialDevices).
+	_, _ = rfdock.SyncSerialDevices(ctx, cli, missionID)
 	cmd := []string{shell}
 	if shell == "/bin/zsh" {
 		cmd = []string{"/bin/sh", "-c", "if [ -x /bin/zsh ]; then exec /bin/zsh -il; elif [ -x /bin/bash ]; then exec /bin/bash -il; else exec /bin/sh -i; fi"}

@@ -207,6 +207,49 @@ func storeName(p string) string {
 	return base
 }
 
+// Build output is meant for a terminal: test runners colour their dots,
+// downloaders redraw a bar with carriage returns, configure scripts print
+// thousands of columns. The log and the panel get the plain text.
+const (
+	maxLogLineLength  = 2000
+	maxLastLineLength = 240
+)
+
+var otherEscapeRe = regexp.MustCompile("\x1b\\][^\x07\x1b]*(?:\x07|\x1b\\\\)|\x1b[@-_]")
+
+// cleanLogLine strips terminal escape sequences and control characters, keeps
+// what a carriage-return redraw would have left visible, and caps the length.
+func cleanLogLine(line string) string {
+	if i := strings.LastIndexByte(line, '\r'); i >= 0 {
+		line = line[i+1:]
+	}
+	if strings.IndexByte(line, 0x1b) >= 0 {
+		line = ansiEscapeRe.ReplaceAllString(line, "")
+		line = otherEscapeRe.ReplaceAllString(line, "")
+	}
+	line = strings.Map(func(r rune) rune {
+		if r == '\t' {
+			return ' '
+		}
+		if r < 0x20 || r == 0x7f {
+			return -1
+		}
+		return r
+	}, line)
+	if len(line) > maxLogLineLength {
+		line = line[:maxLogLineLength] + " ..."
+	}
+	return line
+}
+
+// preview shortens a line for the single-line "now" display.
+func preview(line string) string {
+	if len(line) <= maxLastLineLength {
+		return line
+	}
+	return line[:maxLastLineLength] + " ..."
+}
+
 // LineWriter turns writes into whole lines for fn (no trailing newline).
 // Partial lines are kept until the newline arrives; Flush delivers a last
 // unterminated line.
@@ -323,6 +366,7 @@ func (m *buildMonitor) plainWriter() io.Writer {
 // handleLine is called with the lock held.
 func (m *buildMonitor) handleLine(line string) {
 	if !strings.HasPrefix(line, "@nix ") {
+		line = cleanLogLine(line)
 		if line == "" {
 			return
 		}
@@ -363,6 +407,7 @@ func (m *buildMonitor) handleLine(line string) {
 }
 
 func (m *buildMonitor) message(level int, msg string) {
+	msg = cleanLogLine(msg)
 	if level <= nixLevelInfo && msg != "" {
 		m.logLine(msg)
 	}
@@ -437,7 +482,7 @@ func (m *buildMonitor) start(id int64, typ, level int, text string, fields []any
 	case nixActFetchTree:
 		m.sawActivity = true
 	}
-	if text != "" && level <= nixLevelInfo {
+	if text = cleanLogLine(text); text != "" && level <= nixLevelInfo {
 		m.logLine(text)
 	}
 	m.refreshStage()
@@ -479,11 +524,14 @@ func (m *buildMonitor) result(id int64, typ int, fields []any) bool {
 		}
 		return true
 	case nixResBuildLogLine, nixResPostBuildLogLine:
-		line := fieldString(fields, 0)
+		line := cleanLogLine(fieldString(fields, 0))
+		if line == "" {
+			return false
+		}
 		if act.name != "" {
 			line = act.name + "> " + line
 		}
-		m.progress.LastLine = line
+		m.progress.LastLine = preview(line)
 		m.logLine(line)
 		return false
 	}

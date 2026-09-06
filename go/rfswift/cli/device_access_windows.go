@@ -2,6 +2,12 @@
 
 package cli
 
-// Windows does not expose Unix tty ownership or supplementary groups. The Nix
-// engine is not native there, and Unix serial paths are never enumerated.
-func serialDeviceAccess(string) (bool, string) { return true, "" }
+type deviceAccessInfo struct {
+	Kind        string
+	Accessible  bool
+	Group       string
+	GroupAccess bool
+	OwnerRoot   bool
+}
+
+func deviceAccess(string) deviceAccessInfo { return deviceAccessInfo{Kind: "device", Accessible: true} }

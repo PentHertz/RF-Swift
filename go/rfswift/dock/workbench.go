@@ -18,13 +18,9 @@ func UpdateBinding(containerID, kind, source, target string, add bool) error {
 	if source == "" || target == "" {
 		return errors.New("both host source and container target are required")
 	}
-	if add {
-		if _, err := os.Stat(source); err != nil {
-			return fmt.Errorf("host source %q is not accessible: %w", source, err)
-		}
-		if kind == "volume" && (strings.HasPrefix(source, "/dev/") || strings.HasPrefix(target, "/dev/")) {
-			return errors.New("device paths must use the Mapped device setting, not Volume / bind mount")
-		}
+	kind, bindRules, err := resolveBindingKind(kind, source, add)
+	if err != nil {
+		return err
 	}
 	ctx := context.Background()
 	cli, err := NewEngineClient()
@@ -49,16 +45,47 @@ func UpdateBinding(containerID, kind, source, target string, add bool) error {
 	if kind == "device" {
 		key = "Devices"
 	}
+	// A serial port on an engine with hot-plug is always recorded and granted
+	// through the cgroup; as a device it is mapped when plugged in and left to
+	// the on-demand node creation when it is not; as a bind mount it is
+	// mounted as asked.
+	// A bind-mounted serial port is a bind mount, nothing more; the on-demand
+	// handling and the label are for ports given as devices.
+	serialPort := kind == "device" && IsSerialDevicePath(source) && SerialHotplugSupported(GetEngine())
+	serialOnDemand := serialPort && !devicePresent(source)
+	rulesMissing := func() bool {
+		for _, rule := range bindRules {
+			if !strings.Contains(props["Cgroups"], rule) {
+				return true
+			}
+		}
+		return false
+	}
 	updated := strings.Join(updatePropertyItems(strings.Split(props[key], separator), entry, target, add), separator)
-	if updated == props[key] {
+	if serialPort {
+		var addPorts, removePorts []string
+		if add {
+			addPorts = []string{source}
+		} else {
+			removePorts = []string{source}
+		}
+		merged := MergeSerialPorts(props["SerialPorts"], addPorts, removePorts)
+		if merged == props["SerialPorts"] && updated == props[key] && (!add || !rulesMissing()) {
+			return nil
+		}
+		props["SerialPorts"] = merged
+	} else if updated == props[key] && (!add || !rulesMissing()) {
 		return nil
 	}
 	props[key] = updated
+	if add && len(bindRules) > 0 {
+		props["Cgroups"] = strings.Join(appendMissing(splitSummaryList(props["Cgroups"], ","), bindRules...), ",")
+	}
 
 	// Match the RF-Swift CLI: native Docker can rebind by editing its persisted
 	// hostconfig/config.v2 files. Podman and Lima do not expose that storage, so
 	// they retain the commit/recreate compatibility path below.
-	if EngineSupportsDirectConfigEdit() {
+	if useDirectConfigEdit() {
 		inspected, err := inspectContainer(ctx, cli, containerID)
 		if err != nil {
 			return err
@@ -74,6 +101,7 @@ func UpdateBinding(containerID, kind, source, target string, add bool) error {
 				if add {
 					host.Binds = append(host.Binds, mount)
 					addMountPoint(configV2, source, target)
+					host.DeviceCgroupRules = appendMissing(host.DeviceCgroupRules, bindRules...)
 				} else {
 					host.Binds = removeBindByPrefix(host.Binds, mount)
 					removeMountPoint(configV2, target)
@@ -85,7 +113,31 @@ func UpdateBinding(containerID, kind, source, target string, add bool) error {
 				removeMountPoint(configV2, target)
 				host.Devices = removeDevicesAtTarget(host.Devices, target)
 				removeConfigDevicesAtTarget(configV2, target)
-				if add {
+				if serialPort {
+					// The cgroup rules make the port usable across replugs and
+					// SyncSerialDevices creates its node when it is absent
+					// (serialhotplug.go); the label shows the port on the card.
+					if add {
+						host.DeviceCgroupRules = appendMissing(host.DeviceCgroupRules, bindRules...)
+						if !serialOnDemand {
+							host.Devices = append(host.Devices, DeviceMapping{PathOnHost: source, PathInContainer: target, CgroupPermissions: "rwm"})
+							addDeviceMapping(configV2, source, target)
+						}
+					}
+					if config, ok := configV2["Config"].(map[string]interface{}); ok {
+						labels, _ := config["Labels"].(map[string]interface{})
+						if labels == nil {
+							labels = map[string]interface{}{}
+							config["Labels"] = labels
+						}
+						current, _ := labels[SerialPortsLabel].(string)
+						if merged := MergeSerialPorts(current, map[bool][]string{true: {source}}[add], map[bool][]string{true: {source}}[!add]); merged != "" {
+							labels[SerialPortsLabel] = merged
+						} else {
+							delete(labels, SerialPortsLabel)
+						}
+					}
+				} else if add {
 					host.Devices = append(host.Devices, DeviceMapping{PathOnHost: source, PathInContainer: target, CgroupPermissions: "rwm"})
 					addDeviceMapping(configV2, source, target)
 				}
@@ -94,6 +146,65 @@ func UpdateBinding(containerID, kind, source, target string, add bool) error {
 		})
 	}
 	return recreateContainerWithProperties(ctx, cli, containerID, props)
+}
+
+// resolveBindingKind checks a /dev path handed to a binding setting and
+// says how it is applied, honouring the chosen setting: "device" maps a node
+// (a serial port is attached on demand when absent); "volume" and
+// "device-bind" bind-mount a node as asked, with the cgroup rule its major
+// needs, and mount a directory such as /dev/bus/usb as a tree with its rule.
+// A stray directory or an absent device is refused with the fix. Paths
+// outside /dev are plain volumes. It touches nothing, so a front end can
+// call it before asking for a password.
+func resolveBindingKind(kind, source string, add bool) (resolved string, rules []string, err error) {
+	source = strings.TrimSpace(source)
+	if source == "" {
+		return kind, nil, errors.New("host source is required")
+	}
+	if !strings.HasPrefix(source, "/dev/") {
+		if kind == "device" {
+			return kind, nil, nil
+		}
+		return "volume", nil, nil
+	}
+	if !add {
+		if kind == "device" {
+			return kind, nil, nil
+		}
+		return "volume", nil, nil
+	}
+	info, statErr := os.Stat(source)
+	switch {
+	case statErr == nil && info.Mode()&os.ModeDevice != 0:
+		if kind == "device" {
+			return "device", nil, nil
+		}
+		if rule := DeviceRuleFor(source); rule != "" {
+			rules = append(rules, rule)
+		}
+		if IsSerialDevicePath(source) {
+			rules = appendMissing(rules, SerialCgroupRules...)
+		}
+		return "volume", rules, nil
+	case statErr == nil && info.IsDir():
+		if IsStrayDeviceDir(source) {
+			return kind, nil, fmt.Errorf("%s is an empty directory left where a device node belongs, not a device; remove it with rfswift host devclean and plug the device in", source)
+		}
+		if kind == "device" {
+			return kind, nil, fmt.Errorf("%s is a directory: add it as a bind mount (it is mounted as a tree with its cgroup rule)", source)
+		}
+		if rule := devTreeRules[source]; rule != "" {
+			rules = append(rules, rule)
+		}
+		return "volume", rules, nil
+	case statErr == nil:
+		return kind, nil, fmt.Errorf("%s is neither a device node nor a directory", source)
+	case IsSerialDevicePath(source) && SerialHotplugSupported(GetEngine()):
+		// Attached on demand once plugged in (serialhotplug.go).
+		return "device", nil, nil
+	default:
+		return kind, nil, fmt.Errorf("%s is not present on this host: plug the device in first (a serial port can be added while unplugged)", source)
+	}
 }
 
 func removeConfigDevicesAtTarget(config map[string]interface{}, target string) {

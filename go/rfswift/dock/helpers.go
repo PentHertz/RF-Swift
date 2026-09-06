@@ -141,6 +141,14 @@ func getContainerIDByName(ctx context.Context, containerName string) string {
 			}
 		}
 	}
+	// A container ID, full or abbreviated, as the engine's own tools accept.
+	if len(containerName) >= 4 {
+		for _, container := range listRes.Items {
+			if strings.HasPrefix(container.ID, containerName) {
+				return container.ID
+			}
+		}
+	}
 	return ""
 }
 
@@ -639,7 +647,7 @@ func nvidiaToolkitInstalled() bool {
 //	in(2): *container.HostConfig hostConfig - container host config to modify
 //	out: string - summary of what was configured
 func applyGPUConfig(gpus string, hostConfig *container.HostConfig) string {
-	gpus = strings.TrimSpace(gpus)
+	gpus = NormalizeGPUSpec(gpus)
 	if gpus == "" {
 		return ""
 	}
@@ -700,6 +708,33 @@ func applyGPUConfig(gpus string, hostConfig *container.HostConfig) string {
 	}
 
 	return strings.Join(summary, ",")
+}
+
+// NormalizeGPUSpec reduces a GPU request to what the engine understands:
+// "all", or a comma-separated list of device ids. Vendor annotations older
+// versions stored for display ("all (amd)", "nvidia (fallback)") are dropped,
+// and "none"/"off" mean no request.
+func NormalizeGPUSpec(gpus string) string {
+	gpus = strings.TrimSpace(gpus)
+	if i := strings.Index(gpus, " ("); i >= 0 {
+		gpus = strings.TrimSpace(gpus[:i])
+	}
+	switch strings.ToLower(gpus) {
+	case "", "none", "off", "false", "nvidia", "amd", "intel":
+		if strings.EqualFold(gpus, "nvidia") || strings.EqualFold(gpus, "amd") || strings.EqualFold(gpus, "intel") {
+			return "all"
+		}
+		return ""
+	case "all", "true", "yes":
+		return "all"
+	}
+	var ids []string
+	for _, id := range strings.Split(gpus, ",") {
+		if id = strings.TrimSpace(id); id != "" {
+			ids = append(ids, id)
+		}
+	}
+	return strings.Join(ids, ",")
 }
 
 // buildNVIDIADeviceRequests creates Docker DeviceRequests for NVIDIA GPUs.
@@ -786,7 +821,21 @@ func convertCapsToString(caps []string) string {
 	if len(caps) == 0 {
 		return ""
 	}
-	return strings.Join(caps, ",")
+	out := make([]string, 0, len(caps))
+	for _, c := range caps {
+		if n := NormalizeCapName(c); n != "" {
+			out = append(out, n)
+		}
+	}
+	return strings.Join(out, ",")
+}
+
+// NormalizeCapName gives a Linux capability its canonical short form: the
+// daemon reports "CAP_NET_ADMIN" for a "NET_ADMIN" request, and comparing the
+// two as strings made removals silent no-ops and additions duplicates.
+func NormalizeCapName(name string) string {
+	name = strings.ToUpper(strings.TrimSpace(name))
+	return strings.TrimPrefix(name, "CAP_")
 }
 
 // convertSecurityOptToString extracts the seccomp profile path from a slice of

@@ -12,6 +12,10 @@ branch.
 
 ### Added
 
+- Workbench: the Nix build log and its "now" line show plain text. Terminal
+  escape sequences (test runners' coloured dots), carriage-return redraws and
+  control characters are stripped before a line reaches the panel or
+  `build.log`, log lines are capped at 2000 characters and the preview at 240.
 - Workbench: creating a Nix mission now shows the build as it happens. The
   create dialog follows Nix's own progress stream (`--log-format
   internal-json`, what Nix's terminal progress bar is drawn from) and shows
@@ -99,6 +103,98 @@ branch.
   `certs init` on the Workbench machine produced a different CA and server
   certificate and every connection failed with "pin changed"; that error now
   says so. `bundle.json` records the agent name and host.
+- Removing a Linux capability from a container never worked, and adding one
+  twice duplicated it: the daemon reports "CAP_NET_ADMIN" for a "NET_ADMIN"
+  request and RF Swift compared the two as strings. Capability names are
+  now compared and shown in their short form. The snapshot image a
+  re-creation runs from is no longer reported as "could not remove".
+- The Configure dialog shows the container's current values for the selected
+  setting (devices, bind mounts, capabilities, cgroup rules, GPU, ports)
+  instead of always listing cgroup rules, opens on "Mapped device" with an
+  empty field, clears the field when the setting changes (a cgroup rule no
+  longer lingers under GPU) and refuses an empty value before applying.
+- The mission Configuration card shows serial ports as "attached on demand"
+  with the ports present on the host, since a hot-pluggable port is no
+  longer a device mapping; the Configure dialog explains each setting and
+  accepts a serial port that is not plugged in yet. A container's GPU
+  request now survives a re-creation (the label is written back) and is
+  always the plain request ("all", "0,1"); the vendor annotation older
+  versions stored for display no longer flows back into the configuration.
+- Configuring a Docker container from the Workbench (bind mounts, devices,
+  capabilities, cgroup rules, ports, GPU) works again. Docker keeps a
+  container's configuration in files under `/var/lib/docker` that only root
+  can edit, so every change failed with "permission denied" in the GUI. The
+  change is still applied the way it always was on the CLI, rewriting those
+  files in place and restarting the Docker service (no copy of the
+  container, no extra disk), and the missing root is now asked for: one
+  polkit prompt in the Workbench, which runs itself headless as root to
+  apply it (always a polkit dialog, even when the Workbench was started from
+  a terminal), and one sudo prompt on the CLI's `config` commands. Docker
+  inside the Lima VM edits through the VM's own sudo, without a prompt. The
+  edited container comes back running with its new configuration, and the
+  other containers the service restart stopped are started again. Committing
+  and re-creating the container (no root, a snapshot image per change) stays
+  the way on Podman and is available on request: `--recreate` on the CLI, a
+  checkbox in the Configure dialog. `config` commands also accept a container
+  ID, full or abbreviated. The "Device path as bind mount" setting no longer
+  answers "device paths must use the Mapped device setting": a device node
+  becomes a device mapping (a serial port on demand) and a `/dev` tree such
+  as `/dev/bus/usb` is mounted with the cgroup rule that makes its nodes
+  usable. A device node given as a bind mount, at creation or from the
+  "Directory / file bind mount" and "Device path as bind mount" settings, is
+  bind-mounted as asked (with the cgroup rule its major needs) rather than
+  turned into a mapping; "Mapped device" maps it. The CLI's `config bindings
+  add` and `rm` go through the same code as the Workbench, so a serial port
+  added with `-d` is attached on demand and hot-pluggable there too. The
+  hot-plug can be switched per container: `rfswift config serial-hotplug
+  on|off -c <mission>` and the "Serial hot-plug" setting of the Configure
+  dialog; off removes the serial cgroup rules and leaves the container's
+  `/dev` alone. A bind-mounted serial port is listed under Bind mounts only. A change that cannot
+  work is refused before the password prompt, not after it. A serial port
+  attached on demand is recorded in the `org.rfswift.serial_ports` label and
+  listed under Devices on the mission card as "serial, on demand, plugged
+  in / not plugged in", since it is no longer a device mapping.
+- The RFID mission template now maps `/dev/tty0`, which the Proxmark3 client
+  script requires ("Script cannot access /dev/ttyXXX files, insufficient
+  privileges" is its complaint when the console is missing), and lists
+  `/dev/ttyACM0`: mapped when the reader is plugged in at creation, attached
+  on demand otherwise. A mission created from the template in the Workbench
+  had neither, so `pm3` never started in it. Built-in templates are stored as
+  files on first run and were never refreshed afterwards, so a template fix
+  did not reach an installed machine: an unedited copy of a built-in
+  template is now brought up to date automatically (a fingerprint records
+  what RF Swift wrote), an edited one is kept and reported as before.
+- A device node listed among a mission's bind mounts (`/dev/ttyACM0` under
+  "volumes") no longer turns into a root-owned empty directory when the
+  device is unplugged at start. At creation and re-creation the node becomes
+  a device mapping, a start whose bind would create such a directory is
+  refused with the fix, and a missing optional device is dropped with an
+  explanation. Serial ports (`/dev/ttyACM*`, `/dev/ttyUSB*`, `/dev/ttyAMA*`)
+  are now hot-pluggable on Docker and rootful Podman. A port that is plugged
+  in when the mission is created or configured is mapped like any device and
+  shows under Devices; every serial port also gets device cgroup rules for
+  the serial majors, and RF Swift creates the port's node inside the
+  container's `/dev` when it starts and whenever a terminal or command is
+  opened in it, removing nodes whose device is gone. A port that is absent
+  at the time is recorded and attached on demand instead of failing the
+  start: plug the device in, open a terminal, and the port is there. Rootless Podman, which allows neither cgroup rules nor `mknod`,
+  keeps the mapping and requires the port to be present at creation; the
+  pre-creation check says so. `rfswift host devclean` and the Workbench engine doctor remove the
+  directories earlier versions left behind. The Nix engine's "device access"
+  warning now says what is wrong: a stray directory (and the cleanup), a
+  root-owned node without a udev rule (`rfswift host udev`), a group you are
+  not in (`usermod`), or a group this session has not picked up yet
+  (`newgrp`), instead of suggesting `newgrp root`.
+- Creating a mission through a remote agent now shows progress in the create
+  dialog as a local creation does: the live Nix build status and log, and
+  the layer-by-layer download bar of a Docker or Podman image pull. The
+  agent runs both as jobs (`targets.create.start/poll/cancel`,
+  `images.pull.start/poll/cancel`) and the Workbench polls them; "Stop &
+  clean" interrupts the build or the pull on the agent host. Older agents
+  still answer the synchronous calls.
+- "Reclaim space" on a container engine and the Nix "Collect garbage" action
+  work through a connected agent (`engines.prune` and `nix.gc` agent methods,
+  sharing the local implementation now in the `dock` and `nix` packages).
 - Remote agents now list every RF Swift container on every engine of their
   host (Docker, Podman, Lima), not only the auto-detected one, and the
   previous cap of 15 containers is gone. A new `engines.status` agent method

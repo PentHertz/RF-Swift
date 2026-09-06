@@ -135,6 +135,9 @@ func (e *DockerEngine) StartService() error {
 func (e *DockerEngine) RestartService() error {
 	switch runtime.GOOS {
 	case "linux":
+		if os.Geteuid() == 0 {
+			return exec.Command("systemctl", "restart", "docker").Run()
+		}
 		return exec.Command("sudo", "systemctl", "restart", "docker").Run()
 	case "darwin":
 		return exec.Command("osascript", "-e",
@@ -189,6 +192,11 @@ func (e *DockerEngine) GetConfigV2Path(containerID string) (string, error) {
 // container recreation is used instead.
 //
 //	out: bool
+//
+// Editing hostconfig.json and config.v2.json under /var/lib/docker needs a
+// root process and a daemon restart; a plain user is asked to elevate
+// (NeedsRootForConfigEdit, sudo on a terminal, polkit from the Workbench)
+// rather than going through a container re-creation.
 func (e *DockerEngine) SupportsDirectConfigEdit() bool {
 	return runtime.GOOS == "linux"
 }

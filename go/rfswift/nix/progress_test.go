@@ -2,6 +2,7 @@ package nix
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"strings"
 	"sync"
@@ -110,6 +111,41 @@ func TestBuildMonitorFollowsNixStream(t *testing.T) {
 	m.mu.Unlock()
 	if !p.Done || p.Stage != "done" || len(p.Building) != 0 || p.Builds.Done != 1 {
 		t.Errorf("final = %+v", p)
+	}
+}
+
+func TestBuildMonitorCleansTerminalOutput(t *testing.T) {
+	var log bytes.Buffer
+	m := newBuildMonitor("environment", nil, &log)
+	// Nix escapes control characters in its JSON the way json.Marshal does.
+	logLine := func(text string) string {
+		quoted, _ := json.Marshal(text)
+		return `@nix {"action":"result","fields":[` + string(quoted) + `],"id":7,"type":101}` + "\n"
+	}
+	dots := strings.Repeat("\x1b[32m.\x1b[0m", 300)
+	feed(t, m, `@nix {"action":"start","fields":["/nix/store/abcdefghijklmnopqrstuvwxyz012345-python3.12-asn1tools-0.167.0.drv","",1,1],"id":7,"level":3,"parent":0,"text":"building","type":105}`+"\n"+
+		logLine(dots)+
+		logLine("downloading  10%\r downloading  55%\r downloading 100%")+
+		logLine("\x1b]0;title\x07tab\tseparated\x08")+
+		"plain \x1b[1mbold\x1b[0m line\n", 1<<20)
+	out := log.String()
+	if strings.ContainsRune(out, 0x1b) || strings.ContainsRune(out, '\r') || strings.ContainsRune(out, 0x08) {
+		t.Fatalf("log still carries terminal control sequences:\n%q", out)
+	}
+	for _, want := range []string{"python3.12-asn1tools-0.167.0> " + strings.Repeat(".", 300) + "\n", "python3.12-asn1tools-0.167.0>  downloading 100%\n", "python3.12-asn1tools-0.167.0> tab separated\n", "plain bold line\n"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("log lacks %q:\n%s", want, out)
+		}
+	}
+	feed(t, m, logLine(strings.Repeat("x", 5000)), 1<<20)
+	m.mu.Lock()
+	last := m.progress.LastLine
+	m.mu.Unlock()
+	if len(last) > maxLastLineLength+40 || !strings.HasSuffix(last, " ...") {
+		t.Errorf("last line preview not shortened: %d chars", len(last))
+	}
+	if lines := strings.Split(strings.TrimSpace(log.String()), "\n"); len(lines[len(lines)-1]) > maxLogLineLength+80 {
+		t.Errorf("log line not capped: %d chars", len(lines[len(lines)-1]))
 	}
 }
 

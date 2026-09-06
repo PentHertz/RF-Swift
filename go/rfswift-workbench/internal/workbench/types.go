@@ -142,6 +142,9 @@ type ContainerChange struct {
 	Source string `json:"source"`
 	Target string `json:"target"`
 	Add    bool   `json:"add"`
+	// Recreate: commit and re-create the container instead of rewriting its
+	// files in place (Docker: no password prompt, a snapshot image stays).
+	Recreate bool `json:"recreate"`
 }
 
 type MissionTemplate struct {

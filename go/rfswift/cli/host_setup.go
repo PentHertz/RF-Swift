@@ -19,6 +19,7 @@ import (
 
 	"github.com/spf13/cobra"
 	common "penthertz/rfswift/common"
+	rfdock "penthertz/rfswift/dock"
 	"penthertz/rfswift/hostsetup"
 	"penthertz/rfswift/tui"
 )
@@ -148,6 +149,44 @@ func hostUdevInstall(st hostsetup.UdevStatus, yes bool) (bool, error) {
 		common.PrintInfoMessage(fmt.Sprintf("Group membership becomes active at your next login (or 'newgrp %s' in this terminal). Rootless Podman keeps your groups only with the crun runtime; the logged-in user's seat ACL works right away.", report.GroupsJoined[0]))
 	}
 	return true, nil
+}
+
+var hostDevcleanCmd = &cobra.Command{
+	Use:   "devclean",
+	Short: "Remove empty directories a container left where a device node belongs (/dev/ttyACM0 ...)",
+	Long: `A container that bind-mounts a device node (/dev/ttyACM0 listed under its
+volumes) while the device is unplugged makes Docker or Podman create an empty
+root-owned directory in its place. The device then never reappears under that
+name and every tool fails until the directory is removed as root. RF Swift no
+longer creates such mounts; this command cleans up the ones that exist, in one
+sudo call, after asking.
+
+Examples:
+  rfswift host devclean          # list, then offer to remove
+  rfswift host devclean --list   # only list
+  rfswift host devclean --yes    # remove without asking`,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		listOnly, _ := cmd.Flags().GetBool("list")
+		yes, _ := cmd.Flags().GetBool("yes")
+		dirs := rfdock.StrayDeviceDirs()
+		if len(dirs) == 0 {
+			common.PrintSuccessMessage("No stray device directory under /dev.")
+			return nil
+		}
+		common.PrintWarningMessage(fmt.Sprintf("Empty directories where a device node belongs: %s", strings.Join(dirs, ", ")))
+		if listOnly {
+			return nil
+		}
+		if !yes && !tui.ConfirmDefault("Remove them now (one sudo call)?", true) {
+			common.PrintInfoMessage("Nothing removed. Later: rfswift host devclean --yes")
+			return nil
+		}
+		if err := rfdock.RemoveStrayDeviceDirs(dirs); err != nil {
+			return err
+		}
+		common.PrintSuccessMessage(fmt.Sprintf("Removed %d director(ies). Unplug and replug the device so udev recreates its node.", len(dirs)))
+		return nil
+	},
 }
 
 var hostUdevCmd = &cobra.Command{
@@ -644,7 +683,9 @@ Examples:
 }
 
 func registerHostSetupCommands() {
-	HostCmd.AddCommand(hostSetupCmd, hostUdevCmd, hostDockerAccessCmd, hostIsolateCmd)
+	hostDevcleanCmd.Flags().Bool("list", false, "only list the stray directories")
+	hostDevcleanCmd.Flags().BoolP("yes", "y", false, "remove without asking (scripts)")
+	HostCmd.AddCommand(hostSetupCmd, hostUdevCmd, hostDockerAccessCmd, hostIsolateCmd, hostDevcleanCmd)
 	hostIsolateCmd.Flags().Bool("status", false, "only show the state")
 	hostIsolateCmd.Flags().BoolP("yes", "y", false, "apply without asking")
 	hostIsolateCmd.Flags().Bool("sysctl", false, "last resort: lift Ubuntu's user-namespace restriction for every program (weakens the host)")

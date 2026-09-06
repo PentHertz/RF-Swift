@@ -13,6 +13,7 @@ import (
 	"os"
 
 	"penthertz/rfswift-workbench/internal/workbench"
+	"penthertz/rfswift/hostsetup"
 
 	"github.com/wailsapp/wails/v2"
 	"github.com/wailsapp/wails/v2/pkg/options"
@@ -32,7 +33,15 @@ func main() {
 	mcpMission := flag.String("mission", "", "restrict MCP access to one mission")
 	mcpWrite := flag.Bool("mcp-write", false, "allow MCP clients to change notes and findings")
 	mcpExec := flag.Bool("mcp-exec", false, "allow MCP clients to execute mission commands")
+	applyChange := flag.String("apply-container-change", "", "internal: apply a container configuration change (JSON) and exit; the Workbench runs itself this way as root through polkit")
 	flag.Parse()
+	if *applyChange != "" {
+		if err := workbench.ApplyContainerChangeJSON(*applyChange); err != nil {
+			fmt.Fprintln(os.Stderr, "rfswift-workbench:", err)
+			os.Exit(1)
+		}
+		return
+	}
 	if *mcpMode {
 		if err := workbench.RunMCPServer(os.Stdin, os.Stdout, workbench.MCPOptions{Workspace: *mcpWorkspace, Mission: *mcpMission, AllowWrite: *mcpWrite, AllowExec: *mcpExec}); err != nil {
 			fmt.Fprintln(os.Stderr, "rfswift-workbench mcp:", err)
@@ -40,6 +49,8 @@ func main() {
 		}
 		return
 	}
+	// Root is asked for through polkit dialogs, never a terminal prompt.
+	hostsetup.SetGraphical(true)
 	app := workbench.NewApp(assets)
 	err := wails.Run(&options.App{
 		Title:  "RF Swift Workbench",

@@ -140,7 +140,15 @@ func organizeCommands() {
 	// keep working). Give each parent the matching group so cobra's group check
 	// is satisfied at both parents.
 	configCmd.AddGroup(&cobra.Group{ID: grpConfig, Title: "Container configuration:"})
-	configCmd.AddCommand(BindingsCmd, CapabilitiesCmd, CgroupsCmd, GPUsCmd, PortsCmd, UlimitsCmd)
+	SerialHotplugCmd.Flags().StringP("container", "c", "", "container name or ID")
+	configCmd.AddCommand(BindingsCmd, CapabilitiesCmd, CgroupsCmd, GPUsCmd, PortsCmd, UlimitsCmd, SerialHotplugCmd)
+	// Docker on Linux keeps its container configuration in files only root can
+	// edit: these commands re-run themselves as root (one sudo prompt) when
+	// needed, instead of failing on /var/lib/docker.
+	for _, c := range []*cobra.Command{BindingsCmd, CapabilitiesCmd, CgroupsCmd, GPUsCmd, PortsCmd, UlimitsCmd, SerialHotplugCmd} {
+		c.PersistentFlags().Bool("recreate", false, "commit the container and re-create it with the new setting instead of editing its files (no root needed, leaves a snapshot image per change; the way on Podman)")
+		c.PersistentPreRunE = elevateForConfigEdit
+	}
 	rootCmd.AddCommand(configCmd)
 
 	systemCmd.AddGroup(&cobra.Group{ID: grpSystem, Title: "System & maintenance:"})

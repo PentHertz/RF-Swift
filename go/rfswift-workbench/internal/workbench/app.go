@@ -61,7 +61,7 @@ func (a *App) setWorkspace(ws string) {
 func (a *App) setEngine(eng Engine) {
 	a.stateMu.Lock()
 	defer a.stateMu.Unlock()
-	a.hookLocalEngine(eng)
+	a.hookEngine(eng)
 	a.eng = eng
 }
 
@@ -98,7 +98,7 @@ func NewApp(assetFS ...fs.FS) *App {
 	if len(assetFS) > 0 {
 		app.assets = assetFS[0]
 	}
-	app.hookLocalEngine(app.eng)
+	app.hookEngine(app.eng)
 	return app
 }
 

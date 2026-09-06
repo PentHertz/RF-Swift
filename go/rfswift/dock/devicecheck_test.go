@@ -65,10 +65,20 @@ func TestDeviceCheckRootlessPodmanOnLinux(t *testing.T) {
 }
 
 func TestDeviceCheckRootfulDockerOnLinuxOnlyFlagsMissing(t *testing.T) {
+	// A missing serial port is attached on demand once plugged in (serial
+	// hot-plug), so only the other missing device is an issue.
 	h := fakeHost("linux", EngineDocker, false, map[string]bool{"/dev/console": true}, map[string]bool{})
-	issues, scope, _ := h.issues(deviceEntriesFromSpecs([]string{"/dev/console:/dev/console", "/dev/ttyACM0:/dev/ttyACM0"}, nil))
-	if scope != "host" || len(issues) != 1 || issues[0].Path != "/dev/ttyACM0" {
+	issues, scope, _ := h.issues(deviceEntriesFromSpecs([]string{"/dev/console:/dev/console", "/dev/ttyACM0:/dev/ttyACM0", "/dev/rfkill:/dev/rfkill"}, nil))
+	if scope != "host" || len(issues) != 1 || issues[0].Path != "/dev/rfkill" {
 		t.Fatalf("issues = %#v scope = %q", issues, scope)
+	}
+}
+
+func TestDeviceCheckRootlessPodmanRequiresSerialPortAtCreation(t *testing.T) {
+	h := fakeHost("linux", EnginePodman, true, map[string]bool{}, map[string]bool{})
+	issues, _, _ := h.issues(deviceEntriesFromSpecs([]string{"/dev/ttyACM0:/dev/ttyACM0"}, nil))
+	if len(issues) != 1 || !strings.Contains(issues[0].Reason, "rootless Podman") {
+		t.Fatalf("issues = %#v", issues)
 	}
 }
 

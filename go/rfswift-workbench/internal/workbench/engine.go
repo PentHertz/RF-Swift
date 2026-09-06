@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -48,7 +49,13 @@ func (e *RemotePendingEngine) unavailable() error {
 }
 
 // RemoteEngine forwards engine-neutral operations to the authenticated agent.
-type RemoteEngine struct{ Config remote.ClientConfig }
+type RemoteEngine struct {
+	Config remote.ClientConfig
+	// NixBuild and NixBuildLog receive what the agent reports while Create
+	// follows a Nix build (nix_build_events.go turns them into UI events).
+	NixBuild    func(mission string, p rfnix.BuildProgress)
+	NixBuildLog func(mission, line string)
+}
 
 func (e *RemoteEngine) Name() string { return "remote:" + e.Config.Endpoint }
 func (e *RemoteEngine) call(method string, params, result any) error {
@@ -58,6 +65,20 @@ func (e *RemoteEngine) call(method string, params, result any) error {
 }
 func (e *RemoteEngine) callContext(ctx context.Context, method string, params, result any) error {
 	return remote.Control(ctx, e.Config, method, params, result)
+}
+
+// Prune reclaims space on one of the agent host's engines.
+func (e *RemoteEngine) Prune(name string, opts rfdock.PruneOptions) (rfdock.PruneSummary, error) {
+	var out rfdock.PruneSummary
+	err := e.call("engines.prune", map[string]any{"engine": name, "images": opts.Images, "unusedImages": opts.UnusedImages, "buildCache": opts.BuildCache, "volumes": opts.Volumes, "networks": opts.Networks}, &out)
+	return out, err
+}
+
+// NixGC runs the Nix store garbage collection on the agent host.
+func (e *RemoteEngine) NixGC() (string, error) {
+	var out string
+	err := e.call("nix.gc", map[string]any{}, &out)
+	return out, err
 }
 
 // EngineReport asks the agent about the engines on its host (engine doctor).
@@ -128,13 +149,140 @@ func (e *RemoteEngine) Create(req MissionCreate) (Mission, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	// Older agents silently ignored isolation/audio flags. A versioned method
-	// fails closed on those agents instead of creating an unprotected target.
-	err := remote.Control(ctx, e.Config, "targets.create.v2", req, &out)
-	if err != nil {
+	// The agent runs the creation as a job and this side polls it, so a Nix
+	// build's progress and log reach the create dialog as they do locally.
+	var start struct {
+		Job string `json:"job"`
+	}
+	if err := remote.Control(ctx, e.Config, "targets.create.start", req, &start); err != nil {
+		if strings.Contains(err.Error(), "unsupported control method") {
+			return e.createSynchronously(ctx, req)
+		}
+		return out, fmt.Errorf("remote creation failed: %w", err)
+	}
+	poll := func(cursor int) (remoteCreatePoll, error) {
+		var p remoteCreatePoll
+		// Each poll gets its own short deadline; the creation itself is
+		// bounded by ctx (the dialog's "Stop & clean").
+		pctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		err := remote.Control(pctx, e.Config, "targets.create.poll", map[string]any{"job": start.Job, "cursor": cursor}, &p)
+		return p, err
+	}
+	cursor, seq := 0, 0
+	ticker := time.NewTicker(400 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			cctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			_ = remote.Control(cctx, e.Config, "targets.create.cancel", map[string]any{"job": start.Job}, nil)
+			cancel()
+			return out, fmt.Errorf("creation of %s cancelled", req.Name)
+		case <-ticker.C:
+		}
+		p, err := poll(cursor)
+		if err != nil {
+			return out, fmt.Errorf("lost the agent while creating %s: %w", req.Name, err)
+		}
+		cursor = p.Cursor
+		if e.NixBuildLog != nil {
+			for _, line := range p.Lines {
+				e.NixBuildLog(req.Name, line)
+			}
+		}
+		if p.Progress != nil && p.ProgressSeq != seq && e.NixBuild != nil {
+			seq = p.ProgressSeq
+			e.NixBuild(req.Name, *p.Progress)
+		}
+		if p.Done {
+			if p.Error != "" {
+				return out, errors.New(p.Error)
+			}
+			if p.Target != nil {
+				return *p.Target, nil
+			}
+			return e.Inspect(req.Name)
+		}
+	}
+}
+
+// PullImage pulls an image on the agent host and relays the layer progress
+// the agent's job reports, so the create dialog's download bar moves as for a
+// local pull. Older agents get the one-shot call without progress.
+func (e *RemoteEngine) PullImage(ctx context.Context, engine, image string, progress func(rfdock.PullProgress)) (string, error) {
+	var start struct {
+		Job string `json:"job"`
+	}
+	if err := remote.Control(ctx, e.Config, "images.pull.start", map[string]string{"engine": engine, "image": image}, &start); err != nil {
+		if strings.Contains(err.Error(), "unsupported control method") {
+			var resolved string
+			err = remote.Control(ctx, e.Config, "images.pull", map[string]string{"engine": engine, "image": image}, &resolved)
+			return resolved, err
+		}
+		return "", err
+	}
+	var poll struct {
+		Layers      []rfdock.PullProgress `json:"layers"`
+		ProgressSeq int                   `json:"progressSeq"`
+		Done        bool                  `json:"done"`
+		Resolved    string                `json:"resolved"`
+		Error       string                `json:"error"`
+	}
+	seq := 0
+	ticker := time.NewTicker(400 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			cctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			_ = remote.Control(cctx, e.Config, "images.pull.cancel", map[string]any{"job": start.Job}, nil)
+			cancel()
+			return "", fmt.Errorf("pull of %s cancelled", image)
+		case <-ticker.C:
+		}
+		pctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		err := remote.Control(pctx, e.Config, "images.pull.poll", map[string]any{"job": start.Job}, &poll)
+		cancel()
+		if err != nil {
+			return "", fmt.Errorf("lost the agent while pulling %s: %w", image, err)
+		}
+		if poll.ProgressSeq != seq && progress != nil {
+			seq = poll.ProgressSeq
+			for _, layer := range poll.Layers {
+				progress(layer)
+			}
+		}
+		if poll.Done {
+			if poll.Error != "" {
+				return "", errors.New(poll.Error)
+			}
+			return poll.Resolved, nil
+		}
+	}
+}
+
+// remoteCreatePoll mirrors the agent's targets.create.poll answer.
+type remoteCreatePoll struct {
+	Progress    *rfnix.BuildProgress `json:"progress"`
+	ProgressSeq int                  `json:"progressSeq"`
+	Lines       []string             `json:"lines"`
+	Cursor      int                  `json:"cursor"`
+	Done        bool                 `json:"done"`
+	Target      *Mission             `json:"target"`
+	Error       string               `json:"error"`
+}
+
+// createSynchronously is the pre-job protocol: one call that answers when the
+// target exists. Older agents silently ignored isolation/audio flags; the
+// versioned method fails closed on those instead of creating an unprotected
+// target.
+func (e *RemoteEngine) createSynchronously(ctx context.Context, req MissionCreate) (Mission, error) {
+	var out Mission
+	if err := remote.Control(ctx, e.Config, "targets.create.v2", req, &out); err != nil {
 		return out, fmt.Errorf("remote creation failed (requires an agent supporting targets.create.v2): %w", err)
 	}
-	return out, err
+	return out, nil
 }
 func (e *RemoteEngine) Delete(id string, nix, clean bool) error {
 	return e.call("targets.delete", map[string]any{"id": id, "nix": nix, "clean": clean}, nil)
@@ -217,17 +365,7 @@ func canonicalSocket(socket string) string {
 }
 
 // engineByType returns a fresh engine for a mission's recorded engine name.
-func engineByType(t rfdock.EngineType) rfdock.ContainerEngine {
-	switch t {
-	case rfdock.EngineDocker:
-		return &rfdock.DockerEngine{}
-	case rfdock.EnginePodman:
-		return &rfdock.PodmanEngine{}
-	case rfdock.EngineLima:
-		return &rfdock.LimaEngine{}
-	}
-	return nil
-}
+func engineByType(t rfdock.EngineType) rfdock.ContainerEngine { return rfdock.EngineByType(t) }
 
 // LocalEngine drives docker/podman/lima containers and Nix environments on this
 // host via the rfswift packages. Containers from every running engine are
@@ -613,8 +751,19 @@ func (e *LocalEngine) Start(id string) error {
 		return err
 	}
 	defer cli.Close()
-	_, err = cli.ContainerStart(context.Background(), id, client.ContainerStartOptions{})
-	return err
+	// A /dev bind whose device is unplugged would be created as a directory
+	// by the engine; refuse with the fix instead (rfdock.PreflightDevices).
+	if runtime.GOOS == "linux" {
+		if err := rfdock.PreflightDevices(context.Background(), cli, id); err != nil {
+			return err
+		}
+	}
+	if _, err = cli.ContainerStart(context.Background(), id, client.ContainerStartOptions{}); err != nil {
+		return err
+	}
+	// Serial ports plugged in since the last start get their nodes now.
+	_, _ = rfdock.SyncSerialDevices(context.Background(), cli, id)
+	return nil
 }
 
 // Stop stops a running container. No-op for Nix environments.
@@ -838,6 +987,7 @@ func (e *LocalEngine) ExecStream(id, cmd string, live io.Writer) (string, error)
 	if err != nil {
 		return "", err
 	}
+	_, _ = rfdock.SyncSerialDevices(context.Background(), cli, id)
 	defer cli.Close()
 	ctx := context.Background()
 	cr, err := cli.ExecCreate(ctx, id, client.ExecCreateOptions{

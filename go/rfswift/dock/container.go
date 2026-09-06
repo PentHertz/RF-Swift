@@ -444,10 +444,15 @@ func ContainerExec(containerIdentifier string, WorkingDir string) {
 		}
 	}
 
+	if err := PreflightDevices(ctx, cli, containerIdentifier); err != nil {
+		common.PrintErrorMessage(err)
+		return
+	}
 	if _, err := cli.ContainerStart(ctx, containerIdentifier, client.ContainerStartOptions{}); err != nil {
 		common.PrintErrorMessage(err)
 		return
 	}
+	syncSerialAfterStart(ctx, cli, containerIdentifier)
 
 	common.PrintSuccessMessage(fmt.Sprintf("Container '%s' started successfully", containerIdentifier))
 
@@ -531,6 +536,48 @@ func ContainerRun(containerName string) {
 	}
 
 	bindings := combineBindings(containerCfg.x11forward, containerCfg.extrabinding)
+	// A device node listed under the bind mounts becomes a device mapping;
+	// a missing or stray one is dropped with an explanation (devbinds.go).
+	bindings, devBinds, bindRules, devWarnings := SanitizeDeviceBinds(bindings)
+	for _, w := range devWarnings {
+		if !IsSerialDevicePath(w.Path) {
+			common.PrintWarningMessage(w.String())
+		}
+	}
+	for _, spec := range devBinds {
+		appendCommaSeparated(&containerCfg.devices, spec)
+	}
+	for _, rule := range bindRules {
+		if !strings.Contains(containerCfg.cgroups, rule) {
+			appendCommaSeparated(&containerCfg.cgroups, rule)
+		}
+	}
+	// Serial ports are attached on demand where the engine allows it: not
+	// mapped at creation, opened through the cgroup rules and their nodes
+	// created by SyncSerialDevices when present (serialhotplug.go).
+	var serialPorts []string
+	if runtime.GOOS == "linux" && SerialHotplugSupported(GetEngine()) {
+		specs := strings.Split(containerCfg.devices, ",")
+		serialPorts = serialPortsIn(specs)
+		for _, w := range devWarnings {
+			if IsSerialDevicePath(w.Path) {
+				serialPorts = appendMissing(serialPorts, w.Path)
+			}
+		}
+		absent, rest := serialSpecs(specs)
+		if len(serialPorts) > 0 {
+			containerCfg.devices = strings.Join(rest, ",")
+			for _, rule := range SerialCgroupRules {
+				if !strings.Contains(containerCfg.cgroups, rule) {
+					appendCommaSeparated(&containerCfg.cgroups, rule)
+				}
+			}
+			if len(absent) > 0 {
+				common.PrintInfoMessage("Serial ports not plugged in now are attached on demand: plug the device in and enter the container (or open a terminal) to get its /dev/tty* node.")
+			}
+		}
+		devWarnings = nil
+	}
 	// Windows: sound comes from WSLg's PulseAudio socket under /mnt/wslg.
 	bindings = ensureWSLgMount(bindings, containerCfg.pulseServer)
 	extrahosts := splitAndCombine(containerCfg.extrahosts)
@@ -650,14 +697,27 @@ func ContainerRun(containerName string) {
 		engine := GetEngine()
 		if runtime.GOOS == "linux" && (engine == nil || engine.Type() != EngineLima) {
 			var presentDevices []container.DeviceMapping
+			var missingDevices []string
 			for _, dev := range filteredDevices {
 				if _, err := os.Stat(dev.PathOnHost); err != nil {
-					common.PrintWarningMessage(fmt.Sprintf("Skipping non-existent device: %s", dev.PathOnHost))
+					missingDevices = append(missingDevices, dev.PathOnHost)
 					continue
 				}
 				presentDevices = append(presentDevices, dev)
 			}
+			// A serial port the mission names is a requirement: stop with the
+			// notice rather than create a mission that cannot reach it.
+			if err := RequiredDevicesError(devWarnings, missingDevices); err != nil {
+				common.PrintErrorMessage(err)
+				return
+			}
+			for _, path := range missingDevices {
+				common.PrintWarningMessage(fmt.Sprintf("Skipping non-existent device: %s", path))
+			}
 			filteredDevices = presentDevices
+		} else if err := RequiredDevicesError(devWarnings, nil); err != nil {
+			common.PrintErrorMessage(err)
+			return
 		}
 
 		hostConfig.Devices = filteredDevices
@@ -745,6 +805,9 @@ func ContainerRun(containerName string) {
 	}
 	if containerCfg.gpus != "" {
 		containerLabels["org.rfswift.gpus"] = containerCfg.gpus
+	}
+	if len(serialPorts) > 0 {
+		containerLabels[SerialPortsLabel] = strings.Join(serialPorts, ",")
 	}
 	if containerCfg.exposedPorts == "" {
 		containerLabels["org.rfswift.exposedPorts"] = "none"
@@ -861,6 +924,7 @@ func ContainerRun(containerName string) {
 			common.PrintErrorMessage(err)
 			return
 		}
+		syncSerialAfterStart(ctx, cli, resp.ID)
 
 		props, err := getContainerProperties(ctx, cli, resp.ID)
 		if err != nil {
@@ -903,6 +967,7 @@ func ContainerRun(containerName string) {
 		common.PrintErrorMessage(err)
 		return
 	}
+	syncSerialAfterStart(ctx, cli, resp.ID)
 
 	props, err := getContainerProperties(ctx, cli, resp.ID)
 	if err != nil {
@@ -1360,6 +1425,7 @@ func ContainerInstallScript(containerIdentifier, scriptName, functionScript stri
 		if _, err := cli.ContainerStart(ctx, containerIdentifier, client.ContainerStartOptions{}); err != nil {
 			return fmt.Errorf("failed to start container: %v", err)
 		}
+		syncSerialAfterStart(ctx, cli, containerIdentifier)
 	}
 
 	// Steps 1 and 2: apt housekeeping. A mirror that is temporarily down makes

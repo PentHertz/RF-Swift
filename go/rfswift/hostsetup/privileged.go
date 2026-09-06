@@ -17,6 +17,7 @@ package hostsetup
 
 import (
 	"fmt"
+	"golang.org/x/term"
 	"os"
 	"os/exec"
 	"os/user"
@@ -63,14 +64,29 @@ func InvokingUser() string {
 // tell an interactive CLI (has a TTY for a sudo password prompt) from a GUI
 // backend (no TTY, needs a graphical polkit prompt).
 func isTerminal(f *os.File) bool {
-	fi, err := f.Stat()
-	return err == nil && fi.Mode()&os.ModeCharDevice != 0
+	// A mode check is not enough: /dev/null is a character device too, and
+	// a GUI or a script often hands it over as stdin.
+	return f != nil && term.IsTerminal(int(f.Fd()))
 }
+
+// graphical is set by a GUI front end: the password prompt must then be a
+// polkit dialog, never a sudo prompt on whatever terminal the GUI happened
+// to be launched from (a Workbench started from a shell has a TTY stdin,
+// and a sudo prompt there is invisible to the person using the window).
+var graphical bool
+
+// SetGraphical tells the privileged runners they serve a GUI.
+func SetGraphical(on bool) { graphical = on }
+
+// wantsPkexecFirst reports whether the polkit dialog must be tried before a
+// terminal prompt.
+func wantsPkexecFirst() bool { return graphical || !isTerminal(os.Stdin) }
 
 // RunPrivileged runs a shell script as root: directly when already root, via
 // sudo on an interactive terminal (one password prompt for the whole script),
 // or via pkexec (a graphical polkit prompt) when there is no controlling
-// terminal, so the Workbench GUI can apply host changes with a single click.
+// terminal or the caller is a GUI, so the Workbench can apply host changes
+// with a single click.
 func RunPrivileged(script string) error {
 	if os.Geteuid() == 0 {
 		cmd := exec.Command("sh", "-c", script)
@@ -79,8 +95,8 @@ func RunPrivileged(script string) error {
 	}
 	_, hasSudo := exec.LookPath("sudo")
 	pkexec, hasPkexec := exec.LookPath("pkexec")
-	// On a terminal, prefer sudo (its prompt works inline).
-	if isTerminal(os.Stdin) && hasSudo == nil {
+	// On a terminal, prefer sudo (its prompt works inline); a GUI never.
+	if !wantsPkexecFirst() && hasSudo == nil {
 		cmd := exec.Command("sudo", "sh", "-c", script)
 		cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
 		return cmd.Run()
@@ -97,6 +113,41 @@ func RunPrivileged(script string) error {
 		return cmd.Run()
 	}
 	return fmt.Errorf("root privileges are needed for this change: install sudo or pkexec, or re-run as root")
+}
+
+// RunPrivilegedCommand runs a program as root the way RunPrivileged runs a
+// script: directly when already root, via sudo on a terminal, via pkexec
+// otherwise. Output is returned so a GUI can show what happened.
+func RunPrivilegedCommand(argv ...string) (string, error) {
+	if len(argv) == 0 {
+		return "", fmt.Errorf("no command")
+	}
+	var cmd *exec.Cmd
+	switch {
+	case os.Geteuid() == 0:
+		cmd = exec.Command(argv[0], argv[1:]...)
+	case !wantsPkexecFirst():
+		if _, err := exec.LookPath("sudo"); err != nil {
+			return "", fmt.Errorf("root privileges are needed for this change: install sudo or re-run as root")
+		}
+		cmd = exec.Command("sudo", argv...)
+		cmd.Stdin = os.Stdin
+	default:
+		pkexec, err := exec.LookPath("pkexec")
+		if err != nil {
+			if graphical {
+				return "", fmt.Errorf("root privileges are needed for this change and no graphical prompt is available: install polkit (pkexec), or apply the change with the CLI (rfswift config ...)")
+			}
+			if _, sudoErr := exec.LookPath("sudo"); sudoErr != nil {
+				return "", fmt.Errorf("root privileges are needed for this change: install pkexec (polkit) or sudo")
+			}
+			cmd = exec.Command("sudo", argv...)
+		} else {
+			cmd = exec.Command(pkexec, argv...)
+		}
+	}
+	out, err := cmd.CombinedOutput()
+	return string(out), err
 }
 
 // GroupStatus reports, for the given groups, which do not exist on the host

@@ -36,11 +36,15 @@ type nixBuildLogBatch struct {
 	timer *time.Timer
 }
 
-// hookLocalEngine gives a local engine the UI's build observers. Remote
-// agents keep their coarse progress: the wire protocol carries none.
-func (a *App) hookLocalEngine(eng Engine) {
-	if local, ok := eng.(*LocalEngine); ok {
-		local.NixBuild, local.NixBuildLog = a.emitNixBuild, a.emitNixBuildLog
+// hookEngine gives an engine the UI's build observers: the local engine
+// reports its own builds, a remote engine relays what the agent's job
+// reports while a creation is polled.
+func (a *App) hookEngine(eng Engine) {
+	switch e := eng.(type) {
+	case *LocalEngine:
+		e.NixBuild, e.NixBuildLog = a.emitNixBuild, a.emitNixBuildLog
+	case *RemoteEngine:
+		e.NixBuild, e.NixBuildLog = a.emitNixBuild, a.emitNixBuildLog
 	}
 }
 

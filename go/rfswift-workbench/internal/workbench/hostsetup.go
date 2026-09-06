@@ -8,6 +8,7 @@ import (
 	"errors"
 	"runtime"
 
+	rfdock "penthertz/rfswift/dock"
 	"penthertz/rfswift/hostsetup"
 )
 
@@ -36,6 +37,31 @@ func (a *App) HostUdevStatus() hostsetup.UdevStatus {
 		return hostsetup.UdevStatus{File: hostsetup.HostRulesFile, Detail: "host udev rules are managed on local Linux hosts only"}
 	}
 	return hostsetup.GetUdevStatus()
+}
+
+// HostStrayDeviceDirs lists empty directories under /dev where a device node
+// belongs, left by a container started while the device was unplugged.
+func (a *App) HostStrayDeviceDirs() []string {
+	if !a.hostSetupApplies() {
+		return []string{}
+	}
+	dirs := rfdock.StrayDeviceDirs()
+	if dirs == nil {
+		dirs = []string{}
+	}
+	return dirs
+}
+
+// HostStrayDeviceDirsRemove deletes them after a polkit prompt.
+func (a *App) HostStrayDeviceDirsRemove() ([]string, error) {
+	if !a.hostSetupApplies() {
+		return nil, errors.New("stray device directories can only be removed on a local Linux host")
+	}
+	dirs := rfdock.StrayDeviceDirs()
+	if len(dirs) == 0 {
+		return []string{}, nil
+	}
+	return dirs, rfdock.RemoveStrayDeviceDirs(dirs)
 }
 
 // HostUdevInstall installs (or updates) the rules, creates the plugdev group,

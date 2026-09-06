@@ -75,6 +75,21 @@ func agentControl(ctx context.Context, req remote.ControlRequest) (any, error) {
 		return agentListTargets()
 	case "engines.status":
 		return agentEngineReport(), nil
+	case "engines.prune":
+		var p struct {
+			Engine string
+			rfdock.PruneOptions
+		}
+		if err := decode(&p); err != nil {
+			return nil, err
+		}
+		eng := rfdock.EngineByType(rfdock.EngineType(strings.ToLower(strings.TrimSpace(p.Engine))))
+		if eng == nil || !eng.IsAvailable() {
+			return nil, fmt.Errorf("unknown or missing engine %q on the agent host", p.Engine)
+		}
+		return rfdock.PruneEngine(eng, p.PruneOptions)
+	case "nix.gc":
+		return rfnix.StoreGC()
 	case "targets.inspect":
 		var p struct{ ID string }
 		if err := decode(&p); err != nil {
@@ -94,6 +109,27 @@ func agentControl(ctx context.Context, req remote.ControlRequest) (any, error) {
 		}
 		p.Context = ctx
 		return agentCreateTarget(p)
+	case "targets.create.start":
+		var p agentCreate
+		if err := decode(&p); err != nil {
+			return nil, err
+		}
+		return agentCreateStart(p)
+	case "targets.create.poll":
+		var p struct {
+			Job    string
+			Cursor int
+		}
+		if err := decode(&p); err != nil {
+			return nil, err
+		}
+		return agentCreatePoll(p.Job, p.Cursor)
+	case "targets.create.cancel":
+		var p struct{ Job string }
+		if err := decode(&p); err != nil {
+			return nil, err
+		}
+		return nil, agentCreateCancel(p.Job)
 	case "targets.delete":
 		var p struct {
 			ID         string
@@ -121,6 +157,24 @@ func agentControl(ctx context.Context, req remote.ControlRequest) (any, error) {
 			return nil, err
 		}
 		return rfdock.PullImageContext(ctx, p.Engine, p.Image, nil)
+	case "images.pull.start":
+		var p struct{ Engine, Image string }
+		if err := decode(&p); err != nil {
+			return nil, err
+		}
+		return agentPullStart(p.Engine, p.Image)
+	case "images.pull.poll":
+		var p struct{ Job string }
+		if err := decode(&p); err != nil {
+			return nil, err
+		}
+		return agentPullPoll(p.Job)
+	case "images.pull.cancel":
+		var p struct{ Job string }
+		if err := decode(&p); err != nil {
+			return nil, err
+		}
+		return nil, agentPullCancel(p.Job)
 	case "profiles.defaults":
 		d, err := rfdock.LoadCreationDefaults()
 		if err != nil {
@@ -457,18 +511,28 @@ func agentLifecycle(ctx context.Context, id string, start bool) error {
 	}
 	defer c.Close()
 	if start {
-		_, e = c.ContainerStart(ctx, id, client.ContainerStartOptions{})
+		if _, e = c.ContainerStart(ctx, id, client.ContainerStartOptions{}); e == nil {
+			_, _ = rfdock.SyncSerialDevices(ctx, c, id)
+		}
 	} else {
 		_, e = c.ContainerStop(ctx, id, client.ContainerStopOptions{})
 	}
 	return e
 }
 func agentCreateTarget(p agentCreate) (agentTarget, error) {
+	return agentCreateTargetWith(p, rfnix.BuildOptions{Context: p.Context})
+}
+
+// agentCreateTargetWith creates a target and, for a Nix environment, follows
+// its build through build (progress snapshots, log lines, cancellation).
+func agentCreateTargetWith(p agentCreate, build rfnix.BuildOptions) (agentTarget, error) {
 	if p.Isolate && p.Engine != "nix" {
 		return agentTarget{}, errors.New("isolate is supported only for Nix targets")
 	}
 	if p.Engine == "nix" {
-		e := rfnix.RunEnvironment(agentNixCreateOptions(p))
+		opts := agentNixCreateOptions(p)
+		opts.BuildOptions = build
+		e := rfnix.RunEnvironment(opts)
 		if e != nil {
 			return agentTarget{}, e
 		}
@@ -501,7 +565,7 @@ func agentConfigure(p agentChange) error {
 	case "volume", "device":
 		return rfdock.UpdateBinding(p.ID, p.Kind, p.Source, p.Target, p.Add)
 	case "device-bind":
-		return rfdock.UpdateBinding(p.ID, "volume", p.Source, p.Target, p.Add)
+		return rfdock.UpdateBinding(p.ID, "device-bind", p.Source, p.Target, p.Add)
 	case "capability":
 		return rfdock.UpdateCapability(p.ID, p.Value, p.Add)
 	case "cgroup":
@@ -512,6 +576,8 @@ func agentConfigure(p agentChange) error {
 		return rfdock.UpdateExposedPort(p.ID, p.Value, p.Add)
 	case "published-port":
 		return rfdock.UpdatePortBinding(p.ID, p.Value, p.Add)
+	case "serial-hotplug":
+		return rfdock.UpdateSerialHotplug(p.ID, p.Add)
 	}
 	return errors.New("unsupported container setting")
 }

@@ -217,8 +217,13 @@ After authentication, Workbench switches to the remote engine. The engine
 doctor (the Engines chip) then describes the agent host instead of this
 machine: every installed engine with its state, the number of RF Swift
 containers the agent can list on it, and the agent's reason when it cannot use
-one, plus whether Nix is installed there. Engines are managed on the agent
-host itself; the doctor only shows them. Mission listing,
+one, plus whether Nix is installed there. Creating a mission through the
+agent shows the same progress as a local creation: the live Nix build status
+(task counts, what is compiling, the log tail) or the layer-by-layer download
+of a container image. The agent runs the creation and the pull as jobs that
+the Workbench polls, and "Stop & clean" cancels them on the agent host. "Reclaim space" and the Nix
+"Collect garbage" action run on the agent host through the agent; starting or
+stopping a Lima VM stays a local action. Mission listing,
 inspection, container/Nix creation, image checks and pulls, start/stop, deletion,
 container configuration, interactive terminals, and mission-workspace artifacts
 are routed to the agent. There is no fallback to the GUI host. Use **Disconnect**

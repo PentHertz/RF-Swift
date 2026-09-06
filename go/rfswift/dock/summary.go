@@ -36,6 +36,31 @@ type ContainerSummary struct {
 	CgroupRules  []string `json:"cgroupRules"`
 	Ulimits      []string `json:"ulimits"`
 	GPUs         string   `json:"gpus"`
+	// SerialHotplug: the container opens serial ports through its device
+	// cgroup and RF Swift attaches their nodes on demand (serialhotplug.go).
+	// SerialPorts are the ports the container was configured with (label),
+	// SerialPresent the ports present on the host right now.
+	SerialHotplug bool     `json:"serialHotplug"`
+	SerialPorts   []string `json:"serialPorts"`
+	SerialPresent []string `json:"serialPresent"`
+}
+
+// serialSummary reports whether rules grant the serial majors and which of
+// the host's serial ports are present, for the summary sheet.
+func serialSummary(rules []string, present []string) (bool, []string) {
+	hotplug := false
+	for _, rule := range rules {
+		for _, serial := range SerialCgroupRules {
+			if strings.TrimSpace(rule) == serial {
+				hotplug = true
+			}
+		}
+	}
+	ports := []string{}
+	if hotplug {
+		ports = append(ports, present...)
+	}
+	return hotplug, ports
 }
 
 // ContainerSummaryFor inspects a container and returns its summary. Only local
@@ -62,26 +87,41 @@ func ContainerSummaryFor(ctx context.Context, cli *client.Client, containerID st
 	}
 	_, tag := parseImageName(props["ImageName"])
 	_, version := parseTagVersion(tag)
+	var present []string
+	for _, n := range listHostSerialNodes() {
+		present = append(present, n.Path)
+	}
+	serialHotplug, serialPresent := serialSummary(splitSummaryList(props["Cgroups"], ","), present)
+	if strings.EqualFold(props["SerialHotplug"], "off") {
+		serialHotplug, serialPresent = false, []string{}
+	}
+	serialPorts := SerialPortsFromLabel(props["SerialPorts"])
+	if serialPorts == nil {
+		serialPorts = []string{}
+	}
 	return ContainerSummary{
-		Name:         strings.TrimPrefix(containerJSON.Name, "/"),
-		XDisplay:     props["XDisplay"],
-		Shell:        props["Shell"],
-		Privileged:   props["Privileged"] == "true",
-		NetworkMode:  networkMode,
-		NATSubnet:    props["NATSubnet"],
-		ExposedPorts: splitSummaryList(props["ExposedPorts"], ","),
-		PortBindings: splitSummaryList(props["PortBindings"], ";;"),
-		Image:        props["ImageName"],
-		ImageVersion: version,
-		Size:         props["Size"],
-		Bindings:     splitSummaryList(props["Bindings"], ";;"),
-		ExtraHosts:   splitSummaryList(props["ExtraHosts"], ","),
-		Devices:      splitSummaryList(props["Devices"], ","),
-		Caps:         splitSummaryList(props["Caps"], ","),
-		Seccomp:      props["Seccomp"],
-		CgroupRules:  splitSummaryList(props["Cgroups"], ","),
-		Ulimits:      splitSummaryList(props["Ulimits"], ","),
-		GPUs:         props["GPUs"],
+		Name:          strings.TrimPrefix(containerJSON.Name, "/"),
+		XDisplay:      props["XDisplay"],
+		Shell:         props["Shell"],
+		Privileged:    props["Privileged"] == "true",
+		NetworkMode:   networkMode,
+		NATSubnet:     props["NATSubnet"],
+		ExposedPorts:  splitSummaryList(props["ExposedPorts"], ","),
+		PortBindings:  splitSummaryList(props["PortBindings"], ";;"),
+		Image:         props["ImageName"],
+		ImageVersion:  version,
+		Size:          props["Size"],
+		Bindings:      splitSummaryList(props["Bindings"], ";;"),
+		ExtraHosts:    splitSummaryList(props["ExtraHosts"], ","),
+		Devices:       splitSummaryList(props["Devices"], ","),
+		Caps:          splitSummaryList(props["Caps"], ","),
+		Seccomp:       props["Seccomp"],
+		CgroupRules:   splitSummaryList(props["Cgroups"], ","),
+		Ulimits:       splitSummaryList(props["Ulimits"], ","),
+		GPUs:          props["GPUs"],
+		SerialHotplug: serialHotplug,
+		SerialPorts:   serialPorts,
+		SerialPresent: serialPresent,
 	}, nil
 }
 

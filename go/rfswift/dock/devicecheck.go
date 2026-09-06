@@ -156,7 +156,18 @@ func (h deviceCheckHost) issues(entries []deviceEntry) ([]DeviceIssue, string, s
 	case h.goos == "linux":
 		for _, e := range entries {
 			if !h.exists(e.Path) {
-				add(e, "not present on this host")
+				switch {
+				case IsSerialDevicePath(e.Path) && !h.rootless:
+					// Attached on demand once plugged in: not a problem.
+				case IsSerialDevicePath(e.Path):
+					add(e, "not present on this host; rootless Podman maps a serial port at creation, so it must be plugged in first (Docker attaches serial ports on demand)")
+				default:
+					add(e, "not present on this host")
+				}
+				continue
+			}
+			if e.Bind && IsStrayDeviceDir(e.Path) {
+				add(e, "an empty directory left where the device node belongs (a container started while it was unplugged); remove it with rfswift host devclean, then plug the device in")
 				continue
 			}
 			if !h.rootless {
