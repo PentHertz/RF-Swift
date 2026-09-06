@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -41,7 +42,8 @@ func TestClientCredentialFileRoundTrip(t *testing.T) {
 	if strings.Contains(string(raw), "\n-----BEGIN PRIVATE KEY") || strings.Contains(string(raw), "EC PRIVATE KEY") {
 		t.Fatal("credential file carries a plaintext key")
 	}
-	if info, _ := os.Stat(path); info.Mode().Perm() != 0o600 {
+	// Windows keeps permissions in ACLs, not mode bits (Go reports 666 there).
+	if info, _ := os.Stat(path); runtime.GOOS != "windows" && info.Mode().Perm() != 0o600 {
 		t.Errorf("credential file mode = %o, want 600", info.Mode().Perm())
 	}
 	if err := WriteRoleFile(path, file); err == nil {
