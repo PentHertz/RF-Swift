@@ -66,18 +66,11 @@ func sameProfile(a, b Profile) bool {
 
 // unmodifiedDefault reports whether a stored built-in profile is still what
 // RF Swift wrote: its content matches its own fingerprint, or, for a file
-// written before fingerprints existed, it is one of the layouts older
-// releases shipped (previousDefaults) or every field it sets equals the
-// current default's (a default that only gained fields is then safe to
-// refresh).
+// written before fingerprints existed, every field it sets equals the current
+// default's (a default that only gained fields is then safe to refresh).
 func unmodifiedDefault(stored, def Profile) bool {
 	if stored.Fingerprint != "" {
 		return profileFingerprint(stored) == stored.Fingerprint
-	}
-	for _, old := range previousDefaults(def) {
-		if sameProfile(stored, old) {
-			return true
-		}
 	}
 	str := func(s, d string) bool { return s == "" || s == d }
 	flag := func(s, d bool) bool { return !s || d }
@@ -87,31 +80,6 @@ func unmodifiedDefault(stored, def Profile) bool {
 		flag(stored.Privileged, def.Privileged) && flag(stored.Realtime, def.Realtime) &&
 		str(stored.Devices, def.Devices) && str(stored.Bindings, def.Bindings) && str(stored.Caps, def.Caps) &&
 		str(stored.Cgroups, def.Cgroups) && str(stored.GPUs, def.GPUs) && str(stored.VPN, def.VPN)
-}
-
-// previousDefaults lists the earlier layouts of a built-in profile exactly as
-// the releases before the fingerprint wrote them. A stored copy equal to one
-// of them was never edited, so it is refreshed like a fingerprinted copy even
-// where the current default dropped or changed a field, which the field-wise
-// rule in unmodifiedDefault cannot tell from an edit. Only rfid changed shape
-// that way: its Proxmark3 serial port went from a bind mount to a device
-// mapping to the serial hot-plug, and the USB cgroup rule gained the serial
-// ones.
-func previousDefaults(def Profile) []Profile {
-	if def.Name != "rfid" {
-		return nil
-	}
-	var out []Profile
-	for _, l := range []struct{ devices, bindings, cgroups string }{
-		{"", usbTreeBinding, ""},
-		{"", usbTreeBinding + ",/dev/ttyACM0:/dev/ttyACM0", ""},
-		{"/dev/ttyACM0:/dev/ttyACM0", usbTreeBinding, "c 189:* rwm"},
-		{"", usbTreeBinding, "c 189:* rwm"},
-	} {
-		out = append(out, Profile{Name: def.Name, Description: def.Description, Image: def.Image, Network: def.Network,
-			Devices: l.devices, Bindings: l.bindings, Cgroups: l.cgroups})
-	}
-	return out
 }
 
 func readProfileFile(path string) (Profile, error) {
@@ -267,21 +235,17 @@ func DefaultProfiles() []Profile {
 		{
 			// The Proxmark3 client script refuses to run unless /dev/tty0 is a
 			// device inside the container ("cannot access /dev/ttyXXX files"),
-			// so the console is mapped. The reader's serial port is not listed:
-			// a fixed /dev/ttyACM0 entry only works while the reader is plugged
-			// in at creation, and on engines without serial hot-plug an absent
-			// port failed the creation or left an empty directory in its place.
-			// The serial cgroup rules arm the hot-plug instead (serialhotplug.go):
-			// the port's node is created inside the container whenever the
-			// reader is plugged in. The create dialog's Proxmark button and -d
-			// still add the node explicitly.
+			// so the console is mapped. The serial port itself is listed too:
+			// plugged in at creation it is mapped like any device, absent it is
+			// attached on demand (serialhotplug.go), so the mission is created
+			// either way and the reader works as soon as it is plugged in.
 			Name:        "rfid",
 			Description: "RFID/NFC tools (Proxmark3, libnfc) over USB",
 			Image:       officialImage("rfid"),
 			Network:     "host",
-			Devices:     "/dev/tty0:/dev/tty0",
+			Devices:     "/dev/tty0:/dev/tty0,/dev/ttyACM0:/dev/ttyACM0",
 			Bindings:    usbTreeBinding,
-			Cgroups:     "c 189:* rwm,c 166:* rwm,c 188:* rwm",
+			Cgroups:     "c 189:* rwm",
 		},
 		{
 			Name:        "automotive",
@@ -347,10 +311,6 @@ func LoadProfiles() []Profile {
 		return nil
 	}
 
-	defaults := map[string]Profile{}
-	for _, def := range DefaultProfiles() {
-		defaults[strings.ToLower(def.Name)] = def
-	}
 	var profiles []Profile
 	for _, entry := range entries {
 		if entry.IsDir() || (!strings.HasSuffix(entry.Name(), ".yaml") && !strings.HasSuffix(entry.Name(), ".yml")) {
@@ -366,15 +326,6 @@ func LoadProfiles() []Profile {
 		}
 		if p.Name == "" {
 			p.Name = strings.TrimSuffix(strings.TrimSuffix(entry.Name(), ".yaml"), ".yml")
-		}
-		// An unedited copy of an older built-in is served as the current
-		// built-in without waiting for `profile init` (or the Workbench) to
-		// rewrite the file: `run --profile`, the TUI wizard and `profile
-		// list` otherwise keep handing out a layout RF Swift has since fixed.
-		// The file itself is left alone here; an edited copy is returned as
-		// written.
-		if def, ok := defaults[strings.ToLower(p.Name)]; ok && !sameProfile(p, def) && unmodifiedDefault(p, def) {
-			p = def
 		}
 		profiles = append(profiles, p)
 	}

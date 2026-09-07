@@ -343,15 +343,6 @@ func (a *App) CreateMission(req MissionCreate) (Mission, error) {
 	if !validWorkspaceName(req.Name) {
 		return Mission{}, errors.New("mission name must be a single safe path component")
 	}
-	// The Nix-only switches (lazy tools, pure shell, bubblewrap jail, flake)
-	// mean nothing to a container engine. Drop them here rather than let a
-	// stale dialog value reach an engine that refuses them: the remote agent
-	// rejects "isolate" on a container target, so a Docker mission created
-	// right after a jailed Nix environment failed with "isolate is supported
-	// only for Nix targets".
-	if req.Engine != "nix" {
-		req.Lazy, req.Pure, req.Isolate, req.FlakeRef = false, false, false, ""
-	}
 	if _, err := os.Stat(a.store.missionDir(ws, req.Name)); err == nil {
 		var existing Mission
 		if readErr := readJSON(filepath.Join(a.store.missionDir(ws, req.Name), "mission.json"), &existing); readErr != nil || existing.Engine != "nix" || req.Engine != "nix" {
