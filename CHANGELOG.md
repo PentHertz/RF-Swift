@@ -89,6 +89,15 @@ branch.
 
 ### Fixed
 
+- Workbench: creating a container mission right after a jailed Nix
+  environment no longer fails with "isolate is supported only for Nix
+  targets". The create dialog sent its Nix-only switches (lazy tools, pure
+  shell, isolate) with every request, and their state survived from one
+  dialog to the next, so a Docker mission created after a Nix one with
+  "Isolate (jail)" ticked was refused by the remote agent until the app was
+  restarted. The dialog now resets those switches when it opens and sends
+  them only for a Nix environment, and the backend drops them for container
+  engines whatever the dialog sends.
 - Remote agent credentials can now move between machines. `rfswift agent
   certs client --bundle DIR --name laptop` signs a new client certificate with
   the bundle's CA and writes one JSON file with everything that client needs
@@ -156,14 +165,27 @@ branch.
   in / not plugged in", since it is no longer a device mapping.
 - The RFID mission template now maps `/dev/tty0`, which the Proxmark3 client
   script requires ("Script cannot access /dev/ttyXXX files, insufficient
-  privileges" is its complaint when the console is missing), and lists
-  `/dev/ttyACM0`: mapped when the reader is plugged in at creation, attached
-  on demand otherwise. A mission created from the template in the Workbench
-  had neither, so `pm3` never started in it. Built-in templates are stored as
+  privileges" is its complaint when the console is missing), and reaches the
+  reader's serial port through the serial hot-plug rather than a fixed
+  `/dev/ttyACM0` entry: the template carries the CDC-ACM and USB-serial
+  cgroup rules (`c 166:* rwm`, `c 188:* rwm`) next to the USB one, so the
+  port's node is created inside the container when the reader is plugged
+  in, whenever that is. `/dev/ttyACM0` is no longer in the default device
+  list of a new mission (Workbench create dialog, `--profile rfid`, the TUI
+  wizard): on an engine without serial hot-plug (Lima on macOS, a Windows
+  host, rootless Podman) a listed port that was absent either failed the
+  creation or was left as an empty `/dev/ttyACM0` directory. The "Add
+  /dev/ttyACM0 (Proxmark)" button of the create dialog still adds it on
+  request. A mission created from the template in the Workbench had neither
+  the console nor the port, so `pm3` never started in it. Built-in templates are stored as
   files on first run and were never refreshed afterwards, so a template fix
   did not reach an installed machine: an unedited copy of a built-in
   template is now brought up to date automatically (a fingerprint records
-  what RF Swift wrote), an edited one is kept and reported as before.
+  what RF Swift wrote), an edited one is kept and reported as before. A copy
+  written before the fingerprint existed is recognised by its exact older
+  layout, and `--profile rfid`, the TUI wizard and `profile list` serve the
+  current template for such a copy even before `profile init` rewrites the
+  file.
 - A device node listed among a mission's bind mounts (`/dev/ttyACM0` under
   "volumes") no longer turns into a root-owned empty directory when the
   device is unplugged at start. At creation and re-creation the node becomes
