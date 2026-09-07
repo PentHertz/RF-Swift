@@ -131,3 +131,26 @@ func TestValidateImportedStorePath(t *testing.T) {
 		}
 	}
 }
+
+func TestClosureImportNeedsRoot(t *testing.T) {
+	needsRoot := []string{
+		"error: cannot add path '/nix/store/abc-x' because it lacks a signature by a trusted key",
+		"cannot import path '/nix/store/abc-x' because it lacks a valid signature",
+	}
+	for _, msg := range needsRoot {
+		if !closureImportNeedsRoot(msg) {
+			t.Errorf("not recognised as a trust refusal: %q", msg)
+		}
+	}
+	other := []string{
+		"",
+		"error: path '/nix/store/abc-x' does not exist in binary cache 'file:///tmp/x'",
+		"error: hash mismatch importing path '/nix/store/abc-x'",
+		"warning: ignoring untrusted substituter",
+	}
+	for _, msg := range other {
+		if closureImportNeedsRoot(msg) {
+			t.Errorf("wrongly treated as a trust refusal: %q", msg)
+		}
+	}
+}

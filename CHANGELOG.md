@@ -89,6 +89,24 @@ branch.
 
 ### Fixed
 
+- Workbench on macOS: exporting a Nix environment or a container, importing
+  one, and exporting or importing a Workbench project no longer crash the app
+  the moment the file dialog opens. Wails builds one Cocoa `UTType` per filter
+  pattern, gets none for a multi-part extension (`*.rfenv.age`, `*.tar.gz`,
+  `*.rfswift-workbench.zip`) and aborts the process inserting it. The macOS
+  dialogs now receive one plain extension per pattern (`.rfenv` and `.age`,
+  `.gz`, `.tgz`, `.tar`, `.zip`); GTK and Windows keep the full patterns. A
+  bare file name typed in the save dialog also folds the single extension
+  Cocoa appends into the archive's (`radio.gz` becomes `radio.tar.gz`, not
+  `radio.gz.tar.gz`).
+- `rfswift nix import` and the Workbench import now work on hosts whose Nix
+  daemon does not trust the user, which is every macOS install and Linux
+  multi-user install by default: the daemon refused the archive's unsigned
+  store paths with "lacks a signature by a trusted key". The store copy is
+  retried as root (sudo on a terminal, the administrator password dialog on
+  macOS, a polkit prompt on Linux from the Workbench); the profile pin, the
+  workspace and the manifest stay the user's. Listing the user in
+  `trusted-users` in `/etc/nix/nix.conf` avoids the prompt.
 - Workbench: creating a container mission right after a jailed Nix
   environment no longer fails with "isolate is supported only for Nix
   targets". The create dialog sent its Nix-only switches (lazy tools, pure

@@ -23,6 +23,7 @@ import (
 	"os/user"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"sort"
 	"strings"
 )
@@ -101,7 +102,13 @@ func RunPrivileged(script string) error {
 		cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
 		return cmd.Run()
 	}
-	// No terminal (GUI): use pkexec for a graphical password dialog.
+	// No terminal (GUI): macOS has no polkit, its administrator password
+	// dialog is the graphical prompt; elsewhere pkexec.
+	if runtime.GOOS == "darwin" {
+		cmd := exec.Command(osascriptBinary, "-e", adminShellScript([]string{"/bin/sh", "-c", script}))
+		cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
+		return cmd.Run()
+	}
 	if hasPkexec == nil {
 		cmd := exec.Command(pkexec, "/bin/sh", "-c", script)
 		cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
@@ -132,6 +139,10 @@ func RunPrivilegedCommand(argv ...string) (string, error) {
 		}
 		cmd = exec.Command("sudo", argv...)
 		cmd.Stdin = os.Stdin
+	case runtime.GOOS == "darwin":
+		// No polkit on macOS: the system's administrator password dialog is
+		// the graphical prompt (the Workbench, or a CLI without a terminal).
+		cmd = exec.Command(osascriptBinary, "-e", adminShellScript(argv))
 	default:
 		pkexec, err := exec.LookPath("pkexec")
 		if err != nil {
@@ -148,6 +159,29 @@ func RunPrivilegedCommand(argv ...string) (string, error) {
 	}
 	out, err := cmd.CombinedOutput()
 	return string(out), err
+}
+
+const osascriptBinary = "/usr/bin/osascript"
+
+// adminShellScript builds the AppleScript that runs argv as root through the
+// macOS administrator password dialog. Each argument is single-quoted for sh,
+// then the command line is escaped for an AppleScript string literal, whose
+// only escapes are backslash and double quote. shellScriptSource is the same
+// script without elevation (it runs as the caller), which the tests use to
+// check the quoting through osascript itself.
+func adminShellScript(argv []string) string {
+	return shellScriptSource(argv) + " with administrator privileges"
+}
+
+func shellScriptSource(argv []string) string {
+	quoted := make([]string, len(argv))
+	for i, arg := range argv {
+		quoted[i] = ShellQuote(arg)
+	}
+	line := strings.Join(quoted, " ")
+	line = strings.ReplaceAll(line, `\`, `\\`)
+	line = strings.ReplaceAll(line, `"`, `\"`)
+	return `do shell script "` + line + `"`
 }
 
 // GroupStatus reports, for the given groups, which do not exist on the host

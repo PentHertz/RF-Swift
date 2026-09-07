@@ -62,8 +62,15 @@ func TestEnsureArchiveExtension(t *testing.T) {
 		{"assessment.RFENV", ".rfenv", "assessment.RFENV"},
 		{"assessment", ".rfenv.age", "assessment.rfenv.age"},
 		{"radio", ".tar.gz", "radio.tar.gz"},
-		{"radio.tar", ".tar.gz", "radio.tar.tar.gz"},
 		{"radio.TAR.GZ", ".tar.gz", "radio.TAR.GZ"},
+		// Cocoa appends one allowed type to a bare name; fold it, never double it.
+		{"radio.tar", ".tar.gz", "radio.tar.gz"},
+		{"radio.gz", ".tar.gz", "radio.tar.gz"},
+		{"radio.gz", ".tar.gz.age", "radio.tar.gz.age"},
+		{"radio.tar.gz", ".tar.gz.age", "radio.tar.gz.age"},
+		{"assessment.rfenv", ".rfenv.age", "assessment.rfenv.age"},
+		{"assessment.age", ".rfenv.age", "assessment.rfenv.age"},
+		{"assessment.rfenv.age", ".rfenv", "assessment.rfenv.age.rfenv"},
 	}
 	for _, test := range tests {
 		if got := ensureArchiveExtension(test.path, test.ext); got != test.want {

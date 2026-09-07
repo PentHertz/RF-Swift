@@ -24,7 +24,7 @@ func (a *App) ExportWorkbenchProject() (string, error) {
 	destination, err := wruntime.SaveFileDialog(a.ctx, wruntime.SaveDialogOptions{
 		Title:           "Export RF Swift Workbench project",
 		DefaultFilename: a.workspace() + ".rfswift-workbench.zip",
-		Filters:         []wruntime.FileFilter{{DisplayName: "RF Swift Workbench project", Pattern: "*.rfswift-workbench.zip"}},
+		Filters:         nativeDialogFilters([]wruntime.FileFilter{{DisplayName: "RF Swift Workbench project", Pattern: "*.rfswift-workbench.zip"}}),
 	})
 	if err != nil || destination == "" {
 		return "", err
@@ -97,7 +97,7 @@ func writeProjectArchive(source, destination string) error {
 func (a *App) ImportWorkbenchProject() (string, error) {
 	archive, err := wruntime.OpenFileDialog(a.ctx, wruntime.OpenDialogOptions{
 		Title:   "Import RF Swift Workbench project",
-		Filters: []wruntime.FileFilter{{DisplayName: "RF Swift Workbench project", Pattern: "*.rfswift-workbench.zip;*.zip"}},
+		Filters: nativeDialogFilters([]wruntime.FileFilter{{DisplayName: "RF Swift Workbench project", Pattern: "*.rfswift-workbench.zip;*.zip"}}),
 	})
 	if err != nil || archive == "" {
 		return "", err

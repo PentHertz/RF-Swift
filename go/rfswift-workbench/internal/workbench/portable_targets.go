@@ -33,11 +33,27 @@ func containerArchiveFilters() []wruntime.FileFilter {
 	}
 }
 
+// ensureArchiveExtension makes path end with the extension the export writes.
+// The native save dialog may already have appended one piece of it: Cocoa adds
+// the first allowed type to a bare name, so "radio" comes back as "radio.gz"
+// or "radio.tar" for a ".tar.gz" export. Such trailing pieces are folded into
+// the full extension instead of being doubled ("radio.tar.tar.gz").
 func ensureArchiveExtension(path, extension string) string {
-	if !strings.HasSuffix(strings.ToLower(path), strings.ToLower(extension)) {
-		return path + extension
+	if strings.HasSuffix(strings.ToLower(path), strings.ToLower(extension)) {
+		return path
 	}
-	return path
+	pieces := strings.Split(strings.TrimPrefix(strings.ToLower(extension), "."), ".")
+	for stripped := true; stripped; {
+		stripped = false
+		for _, piece := range pieces {
+			suffix := "." + piece
+			if piece != "" && len(path) > len(suffix) && strings.HasSuffix(strings.ToLower(path), suffix) {
+				path = path[:len(path)-len(suffix)]
+				stripped = true
+			}
+		}
+	}
+	return path + extension
 }
 
 func (a *App) transferProgress(operation, kind, target string, percent int, stage string, bytes, total int64) {
@@ -73,7 +89,7 @@ func (a *App) ExportTarget(id, engine, password string) (string, error) {
 		path, err := wruntime.SaveFileDialog(a.ctx, wruntime.SaveDialogOptions{
 			Title:           "Export RF Swift Nix environment",
 			DefaultFilename: id + extension,
-			Filters:         nixEnvironmentFilters(),
+			Filters:         nativeDialogFilters(nixEnvironmentFilters()),
 		})
 		if err != nil || path == "" {
 			return "", err
@@ -122,7 +138,7 @@ func (a *App) ExportTarget(id, engine, password string) (string, error) {
 	path, err := wruntime.SaveFileDialog(a.ctx, wruntime.SaveDialogOptions{
 		Title:           "Export RF Swift container",
 		DefaultFilename: id + "-" + time.Now().Format("20060102-150405") + extension,
-		Filters:         containerArchiveFilters(),
+		Filters:         nativeDialogFilters(containerArchiveFilters()),
 	})
 	if err != nil || path == "" {
 		return "", err
@@ -191,7 +207,7 @@ func (a *App) ImportContainerArchive(engine, imageName, password string) (Contai
 	rfdock.SetPreferredEngine(engine)
 	path, err := wruntime.OpenFileDialog(a.ctx, wruntime.OpenDialogOptions{
 		Title:   "Import RF Swift container archive",
-		Filters: containerArchiveFilters(),
+		Filters: nativeDialogFilters(containerArchiveFilters()),
 	})
 	if err != nil || path == "" {
 		return ContainerImportResult{}, err
@@ -226,7 +242,7 @@ func (a *App) ImportNixEnvironment(name, password string) (PortableImportResult,
 	}
 	path, err := wruntime.OpenFileDialog(a.ctx, wruntime.OpenDialogOptions{
 		Title:   "Import RF Swift Nix environment",
-		Filters: nixEnvironmentFilters(),
+		Filters: nativeDialogFilters(nixEnvironmentFilters()),
 	})
 	if err != nil || path == "" {
 		return PortableImportResult{}, err

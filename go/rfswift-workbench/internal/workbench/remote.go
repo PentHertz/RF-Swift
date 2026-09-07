@@ -60,11 +60,11 @@ func (a *App) SelectRemoteBundle() (string, error) {
 }
 
 func (a *App) SelectRemoteCredentialFile() (string, error) {
-	return wruntime.OpenFileDialog(a.ctx, wruntime.OpenDialogOptions{Title: "Select an RF Swift credential file", Filters: []wruntime.FileFilter{{DisplayName: "RF Swift credentials (*.json)", Pattern: "*.json"}}})
+	return wruntime.OpenFileDialog(a.ctx, wruntime.OpenDialogOptions{Title: "Select an RF Swift credential file", Filters: nativeDialogFilters([]wruntime.FileFilter{{DisplayName: "RF Swift credentials (*.json)", Pattern: "*.json"}})})
 }
 
 func (a *App) SelectRemoteCredentialSavePath(suggested string) (string, error) {
-	return wruntime.SaveFileDialog(a.ctx, wruntime.SaveDialogOptions{Title: "Save the credential file", DefaultFilename: suggested, Filters: []wruntime.FileFilter{{DisplayName: "RF Swift credentials (*.json)", Pattern: "*.json"}}})
+	return wruntime.SaveFileDialog(a.ctx, wruntime.SaveDialogOptions{Title: "Save the credential file", DefaultFilename: suggested, Filters: nativeDialogFilters([]wruntime.FileFilter{{DisplayName: "RF Swift credentials (*.json)", Pattern: "*.json"}})})
 }
 
 // ImportRemoteCredentials installs a credential file from another machine:

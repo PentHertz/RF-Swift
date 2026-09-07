@@ -61,6 +61,33 @@ rfswift nix gc                     # reclaim store space; environments and their
 The newer resource-first spelling is `rfswift env ...`; `rfswift nix ...`
 remains compatible and prints a deprecation notice.
 
+## Moving an environment to another machine
+
+```bash
+rfswift nix export mysdr -o mysdr.rfenv          # closure + workspace, one archive
+rfswift nix import mysdr.rfenv                    # same name, workspace under ~/rfswift-workspace
+rfswift nix import mysdr.rfenv --name lab2 --workspace ~/work/lab2
+```
+
+A `.rfenv` holds the realised closure of the environment (a lazy one is
+realised first), the tools installed into it, its workspace and a manifest; the
+Workbench adds the mission's notes, findings and captures next to it and can
+encrypt the whole with a password. Import on the same architecture and OS as
+the export (an aarch64-darwin archive does not run on x86_64-linux).
+
+The archive carries no signatures for paths that were built rather than
+downloaded, and a Nix daemon accepts unsigned paths only from root or a user in
+its `trusted-users`, which the macOS installer and Linux multi-user installs do
+not grant by default. `nix import` then copies the closure as root: one sudo
+prompt on a terminal, the administrator password dialog on macOS or a polkit
+prompt on Linux from the Workbench. Only that copy runs as root; the profile
+pin, the workspace and the manifest stay yours. To avoid the prompt, add your
+user to `/etc/nix/nix.conf` and restart the daemon:
+
+```
+trusted-users = root <your user>
+```
+
 ## Updating, rebuilding and rolling back
 
 Check whether the pinned flake inputs have changed without modifying anything:

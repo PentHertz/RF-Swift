@@ -12,6 +12,7 @@ package nix
 
 import (
 	"archive/tar"
+	"bytes"
 	"compress/gzip"
 	"encoding/json"
 	"errors"
@@ -23,6 +24,7 @@ import (
 	"strings"
 
 	common "penthertz/rfswift/common"
+	"penthertz/rfswift/hostsetup"
 )
 
 const (
@@ -304,12 +306,8 @@ func ImportEnvironmentWithProgress(inFile, newName, newWorkspace string, progres
 	if m.ExtrasPath != "" {
 		copyPaths = append(copyPaths, m.ExtrasPath)
 	}
-	args := append(experimentalArgs(), "copy", "--no-check-sigs", "--from", cacheURL)
-	args = append(args, copyPaths...)
-	cp := nixCommand(args...)
-	cp.Stdout, cp.Stderr = os.Stderr, os.Stderr
-	if err := cp.Run(); err != nil {
-		return fmt.Errorf("nix copy (import) failed: %w", err)
+	if err := importClosure(cacheURL, copyPaths, report); err != nil {
+		return err
 	}
 	report(60, "Nix store closure imported")
 
@@ -376,6 +374,56 @@ func ImportEnvironmentWithProgress(inFile, newName, newWorkspace string, progres
 	}
 	common.PrintSuccessMessage(fmt.Sprintf("Imported environment '%s'%s. Enter it with: rfswift exec %s", name, wsNote, name))
 	return nil
+}
+
+// importClosure copies the archived closure from the file:// cache into the
+// local store. The archive carries no signature for paths that were built
+// rather than downloaded, and a Nix daemon accepts unsigned paths only from
+// root or a user listed in trusted-users, which neither the macOS installer
+// nor a Linux multi-user install grants by default (single-user installs and
+// root are unaffected). That one refusal is retried as root: sudo on a
+// terminal, the administrator password dialog on macOS or a polkit prompt on
+// Linux from the Workbench. Only the store copy runs as root; the profile
+// pin, workspace and manifest stay the user's.
+func importClosure(cacheURL string, paths []string, report func(percent int, stage string)) error {
+	args := append(experimentalArgs(), "copy", "--no-check-sigs", "--from", cacheURL)
+	args = append(args, paths...)
+	var stderr bytes.Buffer
+	cp := nixCommand(args...)
+	cp.Stdout = os.Stderr
+	cp.Stderr = io.MultiWriter(os.Stderr, &stderr)
+	err := cp.Run()
+	if err == nil {
+		return nil
+	}
+	if os.Geteuid() == 0 || !closureImportNeedsRoot(stderr.String()) {
+		return fmt.Errorf("nix copy (import) failed: %w", err)
+	}
+	nixBin, lookErr := exec.LookPath(NixBinary())
+	if lookErr != nil {
+		return fmt.Errorf("nix copy (import) failed: %w", err)
+	}
+	if abs, absErr := filepath.Abs(nixBin); absErr == nil {
+		nixBin = abs
+	}
+	common.PrintWarningMessage(closureImportRootNotice)
+	report(32, "Importing the Nix store closure with administrator rights (your user is not a trusted Nix user)")
+	out, rootErr := hostsetup.RunPrivilegedCommand(append([]string{nixBin}, args...)...)
+	if rootErr != nil {
+		return fmt.Errorf("the Nix daemon refused the archive's unsigned store paths (your user is not in trusted-users) and importing them as root failed: %w\n%s", rootErr, strings.TrimSpace(out))
+	}
+	return nil
+}
+
+const closureImportRootNotice = "The Nix daemon refuses the archive's unsigned store paths because your user is not in its trusted-users. " +
+	"Importing the closure as root instead (one password prompt). " +
+	"To skip the prompt next time, add your user to trusted-users in /etc/nix/nix.conf and restart the daemon."
+
+// closureImportNeedsRoot recognises the daemon's refusal of unsigned paths
+// from an untrusted user, the only import failure that root fixes.
+func closureImportNeedsRoot(stderr string) bool {
+	s := strings.ToLower(stderr)
+	return strings.Contains(s, "lacks a signature") || strings.Contains(s, "lacks a valid signature")
 }
 
 type portableLink struct {
