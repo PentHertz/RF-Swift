@@ -42,9 +42,21 @@ func TestSerialHotplugNotOfferedWithoutSupport(t *testing.T) {
 	if !strings.Contains(err.Error(), "macusb attach") {
 		t.Errorf("Lima refusal must say what to do instead: %v", err)
 	}
-	SetPreferredEngine("lima")
+	// Pin the Lima engine rather than asking detection for it: on a host
+	// without Lima (the CI runners) detection falls back to Docker and the
+	// switch would be accepted.
+	setActiveEngineForTest(&LimaEngine{})
+	defer SetPreferredEngine("docker")
 	if err := ValidateConfigChange(ConfigChange{Container: "c", Kind: "serial-hotplug", Add: true}); err == nil {
 		t.Error("validation must refuse the switch on Lima before any container is touched")
 	}
-	SetPreferredEngine("docker")
+}
+
+// setActiveEngineForTest makes GetEngine return eng without detection, so a
+// test does not depend on what the host has installed. SetPreferredEngine
+// clears the pin.
+func setActiveEngineForTest(eng ContainerEngine) {
+	activeEngineMu.Lock()
+	defer activeEngineMu.Unlock()
+	activeEngine = eng
 }
