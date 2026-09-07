@@ -89,6 +89,15 @@ branch.
 
 ### Fixed
 
+- Workbench: creating a container mission right after a jailed Nix
+  environment no longer fails with "isolate is supported only for Nix
+  targets". The create dialog sent its Nix-only switches (lazy tools, pure
+  shell, isolate) with every request, and their state survived from one
+  dialog to the next, so a Docker mission created after a Nix one with
+  "Isolate (jail)" ticked was refused by the remote agent until the app was
+  restarted. The dialog now resets those switches when it opens and sends
+  them only for a Nix environment, and the backend drops them for container
+  engines whatever the dialog sends.
 - Remote agent credentials can now move between machines. `rfswift agent
   certs client --bundle DIR --name laptop` signs a new client certificate with
   the bundle's CA and writes one JSON file with everything that client needs
