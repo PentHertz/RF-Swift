@@ -55,6 +55,9 @@ type RemoteEngine struct {
 	// follows a Nix build (nix_build_events.go turns them into UI events).
 	NixBuild    func(mission string, p rfnix.BuildProgress)
 	NixBuildLog func(mission, line string)
+	// AuditProgress, when set, receives the stages of a Nix audit as the
+	// audit script writes them (audit_progress.go).
+	AuditProgress func(mission, stage string, percent int)
 }
 
 func (e *RemoteEngine) Name() string { return "remote:" + e.Config.Endpoint }
@@ -380,6 +383,9 @@ type LocalEngine struct {
 	// callers without a UI, such as the MCP server.
 	NixBuild    func(mission string, p rfnix.BuildProgress)
 	NixBuildLog func(mission, line string)
+	// AuditProgress, when set, receives the stages of a Nix audit as the
+	// audit script writes them (audit_progress.go).
+	AuditProgress func(mission, stage string, percent int)
 }
 
 // nixBuildOptions wires a build's progress and log to the UI hooks and its
@@ -724,7 +730,7 @@ func (e *LocalEngine) Inspect(id string) (Mission, error) {
 			m.Ports = append(m.Ports, Port{Port: port.String(), Published: pub, Service: ""})
 		}
 	}
-	if summary, err := rfdock.ContainerSummaryFor(context.Background(), cli, id); err == nil {
+	if summary, err := rfdock.ContainerSummaryForEngine(context.Background(), cli, id, engType); err == nil {
 		m.Summary = &summary
 	}
 	return m, nil
@@ -794,7 +800,9 @@ func (e *LocalEngine) AuditDetailed(id string) (AuditResult, error) {
 		if envErr != nil {
 			return AuditResult{}, envErr
 		}
+		stop := e.followAuditSummary(id, env, filepath.Join(out, "summary.txt"))
 		auditErr := rfnix.RunAudit(env.FlakeRef, []string{"--env", env.Image, "--format", "json", "--out", out})
+		stop()
 		report := filepath.Join(out, "report.json")
 		if _, err := os.Stat(report); err != nil {
 			if auditErr != nil {
@@ -834,8 +842,65 @@ func parseAuditFile(path string) AuditResult {
 		collectSecurityIssues(root, "", &result.Issues)
 		appendReportLevelIssues(root, &result.Issues)
 		appendImageCVESummary(root, &result.Issues)
+		result.ScannerErrors = collectScannerErrors(root)
 	}
 	return result
+}
+
+// collectScannerErrors lists the scans the audit script could not complete:
+// its top-level issue lines "<target>: <scanner> did not complete ..." and
+// the per-target counters it sets to -1 in that case (vulnix_cves,
+// osv_advisories, grype.*). Such a report is incomplete: its zero CVE count
+// means "not scanned", not "clean".
+func collectScannerErrors(root any) []string {
+	m, ok := root.(map[string]any)
+	if !ok {
+		return nil
+	}
+	var out []string
+	add := func(s string) {
+		if s = strings.TrimSpace(s); s != "" {
+			out = append(out, s)
+		}
+	}
+	if issues, ok := m["issues"].([]any); ok {
+		for _, item := range issues {
+			if s, ok := item.(string); ok && (strings.Contains(s, "did not complete") || strings.Contains(s, "SCAN ERROR")) {
+				add(s)
+			}
+		}
+	}
+	// The counters say the same as the issue lines when the script wrote
+	// them; they matter for a report whose issue list was trimmed or
+	// produced by an older script.
+	mentioned := func(label, scanner string) bool {
+		for _, s := range out {
+			if strings.HasPrefix(s, label+": "+scanner) {
+				return true
+			}
+		}
+		return false
+	}
+	targets, _ := m["targets"].([]any)
+	for _, t := range targets {
+		tm, ok := t.(map[string]any)
+		if !ok {
+			continue
+		}
+		label := toStr(tm["label"])
+		if n, ok := asInt(tm["vulnix_cves"]); ok && n < 0 && !mentioned(label, "vulnix") {
+			add(label + ": vulnix did not complete")
+		}
+		if n, ok := asInt(tm["osv_advisories"]); ok && n < 0 && !mentioned(label, "osv-scanner") {
+			add(label + ": osv-scanner did not complete")
+		}
+		if g, ok := tm["grype"].(map[string]any); ok {
+			if n, ok := asInt(g["critical"]); ok && n < 0 && !mentioned(label, "grype") {
+				add(label + ": grype did not complete")
+			}
+		}
+	}
+	return out
 }
 
 // appendImageCVESummary turns a container report's `image_cve` block — Trivy's

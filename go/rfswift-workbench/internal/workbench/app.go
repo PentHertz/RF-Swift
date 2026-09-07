@@ -38,9 +38,17 @@ type App struct {
 	usbMu           sync.Mutex
 	usbAttached     map[string]bool // QMP device IDs we forwarded into the Lima VM this session
 
+	// Remote agents authenticated this session, by connection id, so the
+	// Agents list can switch back to one after going local without asking
+	// for its credentials again (remote.go, SelectConnection).
+	remoteMu    sync.Mutex
+	remoteConns map[string]rememberedRemote
+
 	// Live Nix build status for the UI (nix_build_events.go).
 	nixBuildOps sync.Map // mission -> operation whose progress bar the build drives
 	nixBuildLog nixBuildLogBatch
+	// Missions whose running audit reports real stages (audit_progress.go).
+	auditLiveStages sync.Map
 }
 
 func (a *App) currentScope() (string, Engine) {

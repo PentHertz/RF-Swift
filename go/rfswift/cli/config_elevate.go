@@ -28,6 +28,14 @@ func elevateForConfigEdit(cmd *cobra.Command, args []string) error {
 	if len(args) == 0 && cmd.Runnable() == false {
 		return nil // a group without a subcommand only prints help
 	}
+	// Cobra runs only the nearest persistent pre-run hook: this one replaces
+	// the root's, which is where --engine / RFSWIFT_ENGINE / the configured
+	// engine are applied. Run it first, or every configuration command would
+	// auto-detect the engine and drive the wrong daemon (Docker Desktop
+	// instead of the Lima VM on macOS, Docker instead of Podman on Linux).
+	if root := cmd.Root(); root != nil && root != cmd && root.PersistentPreRun != nil {
+		root.PersistentPreRun(cmd, args)
+	}
 	if recreate, _ := cmd.Flags().GetBool("recreate"); recreate {
 		rfdock.SetConfigEditMode(rfdock.EditModeRecreate)
 	}

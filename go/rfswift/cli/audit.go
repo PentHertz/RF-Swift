@@ -86,8 +86,9 @@ func detectAuditTarget(target string) string {
 // auditNixEnv drives the Nix audit for one environment, storing its report in
 // the environment's own state dir so `nix info` can surface the posture.
 func auditNixEnv(name, format, failOn, out string) {
+	flakeRef, image, reportDir := nixAuditTarget(name)
 	var sargs []string
-	sargs = append(sargs, "--env", name)
+	sargs = append(sargs, "--env", image)
 	if format == "" {
 		format = "stdout,txt,json"
 	}
@@ -96,13 +97,32 @@ func auditNixEnv(name, format, failOn, out string) {
 		sargs = append(sargs, "--fail-on", failOn)
 	}
 	if out == "" {
-		out = rfnix.EnvReportDir(name)
+		out = reportDir
 	}
 	sargs = append(sargs, "--out", out)
-	if err := rfnix.RunAudit(rfnix.ResolveFlakeRef(""), sargs); err != nil {
+	if err := rfnix.RunAudit(flakeRef, sargs); err != nil {
 		common.PrintErrorMessage(err)
 		os.Exit(1)
 	}
+}
+
+// nixAuditTarget resolves what the audit scans for a name given on the
+// command line. A registered environment (rfswift env run -n NAME -i IMAGE)
+// is audited as the flake environment it was built from, on the flake it
+// was pinned to, with the report kept in the environment's directory: the
+// same thing the Workbench does. The flake knows nothing of the local name,
+// so passing it as the environment ("--env superlab") only yields "could not
+// realise closure". A name that is not an environment is taken as a flake
+// environment (an image name such as "sdr_light") on the default flake.
+func nixAuditTarget(name string) (flakeRef, image, reportDir string) {
+	if env, err := rfnix.GetEnvironment(name); err == nil && env.Image != "" {
+		flakeRef = env.FlakeRef
+		if flakeRef == "" {
+			flakeRef = rfnix.ResolveFlakeRef("")
+		}
+		return flakeRef, env.Image, rfnix.EnvReportDir(name)
+	}
+	return rfnix.ResolveFlakeRef(""), name, rfnix.EnvReportDir(name)
 }
 
 func registerAuditCommand() {

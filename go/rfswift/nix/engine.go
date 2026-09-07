@@ -56,6 +56,12 @@ func RunAudit(flakeRef string, args []string) error {
 	if !IsAvailable() {
 		return fmt.Errorf("nix is not installed or not on PATH")
 	}
+	// vulnix builds its NVD database on first use and a concurrent scan fails
+	// on that database's lock; the Workbench audits several environments from
+	// one process, so audits run one at a time here (the script retries as
+	// well, for scans started from another process).
+	auditMu.Lock()
+	defer auditMu.Unlock()
 	full := append(experimentalArgs(), "run", fmt.Sprintf("%s#audit", flakeRef))
 	if len(args) > 0 {
 		full = append(full, "--")
@@ -91,6 +97,7 @@ func NixCommand(args ...string) *exec.Cmd {
 var (
 	selected   bool
 	selectedMu sync.RWMutex
+	auditMu    sync.Mutex
 )
 
 // SetSelected records whether the Nix engine is the active backend for this run.

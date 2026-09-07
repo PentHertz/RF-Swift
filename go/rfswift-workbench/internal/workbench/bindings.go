@@ -24,6 +24,7 @@ import (
 	wruntime "github.com/wailsapp/wails/v2/pkg/runtime"
 	rfdock "penthertz/rfswift/dock"
 	rfnix "penthertz/rfswift/nix"
+	"penthertz/rfswift/remote"
 )
 
 // This file is the bound API surface: every exported method is callable from the
@@ -110,6 +111,7 @@ func (a *App) Missions() ([]Mission, error) {
 		if _, statErr := os.Stat(auditPath); statErr == nil {
 			result := parseAuditFile(auditPath)
 			live[i].AuditIssues = result.Issues
+			live[i].AuditErrors = result.ScannerErrors
 			if severityTotal(live[i].EnvironmentAudit) == 0 {
 				live[i].EnvironmentAudit = result.Posture
 			}
@@ -504,6 +506,16 @@ func (a *App) ConfigureContainer(id string, change ContainerChange) error {
 		return applyContainerChangeAsRoot(c)
 	}
 	return rfdock.ApplyConfigChange(c)
+}
+
+// emitAuditStage forwards a Nix audit's real stage to the GUI and marks the
+// audit as live so the fallback timer in AuditDetailed stays quiet.
+func (a *App) emitAuditStage(mission, stage string, percent int) {
+	a.auditLiveStages.Store(mission, true)
+	if a.ctx == nil {
+		return
+	}
+	wruntime.EventsEmit(a.ctx, "rfswift:audit-progress", map[string]any{"mission": mission, "percent": percent, "stage": stage})
 }
 
 // ApplyContainerChangeJSON is the headless entry point of the Workbench
@@ -1469,6 +1481,11 @@ func (a *App) AuditDetailed(mission string) (AuditResult, error) {
 	emit := func(percent int, stage string) {
 		wruntime.EventsEmit(a.ctx, "rfswift:audit-progress", map[string]any{"mission": mission, "percent": percent, "stage": stage})
 	}
+	// The timer below is a fallback for audits that report no stages
+	// (containers, remote agents). A Nix audit reports its real stages
+	// through emitAuditStage (audit_progress.go), which switches it off.
+	a.auditLiveStages.Delete(mission)
+	defer a.auditLiveStages.Delete(mission)
 	emit(5, "Preparing audit")
 	local, localOK := a.engine().(*LocalEngine)
 	remoteEngine, remoteOK := a.engine().(*RemoteEngine)
@@ -1486,6 +1503,9 @@ func (a *App) AuditDetailed(mission string) (AuditResult, error) {
 			case <-done:
 				return
 			case <-ticker.C:
+				if _, live := a.auditLiveStages.Load(mission); live {
+					continue
+				}
 				if percent < 85 {
 					percent += 5
 					emit(percent, "Scanning packages and configuration")
@@ -1630,18 +1650,38 @@ func shellQuote(value string) string {
 // Connections lists the agents the Workbench can attach to. The scaffold ships a
 // local connection and one sample remote; real ones will come from config.
 func (a *App) Connections() []Connection {
-	return []Connection{
+	out := []Connection{
 		{ID: "local", Name: "This machine", Host: "in-process", Kind: "local", Auth: []string{"local OS user"}, CertDays: -1, Bind: "loopback", RateLimit: true, Version: "up-to-date"},
 	}
+	for _, r := range a.rememberedRemotes() {
+		out = append(out, r.Conn)
+	}
+	return out
 }
 
-// SelectConnection is explicit even while only the in-process engine exists,
-// so a future remote Engine can implement the same binding without UI changes.
+// SelectConnection switches the active engine: "local" for this machine, or
+// the id of an agent authenticated earlier this session (ConnectRemoteAgent),
+// which is probed again with the same credentials before it is selected. An
+// agent this session never authenticated to has to be connected first.
 func (a *App) SelectConnection(id string) error {
-	if id != "local" {
-		return fmt.Errorf("connect with the agent credentials before selecting %q", id)
+	if id == "local" {
+		a.setEngine(NewLocalEngine())
+		return nil
 	}
-	a.setEngine(NewLocalEngine())
+	r, ok := a.rememberedRemote(id)
+	if !ok {
+		return fmt.Errorf("agent %q is not connected in this session: connect to it with its credentials (Saved remote agents, or Add agent)", id)
+	}
+	parent := a.ctx
+	if parent == nil {
+		parent = context.Background()
+	}
+	ctx, cancel := context.WithTimeout(parent, 10*time.Second)
+	defer cancel()
+	if _, err := remote.ProbeAgent(ctx, r.Config, false); err != nil {
+		return fmt.Errorf("%s (%s) did not answer: %w", r.Conn.Name, r.Conn.Host, err)
+	}
+	a.setEngine(&RemoteEngine{Config: r.Config})
 	return nil
 }
 

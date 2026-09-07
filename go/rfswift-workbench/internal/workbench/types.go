@@ -44,6 +44,10 @@ type AuditResult struct {
 	Posture Posture         `json:"posture"`
 	Issues  []SecurityIssue `json:"issues"`
 	Raw     json.RawMessage `json:"raw,omitempty"`
+	// ScannerErrors lists the scanners that did not complete (the report's
+	// "X did not complete" lines and negative counters): the audit is then
+	// incomplete and its counts are a lower bound, to be re-run.
+	ScannerErrors []string `json:"scannerErrors,omitempty"`
 }
 
 // Mission is one pentest against one target (a container or a Nix env).
@@ -69,6 +73,7 @@ type Mission struct {
 	Status           string          `json:"status"` // stopped|starting|up (runtime, from the engine)
 	EnvironmentAudit Posture         `json:"environmentAudit"`
 	AuditIssues      []SecurityIssue `json:"auditIssues,omitempty"`
+	AuditErrors      []string        `json:"auditErrors,omitempty"` // scanners that did not complete in the last audit
 	FindingSummary   Posture         `json:"findingSummary"`
 	Posture          Posture         `json:"posture,omitempty"` // legacy environment-audit migration only
 	Notes            string          `json:"notes"`             // short config note

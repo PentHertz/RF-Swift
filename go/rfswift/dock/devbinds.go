@@ -28,9 +28,11 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"sort"
 	"strings"
 
+	"github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/client"
 
 	"penthertz/rfswift/hostsetup"
@@ -108,12 +110,31 @@ func DeviceRuleFor(path string) string {
 // callers that want mappings instead; it is empty now that a bind mount of
 // a node is honoured as such.
 func SanitizeDeviceBinds(binds []string) (kept []string, devices []string, rules []string, warnings []DevBindWarning) {
+	// With Lima the container runs inside a QEMU VM: the /dev paths a mission
+	// binds (the USB tree, serial ports) exist in that VM, not on this macOS
+	// host, so stat'ing them here would wrongly drop every one as "missing".
+	// Keep them and attach the cgroup rule by name instead, leaving the paths
+	// to the engine as the rest of this package does.
+	remote := devicePathsBelongToVM()
 	for _, bind := range binds {
 		spec := strings.TrimSpace(bind)
 		parts := strings.SplitN(spec, ":", 3)
 		source := parts[0]
 		if len(parts) < 2 || !strings.HasPrefix(source, "/dev/") {
 			kept = append(kept, bind)
+			continue
+		}
+		if remote {
+			kept = append(kept, bind)
+			target := parts[1]
+			if rule := devTreeRules[source]; rule != "" {
+				rules = appendMissing(rules, rule)
+			} else if rule := devTreeRules[target]; rule != "" {
+				rules = appendMissing(rules, rule)
+			}
+			if IsSerialDevicePath(source) || IsSerialDevicePath(target) {
+				rules = appendMissing(rules, SerialCgroupRules...)
+			}
 			continue
 		}
 		info, err := os.Stat(source)
@@ -142,6 +163,25 @@ func SanitizeDeviceBinds(binds []string) (kept []string, devices []string, rules
 	return kept, devices, rules, warnings
 }
 
+// devicePathsBelongToVMFn is the seam tests use to pin the VM-path decision
+// without a live engine; production keeps the engine-backed implementation.
+var devicePathsBelongToVMFn = devicePathsBelongToVMFromEngine
+
+// devicePathsBelongToVM reports whether the /dev paths in a bind mount refer
+// to a virtual machine rather than this host. On macOS the Lima engine runs
+// containers in a QEMU VM whose /dev tree (USB devices hot-plugged with
+// `rfswift macusb attach`, serial ports) is not visible from the host, so a
+// host stat of those paths is meaningless and must not gate the bind.
+func devicePathsBelongToVM() bool { return devicePathsBelongToVMFn() }
+
+func devicePathsBelongToVMFromEngine() bool {
+	if runtime.GOOS == "linux" {
+		return false
+	}
+	engine := GetEngine()
+	return engine != nil && engine.Type() == EngineLima
+}
+
 // PreflightDevices refuses to start a container whose /dev bind mount would
 // be created as a directory, and explains a device mapping that is missing,
 // which the engine would otherwise report as "error gathering device
@@ -156,6 +196,15 @@ func PreflightDevices(ctx context.Context, cli *client.Client, id string) error 
 		return nil
 	}
 	var problems []string
+	if devicePathsBelongToVM() {
+		// The paths live in the engine's VM (Lima): ask it, the host knows
+		// nothing about them. An unreachable VM leaves the start to report.
+		problems = preflightVMDevices(hc)
+		if len(problems) == 0 {
+			return nil
+		}
+		return fmt.Errorf("cannot start %s: %s. Attach the device to the VM (rfswift macusb attach, or the USB button in the Workbench), or remove the mapping from the mission's configuration", strings.TrimPrefix(res.Container.Name, "/"), strings.Join(problems, "; "))
+	}
 	for _, bind := range hc.Binds {
 		source := strings.SplitN(bind, ":", 2)[0]
 		if !strings.HasPrefix(source, "/dev/") {
@@ -180,6 +229,37 @@ func PreflightDevices(ctx context.Context, cli *client.Client, id string) error 
 		return nil
 	}
 	return fmt.Errorf("cannot start %s: %s. Plug the device in, or remove the mapping from the mission's configuration", strings.TrimPrefix(res.Container.Name, "/"), strings.Join(problems, "; "))
+}
+
+// preflightVMDevices is PreflightDevices for a container whose /dev paths
+// live in the engine's VM: the missing ones, by the VM's account.
+func preflightVMDevices(hc *container.HostConfig) []string {
+	var paths []string
+	for _, bind := range hc.Binds {
+		if source := strings.SplitN(bind, ":", 2)[0]; strings.HasPrefix(source, "/dev/") {
+			paths = append(paths, source)
+		}
+	}
+	for _, dev := range hc.Devices {
+		paths = append(paths, dev.PathOnHost)
+	}
+	infos, ok := vmPathInfo(paths)
+	if !ok {
+		return nil
+	}
+	var problems []string
+	for _, bind := range hc.Binds {
+		source := strings.SplitN(bind, ":", 2)[0]
+		if strings.HasPrefix(source, "/dev/") && !infos[source].Exists {
+			problems = append(problems, fmt.Sprintf("%s is bound as a volume but not present in the VM; starting now would create a directory in its place", source))
+		}
+	}
+	for _, dev := range hc.Devices {
+		if !infos[dev.PathOnHost].Exists {
+			problems = append(problems, fmt.Sprintf("device %s is not present in the VM", dev.PathOnHost))
+		}
+	}
+	return problems
 }
 
 // serialPortName matches the hot-pluggable serial ports: USB CDC-ACM

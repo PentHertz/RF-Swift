@@ -173,6 +173,9 @@ func resolveBindingKind(kind, source string, add bool) (resolved string, rules [
 		}
 		return "volume", nil, nil
 	}
+	if devicePathsBelongToVM() {
+		return resolveVMBindingKind(kind, source)
+	}
 	info, statErr := os.Stat(source)
 	switch {
 	case statErr == nil && info.Mode()&os.ModeDevice != 0:
@@ -204,6 +207,56 @@ func resolveBindingKind(kind, source string, add bool) (resolved string, rules [
 		return "device", nil, nil
 	default:
 		return kind, nil, fmt.Errorf("%s is not present on this host: plug the device in first (a serial port can be added while unplugged)", source)
+	}
+}
+
+// resolveVMBindingKind is resolveBindingKind for a /dev path that lives in
+// the engine's VM (Lima): the VM is asked what the path is. When the VM
+// cannot answer, the path is taken as named (a known tree such as
+// /dev/bus/usb gets its rule, a serial port its rules) rather than refused:
+// the engine reports a path that is really absent when the container starts.
+func resolveVMBindingKind(kind, source string) (resolved string, rules []string, err error) {
+	infos, ok := vmPathInfo([]string{source})
+	if !ok {
+		if kind == "device" {
+			if _, tree := devTreeRules[source]; tree {
+				return kind, nil, fmt.Errorf("%s is a device tree: add it as a bind mount (it is mounted with its cgroup rule)", source)
+			}
+			return "device", nil, nil
+		}
+		if rule := devTreeRules[source]; rule != "" {
+			rules = append(rules, rule)
+		}
+		if IsSerialDevicePath(source) {
+			rules = appendMissing(rules, SerialCgroupRules...)
+		}
+		return "volume", rules, nil
+	}
+	info := infos[source]
+	switch {
+	case info.Device:
+		if kind == "device" {
+			return "device", nil, nil
+		}
+		if rule := info.Rule(); rule != "" {
+			rules = append(rules, rule)
+		}
+		if IsSerialDevicePath(source) {
+			rules = appendMissing(rules, SerialCgroupRules...)
+		}
+		return "volume", rules, nil
+	case info.IsDir:
+		if kind == "device" {
+			return kind, nil, fmt.Errorf("%s is a directory in the VM: add it as a bind mount (it is mounted as a tree with its cgroup rule)", source)
+		}
+		if rule := devTreeRules[source]; rule != "" {
+			rules = append(rules, rule)
+		}
+		return "volume", rules, nil
+	case info.Exists:
+		return kind, nil, fmt.Errorf("%s is neither a device node nor a directory in the VM", source)
+	default:
+		return kind, nil, fmt.Errorf("%s is not present in the VM that runs the containers: attach the device first (rfswift macusb attach, or the USB button in the Workbench), then add it", source)
 	}
 }
 

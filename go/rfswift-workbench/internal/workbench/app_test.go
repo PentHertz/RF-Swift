@@ -3,6 +3,8 @@ package workbench
 import (
 	"os"
 	"path/filepath"
+	"penthertz/rfswift/remote"
+	"strings"
 	"testing"
 )
 
@@ -171,6 +173,35 @@ func TestUnsupportedConnectionIsRejected(t *testing.T) {
 	}
 	if err := a.SelectConnection("local"); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// An agent authenticated this session stays in the Agents list after going
+// local, so it can be selected again without re-entering its credentials;
+// one that stopped answering is refused with its name, not a credentials hint.
+func TestRememberedAgentIsListedAndReprobedOnSelect(t *testing.T) {
+	a := testApp(t, &fakeEngine{})
+	conn := Connection{ID: "remote-lab-agent", Name: "lab-agent", Host: "https://localhost:1", Kind: "remote"}
+	a.rememberRemote(conn, remote.ClientConfig{Endpoint: conn.Host}, RemoteConnectRequest{Endpoint: conn.Host})
+	var listed bool
+	for _, c := range a.Connections() {
+		if c.ID == conn.ID && c.Kind == "remote" {
+			listed = true
+		}
+	}
+	if !listed {
+		t.Fatalf("remembered agent missing from Connections: %+v", a.Connections())
+	}
+	err := a.SelectConnection(conn.ID)
+	if err == nil {
+		t.Fatal("an agent that does not answer must not be selected")
+	}
+	if !strings.Contains(err.Error(), "lab-agent") || strings.Contains(err.Error(), "credentials") {
+		t.Fatalf("the refusal must name the agent, not ask for credentials: %v", err)
+	}
+	a.ForgetRemoteAgent(conn.ID)
+	if len(a.Connections()) != 1 {
+		t.Fatalf("forgotten agent still listed: %+v", a.Connections())
 	}
 }
 

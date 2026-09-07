@@ -507,6 +507,7 @@ func normalizeCreationDevices(specs, binds, rules []string) (normalizedCreationD
 		}
 		return false
 	}
+	isDirectory := creationDeviceDirProbe(specs)
 	for _, spec := range specs {
 		parts := strings.SplitN(strings.TrimSpace(spec), ":", 3)
 		if len(parts) < 2 {
@@ -514,10 +515,7 @@ func normalizeCreationDevices(specs, binds, rules []string) (normalizedCreationD
 		}
 		host, target := parts[0], parts[1]
 		_, knownTree := majorRules[target]
-		isDir := false
-		if stat, err := os.Stat(host); err == nil {
-			isDir = stat.IsDir()
-		}
+		isDir := isDirectory(host)
 		if knownTree || isDir {
 			mount := host + ":" + target + ":rw"
 			if !bindExistsByPrefix(result.binds, host+":"+target) {
@@ -531,6 +529,30 @@ func normalizeCreationDevices(specs, binds, rules []string) (normalizedCreationD
 		result.nodes = append(result.nodes, spec)
 	}
 	return result, outRules
+}
+
+// creationDeviceDirProbe says whether a device spec's host side is a
+// directory (a tree to bind-mount rather than a node to map). The paths are
+// looked at where they live: on this host, or inside the engine's VM (Lima)
+// where a host stat would see nothing.
+func creationDeviceDirProbe(specs []string) func(string) bool {
+	if !devicePathsBelongToVM() {
+		return func(host string) bool {
+			stat, err := os.Stat(host)
+			return err == nil && stat.IsDir()
+		}
+	}
+	var paths []string
+	for _, spec := range specs {
+		if host := strings.SplitN(strings.TrimSpace(spec), ":", 2)[0]; host != "" {
+			paths = append(paths, host)
+		}
+	}
+	infos, ok := vmPathInfo(paths)
+	if !ok {
+		return func(string) bool { return false }
+	}
+	return func(host string) bool { return infos[host].IsDir }
 }
 
 func exposedPortsString(ports network.PortSet) string {

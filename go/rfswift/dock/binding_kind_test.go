@@ -3,6 +3,7 @@ package dock
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -82,5 +83,106 @@ func TestValidateConfigChangeBeforeElevation(t *testing.T) {
 	}
 	if err := ValidateConfigChange(ConfigChange{Container: "c", Kind: "capability", Value: "NET_ADMIN", Add: true}); err != nil {
 		t.Errorf("capability: %v", err)
+	}
+}
+
+// pinVMPathInfo makes the VM probe answer from a table (nil: VM unreachable).
+func pinVMPathInfo(table map[string]VMPathInfo) func() {
+	prev := vmPathInfoFn
+	vmPathInfoFn = func(paths []string) (map[string]VMPathInfo, bool) {
+		if table == nil {
+			return nil, false
+		}
+		out := map[string]VMPathInfo{}
+		for _, p := range paths {
+			if info, ok := table[p]; ok {
+				out[p] = info
+			}
+		}
+		return out, true
+	}
+	return func() { vmPathInfoFn = prev }
+}
+
+// TestResolveBindingKindLimaVM: with Lima the /dev paths live in the VM, so
+// the bindings dialog and `rfswift bindings add` must ask the VM instead of
+// refusing every path as "not present on this host" (the macOS bug where
+// /dev/bus/usb could not be added or removed from a mission).
+func TestResolveBindingKindLimaVM(t *testing.T) {
+	defer pinDevicePathsBelongToVM(true)()
+	defer pinVMPathInfo(map[string]VMPathInfo{
+		"/dev/bus/usb": {Exists: true, IsDir: true, Major: -1},
+		"/dev/ttyACM0": {Exists: true, Device: true, Kind: "c", Major: 166},
+		"/dev/etc":     {Exists: true, Major: -1},
+	})()
+	for _, kind := range []string{"volume", "device-bind"} {
+		got, rules, err := resolveBindingKind(kind, "/dev/bus/usb", true)
+		if err != nil || got != "volume" || len(rules) != 1 || rules[0] != "c 189:* rwm" {
+			t.Errorf("%s /dev/bus/usb in the VM -> %s %v %v", kind, got, rules, err)
+		}
+	}
+	if _, _, err := resolveBindingKind("device", "/dev/bus/usb", true); err == nil {
+		t.Error("a VM directory as a device mapping must be refused with advice")
+	}
+	if got, rules, err := resolveBindingKind("device", "/dev/ttyACM0", true); err != nil || got != "device" || len(rules) != 0 {
+		t.Errorf("device node in the VM -> %s %v %v", got, rules, err)
+	}
+	got, rules, err := resolveBindingKind("volume", "/dev/ttyACM0", true)
+	if err != nil || got != "volume" || !reflect.DeepEqual(rules, []string{"c 166:* rwm", "c 188:* rwm", "c 204:* rwm"}) {
+		t.Errorf("serial node bound in the VM -> %s %v %v", got, rules, err)
+	}
+	if _, _, err := resolveBindingKind("volume", "/dev/etc", true); err == nil {
+		t.Error("a plain file in the VM must be refused")
+	}
+	if _, _, err := resolveBindingKind("volume", "/dev/ttyUSB0", true); err == nil || !strings.Contains(err.Error(), "not present in the VM") {
+		t.Errorf("absent in the VM: %v", err)
+	}
+	// Removal never asks.
+	if got, _, err := resolveBindingKind("volume", "/dev/ttyUSB0", false); err != nil || got != "volume" {
+		t.Errorf("removal: %s %v", got, err)
+	}
+	// VM unreachable: taken as named, rules by name, nothing refused.
+	defer pinVMPathInfo(nil)()
+	if got, rules, err := resolveBindingKind("volume", "/dev/bus/usb", true); err != nil || got != "volume" || !reflect.DeepEqual(rules, []string{"c 189:* rwm"}) {
+		t.Errorf("unreachable VM, USB tree -> %s %v %v", got, rules, err)
+	}
+	if got, _, err := resolveBindingKind("device", "/dev/ttyACM0", true); err != nil || got != "device" {
+		t.Errorf("unreachable VM, device -> %s %v", got, err)
+	}
+	if _, _, err := resolveBindingKind("device", "/dev/bus/usb", true); err == nil {
+		t.Error("unreachable VM: the USB tree as a device mapping is still refused")
+	}
+}
+
+// TestNormalizeCreationDevicesLimaVM: a VM directory given under devices is
+// promoted to a bind mount from the VM's answer, not a host stat.
+func TestNormalizeCreationDevicesLimaVM(t *testing.T) {
+	defer pinDevicePathsBelongToVM(true)()
+	defer pinVMPathInfo(map[string]VMPathInfo{
+		"/dev/serial":  {Exists: true, IsDir: true, Major: -1},
+		"/dev/ttyACM0": {Exists: true, Device: true, Kind: "c", Major: 166},
+	})()
+	got, _ := normalizeCreationDevices([]string{"/dev/serial:/dev/serial", "/dev/ttyACM0:/dev/ttyACM0", "/dev/bus/usb:/dev/bus/usb"}, nil, nil)
+	if !reflect.DeepEqual(got.binds, []string{"/dev/serial:/dev/serial:rw", "/dev/bus/usb:/dev/bus/usb:rw"}) {
+		t.Fatalf("binds = %#v", got.binds)
+	}
+	if !reflect.DeepEqual(got.nodes, []string{"/dev/ttyACM0:/dev/ttyACM0"}) {
+		t.Fatalf("nodes = %#v", got.nodes)
+	}
+}
+
+func TestParseVMPathInfo(t *testing.T) {
+	got := parseVMPathInfo("c a6 /dev/ttyACM0\nd - /dev/bus/usb\nf - /dev/etc\nbad line\n")
+	if info := got["/dev/ttyACM0"]; !info.Device || info.Major != 166 || info.Rule() != "c 166:* rwm" {
+		t.Errorf("ttyACM0 = %#v", info)
+	}
+	if info := got["/dev/bus/usb"]; !info.IsDir || info.Rule() != "" {
+		t.Errorf("bus/usb = %#v", info)
+	}
+	if info := got["/dev/etc"]; !info.Exists || info.IsDir || info.Device {
+		t.Errorf("etc = %#v", info)
+	}
+	if len(got) != 3 {
+		t.Errorf("entries = %d", len(got))
 	}
 }

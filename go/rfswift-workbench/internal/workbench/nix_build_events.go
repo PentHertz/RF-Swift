@@ -43,6 +43,7 @@ func (a *App) hookEngine(eng Engine) {
 	switch e := eng.(type) {
 	case *LocalEngine:
 		e.NixBuild, e.NixBuildLog = a.emitNixBuild, a.emitNixBuildLog
+		e.AuditProgress = a.emitAuditStage
 	case *RemoteEngine:
 		e.NixBuild, e.NixBuildLog = a.emitNixBuild, a.emitNixBuildLog
 	}

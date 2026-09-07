@@ -87,7 +87,8 @@ through its device cgroup and RF Swift creates their nodes inside it when it
 starts and whenever a terminal opens, so a port plugged in later works without
 re-creating the container. Off removes those cgroup rules and leaves the
 container's /dev alone; ports must then be mapped or bind-mounted explicitly.`,
-	Args: cobra.ExactArgs(1),
+	Args:         cobra.ExactArgs(1),
+	SilenceUsage: true,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		contID, _ := cmd.Flags().GetString("container")
 		if contID == "" {

@@ -12,13 +12,10 @@ package dock
 import (
 	"fmt"
 	"os"
-	"os/exec"
 	"runtime"
 	"strings"
 
 	"github.com/moby/moby/api/types/container"
-
-	rfutils "penthertz/rfswift/rfutils"
 )
 
 // DeviceIssue is one device mapping (or /dev bind mount) the engine cannot
@@ -95,16 +92,14 @@ func limaPathsExist(instance string, paths []string) (map[string]bool, bool) {
 	if len(paths) == 0 {
 		return map[string]bool{}, true
 	}
-	script := `for p in "$@"; do [ -e "$p" ] && printf '%s\n' "$p"; done; exit 0`
-	args := append([]string{"shell", instance, "sh", "-c", script, "sh"}, paths...)
-	out, err := exec.Command(rfutils.LimaCtl(), args...).Output()
-	if err != nil {
+	infos, ok := limaPathInfoIn(instance, paths)
+	if !ok {
 		return nil, false
 	}
 	found := map[string]bool{}
-	for _, line := range strings.Split(string(out), "\n") {
-		if line = strings.TrimSpace(line); line != "" {
-			found[line] = true
+	for path, info := range infos {
+		if info.Exists {
+			found[path] = true
 		}
 	}
 	return found, true

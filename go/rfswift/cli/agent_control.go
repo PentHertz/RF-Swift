@@ -296,6 +296,7 @@ func agentInstallTool(mission, name string) error {
 	if env, err := rfnix.GetEnvironment(mission); err == nil {
 		return rfnix.InstallPackages(env.FlakeRef, []string{name}, mission)
 	}
+	agentRoute(mission)
 	return rfdock.ContainerInstallScript(mission, "entrypoint.sh", name)
 }
 
@@ -308,6 +309,7 @@ func agentAudit(id string) (map[string]string, error) {
 	if env, envErr := rfnix.GetEnvironment(id); envErr == nil {
 		err = rfnix.RunAudit(env.FlakeRef, []string{"--env", env.Image, "--format", "json", "--out", out})
 	} else {
+		agentRoute(id)
 		err = rfdock.AuditContainer(id, rfdock.ContainerAuditOptions{OutDir: out, Formats: "json"})
 	}
 	data, readErr := os.ReadFile(filepath.Join(out, "report.json"))
@@ -327,16 +329,39 @@ func agentEngines() []rfdock.ContainerEngine {
 	if rfdock.IsLimaEngineCandidate() {
 		candidates = append(candidates, &rfdock.LimaEngine{})
 	}
+	// GetEngine exports the Lima/Podman socket as DOCKER_HOST; the Docker
+	// engine below must not dial it and list that daemon a second time.
+	agentResetEngineEnv()
 	var out []rfdock.ContainerEngine
 	seen := map[rfdock.EngineType]bool{}
+	seenSocket := map[string]bool{}
 	for _, eng := range candidates {
 		if eng == nil || seen[eng.Type()] || !eng.IsAvailable() {
 			continue
 		}
 		seen[eng.Type()] = true
+		if key := canonicalSocketPath(eng.GetSocketPath()); key != "" {
+			if seenSocket[key] {
+				continue
+			}
+			seenSocket[key] = true
+		}
 		out = append(out, eng)
 	}
 	return out
+}
+
+// canonicalSocketPath resolves a socket reference so two engines that reach
+// the same daemon (DOCKER_HOST pointing into the Lima VM) are seen as one.
+func canonicalSocketPath(socket string) string {
+	socket = strings.TrimPrefix(socket, "unix://")
+	if socket == "" {
+		return ""
+	}
+	if resolved, err := filepath.EvalSymlinks(socket); err == nil {
+		return resolved
+	}
+	return socket
 }
 
 // agentContainers lists this host's RF Swift containers on one engine. The
@@ -464,6 +489,8 @@ func agentInspect(id string) (agentTarget, error) {
 	if e, err := rfnix.GetEnvironment(id); err == nil {
 		return agentTarget{ID: e.Name, Title: e.Name, Engine: "nix", Env: e.Image, Image: "nix env (" + e.FlakeRef + ")", User: "you", Net: "host (native)", Status: map[bool]string{true: "up", false: "stopped"}[e.Realised()], Mounts: []string{e.Workspace}, FlakeRef: e.FlakeRef}, nil
 	}
+	// The container may live on any engine of this host (agent_route.go).
+	eng := agentRoute(id)
 	c, err := rfdock.NewEngineClient()
 	if err != nil {
 		return agentTarget{}, err
@@ -474,7 +501,11 @@ func agentInspect(id string) (agentTarget, error) {
 		return agentTarget{}, err
 	}
 	i := res.Container
-	t := agentTarget{ID: strings.TrimPrefix(i.Name, "/"), Title: strings.TrimPrefix(i.Name, "/"), Engine: string(rfdock.GetEngine().Type()), User: "root", Status: "stopped"}
+	engineType := rfdock.GetEngine().Type()
+	if eng != nil {
+		engineType = eng.Type()
+	}
+	t := agentTarget{ID: strings.TrimPrefix(i.Name, "/"), Title: strings.TrimPrefix(i.Name, "/"), Engine: string(engineType), User: "root", Status: "stopped"}
 	if i.Config != nil {
 		t.Image = i.Config.Image
 		if i.Config.User != "" {
@@ -496,7 +527,7 @@ func agentInspect(id string) (agentTarget, error) {
 		}
 		t.Mounts = append(t.Mounts, m.Source+" -> "+m.Destination+" ("+rw+")")
 	}
-	if summary, err := rfdock.ContainerSummaryFor(context.Background(), c, id); err == nil {
+	if summary, err := rfdock.ContainerSummaryForEngine(context.Background(), c, id, engineType); err == nil {
 		t.Summary = &summary
 	}
 	return t, nil
@@ -505,12 +536,19 @@ func agentLifecycle(ctx context.Context, id string, start bool) error {
 	if _, e := rfnix.GetEnvironment(id); e == nil {
 		return errors.New("Nix environments have no start/stop lifecycle")
 	}
+	agentRoute(id)
 	c, e := rfdock.NewEngineClient()
 	if e != nil {
 		return e
 	}
 	defer c.Close()
 	if start {
+		// A /dev mapping whose device is absent is refused with the fix
+		// rather than reported by the engine (or, for a bind, turned into a
+		// directory in its place).
+		if e := rfdock.PreflightDevices(ctx, c, id); e != nil {
+			return e
+		}
 		if _, e = c.ContainerStart(ctx, id, client.ContainerStartOptions{}); e == nil {
 			_, _ = rfdock.SyncSerialDevices(ctx, c, id)
 		}
@@ -558,9 +596,11 @@ func agentDelete(id string, nix, clean bool) error {
 		}
 		return nil
 	}
+	agentRoute(id)
 	return rfdock.RemoveContainer(id)
 }
 func agentConfigure(p agentChange) error {
+	agentRoute(p.ID)
 	switch p.Kind {
 	case "volume", "device":
 		return rfdock.UpdateBinding(p.ID, p.Kind, p.Source, p.Target, p.Add)
@@ -602,7 +642,7 @@ func agentTerminalStart(p agentTerminalRequest) (map[string]string, error) {
 	}
 	args := []string{"--engine", t.Engine, "exec", "-c", p.Mission, "-e", p.Shell}
 	cmd := exec.Command(exe, args...)
-	cmd.Env = append(os.Environ(), "TERM=xterm-256color", "COLORTERM=truecolor")
+	cmd.Env = agentChildEnv("TERM=xterm-256color", "COLORTERM=truecolor")
 	f, e := ptyx.Start(cmd, p.Cols, p.Rows)
 	if e != nil {
 		return nil, e

@@ -125,6 +125,7 @@ func ValidateConfigChange(c ConfigChange) error {
 			return errors.New("port is required")
 		}
 	case "serial-hotplug":
+		return SerialHotplugUnavailableError(GetEngine())
 	default:
 		return fmt.Errorf("unsupported container setting %q", c.Kind)
 	}

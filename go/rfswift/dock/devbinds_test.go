@@ -55,6 +55,9 @@ func TestSanitizeDeviceBinds(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("device nodes are a Unix notion")
 	}
+	// This case exercises the host-stat path; pin the decision so an ambient
+	// Lima engine on the dev machine cannot flip it to the VM branch.
+	defer pinDevicePathsBelongToVM(false)()
 	binds := []string{
 		"/home/user/work:/root/work:rw",
 		"/dev/null:/dev/null",
@@ -83,6 +86,63 @@ func TestSanitizeDeviceBinds(t *testing.T) {
 	}
 	if got := DeviceRuleFor("/dev/rfswift-no-such-node"); got != "" {
 		t.Errorf("a missing node has no rule, got %q", got)
+	}
+}
+
+// pinDevicePathsBelongToVM forces the VM-path decision for a test and returns
+// a restore func.
+func pinDevicePathsBelongToVM(v bool) func() {
+	prev := devicePathsBelongToVMFn
+	devicePathsBelongToVMFn = func() bool { return v }
+	return func() { devicePathsBelongToVMFn = prev }
+}
+
+// TestSanitizeDeviceBindsLimaVM covers containers that run in the Lima VM: the
+// /dev paths a mission binds live in the VM, not on this host, so they must be
+// kept (with their cgroup rules) instead of dropped by a host stat. This is
+// the HydraSDR / USB-tree case on macOS.
+func TestSanitizeDeviceBindsLimaVM(t *testing.T) {
+	defer pinDevicePathsBelongToVM(true)()
+	binds := []string{
+		"/home/user/work:/root/work:rw",
+		"/dev/bus/usb:/dev/bus/usb",
+		"/dev/ttyACM0:/dev/ttyACM0",
+		"not-a-bind",
+	}
+	kept, devices, rules, warnings := SanitizeDeviceBinds(binds)
+	if len(warnings) != 0 {
+		t.Fatalf("VM paths must not warn about the host, got %+v", warnings)
+	}
+	if len(devices) != 0 {
+		t.Errorf("no device mappings are produced, got %v", devices)
+	}
+	for _, want := range []string{"/dev/bus/usb:/dev/bus/usb", "/dev/ttyACM0:/dev/ttyACM0", "not-a-bind"} {
+		found := false
+		for _, k := range kept {
+			if k == want {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("bind %q must be kept for the VM, kept = %v", want, kept)
+		}
+	}
+	hasRule := func(r string) bool {
+		for _, x := range rules {
+			if x == r {
+				return true
+			}
+		}
+		return false
+	}
+	if !hasRule("c 189:* rwm") {
+		t.Errorf("the USB tree must carry its cgroup rule, got %v", rules)
+	}
+	for _, r := range SerialCgroupRules {
+		if !hasRule(r) {
+			t.Errorf("a serial port bind must carry the serial cgroup rules, got %v", rules)
+		}
 	}
 }
 

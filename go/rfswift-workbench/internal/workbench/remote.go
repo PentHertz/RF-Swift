@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -142,7 +143,51 @@ func (a *App) ConnectRemoteAgent(req RemoteConnectRequest) (Connection, error) {
 		return Connection{}, err
 	}
 	a.setEngine(&RemoteEngine{Config: cfg})
-	return Connection{ID: "remote-" + strings.ToLower(strings.ReplaceAll(p.Info.Name, " ", "-")), Name: p.Info.Name, Host: req.Endpoint, Kind: "remote", TLS: p.TLS, Cipher: p.Cipher, Cert: p.Fingerprint, CertDays: p.CertDays, CertPin: true, Auth: []string{"mTLS client certificate"}, Bind: p.Info.Exposure, RateLimit: p.Info.RateLimit, Version: "up-to-date"}, nil
+	conn := Connection{ID: "remote-" + strings.ToLower(strings.ReplaceAll(p.Info.Name, " ", "-")), Name: p.Info.Name, Host: req.Endpoint, Kind: "remote", TLS: p.TLS, Cipher: p.Cipher, Cert: p.Fingerprint, CertDays: p.CertDays, CertPin: true, Auth: []string{"mTLS client certificate"}, Bind: p.Info.Exposure, RateLimit: p.Info.RateLimit, Version: "up-to-date"}
+	a.rememberRemote(conn, cfg, req)
+	return conn, nil
+}
+
+// rememberedRemote is an agent this session authenticated to: enough to
+// select it again from the Agents list after switching to the local engine.
+type rememberedRemote struct {
+	Conn    Connection
+	Config  remote.ClientConfig
+	Request RemoteConnectRequest
+}
+
+func (a *App) rememberRemote(conn Connection, cfg remote.ClientConfig, req RemoteConnectRequest) {
+	a.remoteMu.Lock()
+	defer a.remoteMu.Unlock()
+	if a.remoteConns == nil {
+		a.remoteConns = map[string]rememberedRemote{}
+	}
+	a.remoteConns[conn.ID] = rememberedRemote{Conn: conn, Config: cfg, Request: req}
+}
+
+func (a *App) rememberedRemotes() []rememberedRemote {
+	a.remoteMu.Lock()
+	defer a.remoteMu.Unlock()
+	out := make([]rememberedRemote, 0, len(a.remoteConns))
+	for _, r := range a.remoteConns {
+		out = append(out, r)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Conn.ID < out[j].Conn.ID })
+	return out
+}
+
+func (a *App) rememberedRemote(id string) (rememberedRemote, bool) {
+	a.remoteMu.Lock()
+	defer a.remoteMu.Unlock()
+	r, ok := a.remoteConns[id]
+	return r, ok
+}
+
+// ForgetRemoteAgent drops a remembered agent (the Agents list's Disconnect).
+func (a *App) ForgetRemoteAgent(id string) {
+	a.remoteMu.Lock()
+	defer a.remoteMu.Unlock()
+	delete(a.remoteConns, id)
 }
 
 // PingRemoteAgent checks the authenticated remote session without changing the

@@ -27,6 +27,7 @@ package dock
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -135,10 +136,34 @@ func hostSerialNodes() []serialNode {
 // after creation: a rootful daemon on Linux (device cgroup rules and mknod
 // inside the container both work). Rootless Podman and the Lima VM cannot.
 func SerialHotplugSupported(eng ContainerEngine) bool {
-	if eng == nil || eng.Type() == EngineLima || IsRootlessPodman() {
+	if eng == nil {
+		return false
+	}
+	return serialHotplugSupportedType(eng.Type())
+}
+
+// serialHotplugSupportedType is SerialHotplugSupported by engine type.
+func serialHotplugSupportedType(t EngineType) bool {
+	if t == EngineLima || (t == EnginePodman && os.Getuid() != 0) {
 		return false
 	}
 	return deviceNumbersSupported()
+}
+
+// SerialHotplugUnavailableError explains why the switch is refused on an
+// engine without hot-plug, nil where it works.
+func SerialHotplugUnavailableError(eng ContainerEngine) error {
+	if SerialHotplugSupported(eng) {
+		return nil
+	}
+	switch {
+	case eng != nil && eng.Type() == EngineLima:
+		return errors.New("serial hot-plug is not available with the Lima engine: attach the device to the VM (rfswift macusb attach, or the USB button in the Workbench), then add the port as a device or bind mount")
+	case eng != nil && eng.Type() == EnginePodman:
+		return errors.New("serial hot-plug is not available with rootless Podman (device cgroup rules are refused): map the port when it is plugged in, or run RF Swift with sudo")
+	default:
+		return errors.New("serial hot-plug is not available on this host")
+	}
 }
 
 // buildSerialSyncScript writes the shell run inside the container: create
@@ -230,6 +255,9 @@ func SyncSerialDevices(ctx context.Context, cli *client.Client, id string) ([]st
 // the rules and sets the label so the sync leaves the container's /dev
 // alone. Applied by the file edit or the re-creation the engine calls for.
 func UpdateSerialHotplug(containerID string, on bool) error {
+	if err := SerialHotplugUnavailableError(GetEngine()); err != nil {
+		return err
+	}
 	ctx := context.Background()
 	cli, err := NewEngineClient()
 	if err != nil {
