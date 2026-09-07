@@ -9,6 +9,7 @@ import (
 	"penthertz/rfswift/common"
 	rfdock "penthertz/rfswift/dock"
 	rfnix "penthertz/rfswift/nix"
+	"penthertz/rfswift/remote"
 	rfutils "penthertz/rfswift/rfutils"
 )
 
@@ -86,6 +87,9 @@ func usbDevID(vendorID, productID string) string {
 // USB passthrough does not apply (Linux passes devices at creation; remote
 // engines are not driven from this process).
 func (a *App) usbBackend() string {
+	if eng, ok := a.engine().(*RemoteEngine); ok {
+		return a.remoteUSBBackend(eng)
+	}
 	if _, ok := a.engine().(*LocalEngine); !ok {
 		return ""
 	}
@@ -102,6 +106,52 @@ func (a *App) usbBackend() string {
 	return ""
 }
 
+// remoteUSBBackend asks the agent which USB passthrough backend its host
+// offers. A "native" (Linux) agent and an unreachable one report no backend:
+// there is nothing to forward from here, so the GUI keeps the USB panel hidden
+// exactly as it does for a local Linux host. A usbipd (Windows) or lima
+// (macOS) agent drives the panel, and the backend value words the dialog.
+func (a *App) remoteUSBBackend(eng *RemoteEngine) string {
+	// An engine with no endpoint has no agent to ask (e.g. a not-yet-connected
+	// selection): report no backend without a network call.
+	if strings.TrimSpace(eng.Config.Endpoint) == "" {
+		return ""
+	}
+	info, err := eng.USBInfo()
+	if err != nil {
+		return ""
+	}
+	switch info.Backend {
+	case "usbipd", "lima":
+		return info.Backend
+	}
+	return ""
+}
+
+// remoteToUSBDevice maps a device the agent reported to the GUI model.
+func remoteToUSBDevice(d remote.USBDevice) USBDevice {
+	dev := USBDevice{
+		Name:        d.Name,
+		VendorID:    d.VendorID,
+		ProductID:   d.ProductID,
+		Serial:      d.Serial,
+		Attached:    d.Attached,
+		BusID:       d.BusID,
+		GUID:        d.GUID,
+		Shared:      d.Shared,
+		Connected:   d.Connected,
+		State:       d.State,
+		Description: d.Description,
+	}
+	if d.InputDevice {
+		dev.Warning = "Looks like a keyboard or mouse: the agent host cannot use it while it is attached."
+	}
+	if d.Forced {
+		dev.Warning = strings.TrimSpace(dev.Warning + " Shared with --force: the agent host cannot use it while shared.")
+	}
+	return dev
+}
+
 func (a *App) usbSupported() bool { return a.usbBackend() != "" }
 
 // USBSupported tells the GUI whether to surface USB passthrough controls at all.
@@ -113,6 +163,13 @@ func (a *App) USBBackend() string { return a.usbBackend() }
 
 // USBHostInfo summarises the backend state for the dialog header.
 func (a *App) USBHostInfo() (USBHostInfo, error) {
+	if eng, ok := a.engine().(*RemoteEngine); ok {
+		ri, err := eng.USBInfo()
+		if err != nil {
+			return USBHostInfo{}, err
+		}
+		return USBHostInfo{Backend: ri.Backend, Version: ri.Version, WSLDistro: ri.WSLDistro, Notes: ri.Notes}, nil
+	}
 	info := USBHostInfo{Backend: a.usbBackend()}
 	switch info.Backend {
 	case "usbipd":
@@ -145,7 +202,7 @@ func (a *App) USBHostInfo() (USBHostInfo, error) {
 		}
 		info.Notes = append(info.Notes, "Lima VM "+limaInstanceName()+": "+state)
 	default:
-		return info, fmt.Errorf("USB passthrough is available on macOS (Lima) and Windows (usbipd-win)")
+		return info, fmt.Errorf("USB passthrough needs a local macOS (Lima) or Windows (usbipd-win) engine, or a connected agent whose host provides one; this connection offers neither")
 	}
 	return info, nil
 }
@@ -189,13 +246,24 @@ func (a *App) attachedUSBIDs() map[string]bool {
 // ListHostUSB lists host USB devices with their forwarding state for the
 // active backend.
 func (a *App) ListHostUSB() ([]USBDevice, error) {
+	if eng, ok := a.engine().(*RemoteEngine); ok {
+		devs, err := eng.USBList()
+		if err != nil {
+			return nil, err
+		}
+		out := make([]USBDevice, 0, len(devs))
+		for _, d := range devs {
+			out = append(out, remoteToUSBDevice(d))
+		}
+		return out, nil
+	}
 	switch a.usbBackend() {
 	case "lima":
 		return a.listLimaUSB()
 	case "usbipd":
 		return a.listWinUSB()
 	default:
-		return nil, fmt.Errorf("USB passthrough is available on macOS (Lima) and Windows (usbipd-win)")
+		return nil, fmt.Errorf("USB passthrough needs a local macOS (Lima) or Windows (usbipd-win) engine, or a connected agent whose host provides one; this connection offers neither")
 	}
 }
 
@@ -303,6 +371,10 @@ func isNonForwardableWinUSB(d rfutils.USBDevice) bool {
 // AttachHostUSB forwards a host USB device (by vid:pid) into the Lima VM. The
 // VM must be running — start it from the engine doctor first.
 func (a *App) AttachHostUSB(vendorID, productID string) error {
+	if eng, ok := a.engine().(*RemoteEngine); ok {
+		_, err := eng.USBAttach(remote.USBAttachRequest{VendorID: vendorID, ProductID: productID})
+		return err
+	}
 	if a.usbBackend() != "lima" {
 		return fmt.Errorf("USB passthrough by vendor/product ID needs macOS with Lima installed (use AttachWinUSB on Windows)")
 	}
@@ -318,6 +390,9 @@ func (a *App) AttachHostUSB(vendorID, productID string) error {
 
 // DetachHostUSB removes a forwarded USB device from the Lima VM.
 func (a *App) DetachHostUSB(vendorID, productID string) error {
+	if eng, ok := a.engine().(*RemoteEngine); ok {
+		return eng.USBDetach(remote.USBDetachRequest{VendorID: vendorID, ProductID: productID})
+	}
 	if a.usbBackend() != "lima" {
 		return fmt.Errorf("USB passthrough by vendor/product ID needs macOS with Lima installed (use DetachWinUSB on Windows)")
 	}
@@ -334,6 +409,14 @@ func (a *App) DetachHostUSB(vendorID, productID string) error {
 // with an explanation. Attaching itself never needs administrator rights.
 func (a *App) AttachWinUSB(busID string, allowElevation bool) (WinUSBResult, error) {
 	var out WinUSBResult
+	if eng, ok := a.engine().(*RemoteEngine); ok {
+		if !rfutils.IsValidBusID(busID) {
+			return out, fmt.Errorf("invalid bus ID %q", busID)
+		}
+		res, err := eng.USBAttach(remote.USBAttachRequest{BusID: busID, AllowElevation: allowElevation})
+		out = WinUSBResult{Device: remoteToUSBDevice(res.Device), Bound: res.Bound, Elevated: res.Elevated, Already: res.Already}
+		return out, err
+	}
 	if a.usbBackend() != "usbipd" {
 		return out, fmt.Errorf("USB passthrough via usbipd needs Windows with usbipd-win installed")
 	}
@@ -350,6 +433,12 @@ func (a *App) AttachWinUSB(busID string, allowElevation bool) (WinUSBResult, err
 
 // DetachWinUSB returns a forwarded device to Windows (no elevation needed).
 func (a *App) DetachWinUSB(busID string) error {
+	if eng, ok := a.engine().(*RemoteEngine); ok {
+		if !rfutils.IsValidBusID(busID) {
+			return fmt.Errorf("invalid bus ID %q", busID)
+		}
+		return eng.USBDetach(remote.USBDetachRequest{BusID: busID})
+	}
 	if a.usbBackend() != "usbipd" {
 		return fmt.Errorf("USB passthrough via usbipd needs Windows with usbipd-win installed")
 	}
@@ -363,6 +452,9 @@ func (a *App) DetachWinUSB(busID string) error {
 // ref is the bus ID of a connected device or the GUID of an unplugged one.
 // Returns true when a UAC prompt was used.
 func (a *App) UnshareWinUSB(ref string) (bool, error) {
+	if eng, ok := a.engine().(*RemoteEngine); ok {
+		return eng.USBUnshare(ref)
+	}
 	if a.usbBackend() != "usbipd" {
 		return false, fmt.Errorf("USB passthrough via usbipd needs Windows with usbipd-win installed")
 	}
@@ -390,6 +482,9 @@ func humanWinUSBError(err error) error {
 // /dev/bus/usb (and lsusb when available) for WSL 2 - for the "what the VM
 // currently sees" panel.
 func (a *App) VMUSBInfo() (string, error) {
+	if eng, ok := a.engine().(*RemoteEngine); ok {
+		return eng.USBView()
+	}
 	switch a.usbBackend() {
 	case "lima":
 		if !rfutils.IsLimaInstanceRunning(limaInstanceName()) {
@@ -399,6 +494,6 @@ func (a *App) VMUSBInfo() (string, error) {
 	case "usbipd":
 		return rfutils.WSLUSBView()
 	default:
-		return "", fmt.Errorf("USB passthrough is available on macOS (Lima) and Windows (usbipd-win)")
+		return "", fmt.Errorf("USB passthrough needs a local macOS (Lima) or Windows (usbipd-win) engine, or a connected agent whose host provides one; this connection offers neither")
 	}
 }

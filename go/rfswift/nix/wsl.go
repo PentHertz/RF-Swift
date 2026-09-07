@@ -489,7 +489,7 @@ func wslCommandError(args []string, output string, err error) error {
 		if version == "" {
 			version = "unknown"
 		}
-		return fmt.Errorf("the rfswift inside WSL distribution %s (version %s) does not support this operation; this RF Swift is %s. Update it with: rfswift nix wsl setup --update", st.Distro, version, common.Version)
+		return fmt.Errorf("the Linux rfswift inside WSL distribution %s (version %s) does not understand this command: it is an older build than this Windows rfswift (%s), even when the two version strings match (a -dev build does not change the string between builds). Refresh it with: rfswift nix wsl setup --update", st.Distro, version, common.Version)
 	}
 	if line := lastNonEmptyLine(stripANSI(output)); line != "" {
 		return fmt.Errorf("%s (rfswift %s in WSL %s)", line, strings.Join(args, " "), wslDistro())

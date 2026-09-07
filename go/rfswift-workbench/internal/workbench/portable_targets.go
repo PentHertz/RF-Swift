@@ -63,6 +63,9 @@ func (a *App) ExportTarget(id, engine, password string) (string, error) {
 		return "", err
 	}
 	if engine == "nix" {
+		if rfnix.UsesWSL() {
+			return "", errors.New("exporting a Nix environment is not available on Windows yet (the Nix engine runs inside WSL 2). Export it from a Linux or macOS host for now.")
+		}
 		extension := ".rfenv"
 		if password != "" {
 			extension += ".age"

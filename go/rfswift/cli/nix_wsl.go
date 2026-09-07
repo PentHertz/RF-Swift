@@ -50,6 +50,13 @@ func shouldBridgeNixToWSL(cmd *cobra.Command) bool {
 	if cmd == nil || isNixWSLCommand(cmd) {
 		return false
 	}
+	// Exporting a Nix environment is handled on the Windows host itself
+	// (rfnix.ExportEnvironment), which for now warns that export is not yet
+	// available under WSL. Bridging it would instead run the heavy closure
+	// realise inside WSL, so keep it on this side where the warning fires.
+	if isNixCommand(cmd) && cmd.Name() == "export" {
+		return false
+	}
 	return isNixCommand(cmd) || engineCommandNames[cmd.Name()]
 }
 

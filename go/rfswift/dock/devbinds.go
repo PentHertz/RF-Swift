@@ -175,11 +175,16 @@ var devicePathsBelongToVMFn = devicePathsBelongToVMFromEngine
 func devicePathsBelongToVM() bool { return devicePathsBelongToVMFn() }
 
 func devicePathsBelongToVMFromEngine() bool {
-	if runtime.GOOS == "linux" {
-		return false
-	}
-	engine := GetEngine()
-	return engine != nil && engine.Type() == EngineLima
+	// Only a native Linux host shares its /dev with the containers. On Windows
+	// the container engine (Docker Desktop, Podman) runs inside a WSL 2 VM, and
+	// on macOS inside a VM as well (Docker Desktop/OrbStack/Podman, or Lima), so
+	// a host stat of a Linux /dev path is meaningless: it always fails and would
+	// wrongly refuse the start of every device-mapped mission (the very error
+	// remote agents and the CLI hit on Windows while the local Workbench, which
+	// skips the preflight off-Linux, worked). Where the VM can be queried (Lima)
+	// vmPathInfo answers; otherwise the callers fall back to what the path names
+	// say and the engine performs the start.
+	return runtime.GOOS != "linux"
 }
 
 // PreflightDevices refuses to start a container whose /dev bind mount would

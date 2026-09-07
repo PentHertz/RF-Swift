@@ -235,23 +235,11 @@ func wslRebuildEnvironment(name string) error {
 }
 
 func wslExportEnvironment(name, outFile string, progress ExportProgress) error {
-	if _, err := wslReady(); err != nil {
-		return err
-	}
-	if progress != nil {
-		progress(10, "Exporting inside the WSL distribution")
-	}
-	args := []string{"nix", "export", name}
-	if outFile != "" {
-		args = append(args, "-o", outFile)
-	}
-	if err := runInteractive(rfswiftCommand(args...)); err != nil {
-		return err
-	}
-	if progress != nil {
-		progress(100, "Environment export complete")
-	}
-	return nil
+	// Not available on Windows for the moment: the Nix engine runs inside WSL 2,
+	// where realising a (lazy) environment closure for the archive is currently
+	// unreliable. Warn clearly instead of starting a long export that may not
+	// finish. The parameters are kept for the eventual WSL implementation.
+	return fmt.Errorf("exporting a Nix environment is not available on Windows yet (the Nix engine runs inside WSL 2); export it from a Linux or macOS host for now")
 }
 
 func wslImportEnvironment(inFile, newName, newWorkspace string, progress ImportProgress) error {

@@ -293,6 +293,40 @@ func (e *RemoteEngine) Delete(id string, nix, clean bool) error {
 func (e *RemoteEngine) Configure(id string, change ContainerChange) error {
 	return e.call("targets.configure", map[string]any{"id": id, "kind": change.Kind, "value": change.Value, "source": change.Source, "target": change.Target, "add": change.Add}, nil)
 }
+
+// USB passthrough on the agent host. These drive the agent's own usbipd/Lima
+// backend (remote/usb.go); the device must be plugged into the agent machine.
+// They are not part of the Engine interface - the App surfaces them to the GUI
+// via a *RemoteEngine type assertion, the same way EngineReport is.
+func (e *RemoteEngine) USBInfo() (remote.USBHostInfo, error) {
+	var out remote.USBHostInfo
+	err := e.call("usb.info", map[string]any{}, &out)
+	return out, err
+}
+func (e *RemoteEngine) USBList() ([]remote.USBDevice, error) {
+	var out []remote.USBDevice
+	err := e.call("usb.list", map[string]any{}, &out)
+	return out, err
+}
+func (e *RemoteEngine) USBView() (string, error) {
+	var out string
+	err := e.call("usb.view", map[string]any{}, &out)
+	return out, err
+}
+func (e *RemoteEngine) USBAttach(req remote.USBAttachRequest) (remote.USBAttachResult, error) {
+	var out remote.USBAttachResult
+	err := e.call("usb.attach", req, &out)
+	return out, err
+}
+func (e *RemoteEngine) USBDetach(req remote.USBDetachRequest) error {
+	return e.call("usb.detach", req, nil)
+}
+func (e *RemoteEngine) USBUnshare(ref string) (bool, error) {
+	var out remote.USBUnshareResult
+	err := e.call("usb.unshare", map[string]any{"ref": ref}, &out)
+	return out.Elevated, err
+}
+
 func (e *RemotePendingEngine) Name() string                        { return "remote:" + e.Agent }
 func (e *RemotePendingEngine) ListTargets() ([]Mission, error)     { return nil, e.unavailable() }
 func (e *RemotePendingEngine) Inspect(string) (Mission, error)     { return Mission{}, e.unavailable() }

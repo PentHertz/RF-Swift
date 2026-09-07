@@ -358,8 +358,20 @@ func renderNixSummary(env *rfnix.Environment) {
 	if env.FlakeOrigin != "" {
 		items = append(items, tui.PropertyItem{Key: "Pinned from", Value: env.FlakeOrigin + " (move with: rfswift env update " + env.Name + ")"})
 	}
-	items = append(items, tui.PropertyItem{Key: "Engine", Value: "nix (native host user)"})
+	items = append(items, tui.PropertyItem{Key: "Engine", Value: nixEngineLabel()})
 	tui.RenderPropertySheet("🧪 Nix Environment Summary", tui.ColorPrimary, items)
+}
+
+// nixEngineLabel says where the Nix engine actually runs, for the summary
+// sheets. Driven from Windows the engine runs inside a WSL 2 distribution (this
+// code executes there, so WSL_DISTRO_NAME is set) rather than on the native
+// host, so name the distribution instead of calling it "native". On a real
+// Linux/macOS host it is the host user's own Nix.
+func nixEngineLabel() string {
+	if distro := os.Getenv("WSL_DISTRO_NAME"); distro != "" {
+		return "nix in WSL 2 (" + distro + ")"
+	}
+	return "nix (native host user)"
 }
 
 // warnInaccessibleSerialDevices tells the user about serial ports (the usual
@@ -489,7 +501,7 @@ func nixWizard(cat *rfnix.Catalog, image, name string) (*nixWizardResult, error)
 		"Mode":        mode,
 		"Isolation":   isolation,
 		"Workspace":   wsLabel(res.name, res.workspace),
-		"Engine":      "nix (native)",
+		"Engine":      nixEngineLabel(),
 	}
 	tui.PrintRecap("Nix Environment", items, []string{"Environment", "Name", "Tools", "Mode", "Isolation", "Workspace", "Engine"})
 	tui.PrintCLIEquivalent(buildNixCLI(res))

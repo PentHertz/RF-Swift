@@ -247,6 +247,30 @@ func agentControl(ctx context.Context, req remote.ControlRequest) (any, error) {
 			return nil, err
 		}
 		return agentArtifactRead(p.Mission, p.Path)
+	case "usb.info":
+		return agentUSBInfo()
+	case "usb.list":
+		return agentUSBList()
+	case "usb.view":
+		return agentUSBView()
+	case "usb.attach":
+		var p remote.USBAttachRequest
+		if err := decode(&p); err != nil {
+			return nil, err
+		}
+		return agentUSBAttach(p)
+	case "usb.detach":
+		var p remote.USBDetachRequest
+		if err := decode(&p); err != nil {
+			return nil, err
+		}
+		return nil, agentUSBDetach(p)
+	case "usb.unshare":
+		var p remote.USBUnshareRequest
+		if err := decode(&p); err != nil {
+			return nil, err
+		}
+		return agentUSBUnshare(p.Ref)
 	default:
 		return nil, errors.New("unsupported control method")
 	}
@@ -629,9 +653,6 @@ func agentTerminalStart(p agentTerminalRequest) (map[string]string, error) {
 	if p.Rows < 2 {
 		p.Rows = 24
 	}
-	if p.Shell == "" {
-		p.Shell = "/bin/zsh"
-	}
 	t, e := agentInspect(p.Mission)
 	if e != nil {
 		return nil, e
@@ -640,7 +661,19 @@ func agentTerminalStart(p agentTerminalRequest) (map[string]string, error) {
 	if e != nil {
 		return nil, e
 	}
-	args := []string{"--engine", t.Engine, "exec", "-c", p.Mission, "-e", p.Shell}
+	// A container runs the -e shell (with a zsh->bash fallback in the exec
+	// path); a Nix environment instead treats a changed -e as a command to
+	// *execute*, so passing a shell path like /bin/zsh makes it try to run a
+	// binary the env does not ship (exit 127). Pass -e only for containers; a
+	// Nix terminal opens the environment's own interactive shell (no -e).
+	args := []string{"--engine", t.Engine, "exec", "-c", p.Mission}
+	if t.Engine != "nix" {
+		shell := p.Shell
+		if shell == "" {
+			shell = "/bin/zsh"
+		}
+		args = append(args, "-e", shell)
+	}
 	cmd := exec.Command(exe, args...)
 	cmd.Env = agentChildEnv("TERM=xterm-256color", "COLORTERM=truecolor")
 	f, e := ptyx.Start(cmd, p.Cols, p.Rows)
