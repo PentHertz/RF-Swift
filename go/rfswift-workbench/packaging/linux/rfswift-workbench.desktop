@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=RF Swift Workbench
+GenericName=RF & Hardware Security Workspace
+Comment=Research and assessment workspace for RF Swift
+Exec=rfswift-workbench
+Icon=rfswift-workbench
+Terminal=false
+Categories=Development;Security;
+Keywords=RF;SDR;radio;hardware;security;pentest;

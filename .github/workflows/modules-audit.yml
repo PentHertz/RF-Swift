@@ -15,36 +15,22 @@
 #     (sum.golang.org) - the same transparency log that protects our
 #     regular dependencies. No curl-pipe-bash, no unverified release
 #     binaries.
-#   - `go mod verify` re-hashes the local module cache against go.sum,
-#     catching any module tampered with in transit or on disk.
+#   - `go mod verify` re-hashes cached modules against their recorded
+#     download hashes, catching changes made after download.
 
 name: Modules audit
 
+# Reusable implementation for CI and the release gate. User-facing triggers
+# belong to those two orchestrator workflows.
 on:
-  push:
-    branches: ["main", "v3.0.0-dev"]
-    paths:
-      - "go/**"
-      - ".github/workflows/modules-audit.yml"
-  pull_request:
-    branches: ["main", "v3.0.0-dev"]
-    paths:
-      - "go/**"
-      - ".github/workflows/modules-audit.yml"
-  schedule:
-    # Weekly (Monday 05:23 UTC). Catches CVEs and malicious-package
-    # advisories published against versions we already depend on.
-    - cron: "23 5 * * 1"
-  workflow_dispatch:
-  # Allows release.yml to run this workflow as a blocking gate.
   workflow_call:
+    inputs:
+      module:
+        type: string
+        default: go/rfswift
 
 permissions:
   contents: read
-
-defaults:
-  run:
-    working-directory: go/rfswift
 
 jobs:
   # ---- Module integrity + hygiene (fast, ~20s) ----------------------------
@@ -52,6 +38,9 @@ jobs:
   # go.mod/go.sum have no drift, and that deprecated or unwanted
   # modules cannot silently creep back into the dependency graph.
   integrity:
+    defaults:
+      run:
+        working-directory: ${{ inputs.module }}
     name: module integrity
     runs-on: ubuntu-latest
     steps:
@@ -59,8 +48,8 @@ jobs:
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version-file: go/rfswift/go.mod
-          cache-dependency-path: go/rfswift/go.sum
+          go-version-file: ${{ inputs.module }}/go.mod
+          cache-dependency-path: ${{ inputs.module }}/go.sum
 
       - name: Download modules (checksum-DB verified)
         # Every module fetched here is validated against go.sum AND the
@@ -68,8 +57,21 @@ jobs:
         # not set, so verification is on by default).
         run: go mod download
 
-      - name: Verify module cache against go.sum
-        run: go mod verify
+      - name: Verify downloaded module cache
+        # Local replacements have no downloaded archive or ziphash. Make
+        # them workspace modules for this step so Go only verifies cached
+        # dependencies. Later checks still use the original module graph.
+        shell: bash
+        run: |
+          local_modules=$(go list -m -f '{{with .Replace}}{{if not .Version}}{{.Dir}}{{end}}{{end}}' all)
+          if [[ -n "$local_modules" ]]; then
+            export GOWORK="$RUNNER_TEMP/module-integrity.work"
+            go work init .
+            while IFS= read -r local_module; do
+              go work use "$local_module"
+            done <<< "$local_modules"
+          fi
+          go mod verify
 
       - name: Check go.mod/go.sum drift
         # Fails if `go mod tidy` would change anything - i.e. someone
@@ -101,6 +103,9 @@ jobs:
   # reachable from our code - so a failure here is a real, actionable
   # CVE exposure, not noise from an unused transitive dependency.
   govulncheck:
+    defaults:
+      run:
+        working-directory: ${{ inputs.module }}
     name: govulncheck (CVEs)
     runs-on: ubuntu-latest
     steps:
@@ -108,8 +113,8 @@ jobs:
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version-file: go/rfswift/go.mod
-          cache-dependency-path: go/rfswift/go.sum
+          go-version-file: ${{ inputs.module }}/go.mod
+          cache-dependency-path: ${{ inputs.module }}/go.sum
 
       - name: Install govulncheck (sumdb-verified)
         run: go install golang.org/x/vuln/cmd/govulncheck@v1.3.0
@@ -124,6 +129,9 @@ jobs:
   # supply-chain attacks: typosquats, hijacked maintainer releases,
   # and packages with known backdoors - even when no CVE exists.
   osv-scan:
+    defaults:
+      run:
+        working-directory: ${{ inputs.module }}
     name: osv-scanner (CVEs + malicious packages)
     runs-on: ubuntu-latest
     steps:
@@ -131,8 +139,8 @@ jobs:
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version-file: go/rfswift/go.mod
-          cache-dependency-path: go/rfswift/go.sum
+          go-version-file: ${{ inputs.module }}/go.mod
+          cache-dependency-path: ${{ inputs.module }}/go.sum
 
       - name: Install osv-scanner (sumdb-verified)
         run: go install github.com/google/osv-scanner/v2/cmd/osv-scanner@v2.3.8

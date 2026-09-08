@@ -187,10 +187,13 @@ var profileInitCmd = &cobra.Command{
 Existing profiles are not overwritten unless --force is used.`,
 	Run: func(cmd *cobra.Command, args []string) {
 		force, _ := cmd.Flags().GetBool("force")
-		created, skipped, stale := rfdock.InitDefaultProfiles(force)
+		created, updated, skipped, stale := rfdock.InitDefaultProfiles(force)
 
 		if created > 0 {
 			common.PrintSuccessMessage(fmt.Sprintf("%d profile(s) created in %s", created, rfdock.ProfilesDirByPlatform()))
+		}
+		if updated > 0 {
+			common.PrintSuccessMessage(fmt.Sprintf("%d built-in profile(s) refreshed to the current defaults (they had not been edited)", updated))
 		}
 		if skipped > 0 {
 			common.PrintInfoMessage(fmt.Sprintf("%d profile(s) already exist (use --force to overwrite)", skipped))
@@ -200,7 +203,7 @@ Existing profiles are not overwritten unless --force is used.`,
 				"%d kept profile(s) differ from the current defaults: %s\nThey may point at image tags that no longer exist, or miss the capabilities and devices the defaults now set. Refresh with 'rfswift profile init --force' (this discards local edits).",
 				len(stale), strings.Join(stale, ", ")))
 		}
-		if created == 0 && skipped == 0 {
+		if created == 0 && updated == 0 && skipped == 0 {
 			common.PrintInfoMessage("No profiles to create")
 		}
 	},

@@ -420,7 +420,7 @@ func ContainerPull(imageref string, imagetag string) {
 	common.PrintInfoMessage(fmt.Sprintf("Pulling image from: %s", actualPullRef))
 	out, err := cli.ImagePull(ctx, actualPullRef, client.ImagePullOptions{})
 	if err != nil {
-		common.PrintErrorMessage(err)
+		common.PrintErrorMessage(explainRegistryAuthError(err))
 		return
 	}
 	defer out.Close()
@@ -962,7 +962,7 @@ func SaveImageToFile(imageName string, outputFile string, pullFirst bool) error 
 		// Pull the image
 		out, err := cli.ImagePull(ctx, actualPullRef, client.ImagePullOptions{})
 		if err != nil {
-			return fmt.Errorf("failed to pull image: %v", err)
+			return fmt.Errorf("failed to pull image: %w", explainRegistryAuthError(err))
 		}
 		defer out.Close()
 
@@ -1085,7 +1085,7 @@ func ContainerPullVersion(imageref string, version string, imagetag string) {
 
 	out, err := cli.ImagePull(ctx, pullRef, client.ImagePullOptions{})
 	if err != nil {
-		common.PrintErrorMessage(fmt.Errorf("failed to pull image: %v", err))
+		common.PrintErrorMessage(fmt.Errorf("failed to pull image: %w", explainRegistryAuthError(err)))
 		return
 	}
 	defer out.Close()

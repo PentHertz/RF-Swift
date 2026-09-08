@@ -1,0 +1,46 @@
+name: Regression checks
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  remote-platforms:
+    name: Remote transport and terminals (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go/rfswift/go.mod
+          cache-dependency-path: |
+            go/rfswift/go.sum
+            go/rfswift-workbench/go.sum
+      - name: Native remote and PTY tests
+        working-directory: go/rfswift
+        env:
+          RFSWIFT_TEST_OS_KEYRING: ${{ runner.os != 'Linux' && '1' || '0' }}
+        run: go test -race ./remote ./ptyx ./cli
+      - name: Build native CLI and agent
+        working-directory: go/rfswift
+        run: go build ./...
+      - name: All CLI regression tests
+        if: runner.os == 'Linux'
+        working-directory: go/rfswift
+        run: go test -race ./...
+      - name: Workbench backend regression tests
+        if: runner.os == 'Linux'
+        working-directory: go/rfswift-workbench
+        run: go test -race ./...
+      - name: Terminal keyboard behavior and frontend sink guards
+        if: runner.os == 'Linux'
+        run: |
+          node go/rfswift-workbench/scripts/terminal-keyboard-test.mjs
+          node go/rfswift-workbench/scripts/frontend-security-test.mjs

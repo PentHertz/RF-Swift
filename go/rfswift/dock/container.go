@@ -9,6 +9,7 @@ package dock
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -19,6 +20,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/moby/moby/api/pkg/stdcopy"
 	"github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/api/types/network"
 	"github.com/moby/moby/client"
@@ -442,10 +444,15 @@ func ContainerExec(containerIdentifier string, WorkingDir string) {
 		}
 	}
 
+	if err := PreflightDevices(ctx, cli, containerIdentifier); err != nil {
+		common.PrintErrorMessage(err)
+		return
+	}
 	if _, err := cli.ContainerStart(ctx, containerIdentifier, client.ContainerStartOptions{}); err != nil {
 		common.PrintErrorMessage(err)
 		return
 	}
+	syncSerialAfterStart(ctx, cli, containerIdentifier)
 
 	common.PrintSuccessMessage(fmt.Sprintf("Container '%s' started successfully", containerIdentifier))
 
@@ -484,23 +491,12 @@ func ContainerExec(containerIdentifier string, WorkingDir string) {
 		printVPNInfo()
 	}
 
-	// Determine shell to use:
-	// Priority: 1) explicitly set via CLI (-e flag) if different from default
-	//           2) container's original shell (from containerJSON.Path)
-	//           3) fallback to /bin/bash
+	// Use the requested interactive shell. Do not infer it from
+	// containerJSON.Path: that is the container startup executable and may be an
+	// entrypoint wrapper rather than a shell.
 	shellToUse := containerCfg.shell
-
-	// If shell is empty or default, prefer container's configured shell
-	if shellToUse == "" || shellToUse == "/bin/bash" {
-		containerShell := containerJSON.Path
-		if containerShell != "" {
-			shellToUse = containerShell
-		}
-	}
-
-	// Final fallback
 	if shellToUse == "" {
-		shellToUse = "/bin/bash"
+		shellToUse = "/bin/zsh"
 	}
 
 	if err := execInteractiveSession(ctx, cli, containerIdentifier, shellToUse, WorkingDir); err != nil {
@@ -540,8 +536,53 @@ func ContainerRun(containerName string) {
 	}
 
 	bindings := combineBindings(containerCfg.x11forward, containerCfg.extrabinding)
+	// A device node listed under the bind mounts becomes a device mapping;
+	// a missing or stray one is dropped with an explanation (devbinds.go).
+	bindings, devBinds, bindRules, devWarnings := SanitizeDeviceBinds(bindings)
+	for _, w := range devWarnings {
+		if !IsSerialDevicePath(w.Path) {
+			common.PrintWarningMessage(w.String())
+		}
+	}
+	for _, spec := range devBinds {
+		appendCommaSeparated(&containerCfg.devices, spec)
+	}
+	for _, rule := range bindRules {
+		if !strings.Contains(containerCfg.cgroups, rule) {
+			appendCommaSeparated(&containerCfg.cgroups, rule)
+		}
+	}
+	// Serial ports are attached on demand where the engine allows it: not
+	// mapped at creation, opened through the cgroup rules and their nodes
+	// created by SyncSerialDevices when present (serialhotplug.go).
+	var serialPorts []string
+	if runtime.GOOS == "linux" && SerialHotplugSupported(GetEngine()) {
+		specs := strings.Split(containerCfg.devices, ",")
+		serialPorts = serialPortsIn(specs)
+		for _, w := range devWarnings {
+			if IsSerialDevicePath(w.Path) {
+				serialPorts = appendMissing(serialPorts, w.Path)
+			}
+		}
+		absent, rest := serialSpecs(specs)
+		if len(serialPorts) > 0 {
+			containerCfg.devices = strings.Join(rest, ",")
+			for _, rule := range SerialCgroupRules {
+				if !strings.Contains(containerCfg.cgroups, rule) {
+					appendCommaSeparated(&containerCfg.cgroups, rule)
+				}
+			}
+			if len(absent) > 0 {
+				common.PrintInfoMessage("Serial ports not plugged in now are attached on demand: plug the device in and enter the container (or open a terminal) to get its /dev/tty* node.")
+			}
+		}
+		devWarnings = nil
+	}
+	// Windows: sound comes from WSLg's PulseAudio socket under /mnt/wslg.
+	bindings = ensureWSLgMount(bindings, containerCfg.pulseServer)
 	extrahosts := splitAndCombine(containerCfg.extrahosts)
 	dockerenv := combineEnv(containerCfg.xdisplay, containerCfg.pulseServer, containerCfg.extraenv)
+	bindings, dockerenv = addForwardedXAuthority(containerCfg.xdisplay, bindings, dockerenv)
 
 	// Desktop mode: inject env vars and port configuration
 	if containerCfg.desktopProto != "" {
@@ -656,14 +697,27 @@ func ContainerRun(containerName string) {
 		engine := GetEngine()
 		if runtime.GOOS == "linux" && (engine == nil || engine.Type() != EngineLima) {
 			var presentDevices []container.DeviceMapping
+			var missingDevices []string
 			for _, dev := range filteredDevices {
 				if _, err := os.Stat(dev.PathOnHost); err != nil {
-					common.PrintWarningMessage(fmt.Sprintf("Skipping non-existent device: %s", dev.PathOnHost))
+					missingDevices = append(missingDevices, dev.PathOnHost)
 					continue
 				}
 				presentDevices = append(presentDevices, dev)
 			}
+			// A serial port the mission names is a requirement: stop with the
+			// notice rather than create a mission that cannot reach it.
+			if err := RequiredDevicesError(devWarnings, missingDevices); err != nil {
+				common.PrintErrorMessage(err)
+				return
+			}
+			for _, path := range missingDevices {
+				common.PrintWarningMessage(fmt.Sprintf("Skipping non-existent device: %s", path))
+			}
 			filteredDevices = presentDevices
+		} else if err := RequiredDevicesError(devWarnings, nil); err != nil {
+			common.PrintErrorMessage(err)
+			return
 		}
 
 		hostConfig.Devices = filteredDevices
@@ -752,10 +806,33 @@ func ContainerRun(containerName string) {
 	if containerCfg.gpus != "" {
 		containerLabels["org.rfswift.gpus"] = containerCfg.gpus
 	}
+	if len(serialPorts) > 0 {
+		containerLabels[SerialPortsLabel] = strings.Join(serialPorts, ",")
+	}
 	if containerCfg.exposedPorts == "" {
 		containerLabels["org.rfswift.exposedPorts"] = "none"
 	} else {
 		containerLabels["org.rfswift.exposedPorts"] = containerCfg.exposedPorts
+	}
+
+	// ── Devices this engine cannot map on this host ──────────────
+	// Rootless Podman (root-only or inaccessible nodes), Docker/Podman on macOS
+	// (no passthrough into the VM) and Lima (device absent from the VM). List
+	// them with the reason and ask once; the answer applies to all of them.
+	if issues, _, advice := currentDeviceCheckHost(GetEngine()).issues(deviceEntriesFromHostConfig(hostConfig)); len(issues) > 0 {
+		common.PrintWarningMessage(fmt.Sprintf("%d device mapping(s) cannot be used with %s on this host:", len(issues), GetEngine().Name()))
+		for _, issue := range issues {
+			common.PrintWarningMessage(fmt.Sprintf("  - %s: %s", issue.Path, issue.Reason))
+		}
+		if advice != "" {
+			common.PrintInfoMessage(advice)
+		}
+		if !tui.Confirm("Remove them and continue?") {
+			common.PrintInfoMessage("Aborted. Adjust the device mappings (config.ini, profile or -d) and re-run.")
+			return
+		}
+		removeDeviceIssues(hostConfig, issues)
+		common.PrintInfoMessage("Unsupported device mappings removed.")
 	}
 
 	// ── Rootless Podman: strip unsupported features ────────────────
@@ -775,42 +852,9 @@ func ContainerRun(containerName string) {
 			common.PrintInfoMessage("Cgroup rules removed — proceeding in rootless mode.")
 		}
 
-		// 2. Filter devices to only those accessible by current user
-		// Some devices are readable on the host but can't be created as device nodes in rootless containers
-		rootlessBlockedDevices := map[string]bool{
-			"/dev/tty":     true,
-			"/dev/tty0":    true,
-			"/dev/tty1":    true,
-			"/dev/tty2":    true,
-			"/dev/console": true,
-			"/dev/vcsa":    true,
-			"/dev/vhci":    true,
-			"/dev/uinput":  true,
-		}
-		if len(hostConfig.Devices) > 0 {
-			var accessible []container.DeviceMapping
-			var dropped []string
-			for _, dev := range hostConfig.Devices {
-				if rootlessBlockedDevices[dev.PathOnHost] {
-					dropped = append(dropped, dev.PathOnHost)
-					continue
-				}
-				f, err := os.OpenFile(dev.PathOnHost, os.O_RDONLY, 0)
-				if err == nil {
-					f.Close()
-					accessible = append(accessible, dev)
-				} else {
-					dropped = append(dropped, dev.PathOnHost)
-				}
-			}
-			if len(dropped) > 0 {
-				common.PrintWarningMessage(fmt.Sprintf("Dropping %d inaccessible device(s) for rootless mode:", len(dropped)))
-				for _, d := range dropped {
-					common.PrintWarningMessage(fmt.Sprintf("  - %s", d))
-				}
-			}
-			hostConfig.Devices = accessible
-		}
+		// 2. Devices, device-node mounts and ulimits the user namespace cannot
+		// honour (shared with the GUI/API path in CreateContainer).
+		restrictRootlessPodmanHostConfig(hostConfig, func(msg string) { common.PrintWarningMessage(msg) })
 	}
 
 	// Verify the image exists locally before attempting to create container
@@ -880,6 +924,7 @@ func ContainerRun(containerName string) {
 			common.PrintErrorMessage(err)
 			return
 		}
+		syncSerialAfterStart(ctx, cli, resp.ID)
 
 		props, err := getContainerProperties(ctx, cli, resp.ID)
 		if err != nil {
@@ -922,6 +967,7 @@ func ContainerRun(containerName string) {
 		common.PrintErrorMessage(err)
 		return
 	}
+	syncSerialAfterStart(ctx, cli, resp.ID)
 
 	props, err := getContainerProperties(ctx, cli, resp.ID)
 	if err != nil {
@@ -967,18 +1013,34 @@ func ContainerRun(containerName string) {
 //	in(5): string workingDir working directory
 //	out: error
 func execInteractiveSession(ctx context.Context, cli *client.Client, containerID string, shell string, workingDir string) error {
+	// Use a widely available terminfo entry. Passing host-specific values such
+	// as xterm-kitty into minimal images makes Zsh themes and line editing render
+	// incorrectly even though the Docker TTY itself is functional.
+	execEnv := []string{
+		"TERM=xterm-256color",
+		"COLORTERM=truecolor",
+		"LANG=C.UTF-8",
+		"LC_ALL=C.UTF-8",
+	}
+	if os.Getenv("RFSWIFT_RECORDING") == "1" {
+		execEnv = append(execEnv, "RFSWIFT_RECORDING=1")
+	}
+	shellCmd := []string{shell}
+	if shell == "/bin/zsh" {
+		shellCmd = []string{"/bin/sh", "-c", "if [ -x /bin/zsh ]; then exec /bin/zsh -il; elif [ -x /bin/bash ]; then exec /bin/bash -il; else exec /bin/sh -i; fi"}
+	} else if shell == "/bin/bash" {
+		shellCmd = []string{shell, "-il"}
+	} else if shell == "/bin/sh" {
+		shellCmd = []string{shell, "-i"}
+	}
 	execConfig := client.ExecCreateOptions{
 		AttachStdin:  true,
 		AttachStdout: true,
 		AttachStderr: true,
 		TTY:          true,
-		Cmd:          []string{shell},
+		Cmd:          shellCmd,
 		WorkingDir:   workingDir,
-	}
-
-	// Propagate recording indicator into the container shell
-	if os.Getenv("RFSWIFT_RECORDING") == "1" {
-		execConfig.Env = []string{"RFSWIFT_RECORDING=1"}
+		Env:          execEnv,
 	}
 
 	execID, err := cli.ExecCreate(ctx, containerID, execConfig)
@@ -1001,6 +1063,17 @@ func execInteractiveSession(ctx context.Context, cli *client.Client, containerID
 			return fmt.Errorf("failed to set raw terminal: %v", err)
 		}
 		defer term.RestoreTerminal(inFd, state)
+	}
+
+	// Resize before starting so Zsh draws its first prompt at the real terminal
+	// width instead of Docker's default 80x24 dimensions.
+	if outIsTerminal {
+		if size, err := term.GetWinsize(outFd); err == nil {
+			_, _ = cli.ExecResize(ctx, execID.ID, client.ExecResizeOptions{
+				Height: uint(size.Height),
+				Width:  uint(size.Width),
+			})
+		}
 	}
 
 	// NOTE: Podman's compat API implicitly starts the exec session during Attach,
@@ -1050,16 +1123,6 @@ func execInteractiveSession(ctx context.Context, cli *client.Client, containerID
 			}
 		}
 	}()
-
-	// Trigger initial resize
-	if outIsTerminal {
-		if size, err := term.GetWinsize(outFd); err == nil {
-			cli.ExecResize(ctx, execID.ID, client.ExecResizeOptions{
-				Height: uint(size.Height),
-				Width:  uint(size.Width),
-			})
-		}
-	}
 
 	// Handle I/O
 	outputDone := make(chan error)
@@ -1362,30 +1425,39 @@ func ContainerInstallScript(containerIdentifier, scriptName, functionScript stri
 		if _, err := cli.ContainerStart(ctx, containerIdentifier, client.ContainerStartOptions{}); err != nil {
 			return fmt.Errorf("failed to start container: %v", err)
 		}
+		syncSerialAfterStart(ctx, cli, containerIdentifier)
 	}
 
-	// Step 1: Run "apt update" with clock-based loading indicator
+	// Steps 1 and 2: apt housekeeping. A mirror that is temporarily down makes
+	// these exit non-zero without preventing the installer from working, so
+	// their exit status is reported as a warning rather than aborting.
 	common.PrintInfoMessage("Running 'apt update'...")
 	if err := showLoadingIndicator(ctx, func() error {
 		return execCommand(ctx, cli, containerIdentifier, []string{"/bin/bash", "-c", "apt update"})
 	}, "apt update"); err != nil {
-		return err
+		if !errors.As(err, new(*execExitError)) {
+			return err
+		}
+		common.PrintWarningMessage(err.Error())
 	}
 
-	// Step 2: Run "apt --fix-broken install" with clock-based loading indicator
 	common.PrintInfoMessage("Running 'apt --fix-broken install'...")
 	if err := showLoadingIndicator(ctx, func() error {
 		return execCommand(ctx, cli, containerIdentifier, []string{"/bin/bash", "-c", "apt --fix-broken install -y"})
 	}, "apt --fix-broken install"); err != nil {
-		return err
+		if !errors.As(err, new(*execExitError)) {
+			return err
+		}
+		common.PrintWarningMessage(err.Error())
 	}
 
-	// Step 3: Run the provided script with clock-based loading indicator
+	// Step 3: Run the provided script. Its exit status is authoritative: a
+	// failed build must surface as an error, not as "installed".
 	common.PrintInfoMessage(fmt.Sprintf("Running script './%s %s'...", scriptName, functionScript))
 	if err := showLoadingIndicator(ctx, func() error {
 		return execCommand(ctx, cli, containerIdentifier, []string{"/bin/bash", "-c", fmt.Sprintf("./%s %s", scriptName, functionScript)}, "/root/scripts")
 	}, fmt.Sprintf("script './%s %s'", scriptName, functionScript)); err != nil {
-		return err
+		return fmt.Errorf("install function %q failed: %w", functionScript, err)
 	}
 
 	// Step 4: Run "ldconfig"
@@ -1399,7 +1471,44 @@ func ContainerInstallScript(containerIdentifier, scriptName, functionScript stri
 	return nil
 }
 
-// execCommand executes a command in the container, capturing only errors if any.
+// execExitError reports a command that ran to completion inside the container
+// but exited with a non-zero status. Tail holds the end of its combined output.
+type execExitError struct {
+	Cmd      string
+	ExitCode int
+	Tail     string
+}
+
+func (e *execExitError) Error() string {
+	msg := fmt.Sprintf("%s exited with status %d", e.Cmd, e.ExitCode)
+	if e.Tail != "" {
+		msg += ":\n" + e.Tail
+	}
+	return msg
+}
+
+// tailWriter keeps the last max bytes written to it.
+type tailWriter struct {
+	max int
+	buf []byte
+}
+
+func (t *tailWriter) Write(p []byte) (int, error) {
+	t.buf = append(t.buf, p...)
+	if len(t.buf) > t.max {
+		t.buf = t.buf[len(t.buf)-t.max:]
+	}
+	return len(p), nil
+}
+
+func (t *tailWriter) String() string {
+	return strings.TrimSpace(string(t.buf))
+}
+
+// execCommand executes a command in the container and waits for it. The
+// command's output is not shown, but its exit status is checked: a non-zero
+// status returns an *execExitError carrying the tail of the output so the
+// caller can show why an installer or setup step failed.
 //
 //	in(1): context.Context ctx
 //	in(2): *client.Client cli
@@ -1430,9 +1539,19 @@ func execCommand(ctx context.Context, cli *client.Client, containerID string, cm
 	}
 	defer attachResp.Close()
 
-	// Capture only error messages, suppressing standard output
-	_, err = io.Copy(io.Discard, attachResp.Reader)
-	return err
+	// Drain the multiplexed stream, keeping only the tail for error reports.
+	tail := &tailWriter{max: 4096}
+	if _, err := stdcopy.StdCopy(tail, tail, attachResp.Reader); err != nil {
+		return err
+	}
+	inspect, err := cli.ExecInspect(ctx, execID.ID, client.ExecInspectOptions{})
+	if err != nil {
+		return fmt.Errorf("failed to inspect exec instance: %v", err)
+	}
+	if inspect.ExitCode != 0 {
+		return &execExitError{Cmd: strings.Join(cmd, " "), ExitCode: inspect.ExitCode, Tail: tail.String()}
+	}
+	return nil
 }
 
 // execCommandWithOutput executes a command and returns its output.

@@ -7,6 +7,32 @@ set -e
 
 # Configuration
 GITHUB_REPO="PentHertz/RF-Swift"
+# Fallback for the dev channel when GitHub cannot be asked for the newest
+# prerelease tag (see get_latest_release); keep it at the current prerelease.
+DEV_VERSION="4.0.1-dev"
+RELEASE_CHANNEL="${RFSWIFT_CHANNEL:-stable}"
+INSTALL_COMPONENTS="${RFSWIFT_INSTALL:-cli}"
+WORKBENCH_FORMAT="${RFSWIFT_WORKBENCH_FORMAT:-native}"
+# native = distro package (deb/rpm/pacman, with man pages, completions and
+# clean uninstall) on Linux, Homebrew cask on macOS; tarball = the classic
+# archive install to a directory. Empty = offer the choice (native first).
+PKG_FORMAT="${RFSWIFT_PKG_FORMAT:-}"
+# udev rules for RF hardware (Linux): 1 = install without asking, 0 = skip,
+# empty = ask. Installed by the freshly installed CLI (rfswift host udev).
+UDEV_RULES="${RFSWIFT_UDEV:-}"
+# Container engine to set up when none is installed: docker, podman, both or
+# skip (macOS also: lima); empty = ask. Nix engine: 1 = install, 0 = skip,
+# empty = ask. Both make curl|sh and automated installs deterministic.
+ENGINE_PREF="${RFSWIFT_ENGINE:-}"
+NIX_PREF="${RFSWIFT_NIX:-}"
+ISOLATE_PREF="${RFSWIFT_ISOLATE:-}"  # 1|0: install bubblewrap for the Nix engine's --isolate jail (Linux)
+ATTEST_PREF="${RFSWIFT_ATTEST:-}"    # 1|0: verify GitHub build attestations with a logged-in gh (when available)
+BWRAP_CHECKED=0
+# Tarball flow: install directory (absolute path, e.g. /usr/local/bin or
+# ~/.rfswift/bin); empty = ask.
+INSTALL_DIR_PREF="${RFSWIFT_INSTALL_DIR:-}"
+NATIVE_INSTALLED=false
+FOUND_VERSION=false
 
 # Color codes for better readability
 RED='\033[0;31m'
@@ -32,20 +58,39 @@ color_echo() {
   esac
 }
 
+# configure_xquartz_tcp enables XQuartz "Allow connections from network clients"
+# (nolisten_tcp=false) so the container can reach the host X server over TCP
+# (DISPLAY=<host-ip>:0). Without it XQuartz binds no TCP port and GUI tools fail
+# with "could not connect to display". macOS-only; safe to call repeatedly.
+configure_xquartz_tcp() {
+    [ "$(uname)" = "Darwin" ] || return 0
+    if [ "$(defaults read org.xquartz.X11 nolisten_tcp 2>/dev/null || echo unset)" = "0" ]; then
+        return 0
+    fi
+    color_echo "cyan" "🔧 Enabling XQuartz 'Allow connections from network clients'... 🔧"
+    defaults write org.xquartz.X11 nolisten_tcp -bool false
+    if pgrep -qx Xquartz 2>/dev/null; then
+        osascript -e 'quit app "XQuartz"' >/dev/null 2>&1 || true
+        sleep 1
+        open -a XQuartz >/dev/null 2>&1 || true
+    fi
+}
+
 # Enhanced xhost check with Arch Linux support
 check_xhost() {
     if ! command -v xhost >/dev/null 2>&1; then
         # On macOS, xhost may be installed but not in PATH
-        if [[ "$(uname)" == "Darwin" ]] && [[ -x /opt/X11/bin/xhost ]]; then
+        if [ "$(uname)" = "Darwin" ] && [ -x /opt/X11/bin/xhost ]; then
             color_echo "yellow" "⚠️ xhost found at /opt/X11/bin/xhost but not in PATH. Adding it."
             export PATH="/opt/X11/bin:$PATH"
             color_echo "green" "✅ xhost is now available. ✅"
+            configure_xquartz_tcp
             return
         fi
 
         color_echo "red" "❌ xhost is not installed on this system. ❌"
 
-        if [[ "$(uname)" == "Darwin" ]]; then
+        if [ "$(uname)" = "Darwin" ]; then
             color_echo "cyan" "🍎 macOS detected. Installing XQuartz via Homebrew... 📦"
             if ! command -v brew >/dev/null 2>&1; then
                 color_echo "red" "❌ Homebrew is not installed. Please install it first: https://brew.sh ❌"
@@ -53,10 +98,10 @@ check_xhost() {
             fi
             brew install --cask xquartz
             export PATH="/opt/X11/bin:$PATH"
-            if [[ -x /opt/X11/bin/xhost ]]; then
+            if [ -x /opt/X11/bin/xhost ]; then
                 color_echo "green" "✅ XQuartz installed successfully. ✅"
-                color_echo "yellow" "⚠️ You may need to log out and back in for XQuartz to work properly."
-                color_echo "yellow" "⚠️ Make sure to enable 'Allow connections from network clients' in XQuartz -> Settings -> Security."
+                configure_xquartz_tcp
+                color_echo "yellow" "⚠️ Log out and back in once for XQuartz to register the display and apply the setting."
             else
                 color_echo "red" "❌ XQuartz installed but xhost not found. Please reboot and try again. ❌"
                 exit 1
@@ -70,8 +115,10 @@ check_xhost() {
                     sudo pacman -S --noconfirm --needed xorg-xhost
                     ;;
                 "fedora")
-                    color_echo "yellow" "📦 Installing xorg-x11-server-utils using dnf... 📦"
-                    sudo dnf install -y xorg-x11-server-utils
+                    # Fedora split xorg-x11-server-utils into per-tool packages
+                    # (xhost, xrandr, ...); the old name no longer resolves.
+                    color_echo "yellow" "📦 Installing xhost using dnf... 📦"
+                    sudo dnf install -y xhost
                     ;;
                 "rhel"|"centos")
                     if command -v dnf >/dev/null 2>&1; then
@@ -100,6 +147,9 @@ check_xhost() {
         fi
     else
         color_echo "green" "✅ xhost is already installed. Moving on. ✅"
+        # xhost present, but on macOS the network-clients toggle may still be off
+        # from a hand-installed XQuartz — ensure it so GUI forwarding works.
+        configure_xquartz_tcp
     fi
 }
 
@@ -341,7 +391,7 @@ install_pipewire() {
         # Install PipeWire and related packages
         sudo pacman -S --noconfirm --needed pipewire pipewire-pulse pipewire-alsa pipewire-jack wireplumber libpulse
         # Optional: install additional tools
-        sudo pacman -S --noconfirm --needed pipewire-audio pipewire-media-session || true
+        sudo pacman -S --noconfirm --needed pipewire-audio || true
       else
         color_echo "red" "sudo access required for package installation"
         return 1
@@ -714,13 +764,129 @@ have_sudo_access() {
   return 1
 }
 
-# Function to get the current user even when run with sudo
-get_real_user() {
-  if [ -n "$SUDO_USER" ]; then
-    echo "$SUDO_USER"
+# Fetch a URL to stdout with whatever the host has (Debian desktops ship wget
+# but not curl). Fails silently; callers decide what a miss means.
+http_get() {
+  if command_exists curl; then
+    curl -fsSL --retry 2 -H "User-Agent: RF-Swift-Installer" "$1" 2>/dev/null
+  elif command_exists wget; then
+    wget -qO- --header="User-Agent: RF-Swift-Installer" "$1" 2>/dev/null
   else
-    whoami
+    return 1
   fi
+}
+
+# Debian sets a root password at install time and leaves the first user out of
+# the sudo group, so the natural way to run this installer there is a root
+# shell (`su -`). Every privileged step calls `sudo cmd`; as root without the
+# sudo package, run cmd directly.
+provide_sudo_shim() {
+  if [ "$(id -u 2>/dev/null)" = "0" ] && ! command_exists sudo; then
+    sudo() {
+      [ "$1" = "-v" ] && return 0
+      "$@"
+    }
+  fi
+}
+
+# True when the account can get root neither directly nor through sudo
+# (checked without a password prompt). Used for an early, one-time notice.
+lacks_root_access() {
+  [ "$(id -u 2>/dev/null)" = "0" ] && return 1
+  command_exists sudo || return 0
+  sudo -n -v >/dev/null 2>&1 && return 1
+  id -nG 2>/dev/null | tr ' ' '\n' | grep -qxE 'sudo|wheel|admin' && return 1
+  return 0
+}
+
+# A valid local user name (letters, digits, dot, underscore, dash) - refuse to
+# build a privileged command around anything else.
+valid_username() {
+  case "$1" in ""|*[!A-Za-z0-9._-]*) return 1 ;; *) return 0 ;; esac
+}
+
+# Debian's installer leaves the first user out of the sudo group whenever a
+# root password is set, so a fresh desktop account cannot use sudo at all. The
+# Debian wiki's fix (https://wiki.debian.org/sudo) is, from a root shell:
+#   apt install sudo
+#   adduser <user> sudo
+# then log out and back in. Offer exactly that here, driven by the root
+# password the user already has, on apt-based systems that are missing sudo or
+# the account's membership in the sudo group.
+offer_debian_sudo_bootstrap() {
+  command_exists apt-get || return 1
+  me=$(id -un 2>/dev/null)
+  valid_username "$me" || return 1
+  color_echo "cyan" "   On Debian a freshly created user is left out of the 'sudo' group when a root password is set (https://wiki.debian.org/sudo)."
+  need=""
+  command_exists sudo || need="the sudo package"
+  color_echo "cyan" "   RF Swift can fix this now: install sudo and 'adduser' if missing, then add '${me}' to the sudo group. You'll be asked for the ROOT password."
+  prompt_yes_no "Install sudo${need:+ and adduser} and add '${me}' to the sudo group now (asks for the root password)?" "y" || return 1
+
+  # su reads the password straight from the controlling terminal, so it works
+  # even under 'curl | sh'; hand it /dev/tty when our own stdin is not one so
+  # apt/adduser inside it stay non-interactive. Install adduser alongside sudo
+  # (the wiki uses 'adduser <user> <group>'), then add the user to the group.
+  boot_cmd="apt-get update && apt-get install -y sudo adduser && adduser $me sudo"
+  if [ ! -t 0 ] && [ -c /dev/tty ] && ( : < /dev/tty ) 2>/dev/null; then
+    su - -c "$boot_cmd" < /dev/tty
+  else
+    su - -c "$boot_cmd"
+  fi || {
+    color_echo "yellow" "   That did not complete (wrong root password, or no root password set). You can do it by hand: su - , then 'apt install sudo' and 'adduser ${me} sudo'."
+    return 1
+  }
+
+  color_echo "green" "✅ sudo is installed and '${me}' is now in the sudo group."
+  # Group membership only applies to a new login session (verified: sudo still
+  # denies in the current one right after adduser). Installing sudo mid-run
+  # also flips it from absent to present-but-unusable, which would make the
+  # remaining root steps prompt for a password there is no way to answer, so
+  # stop here with a clear next step instead of limping on.
+  color_echo "cyan" "   It takes effect at your NEXT login. Log out and back in (or start a fresh session with 'newgrp sudo'), then re-run this installer:"
+  case "$RELEASE_CHANNEL" in
+    dev) color_echo "cyan" "     RFSWIFT_CHANNEL=dev sh get_rfswift.sh" ;;
+    *)   color_echo "cyan" "     sh get_rfswift.sh   (or the curl | sh one-liner)" ;;
+  esac
+  color_echo "cyan" "   It will then set up Docker/Podman, Nix, the udev rules and a system-wide install. Nothing was installed in this run."
+  exit 0
+}
+
+warn_without_root_access() {
+  lacks_root_access || return 0
+  color_echo "yellow" "⚠️  This account cannot use sudo yet: packages, container engines, Nix, udev rules and a system-wide install need root; without it only a user-local tarball install (~/.rfswift/bin) can proceed."
+  # On Debian/Ubuntu, offer to fix it automatically with the root password.
+  offer_debian_sudo_bootstrap && return 0
+  me=$(id -un 2>/dev/null)
+  grant="usermod -aG sudo ${me}"
+  command_exists sudo || grant="apt-get install -y sudo && ${grant}"
+  color_echo "cyan" "   To get root yourself: run this installer from a root shell,"
+  color_echo "cyan" "     su -                      (then re-run the installer; it sets things up for ${me})"
+  color_echo "cyan" "   or grant sudo once and log out and back in:"
+  color_echo "cyan" "     su - -c '${grant}'"
+}
+
+# Is a directory already on PATH (so a shell alias would be redundant)?
+dir_on_path() {
+  case ":$PATH:" in *":$1:"*) return 0 ;; esac
+  return 1
+}
+
+# The user things are set up for: the sudo caller, or the desktop user behind
+# a `su -` root shell (logname), else the current account.
+get_real_user() {
+  if [ -n "${SUDO_USER:-}" ]; then
+    echo "$SUDO_USER"
+    return 0
+  fi
+  if [ "$(id -u 2>/dev/null)" = "0" ]; then
+    login_user=$(logname 2>/dev/null || true)
+    if [ -n "$login_user" ] && [ "$login_user" != "root" ]; then
+      echo "$login_user"
+      return 0
+    fi
+  fi
+  whoami
 }
 
 # Function to prompt user for yes/no with terminal redirection solution
@@ -732,7 +898,7 @@ prompt_yes_no() {
   # Try to use /dev/tty for interactive input even in pipe scenarios
   if [ -t 0 ]; then
     tty_device="/dev/stdin"
-  elif [ -e "/dev/tty" ]; then
+  elif [ -e "/dev/tty" ] && ( : < /dev/tty ) 2>/dev/null; then
     tty_device="/dev/tty"
   else
     # No interactive terminal available, use defaults
@@ -748,7 +914,7 @@ prompt_yes_no() {
   # Try to read from the terminal
   while true; do
     printf "${YELLOW}%s (y/n): ${NC}" "${prompt}"
-    if read -r response < "$tty_device" 2>/dev/null; then
+    if read -r response 2>/dev/null < "$tty_device"; then
       case "$response" in
         [Yy]* ) return 0 ;;
         [Nn]* ) return 1 ;;
@@ -777,7 +943,7 @@ prompt_choice() {
 
   if [ -t 0 ]; then
     tty_device="/dev/stdin"
-  elif [ -e "/dev/tty" ]; then
+  elif [ -e "/dev/tty" ] && ( : < /dev/tty ) 2>/dev/null; then
     tty_device="/dev/tty"
   else
     printf "${YELLOW}%s: Defaulting to option 1 (no terminal available)${NC}\n" "${prompt}" >&2
@@ -794,7 +960,7 @@ prompt_choice() {
 
   while true; do
     printf "${YELLOW}Enter your choice [1-%d]: ${NC}" "$num" >&2
-    if read -r response < "$tty_device" 2>/dev/null; then
+    if read -r response 2>/dev/null < "$tty_device"; then
       case "$response" in
         [1-9]|[1-9][0-9])
           if [ "$response" -ge 1 ] && [ "$response" -le "$num" ] 2>/dev/null; then
@@ -813,13 +979,84 @@ prompt_choice() {
 }
 
 # Function to create an alias for RF-Swift in the user's shell configuration
+# After a native package install (binary in /usr/bin), copies left by earlier
+# tarball installs shadow it: /usr/local/bin comes before /usr/bin in PATH, and
+# the `alias rfswift=~/.rfswift/bin/rfswift` this script used to write wins
+# over both. The result is a freshly installed package and a stale binary that
+# still answers `rfswift`. Offer to remove the stale copies and the alias, and
+# say so when `rfswift` still does not resolve to the packaged binary.
+cleanup_legacy_installs() {
+  local pkg_bin="/usr/bin/rfswift" wb_bin="/usr/bin/rfswift-workbench" stale="" f
+  local user_home
+  user_home="$(eval echo "~$(get_real_user)")"
+  for f in /usr/local/bin/rfswift /usr/local/bin/rfswift-workbench \
+           "${user_home}/.rfswift/bin/rfswift" "${user_home}/.rfswift/bin/rfswift-workbench" \
+           "${HOME}/.rfswift/bin/rfswift" "${HOME}/.rfswift/bin/rfswift-workbench"; do
+    [ -f "$f" ] || continue
+    case " $stale " in *" $f "*) continue ;; esac
+    if [ "$f" -ef "$pkg_bin" ] || [ "$f" -ef "$wb_bin" ]; then continue; fi
+    stale="$stale $f"
+  done
+  stale="${stale# }"
+  if [ -n "$stale" ]; then
+    color_echo "yellow" "⚠️  Older RF-Swift copies from a previous tarball install were found:"
+    for f in $stale; do color_echo "yellow" "   - $f"; done
+    color_echo "yellow" "   They shadow the package's /usr/bin/rfswift (PATH order), so 'rfswift' would keep running the old version."
+    if prompt_yes_no "Remove these old copies?" "y"; then
+      for f in $stale; do
+        case "$f" in
+          /usr/local/bin/*) sudo rm -f "$f" && color_echo "green" "✅ Removed $f" || color_echo "red" "❌ Could not remove $f" ;;
+          *) rm -f "$f" && color_echo "green" "✅ Removed $f" || color_echo "red" "❌ Could not remove $f" ;;
+        esac
+      done
+    else
+      color_echo "yellow" "   Kept. Run /usr/bin/rfswift explicitly, or remove them later."
+    fi
+  fi
+
+  # The alias only ever pointed at a tarball location; the package is on PATH.
+  local rc
+  for rc in "${user_home}/.bashrc" "${user_home}/.bash_profile" "${user_home}/.zshrc" "${user_home}/.config/fish/config.fish"; do
+    [ -f "$rc" ] || continue
+    grep -q -E "^alias rfswift[ =]" "$rc" 2>/dev/null || continue
+    color_echo "yellow" "⚠️  $rc still defines an 'rfswift' alias pointing at the old install; it would hide /usr/bin/rfswift."
+    if prompt_yes_no "Remove the alias from $rc?" "y"; then
+      sed -i.bak -E '/^alias rfswift[ =]/d' "$rc" 2>/dev/null || sed -i '' -E '/^alias rfswift[ =]/d' "$rc" 2>/dev/null
+      color_echo "green" "✅ Alias removed from $rc (backup: $rc.bak). Open a new shell, or run: unalias rfswift"
+    fi
+  done
+
+  local resolved
+  resolved="$(command -v rfswift 2>/dev/null || true)"
+  if [ -n "$resolved" ] && [ ! "$resolved" -ef "$pkg_bin" ]; then
+    color_echo "yellow" "⚠️  'rfswift' currently resolves to $resolved, not to the package's $pkg_bin. Check your PATH and shell aliases (hash -r / a new shell may be enough)."
+  fi
+}
+
 create_alias() {
   local bin_path="$1"
   color_echo "blue" "🔗 Setting up an alias for RF-Swift..."
   
   # Get the real user even when run with sudo
   REAL_USER=$(get_real_user)
-  USER_HOME=$(eval echo ~${REAL_USER})
+  case "$REAL_USER" in
+    ""|*[!A-Za-z0-9._-]*)
+      color_echo "red" "Invalid local user name; refusing to edit a shell profile."
+      return 1
+      ;;
+  esac
+  USER_HOME=$(getent passwd "$REAL_USER" 2>/dev/null | cut -d: -f6)
+  if [ -z "$USER_HOME" ] && command_exists dscl; then
+    USER_HOME=$(dscl . -read "/Users/$REAL_USER" NFSHomeDirectory 2>/dev/null | awk '{print $2}')
+  fi
+  if [ -z "$USER_HOME" ]; then
+    if [ "$REAL_USER" = "$(id -un 2>/dev/null)" ]; then
+      USER_HOME=$HOME
+    else
+      color_echo "red" "Could not determine the home directory for $REAL_USER."
+      return 1
+    fi
+  fi
   
   # Determine shell from the user's default shell
   USER_SHELL=$(getent passwd "${REAL_USER}" 2>/dev/null | cut -d: -f7 | xargs basename 2>/dev/null)
@@ -833,13 +1070,12 @@ create_alias() {
   # Determine the correct shell configuration file
   case "${USER_SHELL}" in
     bash)
-      # Check for .bash_profile first (macOS preference), then .bashrc (Linux preference)
-      if [ -f "${USER_HOME}/.bash_profile" ]; then
+      # macOS terminals open login shells and read .bash_profile; Linux
+      # terminals open interactive non-login shells and read .bashrc (an Arch
+      # or Fedora skeleton .bash_profile would otherwise swallow the alias).
+      if [ "$(uname -s)" = "Darwin" ] && [ -f "${USER_HOME}/.bash_profile" ]; then
         SHELL_RC="${USER_HOME}/.bash_profile"
-      elif [ -f "${USER_HOME}/.bashrc" ]; then
-        SHELL_RC="${USER_HOME}/.bashrc"
       else
-        # Default to .bashrc if neither exists
         SHELL_RC="${USER_HOME}/.bashrc"
       fi
       ;;
@@ -912,6 +1148,26 @@ create_alias() {
 # Container Engine Selection: Docker or Podman
 # ═══════════════════════════════════════════════════════════════════════════════
 
+# The "also install the other engine?" question when one is present already:
+# RFSWIFT_ENGINE answers it (podman or both -> Podman yes, docker or both ->
+# Docker yes, anything else -> no); without the knob, ask, default no.
+want_second_engine() {
+  case "$ENGINE_PREF" in
+    "") prompt_yes_no "$2" "n" ;;
+    "$1"|both) color_echo "cyan" "   RFSWIFT_ENGINE=${ENGINE_PREF}"; return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+engine_setup_incomplete() {
+  color_echo "yellow" "⚠️  $1 setup did not complete; RF Swift itself is still installed. Set it up later with: rfswift host setup"
+}
+
+docker_service_not_started() {
+  color_echo "yellow" "⚠️  Docker is installed but its service could not be started (no systemd, e.g. a container or WSL without systemd)."
+  color_echo "cyan" "   Start it by hand before using RF Swift: sudo systemctl enable --now docker"
+}
+
 # Check which container engines are already installed
 detect_container_engines() {
   HAS_DOCKER=false
@@ -958,7 +1214,8 @@ offer_lima_for_usb_get_rfswift() {
     color_echo "green" "   Lima is already installed."
     # Offer to update the Lima template if a bundled one is available
     local bundled_template=""
-    local script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    local script_dir
+    script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" 2>/dev/null && pwd)
     for candidate in \
         "${script_dir}/lima/rfswift.yaml" \
         "$(pwd)/lima/rfswift.yaml"; do
@@ -1048,8 +1305,8 @@ check_container_engine() {
   # ── Only Docker installed ──────────────────────────────────────────────
   if [ "$HAS_DOCKER" = true ]; then
     color_echo "green" "✅ Docker is already installed."
-    if prompt_yes_no "Would you also like to install Podman (rootless containers)?" "n"; then
-      install_podman
+    if want_second_engine podman "Would you also like to install Podman (rootless containers)?"; then
+      install_podman || engine_setup_incomplete "Podman"
     fi
     # On macOS, offer Lima for USB passthrough
     if [ "$(uname -s)" = "Darwin" ]; then
@@ -1061,8 +1318,8 @@ check_container_engine() {
   # ── Only Podman installed ──────────────────────────────────────────────
   if [ "$HAS_PODMAN" = true ]; then
     color_echo "green" "✅ Podman is already installed."
-    if prompt_yes_no "Would you also like to install Docker?" "n"; then
-      install_docker
+    if want_second_engine docker "Would you also like to install Docker?"; then
+      install_docker || engine_setup_incomplete "Docker"
     fi
     # On macOS, offer Lima for USB passthrough
     if [ "$(uname -s)" = "Darwin" ]; then
@@ -1073,7 +1330,7 @@ check_container_engine() {
 
   # ── Neither installed ──────────────────────────────────────────────────
   color_echo "yellow" "⚠️  No container engine found."
-  color_echo "blue" "ℹ️  RF-Swift requires Docker or Podman to run containers."
+  color_echo "blue" "ℹ️  Docker or Podman is required only for containers; the Nix engine needs neither."
   echo ""
   color_echo "cyan" "📝 Which container engine would you like to install?"
   echo ""
@@ -1107,18 +1364,32 @@ check_container_engine() {
     choices="Docker Podman Both Skip"
   fi
 
-  CHOICE=$(prompt_choice "Select a container engine to install:" $choices)
+  if [ -n "$ENGINE_PREF" ]; then
+    case "$ENGINE_PREF" in
+      docker) CHOICE=1 ;;
+      podman) CHOICE=2 ;;
+      both)   CHOICE=3 ;;
+      lima)   CHOICE=4 ;;
+      *) if [ "$(uname -s)" = "Darwin" ]; then CHOICE=5; else CHOICE=4; fi ;;
+    esac
+    color_echo "cyan" "   RFSWIFT_ENGINE=${ENGINE_PREF}"
+  else
+    CHOICE=$(prompt_choice "Select a container engine to install:" $choices)
+  fi
 
+  # An engine that fails to install (or to start: no systemd in a container or
+  # on WSL, an unsupported distribution) must not take the RF Swift install
+  # down with it, which a plain call would do through `set -e`.
   case "$CHOICE" in
     1)
-      install_docker
+      install_docker || engine_setup_incomplete "Docker"
       ;;
     2)
-      install_podman
+      install_podman || engine_setup_incomplete "Podman"
       ;;
     3)
-      install_docker
-      install_podman
+      install_docker || engine_setup_incomplete "Docker"
+      install_podman || engine_setup_incomplete "Podman"
       ;;
     4)
       if [ "$(uname -s)" = "Darwin" ]; then
@@ -1127,14 +1398,14 @@ check_container_engine() {
         install_lima
       else
         color_echo "yellow" "⚠️  Container engine installation skipped."
-        color_echo "yellow" "   You will need Docker or Podman before using RF-Swift."
-        return 1
+        color_echo "cyan" "   You can select the Nix engine in the next step, or install Docker/Podman later."
+        return 0
       fi
       ;;
     5)
       color_echo "yellow" "⚠️  Container engine installation skipped."
-      color_echo "yellow" "   You will need Docker or Podman before using RF-Swift."
-      return 1
+      color_echo "cyan" "   You can select the Nix engine in the next step, or install Docker/Podman later."
+      return 0
       ;;
   esac
 
@@ -1421,11 +1692,99 @@ install_docker_compose_steamdeck() {
 add_user_to_docker_group() {
   if command_exists sudo && command_exists groups; then
     current_user=$(get_real_user)
-    if ! groups "$current_user" 2>/dev/null | grep -q docker; then
+    if ! groups "$current_user" 2>/dev/null | grep -qw docker; then
       color_echo "blue" "🔧 Adding '$current_user' to Docker group..."
       sudo usermod -aG docker "$current_user"
-      color_echo "yellow" "⚡ You may need to log out and log back in for Docker group changes to take effect."
     fi
+    grant_docker_session_access "$current_user"
+  fi
+}
+
+# Group membership only counts from the next login. An ACL on the daemon's
+# socket makes Docker usable in THIS session right away; it lasts until the
+# daemon recreates the socket, by which time the group is in effect. Same as
+# `rfswift host docker-access`. Silent when the socket is already writable.
+grant_docker_session_access() {
+  user="$1"
+  if [ ! -S /var/run/docker.sock ]; then
+    color_echo "yellow" "⚡ Docker socket not there yet; the docker group takes effect at your next login (or 'newgrp docker')."
+    return 0
+  fi
+  [ -w /var/run/docker.sock ] && return 0
+  if command_exists setfacl && sudo setfacl -m "u:${user}:rw" /var/run/docker.sock 2>/dev/null && [ -w /var/run/docker.sock ]; then
+    color_echo "green" "✅ Docker is usable right away in this session; the docker group makes it permanent from your next login."
+  else
+    color_echo "yellow" "⚡ Log out and back in (or run 'newgrp docker') for the docker group to take effect."
+  fi
+}
+
+# Locate the rfswift just installed: the packaged one on PATH, else the
+# tarball copy in INSTALL_DIR, else whatever PATH has.
+rfswift_binary_path() {
+  if [ "$NATIVE_INSTALLED" = true ] && command_exists rfswift; then
+    command -v rfswift
+    return 0
+  fi
+  if [ -n "${INSTALL_DIR:-}" ] && [ -x "${INSTALL_DIR}/rfswift" ]; then
+    echo "${INSTALL_DIR}/rfswift"
+    return 0
+  fi
+  if command_exists rfswift; then
+    command -v rfswift
+  fi
+}
+
+# Offer RF Swift's udev rules (Linux, CLI installed). Rootless Podman and Nix
+# environments run tools as the user and cannot open the root-owned USB nodes
+# without them; Docker does not need them. The rules are embedded in the
+# rfswift binary (and shipped by the packages under /usr/share/rfswift/udev/),
+# so the freshly installed CLI does the work in one sudo call. The CLI reads
+# its confirmation/sudo prompt from the terminal, so hand it /dev/tty when the
+# script itself runs from a pipe (curl | sh). RFSWIFT_UDEV=1|0 answers
+# non-interactively.
+offer_udev_rules() {
+  [ "$(uname -s)" = "Linux" ] || return 0
+  case "$INSTALL_COMPONENTS" in cli|both) ;; *) return 0 ;; esac
+  rfswift_bin=$(rfswift_binary_path)
+  if [ -z "$rfswift_bin" ]; then
+    color_echo "yellow" "⚠️  rfswift not found on PATH yet; run 'rfswift host udev' later for SDR/RF hardware access without root."
+    return 0
+  fi
+  echo ""
+  color_echo "blue" "🔌 udev rules for RF hardware (HackRF, RTL-SDR, bladeRF, USRP, Proxmark, ...)"
+  color_echo "cyan" "   Rootless Podman and Nix environments run tools as your user and need them; Docker does not."
+  color_echo "cyan" "   They grant group plugdev + the logged-in user (seat ACL), never world-writable device nodes."
+  install_rules=false
+  case "$UDEV_RULES" in
+    0|no|false)
+      color_echo "yellow" "   Skipped (RFSWIFT_UDEV=0). Later: rfswift host udev"
+      return 0
+      ;;
+    1|yes|true)
+      install_rules=true
+      ;;
+    *)
+      if prompt_yes_no "Install RF Swift's udev rules now? (one sudo prompt)" "y"; then
+        install_rules=true
+      fi
+      ;;
+  esac
+  if [ "$install_rules" != true ]; then
+    color_echo "yellow" "   Skipped. Later: rfswift host udev"
+    return 0
+  fi
+  # Checked in an `if` so a failure (no udev daemon, WSL, a container) reaches
+  # the fallback message instead of ending the script through `set -e`.
+  udev_ok=false
+  if [ ! -t 0 ] && [ -c /dev/tty ] && ( : < /dev/tty ) 2>/dev/null; then
+    if "$rfswift_bin" host udev --yes < /dev/tty; then udev_ok=true; fi
+  else
+    if "$rfswift_bin" host udev --yes; then udev_ok=true; fi
+  fi
+  if [ "$udev_ok" = true ]; then
+    color_echo "green" "✅ udev rules installed (re-plug a device that was already connected)."
+  else
+    color_echo "yellow" "⚠️  Could not install the udev rules. Later: rfswift host udev"
   fi
 }
 
@@ -1476,13 +1835,12 @@ install_docker() {
         
         color_echo "blue" "📦 Installing Docker using pacman..."
         sudo pacman -Sy --noconfirm
-        sudo pacman -S --noconfirm --needed docker docker-compose
+        sudo pacman -S --noconfirm --needed docker docker-compose || return 1
         
         # Enable and start Docker service
         if command_exists systemctl; then
           color_echo "blue" "🚀 Enabling and starting Docker service..."
-          sudo systemctl enable docker
-          sudo systemctl start docker
+          sudo systemctl enable --now docker || docker_service_not_started
         fi
         
         add_user_to_docker_group
@@ -1500,22 +1858,25 @@ install_docker() {
         
         color_echo "blue" "Using sudo to install Docker..."
         
-        if command_exists curl; then
-          curl -fsSL "https://get.docker.com/" | sudo sh
+        # get.docker.com refuses Kali ("Unsupported distribution 'kali'");
+        # Kali packages Docker itself, so install it from the Kali repository.
+        if grep -qs '^ID=kali' /etc/os-release; then
+          color_echo "cyan" "🐉 Kali Linux detected - installing docker.io from the Kali repository..."
+          sudo apt-get update && sudo apt-get install -y docker.io || return 1
+        elif command_exists curl; then
+          curl -fsSL "https://get.docker.com/" | sudo sh || return 1
         elif command_exists wget; then
-          wget -qO- "https://get.docker.com/" | sudo sh
+          wget -qO- "https://get.docker.com/" | sudo sh || return 1
         else
           color_echo "red" "🚨 Missing curl/wget. Please install one of them."
           return 1
         fi
 
-        add_user_to_docker_group
-        
         if command_exists systemctl; then
           color_echo "blue" "🚀 Starting Docker service..."
-          sudo systemctl start docker
-          sudo systemctl enable docker
+          sudo systemctl enable --now docker || docker_service_not_started
         fi
+        add_user_to_docker_group
 
         color_echo "green" "🎉 Docker is now installed and running!"
       fi
@@ -1533,11 +1894,85 @@ install_docker() {
 # ═══════════════════════════════════════════════════════════════════════════════
 
 # Function to get the latest release information
+choose_release_and_components() {
+  case "$RELEASE_CHANNEL" in
+    stable|dev) ;;
+    *) color_echo "red" "Invalid RFSWIFT_CHANNEL '$RELEASE_CHANNEL' (use stable or dev)"; exit 1 ;;
+  esac
+  case "$INSTALL_COMPONENTS" in
+    cli|workbench|both) ;;
+    *) color_echo "red" "Invalid RFSWIFT_INSTALL '$INSTALL_COMPONENTS' (use cli, workbench, or both)"; exit 1 ;;
+  esac
+  case "$PKG_FORMAT" in
+    ""|native|tarball) ;;
+    *) color_echo "red" "Invalid RFSWIFT_PKG_FORMAT '$PKG_FORMAT' (use native or tarball)"; exit 1 ;;
+  esac
+  case "$ENGINE_PREF" in
+    ""|docker|podman|both|lima|skip|none) ;;
+    *) color_echo "red" "Invalid RFSWIFT_ENGINE '$ENGINE_PREF' (use docker, podman, both, lima or skip)"; exit 1 ;;
+  esac
+  case "$NIX_PREF" in
+    ""|1|0|yes|no|true|false) ;;
+    *) color_echo "red" "Invalid RFSWIFT_NIX '$NIX_PREF' (use 1 or 0)"; exit 1 ;;
+  esac
+  case "$INSTALL_DIR_PREF" in
+    ""|/*) ;;
+    *) color_echo "red" "Invalid RFSWIFT_INSTALL_DIR '$INSTALL_DIR_PREF' (use an absolute path)"; exit 1 ;;
+  esac
+
+  # Environment variables make curl|sh and automated installs deterministic.
+  # Interactive installs get a concise choice; no-TTY installs retain the
+  # backwards-compatible stable CLI default.
+  if [ -z "${RFSWIFT_CHANNEL+x}" ]; then
+    channel_choice=$(prompt_choice "Select RF Swift release channel" "Stable" "Development-prerelease")
+    [ "$channel_choice" = "2" ] && RELEASE_CHANNEL="dev" || RELEASE_CHANNEL="stable"
+  fi
+  if [ -z "${RFSWIFT_INSTALL+x}" ]; then
+    component_choice=$(prompt_choice "What would you like to install?" "CLI" "Workbench-GUI" "CLI-and-Workbench")
+    case "$component_choice" in
+      2) INSTALL_COMPONENTS="workbench" ;;
+      3) INSTALL_COMPONENTS="both" ;;
+      *) INSTALL_COMPONENTS="cli" ;;
+    esac
+  fi
+  color_echo "green" "📦 Channel: ${RELEASE_CHANNEL}; components: ${INSTALL_COMPONENTS}"
+}
+
+# A release version may only contain [0-9A-Za-z.-]: enough for semver plus
+# prerelease tags, and safe to embed in URLs, filenames and package names.
+validate_version_string() {
+  case "$1" in
+    ""|*[!0-9A-Za-z.-]*) return 1 ;;
+    *) return 0 ;;
+  esac
+}
+
 get_latest_release() {
   color_echo "blue" "🔍 Detecting the latest RF-Swift release..."
 
+  if [ "$RELEASE_CHANNEL" = "dev" ]; then
+    VERSION="$DEV_VERSION"
+    # The prerelease tag moves (v4.0.0-dev, v4.0.1-dev, ...) and a stale
+    # DEV_VERSION sent every dev-channel install to a 404. Ask GitHub for the
+    # newest prerelease; DEV_VERSION only covers an unreachable API.
+    latest_prerelease=$(http_get "https://api.github.com/repos/${GITHUB_REPO}/releases?per_page=20" \
+      | tr -d '\n' | sed 's/},{/}\
+{/g' | grep '"prerelease": *true' | grep -o '"tag_name": *"[^"]*"' | head -1 \
+      | sed 's/.*: *"v\{0,1\}\([^"]*\)".*/\1/' || true)
+    if [ -n "$latest_prerelease" ] && validate_version_string "$latest_prerelease"; then
+      VERSION="$latest_prerelease"
+    else
+      color_echo "yellow" "⚠️ Could not query GitHub for the newest prerelease; assuming v${DEV_VERSION}."
+    fi
+    FOUND_VERSION=true
+    RELEASE_URL="https://github.com/${GITHUB_REPO}/releases/tag/v${VERSION}"
+    DOWNLOAD_BASE_URL="https://github.com/${GITHUB_REPO}/releases/download/v${VERSION}"
+    color_echo "yellow" "🧪 Using development prerelease: v${VERSION}"
+    return 0
+  fi
+
   # Default version as fallback
-  DEFAULT_VERSION="2.2.5"
+  DEFAULT_VERSION="3.0.1"
   VERSION="${DEFAULT_VERSION}"  # Initialize with default
   
   # First try: Use GitHub API with a proper User-Agent to avoid rate limiting issues
@@ -1586,14 +2021,22 @@ get_latest_release() {
     fi
   fi
 
-  if [ "${FOUND}" = false ]; then  
+  if [ "${FOUND_VERSION}" = false ]; then
     VERSION="${DEFAULT_VERSION}"  # Initialize with default
+  fi
+
+  # The version came off the network (GitHub API or HTML scraping) and flows
+  # into URLs and filesystem paths - constrain it to a safe charset before
+  # using it anywhere.
+  if ! validate_version_string "$VERSION"; then
+    color_echo "red" "🚨 Refusing suspicious version string: '${VERSION}'"
+    exit 1
   fi
 
   # Set URLs based on the version
   RELEASE_URL="https://github.com/${GITHUB_REPO}/releases/tag/v${VERSION}"
   DOWNLOAD_BASE_URL="https://github.com/${GITHUB_REPO}/releases/download/v${VERSION}"
-  
+
   color_echo "green" "📦 Using version: ${VERSION}"
 }
 
@@ -1615,118 +2058,374 @@ detect_system() {
   # Set the download filename
   FILENAME="rfswift_${OS}_${ARCH}.tar.gz"
   DOWNLOAD_URL="${DOWNLOAD_BASE_URL}/${FILENAME}"
-  
+
+  case "${OS}_${ARCH}" in
+    Linux_x86_64) WORKBENCH_FILENAME="rfswift-workbench_Linux_x86_64.tar.gz" ;;
+    Linux_arm64) WORKBENCH_FILENAME="rfswift-workbench_Linux_arm64.tar.gz" ;;
+    Darwin_x86_64|Darwin_arm64) WORKBENCH_FILENAME="rfswift-workbench_Darwin_universal.zip" ;;
+    *) WORKBENCH_FILENAME="" ;;
+  esac
+
+  if { [ "$INSTALL_COMPONENTS" = "workbench" ] || [ "$INSTALL_COMPONENTS" = "both" ]; } && [ -z "$WORKBENCH_FILENAME" ]; then
+    color_echo "red" "RF Swift Workbench is not currently published for ${OS} ${ARCH}."
+    color_echo "yellow" "The CLI remains available; Workbench release targets are Linux x86_64/arm64 and universal macOS."
+    exit 1
+  fi
+
   color_echo "blue" "🏠 Detected system: ${OS} ${ARCH}"
-  color_echo "blue" "📂 Will download: ${FILENAME}"
+}
+
+# Ask which Linux Workbench artifact to use. Only relevant for the tarball
+# flow - the native-package flow ships the Workbench as a distro package - so
+# it is asked right before downloading, not during system detection.
+choose_workbench_format() {
+  [ "$OS" = "Linux" ] || return 0
+  { [ "$INSTALL_COMPONENTS" = "workbench" ] || [ "$INSTALL_COMPONENTS" = "both" ]; } || return 0
+  case "$WORKBENCH_FORMAT" in native|appimage) ;; *) color_echo "red" "RFSWIFT_WORKBENCH_FORMAT must be native or appimage"; exit 1 ;; esac
+  if [ -z "${RFSWIFT_WORKBENCH_FORMAT+x}" ]; then
+    format_choice=$(prompt_choice "Choose the Linux Workbench package" "AppImage-portable" "Native-smaller")
+    [ "$format_choice" = "2" ] && WORKBENCH_FORMAT="native" || WORKBENCH_FORMAT="appimage"
+  fi
+  if [ "$WORKBENCH_FORMAT" = "appimage" ]; then
+    case "$ARCH" in
+      x86_64) WORKBENCH_FILENAME="rfswift-workbench_Linux_x86_64.AppImage" ;;
+      arm64)  WORKBENCH_FILENAME="rfswift-workbench_Linux_arm64.AppImage" ;;
+    esac
+  fi
+  color_echo "blue" "🖥️  Will download: ${WORKBENCH_FILENAME}"
+}
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Native packages: deb/rpm/pacman on Linux, Homebrew cask on macOS
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# Quick existence probe so a release without native packages (or a wrong name)
+# falls back to the tarball flow instead of aborting mid-install.
+release_asset_exists() {
+  if command_exists curl; then
+    curl -fsIL -H "User-Agent: RF-Swift-Installer" "${DOWNLOAD_BASE_URL}/$1" >/dev/null 2>&1
+  else
+    wget -q --spider "${DOWNLOAD_BASE_URL}/$1" >/dev/null 2>&1
+  fi
+}
+
+# Install one downloaded package file with the distro package manager (which
+# also resolves the Workbench's GTK/WebKit dependencies).
+install_pkg_file() {
+  case "$NATIVE_PM" in
+    apt)    sudo apt-get install -y "$1" ;;
+    dnf)    sudo dnf install -y "$1" ;;
+    yum)    sudo yum install -y "$1" ;;
+    zypper) sudo zypper --non-interactive install --allow-unsigned-rpm "$1" ;;
+    pacman) sudo pacman -U --noconfirm "$1" ;;
+    *) return 1 ;;
+  esac
+}
+
+# Download one native package with checksum verification. Returns non-zero so
+# the caller can fall back to tarballs; a checksum MISMATCH still hard-aborts
+# inside download_and_verify (fail closed, never fall back on tampering).
+native_fetch_one() {
+  download_and_verify "$1" "$2" || return 1
+  [ -f "${TMP_DIR}/$1" ] || return 1
+}
+
+# GitHub build-provenance attestations (Sigstore) prove a downloaded file was
+# built by RF Swift's release workflow from the tagged commit, not swapped
+# afterwards. Checking them needs the GitHub CLI 2.49+ (the `attestation`
+# command; Ubuntu 24.04's packaged gh is 2.45) AND a logged-in gh, since the
+# attestations API is not reachable anonymously. Only then is the check
+# offered. Otherwise the install goes on - the SHA-256 of every file was
+# already verified against the release manifest - with one hint. The installer
+# never sends anyone to `gh auth login`: that wizard generates and uploads an
+# SSH key by default, which is not this script's business.
+#
+# Returns 0 ready, 1 no gh, 2 gh too old, 3 gh not logged in.
+gh_attestation_ready() {
+  command_exists gh || return 1
+  gh attestation --help >/dev/null 2>&1 || return 2
+  gh auth status >/dev/null 2>&1 || return 3
+  return 0
+}
+
+# Verify the given files' attestations when possible and wanted. A check that
+# RAN and failed is fatal by default (the file may have been swapped); since
+# the SHA-256 already matched, the user may choose to go on. Without a
+# terminal that question defaults to no, so scripts stay fail-closed.
+verify_attestations() {
+  ready=0
+  gh_attestation_ready || ready=$?   # plain call: a non-zero return would trip set -e
+  case "$ready" in
+    1) color_echo "cyan" "ℹ️  Optional: with the GitHub CLI (https://cli.github.com) you can also check each file's build provenance: gh attestation verify <file> --repo ${GITHUB_REPO}"; return 0 ;;
+    2) color_echo "cyan" "ℹ️  Your gh has no 'attestation' command (needs 2.49+), so the optional build-provenance check is skipped; the SHA-256 checksums were verified."; return 0 ;;
+    3) color_echo "cyan" "ℹ️  gh is not logged in, so the optional build-provenance check is skipped; the SHA-256 checksums were verified. Later: gh attestation verify <file> --repo ${GITHUB_REPO}"; return 0 ;;
+  esac
+  case "$ATTEST_PREF" in
+    1|yes|true) color_echo "cyan" "   RFSWIFT_ATTEST=${ATTEST_PREF}" ;;
+    0|no|false) return 0 ;;
+    *) prompt_yes_no "Also verify the files' GitHub build attestations with gh (recommended)?" "y" || return 0 ;;
+  esac
+  color_echo "blue" "🔏 Verifying build provenance with 'gh attestation verify'..."
+  for f in "$@"; do
+    [ -f "$f" ] || continue
+    if out=$(gh attestation verify "$f" --repo "$GITHUB_REPO" 2>&1); then
+      # gh prints "Build workflow:. .github/workflows/x.yml@ref": drop the label and
+      # its dotted filler, keep the leading dot of the path.
+      wf=$(printf '%s\n' "$out" | grep -m1 'Build workflow' | sed 's/.*Build workflow:\.* *//')
+      color_echo "green" "✅ $(basename "$f"): built by ${GITHUB_REPO} ${wf}"
+      continue
+    fi
+    printf '%s\n' "$out" | tail -n 8
+    color_echo "red" "🚨 Attestation verification failed for $(basename "$f")."
+    color_echo "yellow" "   Its SHA-256 matched the release manifest, but its build provenance could not be confirmed (a network/API problem, or a swapped file)."
+    if prompt_yes_no "Continue the installation anyway?" "n"; then
+      color_echo "yellow" "   Continuing at your request."
+      return 0
+    fi
+    rm -rf "$TMP_DIR"
+    exit 1
+  done
+}
+
+# Packages install as root, so they get the same provenance treatment as the
+# tarballs.
+native_verify_attestations() {
+  verify_attestations "${TMP_DIR}"/rfswift*
+}
+
+# Prefer native packages (man pages, shell completions, dependency handling,
+# clean uninstall) over the tarball when a supported package manager and sudo
+# are available. Any failure returns non-zero and the classic tarball flow
+# takes over. Stable channel only: prerelease package filenames mangle the
+# version (4.0.0-dev -> 4.0.0~dev) and are not worth predicting here.
+try_native_package_install() {
+  [ "$RELEASE_CHANNEL" = "stable" ] || return 1
+  case "$OS" in
+    Darwin) try_native_install_macos ;;
+    Linux)  try_native_install_linux ;;
+    *) return 1 ;;
+  esac
+}
+
+try_native_install_macos() {
+  command_exists brew || return 1
+  if [ -z "$PKG_FORMAT" ]; then
+    color_echo "cyan" "🍺 Homebrew can install RF Swift from the signed, notarized release (CLI + Workbench, auto-updates with brew upgrade)."
+    choice=$(prompt_choice "How would you like to install RF Swift?" "Homebrew-cask-recommended" "Direct-download")
+    [ "$choice" = "1" ] && PKG_FORMAT="native" || PKG_FORMAT="tarball"
+  fi
+  [ "$PKG_FORMAT" = "native" ] || return 1
+  color_echo "blue" "🍺 Installing the rfswift cask..."
+  if brew install --cask penthertz/rfswift/rfswift; then
+    NATIVE_INSTALLED=true
+    INSTALL_DIR="$(brew --prefix)/bin"
+    color_echo "green" "✅ Installed via Homebrew. Upgrade later with: brew upgrade --cask rfswift"
+    return 0
+  fi
+  color_echo "yellow" "⚠️ Homebrew install failed (tap unreachable?). Falling back to direct download."
+  return 1
+}
+
+try_native_install_linux() {
+  [ "$PKG_FORMAT" = "tarball" ] && return 1
+  NATIVE_PM=$(get_package_manager)
+  case "$NATIVE_PM" in apt|dnf|yum|zypper|pacman) ;; *) return 1 ;; esac
+
+  # Map this system onto each ecosystem's package naming.
+  case "$NATIVE_PM" in
+    apt)
+      case "$ARCH" in x86_64) pkg_arch="amd64" ;; arm64) pkg_arch="arm64" ;; riscv64) pkg_arch="riscv64" ;; *) return 1 ;; esac
+      cli_pkg="rfswift_${VERSION}_${pkg_arch}.deb"
+      wb_pkg="rfswift-workbench_${VERSION}_${pkg_arch}.deb"
+      ;;
+    dnf|yum|zypper)
+      case "$ARCH" in x86_64) pkg_arch="x86_64" ;; arm64) pkg_arch="aarch64" ;; riscv64) pkg_arch="riscv64" ;; *) return 1 ;; esac
+      cli_pkg="rfswift-${VERSION}-1.${pkg_arch}.rpm"
+      wb_pkg="rfswift-workbench-${VERSION}-1.${pkg_arch}.rpm"
+      ;;
+    pacman)
+      case "$ARCH" in x86_64) pkg_arch="x86_64" ;; arm64) pkg_arch="aarch64" ;; *) return 1 ;; esac
+      cli_pkg="rfswift-${VERSION}-1-${pkg_arch}.pkg.tar.zst"
+      wb_pkg="rfswift-workbench-${VERSION}-1-${pkg_arch}.pkg.tar.zst"
+      ;;
+  esac
+
+  # The Workbench package declares Debian/Fedora/Arch dependency names and
+  # exists for amd64/arm64 only; anywhere else its tarball/AppImage flow
+  # handles dependencies (see ensure_workbench_runtime). All-or-nothing per
+  # run so the fallback never half-duplicates an install.
+  if [ "$INSTALL_COMPONENTS" = "workbench" ] || [ "$INSTALL_COMPONENTS" = "both" ]; then
+    { [ "$NATIVE_PM" = "zypper" ] || [ "$ARCH" = "riscv64" ]; } && return 1
+  fi
+
+  if ! have_sudo_access; then
+    color_echo "yellow" "⚠️ Native packages need sudo; using the tarball install instead."
+    return 1
+  fi
+
+  # Packages install as root, so checksum verification is not optional on this
+  # path: without a SHA-256 tool, the tarball flow (which at least warns) is
+  # the only acceptable fallback.
+  if ! command_exists sha256sum && ! command_exists shasum; then
+    color_echo "yellow" "⚠️ No SHA-256 tool found to verify packages; using the tarball install."
+    return 1
+  fi
+
+  # Probe every requested package upfront (older releases predate them) so a
+  # missing one can never leave a half-native install behind.
+  if [ "$INSTALL_COMPONENTS" = "cli" ] || [ "$INSTALL_COMPONENTS" = "both" ]; then
+    release_asset_exists "$cli_pkg" || return 1
+  fi
+  if [ "$INSTALL_COMPONENTS" = "workbench" ] || [ "$INSTALL_COMPONENTS" = "both" ]; then
+    release_asset_exists "$wb_pkg" || return 1
+  fi
+
+  if [ -z "$PKG_FORMAT" ]; then
+    color_echo "cyan" "📦 A native package is available for your system (man pages, shell completions, clean uninstall)."
+    choice=$(prompt_choice "How would you like to install RF Swift?" "Native-package-recommended" "Tarball-to-a-directory")
+    [ "$choice" = "1" ] && PKG_FORMAT="native" || PKG_FORMAT="tarball"
+  fi
+  [ "$PKG_FORMAT" = "native" ] || return 1
+
+  # Fetch and verify everything first, then attest, then install - so nothing
+  # is installed before every download has passed verification.
+  TMP_DIR=$(mktemp -d)
+  if [ "$INSTALL_COMPONENTS" = "cli" ] || [ "$INSTALL_COMPONENTS" = "both" ]; then
+    if ! native_fetch_one "$cli_pkg" "RF-Swift_${VERSION}_checksums.txt"; then
+      rm -rf "$TMP_DIR"
+      color_echo "yellow" "⚠️ Native package download failed; falling back to the tarball flow."
+      return 1
+    fi
+  fi
+  if [ "$INSTALL_COMPONENTS" = "workbench" ] || [ "$INSTALL_COMPONENTS" = "both" ]; then
+    if ! native_fetch_one "$wb_pkg" "RF-Swift_${VERSION}_workbench_checksums.txt"; then
+      rm -rf "$TMP_DIR"
+      color_echo "yellow" "⚠️ Workbench package download failed; falling back to the tarball flow."
+      return 1
+    fi
+  fi
+  native_verify_attestations
+  if [ "$INSTALL_COMPONENTS" = "cli" ] || [ "$INSTALL_COMPONENTS" = "both" ]; then
+    if ! install_pkg_file "${TMP_DIR}/${cli_pkg}"; then
+      rm -rf "$TMP_DIR"
+      color_echo "yellow" "⚠️ Native package install failed; falling back to the tarball flow."
+      return 1
+    fi
+  fi
+  if [ "$INSTALL_COMPONENTS" = "workbench" ] || [ "$INSTALL_COMPONENTS" = "both" ]; then
+    if ! install_pkg_file "${TMP_DIR}/${wb_pkg}"; then
+      rm -rf "$TMP_DIR"
+      color_echo "yellow" "⚠️ Workbench package install failed; falling back to the tarball flow."
+      return 1
+    fi
+  fi
+  rm -rf "$TMP_DIR"
+  NATIVE_INSTALLED=true
+  INSTALL_DIR="/usr/bin"
+  color_echo "green" "🎉 RF Swift installed via ${NATIVE_PM} packages - man pages and completions included."
+  return 0
+}
+
+# Download one release asset into TMP_DIR and verify it against the release's
+# checksums file. Used by both the tarball flow and the native-package flow.
+download_and_verify() {
+    asset_name="$1"
+    checksums_name="$2"
+    asset_url="${DOWNLOAD_BASE_URL}/${asset_name}"
+    asset_path="${TMP_DIR}/${asset_name}"
+    checksums_url="${DOWNLOAD_BASE_URL}/${checksums_name}"
+    checksums_path="${TMP_DIR}/${checksums_name}"
+    color_echo "blue" "🔽 Downloading ${asset_name}..."
+    if command_exists curl; then
+      curl -fL --retry 3 --progress-bar -o "$asset_path" "$asset_url"
+    elif command_exists wget; then
+      wget -q --show-progress -O "$asset_path" "$asset_url"
+    else
+      color_echo "red" "🚨 Missing curl or wget."
+      exit 1
+    fi
+
+    calculated=""
+    command_exists shasum && calculated=$(shasum -a 256 "$asset_path" | awk '{print $1}')
+    [ -z "$calculated" ] && command_exists sha256sum && calculated=$(sha256sum "$asset_path" | awk '{print $1}')
+    if [ -z "$calculated" ]; then
+      color_echo "yellow" "⚠️ No SHA-256 utility is available; ${asset_name} cannot be verified."
+      return 0
+    fi
+    if [ ! -f "$checksums_path" ]; then
+      if command_exists curl; then
+        curl -fsSL --retry 3 -o "$checksums_path" "$checksums_url"
+      else
+        wget -qO "$checksums_path" "$checksums_url"
+      fi
+    fi
+    expected=$(grep -E "[[:space:]][*]?${asset_name}\$" "$checksums_path" | awk '{print $1}' | head -1)
+    if [ -z "$expected" ] || [ "$expected" != "$calculated" ]; then
+      color_echo "red" "🚨 Checksum verification failed for ${asset_name}."
+      rm -rf "$TMP_DIR"
+      exit 1
+    fi
+    color_echo "green" "✅ Verified ${asset_name}: ${calculated}"
 }
 
 # Download the files and display checksum information
 download_files() {
   color_echo "blue" "🌟 Preparing to download RF-Swift..."
-
-  # Create temporary directory and store it in a global variable
   TMP_DIR=$(mktemp -d)
-  color_echo "blue" "🔽 Downloading RF-Swift binary from ${DOWNLOAD_URL}..."
-  
-  # Download the file
-  if command_exists curl; then
-    curl -L -o "${TMP_DIR}/${FILENAME}" "${DOWNLOAD_URL}" --progress-bar
-  elif command_exists wget; then
-    wget -q --show-progress -O "${TMP_DIR}/${FILENAME}" "${DOWNLOAD_URL}"
-  else
-    color_echo "red" "🚨 Missing curl or wget. Please install one of them."
-    exit 1
-  fi
-  
-  # Calculate and display checksum
-  color_echo "blue" "Downloaded file: ${TMP_DIR}/${FILENAME}"
-  
-  CALCULATED_CHECKSUM=""
-  if command_exists shasum; then
-    CALCULATED_CHECKSUM=$(shasum -a 256 "${TMP_DIR}/${FILENAME}" | cut -d ' ' -f 1)
-  elif command_exists sha256sum; then
-    CALCULATED_CHECKSUM=$(sha256sum "${TMP_DIR}/${FILENAME}" | cut -d ' ' -f 1)
-  fi
-  
-  if [ -n "$CALCULATED_CHECKSUM" ]; then
-    color_echo "blue" "Calculated checksum: $CALCULATED_CHECKSUM"
-  else
-    color_echo "yellow" "⚠️ Could not calculate checksum (missing shasum/sha256sum tools)"
-  fi
-  
-  # Set the exact checksums file URL format
-  CHECKSUMS_URL="https://github.com/${GITHUB_REPO}/releases/download/v${VERSION}/RF-Swift_${VERSION}_checksums.txt"
-  color_echo "blue" "GitHub checksums file: ${CHECKSUMS_URL}"
 
-  # Automatically verify the SHA-256 checksum against the published checksums
-  # file. A mismatch means the download is corrupted or tampered with - abort.
-  if [ -n "$CALCULATED_CHECKSUM" ]; then
-    CHECKSUMS_FILE="${TMP_DIR}/checksums.txt"
-    if { command_exists curl && curl -fsSL -o "$CHECKSUMS_FILE" "$CHECKSUMS_URL"; } \
-       || { command_exists wget && wget -qO "$CHECKSUMS_FILE" "$CHECKSUMS_URL"; }; then
-      EXPECTED_CHECKSUM=$(grep -E "[[:space:]][*]?${FILENAME}\$" "$CHECKSUMS_FILE" 2>/dev/null | awk '{print $1}' | head -1)
-      if [ -z "$EXPECTED_CHECKSUM" ]; then
-        color_echo "yellow" "⚠️  ${FILENAME} not found in checksums file; skipping checksum verification."
-      elif [ "$EXPECTED_CHECKSUM" = "$CALCULATED_CHECKSUM" ]; then
-        color_echo "green" "✅ Checksum verified: ${CALCULATED_CHECKSUM}"
-      else
-        color_echo "red" "🚨 CHECKSUM MISMATCH - the download may be corrupted or tampered with!"
-        color_echo "red" "   expected: ${EXPECTED_CHECKSUM}"
-        color_echo "red" "   got:      ${CALCULATED_CHECKSUM}"
-        rm -rf "${TMP_DIR}"
-        exit 1
-      fi
-    else
-      color_echo "yellow" "⚠️  Could not download the checksums file; skipping checksum verification."
-    fi
+  if [ "$INSTALL_COMPONENTS" = "cli" ] || [ "$INSTALL_COMPONENTS" = "both" ]; then
+    download_and_verify "$FILENAME" "RF-Swift_${VERSION}_checksums.txt"
+  fi
+  if [ "$INSTALL_COMPONENTS" = "workbench" ] || [ "$INSTALL_COMPONENTS" = "both" ]; then
+    download_and_verify "$WORKBENCH_FILENAME" "RF-Swift_${VERSION}_workbench_checksums.txt"
   fi
   
   # GitHub release page for manual verification
   RELEASE_PAGE_URL="https://github.com/${GITHUB_REPO}/releases/tag/v${VERSION}"
   color_echo "yellow" "If needed, verify the checksum by visiting the GitHub release page: ${RELEASE_PAGE_URL}"
 
-  # Optional: verify GitHub build provenance attestation (Sigstore-backed).
-  # Proves the binary was built by the official RF-Swift release workflow and not
-  # swapped afterwards - same mechanism as LUKSbox.
-  if command_exists gh; then
-    if prompt_yes_no "Verify the GitHub build attestation for this binary (recommended)?" "y"; then
-      color_echo "blue" "🔏 Verifying build provenance with 'gh attestation verify'..."
-      if gh attestation verify "${TMP_DIR}/${FILENAME}" --repo "${GITHUB_REPO}"; then
-        color_echo "green" "✅ Attestation verified - provenance confirmed for ${GITHUB_REPO}."
-      else
-        color_echo "red" "🚨 Attestation verification FAILED (or 'gh' is not signed in - run 'gh auth login')."
-        color_echo "yellow" "   The binary could not be cryptographically verified against ${GITHUB_REPO}."
-        if ! prompt_yes_no "Continue anyway (NOT recommended)?" "n"; then
-          color_echo "red" "🚨 Installation aborted."
-          rm -rf "${TMP_DIR}"
-          exit 1
-        fi
-      fi
-    fi
-  else
-    color_echo "yellow" "ℹ️  Install the GitHub CLI (gh) to cryptographically verify build attestations:"
-    color_echo "yellow" "   https://cli.github.com  -  then: gh attestation verify ${FILENAME} --repo ${GITHUB_REPO}"
-  fi
-  
-  # Ask to continue
-  if ! prompt_yes_no "Continue with installation?" "y"; then
-    color_echo "red" "🚨 Installation aborted by user."
-    rm -rf "${TMP_DIR}"
-    exit 1
-  fi
-  
-  # If we got here, continue with installation
+  # Optional: verify the GitHub build-provenance attestations (Sigstore) when a
+  # logged-in, recent gh is at hand; see verify_attestations. The checksums
+  # above already gate the install, so no extra "continue?" question here.
+  verify_attestations "${TMP_DIR}"/rfswift*.tar.gz "${TMP_DIR}"/rfswift*.zip "${TMP_DIR}"/rfswift*.AppImage
   return 0
 }
 
 # Choose installation directory
 choose_install_dir() {
+  # Preserve the location selected by an earlier tarball installation. This is
+  # especially important when CLI and Workbench were installed separately:
+  # an upgrade must replace each binary in place instead of creating a second,
+  # shadowed copy in the newly selected default directory.
+  CLI_INSTALL_DIR=""
+  WORKBENCH_INSTALL_DIR=""
+  existing_cli=$(installed_binary_dir rfswift)
+  existing_workbench=$(installed_binary_dir rfswift-workbench)
+
   color_echo "blue" "🏠 Choose where to install RF-Swift..."
+  [ -n "$existing_cli" ] && color_echo "green" "✅ Existing CLI detected in ${existing_cli}; it will be replaced there."
+  [ -n "$existing_workbench" ] && color_echo "green" "✅ Existing Workbench detected in ${existing_workbench}; it will be replaced there."
+
+  if [ -n "$existing_cli" ]; then CLI_INSTALL_DIR="$existing_cli"; fi
+  if [ -n "$existing_workbench" ]; then WORKBENCH_INSTALL_DIR="$existing_workbench"; fi
+
+  # If every requested component already has a destination, no new location
+  # needs to be selected. Keep INSTALL_DIR for the alias/post-install helpers.
+  if { [ "$INSTALL_COMPONENTS" = "cli" ] && [ -n "$CLI_INSTALL_DIR" ]; } ||
+     { [ "$INSTALL_COMPONENTS" = "workbench" ] && [ -n "$WORKBENCH_INSTALL_DIR" ]; } ||
+     { [ "$INSTALL_COMPONENTS" = "both" ] && [ -n "$CLI_INSTALL_DIR" ] && [ -n "$WORKBENCH_INSTALL_DIR" ]; }; then
+    INSTALL_DIR="${CLI_INSTALL_DIR:-$WORKBENCH_INSTALL_DIR}"
+    return 0
+  fi
+
   color_echo "cyan" "You have two options:"
   color_echo "cyan" "1. System-wide installation (/usr/local/bin) - requires sudo"
   color_echo "cyan" "2. User-local installation (~/.rfswift/bin) - doesn't require sudo"
   
-  if prompt_yes_no "Install system-wide (requires sudo)?" "n"; then
+  if [ -n "$INSTALL_DIR_PREF" ]; then
+    INSTALL_DIR="$INSTALL_DIR_PREF"
+    color_echo "cyan" "   RFSWIFT_INSTALL_DIR=${INSTALL_DIR}"
+  elif prompt_yes_no "Install system-wide (requires sudo)?" "n"; then
     INSTALL_DIR="/usr/local/bin"
     if ! have_sudo_access; then
       color_echo "red" "🚨 System-wide installation requires sudo. You don't seem to have sudo access."
@@ -1736,27 +2435,80 @@ choose_install_dir() {
   else
     INSTALL_DIR="$HOME/.rfswift/bin"
   fi
+
+  [ -n "$CLI_INSTALL_DIR" ] || CLI_INSTALL_DIR="$INSTALL_DIR"
+  [ -n "$WORKBENCH_INSTALL_DIR" ] || WORKBENCH_INSTALL_DIR="$INSTALL_DIR"
   
   color_echo "green" "👍 Will install RF-Swift to: ${INSTALL_DIR}"
   return 0
 }
 
+# Print the directory of an installed executable. Only absolute command paths
+# are accepted (aliases/functions are ignored), and symlinks are resolved where
+# the platform provides readlink -f so the actual installation is replaced.
+installed_binary_dir() {
+  binary_name="$1"
+  binary_path=$(command -v "$binary_name" 2>/dev/null || true)
+  case "$binary_path" in /*) ;; *) return 0 ;; esac
+  if command_exists readlink; then
+    resolved_path=$(readlink -f "$binary_path" 2>/dev/null || true)
+    [ -n "$resolved_path" ] && binary_path="$resolved_path"
+  fi
+  dirname "$binary_path"
+}
+
+validate_tar_archive() {
+  archive_path="$1"
+  if tar -tzf "$archive_path" | awk '
+    /^\// { bad=1 }
+    { n=split($0,p,"/"); for(i=1;i<=n;i++) if(p[i]=="..") bad=1 }
+    END { exit bad ? 1 : 0 }
+  '; then :; else
+    color_echo "red" "🚨 Unsafe path found in $(basename "$archive_path")."
+    exit 1
+  fi
+  if tar -tvzf "$archive_path" | awk 'substr($0,1,1) ~ /[lh]/ { bad=1 } END { exit bad ? 1 : 0 }'; then :; else
+    color_echo "red" "🚨 Links are not allowed in installer archives."
+    exit 1
+  fi
+}
+
+validate_zip_archive() {
+  archive_path="$1"
+  command_exists unzip || { color_echo "red" "unzip is required to validate the Workbench archive."; exit 1; }
+  if unzip -Z1 "$archive_path" | awk '
+    /^\// || /^[A-Za-z]:[\\\/]/ { bad=1 }
+    { gsub(/\\/,"/"); n=split($0,p,"/"); for(i=1;i<=n;i++) if(p[i]=="..") bad=1 }
+    END { exit bad ? 1 : 0 }
+  '; then :; else
+    color_echo "red" "🚨 Unsafe path found in $(basename "$archive_path")."
+    exit 1
+  fi
+  if command_exists zipinfo && zipinfo -l "$archive_path" | awk '$1 ~ /^l/ { bad=1 } END { exit bad ? 1 : 0 }'; then :; else
+    color_echo "red" "🚨 Symbolic links are not allowed in installer ZIP archives."
+    exit 1
+  fi
+}
+
 # Install the binary
 install_binary() {
+  [ "$INSTALL_COMPONENTS" = "workbench" ] && return 0
+  cli_dir="${CLI_INSTALL_DIR:-$INSTALL_DIR}"
   color_echo "blue" "🔧 Installing RF-Swift..."
   
   # Create installation directory if needed
-  if [ "$INSTALL_DIR" = "/usr/local/bin" ]; then
+  if [ ! -w "$cli_dir" ] && [ -e "$cli_dir" ]; then
     if ! have_sudo_access; then
       color_echo "red" "🚨 System-wide installation requires sudo. Please run with sudo or choose user-local installation."
       exit 1
     fi
-    sudo mkdir -p "$INSTALL_DIR"
+    sudo mkdir -p "$cli_dir"
   else
-    mkdir -p "$INSTALL_DIR"
+    mkdir -p "$cli_dir"
   fi
   
   color_echo "blue" "📦 Extracting archive..."
+  validate_tar_archive "${TMP_DIR}/${FILENAME}"
   tar -xzf "${TMP_DIR}/${FILENAME}" -C "${TMP_DIR}"
   
   RFSWIFT_BIN=$(find "${TMP_DIR}" -name "rfswift" -type f)
@@ -1765,19 +2517,91 @@ install_binary() {
     exit 1
   fi
 
-  color_echo "blue" "🚀 Moving RF-Swift to ${INSTALL_DIR}..."
-  if [ "$INSTALL_DIR" = "/usr/local/bin" ]; then
-    sudo cp "${RFSWIFT_BIN}" "${INSTALL_DIR}/rfswift"
-    sudo chmod +x "${INSTALL_DIR}/rfswift"
+  color_echo "blue" "🚀 Moving RF-Swift to ${cli_dir}..."
+  if [ ! -w "$cli_dir" ]; then
+    sudo cp "${RFSWIFT_BIN}" "${cli_dir}/rfswift"
+    sudo chmod +x "${cli_dir}/rfswift"
   else
-    cp "${RFSWIFT_BIN}" "${INSTALL_DIR}/rfswift"
-    chmod +x "${INSTALL_DIR}/rfswift"
+    cp "${RFSWIFT_BIN}" "${cli_dir}/rfswift"
+    chmod +x "${cli_dir}/rfswift"
   fi
   
-  # Clean up
-  rm -rf "${TMP_DIR}"
-  
-  color_echo "green" "🎉 RF-Swift has been installed successfully to ${INSTALL_DIR}/rfswift!"
+  color_echo "green" "🎉 RF-Swift has been installed successfully to ${cli_dir}/rfswift!"
+}
+
+ensure_workbench_runtime() {
+  [ "$OS" = "Linux" ] || return 0
+  if command_exists ldconfig && ldconfig -p 2>/dev/null | grep -q 'libwebkit2gtk-4.1'; then
+    return 0
+  fi
+  color_echo "yellow" "RF Swift Workbench requires GTK3 and WebKit2GTK 4.1 on Linux."
+  if ! prompt_yes_no "Install the Workbench runtime dependencies now?" "y"; then
+    color_echo "yellow" "Install GTK3 and WebKit2GTK 4.1 before launching rfswift-workbench."
+    return 0
+  fi
+  distro=$(detect_distro)
+  case "$distro" in
+    debian|ubuntu) sudo apt-get update && sudo apt-get install -y libgtk-3-0 libwebkit2gtk-4.1-0 ;;
+    fedora) sudo dnf install -y gtk3 webkit2gtk4.1 ;;
+    arch) sudo pacman -S --needed --noconfirm gtk3 webkit2gtk-4.1 ;;
+    opensuse) sudo zypper install -y libgtk-3-0 libwebkit2gtk-4_1-0 ;;
+    *) color_echo "yellow" "Unknown distro: install the GTK3 and WebKit2GTK 4.1 runtime packages manually." ;;
+  esac
+}
+
+install_workbench() {
+  [ "$INSTALL_COMPONENTS" = "cli" ] && return 0
+  color_echo "blue" "🖥️  Installing RF Swift Workbench..."
+  workbench_dir="${WORKBENCH_INSTALL_DIR:-$INSTALL_DIR}"
+  case "$OS" in
+    Linux)
+      if [ "$WORKBENCH_FORMAT" = "appimage" ]; then
+        if [ ! -w "$workbench_dir" ]; then
+          sudo cp "${TMP_DIR}/${WORKBENCH_FILENAME}" "$workbench_dir/rfswift-workbench"
+          sudo chmod 0755 "$workbench_dir/rfswift-workbench"
+        else
+          cp "${TMP_DIR}/${WORKBENCH_FILENAME}" "$workbench_dir/rfswift-workbench"
+          chmod 0755 "$workbench_dir/rfswift-workbench"
+        fi
+        color_echo "green" "✅ Portable AppImage installed as ${workbench_dir}/rfswift-workbench"
+        return 0
+      fi
+      ensure_workbench_runtime
+      workbench_unpack="${TMP_DIR}/workbench"
+      mkdir -p "$workbench_unpack"
+      validate_tar_archive "${TMP_DIR}/${WORKBENCH_FILENAME}"
+      tar -xzf "${TMP_DIR}/${WORKBENCH_FILENAME}" -C "$workbench_unpack"
+      workbench_bin=$(find "$workbench_unpack" -type f -name rfswift-workbench | head -1)
+      [ -n "$workbench_bin" ] || { color_echo "red" "Workbench binary is missing from its archive."; exit 1; }
+      if [ ! -w "$workbench_dir" ]; then
+        sudo cp "$workbench_bin" "$workbench_dir/rfswift-workbench"
+        sudo chmod 0755 "$workbench_dir/rfswift-workbench"
+      else
+        cp "$workbench_bin" "$workbench_dir/rfswift-workbench"
+        chmod 0755 "$workbench_dir/rfswift-workbench"
+      fi
+      color_echo "green" "✅ Workbench installed as ${workbench_dir}/rfswift-workbench"
+      ;;
+    Darwin)
+      validate_zip_archive "${TMP_DIR}/${WORKBENCH_FILENAME}"
+      app_root="$HOME/Applications"
+      if [ -d "/Applications/rfswift-workbench.app" ]; then
+        app_root="/Applications"
+        color_echo "green" "✅ Existing Workbench detected in /Applications; it will be replaced there."
+      elif [ -d "$HOME/Applications/rfswift-workbench.app" ]; then
+        color_echo "green" "✅ Existing Workbench detected in $HOME/Applications; it will be replaced there."
+      else
+        prompt_yes_no "Install Workbench system-wide in /Applications?" "n" && app_root="/Applications"
+      fi
+      mkdir -p "$app_root"
+      if [ "$app_root" = "/Applications" ]; then
+        sudo ditto -x -k "${TMP_DIR}/${WORKBENCH_FILENAME}" "$app_root"
+      else
+        ditto -x -k "${TMP_DIR}/${WORKBENCH_FILENAME}" "$app_root"
+      fi
+      color_echo "green" "✅ Workbench installed in ${app_root}/rfswift-workbench.app"
+      ;;
+  esac
 }
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1795,8 +2619,9 @@ display_rainbow_logo_animated() {
     PURPLE='\033[1;35m'
     NC='\033[0m' # No Color
     
-    # Clear the screen for better presentation
-    clear
+    # Clear the screen for better presentation (clear is missing on minimal
+    # installs; the script must not stop there)
+    if command_exists clear; then clear 2>/dev/null || true; fi
     
     # Store the logo lines in variables (sh doesn't support arrays)
     LINE1="   888~-_   888~~        ,d88~~\\                ,e,   88~\\   d8   "
@@ -2024,11 +2849,15 @@ install_powerline_fonts() {
         "fedora")
           if have_sudo_access; then
             color_echo "blue" "📦 Using dnf to install fonts..."
+            # dnf5 rejects the whole transaction when one name is unknown, so
+            # every name here must exist in the Fedora repos (Hack is packaged
+            # as source-foundry-hack-fonts; there is no google-noto-fonts).
             sudo dnf install -y \
               powerline-fonts \
               fira-code-fonts \
-              hack-fonts \
-              google-noto-fonts \
+              source-foundry-hack-fonts \
+              google-noto-sans-fonts \
+              google-noto-sans-mono-fonts \
               google-noto-color-emoji-fonts 2>/dev/null || true
             
             # Install additional Nerd Fonts manually
@@ -2190,6 +3019,10 @@ check_agnoster_dependencies() {
 
 install_nerd_fonts_linux() {
   color_echo "blue" "📥 Installing Nerd Fonts manually..."
+  if ! command_exists unzip; then
+    color_echo "yellow" "⚠️  'unzip' is not installed; skipping the Nerd Fonts download (install unzip and re-run, or use your distribution's nerd-font packages)."
+    return 0
+  fi
   
   FONTS_DIR="$HOME/.local/share/fonts"
   mkdir -p "$FONTS_DIR"
@@ -2375,55 +3208,423 @@ check_asciinema() {
 # Main
 # ═══════════════════════════════════════════════════════════════════════════════
 
+# Debian's `su` (without `-`) and ordinary user shells have no sbin directory
+# on PATH, and the Determinate installer looks `groupadd`/`addgroup` up on the
+# caller's PATH before it escalates. It then stops with "Could not find a
+# supported command to create groups" although /usr/sbin/groupadd is right
+# there. Put the sbin directories on PATH for the installer; sudo's secure_path
+# runs the same binaries for the privileged steps anyway.
+ensure_sbin_on_path() {
+  local dir
+  for dir in /usr/local/sbin /usr/sbin /sbin; do
+    [ -d "$dir" ] || continue
+    case ":$PATH:" in
+      *":$dir:"*) ;;
+      *) PATH="$PATH:$dir" ;;
+    esac
+  done
+  export PATH
+}
+
+# Run a command as root: directly when already root, through sudo otherwise.
+run_as_root() {
+  if [ "$(id -u 2>/dev/null)" = "0" ]; then
+    "$@"
+  else
+    sudo "$@"
+  fi
+}
+
+# The official installer leaves flakes and nix-command off; RF Swift's engine
+# needs both, so enable them system-wide and restart the daemon.
+nix_enable_flakes() {
+  local conf="/etc/nix/nix.conf"
+  if grep -qs 'experimental-features.*flakes' "$conf"; then
+    return 0
+  fi
+  if [ "$(id -u 2>/dev/null)" != "0" ] && ! have_sudo_access; then
+    color_echo "yellow" "   Add 'experimental-features = nix-command flakes' to $conf to finish enabling flakes."
+    return 0
+  fi
+  printf 'experimental-features = nix-command flakes\n' | run_as_root tee -a "$conf" >/dev/null
+  if command_exists systemctl; then
+    run_as_root systemctl restart nix-daemon >/dev/null 2>&1 || true
+  fi
+}
+
+# The installers are fetched with curl or, on hosts without it (a stock Debian
+# desktop ships wget only), with wget.
+fetch_installer() {
+  if command_exists curl; then
+    curl --proto '=https' --tlsv1.2 -sSf -L "$1"
+  elif command_exists wget; then
+    wget -qO- --https-only "$1"
+  else
+    color_echo "red" "🚨 Neither curl nor wget is available to download the Nix installer."
+    return 1
+  fi
+}
+
+nix_installer_determinate() {
+  color_echo "blue" "🚀 Running the Determinate Systems Nix installer (enables flakes + nix-command)..."
+  fetch_installer https://install.determinate.systems/nix | sh -s -- install --no-confirm
+}
+
+nix_installer_official() {
+  color_echo "yellow" "⚠️  The Determinate installer did not complete; trying the official NixOS multi-user installer..."
+  if ! command_exists xz; then
+    color_echo "yellow" "   It unpacks with 'xz' (Debian/Ubuntu: sudo apt-get install xz-utils; Fedora: sudo dnf install xz)."
+  fi
+  fetch_installer https://nixos.org/nix/install | sh -s -- --daemon --yes || return 1
+  nix_enable_flakes
+}
+
+install_nix() {
+  color_echo "blue" "❄️  Installing Nix (native engine)..."
+  if command_exists nix; then
+    color_echo "green" "✅ Nix is already installed."
+    return 0
+  fi
+  if [ "$(uname)" = "Linux" ]; then
+    ensure_sbin_on_path
+    if ! command_exists groupadd && ! command_exists addgroup; then
+      color_echo "red" "🚨 Neither 'groupadd' nor 'addgroup' is available; the Nix installer needs one to create the nixbld build group."
+      color_echo "cyan" "   Install it first (Debian/Ubuntu: 'sudo apt-get install passwd'; Alpine: 'apk add shadow'), then re-run."
+      return 1
+    fi
+  fi
+  if nix_installer_determinate || nix_installer_official; then
+    color_echo "green" "✅ Nix installed."
+    color_echo "cyan" "   Open a new shell (or 'source /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh') so 'nix' is on PATH,"
+    color_echo "cyan" "   then:  rfswift --engine nix run <environment>"
+    color_echo "cyan" "   Tip: set 'engine = nix' under [general] in ~/.config/rfswift/config.ini to make Nix the default."
+  else
+    color_echo "red" "🚨 Nix installation failed. Install it manually from https://nixos.org/download and re-run."
+    return 1
+  fi
+}
+
+# Bubblewrap powers the Nix engine's `--isolate` jail (Linux user namespaces):
+# it hides $HOME and the host filesystem while keeping USB/serial devices, the
+# display and the network. Optional - without it, `--isolate` builds bwrap from
+# nixpkgs on first use - but installing it makes the jail work out of the box.
+check_bubblewrap() {
+  # Linux only: bubblewrap relies on Linux namespaces (macOS is unsupported).
+  if [ "$(uname)" != "Linux" ]; then
+    return 0
+  fi
+  BWRAP_CHECKED=1
+  if command_exists bwrap; then
+    color_echo "green" "✅ bubblewrap present ($(rfswift_bwrap))."
+    check_userns
+    return 0
+  fi
+  color_echo "cyan" "   bubblewrap enables the Nix engine's --isolate jail: hides \$HOME and the host filesystem while keeping USB devices, the display and the network."
+  case "$ISOLATE_PREF" in
+    1|yes|true) choice=1; color_echo "cyan" "   RFSWIFT_ISOLATE=${ISOLATE_PREF}" ;;
+    0|no|false) choice=2; color_echo "cyan" "   RFSWIFT_ISOLATE=${ISOLATE_PREF}" ;;
+    *) choice=$(prompt_choice "Install bubblewrap for the Nix engine's --isolate jail?" "Yes" "No") ;;
+  esac
+  if [ "$choice" != "1" ]; then
+    color_echo "yellow" "   Skipped. --isolate will build bubblewrap from nixpkgs on first use, or install it later (e.g. 'sudo apt install bubblewrap')."
+    if apparmor_userns_restricted; then
+      color_echo "yellow" "   Note: this host lets only the distribution's ${DISTRO_BWRAP} create user namespaces (AppArmor), so the nixpkgs build cannot sandbox here."
+    fi
+    return 0
+  fi
+  install_bubblewrap_package || return 0
+  if command_exists bwrap; then
+    color_echo "green" "✅ bubblewrap installed."
+  else
+    color_echo "yellow" "   bubblewrap install did not complete; --isolate will fall back to building it from nixpkgs."
+  fi
+  check_userns
+}
+
+# Install the distribution's bubblewrap package.
+install_bubblewrap_package() {
+  pm=$(get_package_manager)
+  case "$pm" in
+    apt)    sudo apt update && sudo apt install -y bubblewrap ;;
+    dnf)    sudo dnf install -y bubblewrap ;;
+    yum)    sudo yum install -y bubblewrap ;;
+    pacman) sudo pacman -Sy --noconfirm --needed bubblewrap ;;
+    zypper) sudo zypper install -y bubblewrap ;;
+    apk)    sudo apk add bubblewrap ;;
+    emerge) sudo emerge --ask=n sys-apps/bubblewrap ;;
+    *)      color_echo "yellow" "   Unknown package manager; install 'bubblewrap' manually to use --isolate." ; return 1 ;;
+  esac
+}
+
+# Where the distribution's bubblewrap lives. Ubuntu 24.04+ restricts
+# unprivileged user namespaces with AppArmor: only a bwrap covered by an
+# AppArmor profile may create one, and that profile is attached to this path.
+# RF Swift prefers it over any other bwrap on PATH for the same reason.
+DISTRO_BWRAP=/usr/bin/bwrap
+# Ubuntu's profile for it: active out of the box on 26.04, shipped as an
+# optional extra profile by apparmor-profiles on 24.04 (and Debian).
+BWRAP_APPARMOR_PROFILE=/etc/apparmor.d/bwrap-userns-restrict
+BWRAP_APPARMOR_EXTRA=/usr/share/apparmor/extra-profiles/bwrap-userns-restrict
+
+# The bwrap the CLI will use: a NixOS setuid wrapper, else the distribution's
+# binary, else whatever PATH has.
+rfswift_bwrap() {
+  for b in /run/wrappers/bin/bwrap "$DISTRO_BWRAP"; do
+    [ -x "$b" ] && { echo "$b"; return 0; }
+  done
+  command -v bwrap
+}
+
+# Can this bwrap create a sandbox as the current user?
+bwrap_sandbox_works() {
+  "$1" --ro-bind / / --proc /proc -- true >/dev/null 2>&1
+}
+
+# True when the kernel's AppArmor restriction on unprivileged user namespaces
+# is on (Ubuntu 24.04+). Stock Debian kernels have no such knob. The /proc/sys
+# root is overridable so the tests can simulate hosts.
+apparmor_userns_restricted() {
+  [ "$(cat "${RFSWIFT_PROC_SYS:-/proc/sys}/kernel/apparmor_restrict_unprivileged_userns" 2>/dev/null)" = 1 ]
+}
+
+# Enable the AppArmor profile that lets ${DISTRO_BWRAP} create user
+# namespaces while the restriction stays in force for everything else - the
+# targeted fix on Ubuntu 24.04. Copies the extra profile into /etc/apparmor.d
+# (installing apparmor-profiles first when needed) and loads it.
+enable_bwrap_apparmor_profile() {
+  command_exists apparmor_parser || { color_echo "yellow" "   apparmor_parser not found; is AppArmor installed?"; return 1; }
+  if [ ! -f "$BWRAP_APPARMOR_PROFILE" ]; then
+    if [ ! -f "$BWRAP_APPARMOR_EXTRA" ]; then
+      case "$(get_package_manager)" in
+        apt) sudo apt install -y apparmor-profiles ;;
+        *)   color_echo "yellow" "   No packaged bwrap-userns-restrict profile for this distribution."; return 1 ;;
+      esac
+      [ -f "$BWRAP_APPARMOR_EXTRA" ] || return 1
+    fi
+    sudo cp "$BWRAP_APPARMOR_EXTRA" "$BWRAP_APPARMOR_PROFILE" || return 1
+  fi
+  sudo apparmor_parser -r "$BWRAP_APPARMOR_PROFILE"
+}
+
+# bubblewrap needs unprivileged user namespaces unless it is setuid-root.
+# Ubuntu 24.04+ restricts them with AppArmor (only a profiled bwrap may create
+# one), which makes --isolate fail with a uid-map permission error; a Debian
+# kernel can have them switched off with kernel.unprivileged_userns_clone=0.
+# Test the bwrap the CLI will use and offer the most targeted fix first: the
+# distribution package and its AppArmor profile, then the sysctl as last resort.
+check_userns() {
+  command_exists bwrap || return 0
+  bw=$(rfswift_bwrap)
+  if bwrap_sandbox_works "$bw"; then
+    color_echo "green" "✅ bubblewrap sandbox works - 'rfswift run --engine nix --isolate' is ready."
+    return 0
+  fi
+  if [ -u "$bw" ]; then
+    color_echo "yellow" "   bubblewrap is setuid but the sandbox test failed; check your AppArmor/seccomp policy."
+    return 0
+  fi
+  if apparmor_userns_restricted; then
+    color_echo "yellow" "   bubblewrap cannot create a sandbox yet: this host restricts unprivileged user namespaces with AppArmor (Ubuntu 24.04+ default)."
+    color_echo "cyan" "   Only a bwrap covered by an AppArmor profile may create one; the profile is attached to ${DISTRO_BWRAP}."
+    if [ ! -x "$DISTRO_BWRAP" ]; then
+      color_echo "yellow" "   The bwrap in use is ${bw}, which no profile covers."
+      if prompt_yes_no "Install the distribution's bubblewrap package (${DISTRO_BWRAP}) for --isolate?" "y"; then
+        install_bubblewrap_package || true
+      fi
+    fi
+    if [ -x "$DISTRO_BWRAP" ] && ! bwrap_sandbox_works "$DISTRO_BWRAP"; then
+      if prompt_yes_no "Enable the AppArmor profile for ${DISTRO_BWRAP} (keeps the restriction for every other program)?" "y"; then
+        enable_bwrap_apparmor_profile || color_echo "yellow" "   Could not enable the profile."
+      fi
+    fi
+    if [ -x "$DISTRO_BWRAP" ] && bwrap_sandbox_works "$DISTRO_BWRAP"; then
+      color_echo "green" "✅ ${DISTRO_BWRAP} can sandbox - 'rfswift run --engine nix --isolate' is ready."
+      return 0
+    fi
+    color_echo "yellow" "   Still restricted. Lifting the restriction for every program is the last resort."
+  else
+    color_echo "yellow" "   bubblewrap cannot create a sandbox yet: unprivileged user namespaces look disabled (kernel.unprivileged_userns_clone=0, or a hardened kernel)."
+  fi
+  # Defaults to no: without a terminal the installer must not weaken the host.
+  if ! prompt_yes_no "Enable unprivileged user namespaces for every program (sysctl, persisted)? This weakens the host's hardening" "n"; then
+    color_echo "yellow" "   Skipped. --isolate needs unprivileged user namespaces enabled or a setuid bubblewrap; 'rfswift host isolate' offers these fixes again any time."
+    return 0
+  fi
+  # Only knobs this kernel has: an unknown key in sysctl.d makes every boot
+  # log an error.
+  conf=""
+  for kv in kernel.apparmor_restrict_unprivileged_userns=0 kernel.unprivileged_userns_clone=1; do
+    key=${kv%%=*}
+    [ -e "${RFSWIFT_PROC_SYS:-/proc/sys}/$(echo "$key" | tr . /)" ] || continue
+    sudo sysctl -w "$kv" >/dev/null 2>&1 || true
+    conf="${conf}${kv}
+"
+  done
+  if [ -n "$conf" ]; then
+    printf '%s' "$conf" | sudo tee /etc/sysctl.d/99-rfswift-userns.conf >/dev/null 2>&1 || true
+  else
+    color_echo "yellow" "   This kernel has neither user-namespace sysctl; nothing to change."
+  fi
+  if bwrap_sandbox_works "$bw"; then
+    color_echo "green" "✅ Unprivileged user namespaces enabled - --isolate is ready."
+  else
+    color_echo "yellow" "   Still restricted; a reboot or an AppArmor policy change may be required. 'rfswift host isolate --status' shows what the CLI sees."
+  fi
+}
+
+# The Nix engine's --isolate jail needs a host mechanism: bubblewrap on Linux
+# (offered when missing, then tested), Apple's sandbox-exec on macOS (ships
+# with the OS, tested). Runs for every install, whether or not Nix is set up
+# yet, so the jail works the day Nix is added. check_nix_engine may already
+# have covered bubblewrap; then this is a no-op.
+check_isolate() {
+  case "$(uname -s)" in
+    Linux*)
+      [ "$BWRAP_CHECKED" = 1 ] && return 0
+      color_echo "blue" "🔒 Isolation for the Nix engine (--isolate)"
+      check_bubblewrap
+      ;;
+    Darwin*)
+      color_echo "blue" "🔒 Isolation for the Nix engine (--isolate)"
+      check_sandbox_exec
+      ;;
+  esac
+}
+
+# macOS: --isolate is a Seatbelt sandbox applied with sandbox-exec, part of
+# the OS. Nothing to install; confirm it is there and can run a trivial
+# profile (a device-management policy can block it).
+SANDBOX_EXEC="${SANDBOX_EXEC:-/usr/bin/sandbox-exec}"
+check_sandbox_exec() {
+  sb="$SANDBOX_EXEC"
+  if [ ! -x "$sb" ]; then
+    sb=$(command -v sandbox-exec 2>/dev/null) || sb=""
+  fi
+  if [ -z "$sb" ]; then
+    color_echo "yellow" "   sandbox-exec not found (macOS ships it as /usr/bin/sandbox-exec): 'rfswift run --engine nix --isolate' is unavailable; use the container engine for isolation."
+    return 0
+  fi
+  if "$sb" -p '(version 1) (allow default)' /usr/bin/true >/dev/null 2>&1; then
+    color_echo "green" "✅ sandbox-exec works - 'rfswift run --engine nix --isolate' is ready (Seatbelt sandbox)."
+  else
+    color_echo "yellow" "   sandbox-exec is present but could not run a trivial profile; --isolate may be blocked by a device-management policy."
+  fi
+}
+
+# RF Swift can run tool environments natively via Nix (rfswift --engine nix),
+# with no container. Offer to install it alongside (or instead of) a container
+# engine.
+check_nix_engine() {
+  color_echo "blue" "❄️  Native engine (Nix)"
+  if command_exists nix; then
+    color_echo "green" "✅ Nix is available - RF Swift can run tools natively with 'rfswift --engine nix' (no container)."
+    check_bubblewrap
+    return 0
+  fi
+  color_echo "cyan" "   RF Swift can also run its tool environments natively via Nix - no container needed."
+  case "$NIX_PREF" in
+    1|yes|true) choice=1; color_echo "cyan" "   RFSWIFT_NIX=${NIX_PREF}" ;;
+    0|no|false) choice=2; color_echo "cyan" "   RFSWIFT_NIX=${NIX_PREF}" ;;
+    *) choice=$(prompt_choice "Install Nix for the native engine?" "Yes" "No") ;;
+  esac
+  if [ "$choice" = "1" ]; then
+    # A Nix installer that gives up must not end the RF Swift install.
+    if install_nix; then
+      check_bubblewrap
+    else
+      color_echo "yellow" "⚠️  Nix setup did not complete; RF Swift itself is still installed. Retry later from https://nixos.org/download"
+    fi
+  else
+    color_echo "yellow" "   Skipped. Install Nix later from https://nixos.org/download to use '--engine nix'."
+  fi
+}
+
 main() {
+  # A root shell reached with plain `su` keeps the user's PATH, without the
+  # sbin directories (Debian's su no longer adds them). dpkg, ldconfig and the
+  # Nix installer then report tools as missing that are installed; see
+  # ensure_sbin_on_path. Normalise once, for the whole run.
+  ensure_sbin_on_path
+  provide_sudo_shim
+
   display_rainbow_logo_animated
 
   fun_welcome
+  choose_release_and_components
   
   # Verify system requirements first
   if ! verify_system_requirements; then
     color_echo "red" "🚨 Cannot proceed due to missing system requirements."
     exit 1
   fi
+  warn_without_root_access
   
   # Show Steam Deck detection status
   if is_steam_deck; then
     color_echo "magenta" "🎮 Steam Deck detected! Special optimizations will be applied."
   fi
   
-  # Check container engine (Docker / Podman) and offer to install
-  check_container_engine
-  
-  # Check and install audio system
-  check_audio_system
-  
-  # Get latest release info
-  get_latest_release
-  
-  # Detect system architecture
-  detect_system
-  
-  # Download files
-  download_files
-  
-  # Choose installation directory
-  choose_install_dir
-  
-  # Install binary
-  install_binary
+  # Host extras: a container engine, the Nix engine and audio. Each is
+  # optional, so a failure there is reported and the RF Swift install goes on
+  # (a plain call would end the script through `set -e` before anything of
+  # RF Swift itself is installed).
+  check_container_engine || color_echo "yellow" "⚠️  Container engine setup did not complete; continuing with the RF Swift install."
 
-  # check and install agnoster deps
-  check_agnoster_dependencies
-  
-  # Checking xhost
+  # Offer the native Nix engine (rfswift --engine nix)
+  check_nix_engine || color_echo "yellow" "⚠️  Nix setup did not complete; continuing with the RF Swift install."
+
+  # The --isolate jail's host mechanism: bubblewrap (Linux), sandbox-exec
+  # (macOS). Checked on every install, not only when Nix is already there.
+  check_isolate || color_echo "yellow" "⚠️  Isolation setup did not complete; continuing with the RF Swift install."
+
+  # Check and install audio system
+  check_audio_system || color_echo "yellow" "⚠️  Audio setup did not complete; continuing with the RF Swift install."
+
+  # Check X11 display forwarding (installs XQuartz on macOS). This is a host
+  # dependency like the container engine and audio above, so it runs here —
+  # before the binary download — so a failed/skipped download or a dev channel
+  # without a published asset never leaves GUI tools (gqrx, ...) without a
+  # display to connect to.
   check_xhost
 
-  # Check and optionally install asciinema
-  check_asciinema
+  # Get latest release info
+  get_latest_release
 
-  # Set up alias if requested
-  if prompt_yes_no "Would you like to set up an alias for RF-Swift?" "y"; then
-    create_alias "$INSTALL_DIR"
+  # Detect system architecture
+  detect_system
+
+  # Prefer native packages (deb/rpm/pacman, or the Homebrew cask on macOS);
+  # any miss falls back to the classic tarball flow below.
+  if try_native_package_install; then
+    # Linux packages land in /usr/bin; make sure nothing older shadows them.
+    case "$(uname -s)" in Linux*) cleanup_legacy_installs ;; esac
+  else
+    choose_workbench_format
+
+    # Download files
+    download_files
+
+    # Choose installation directory
+    choose_install_dir
+
+    # Install binary
+    install_binary
+    install_workbench
+    rm -rf "${TMP_DIR}"
+  fi
+
+  # udev rules for RF hardware (asks; RFSWIFT_UDEV=1|0 to answer up front)
+  offer_udev_rules || true
+
+  # Fonts and asciinema are cosmetic extras; never let them end the install.
+  check_agnoster_dependencies || color_echo "yellow" "⚠️  Font setup did not complete."
+  check_asciinema || color_echo "yellow" "⚠️  asciinema setup did not complete."
+
+  # Set up alias if requested. Native packages land on PATH with completions
+  # already installed, and a directory that is already on PATH needs none, so
+  # the alias only matters for tarball installs into a private directory.
+  if [ "$NATIVE_INSTALLED" != true ] && ! dir_on_path "$INSTALL_DIR" && prompt_yes_no "Would you like to set up an alias for RF-Swift?" "y"; then
+    create_alias "$INSTALL_DIR" || true
   fi
   
   # Show audio system status
@@ -2431,16 +3632,24 @@ main() {
   
   thank_you_message
   
-  # Final instructions
-  if [ "$INSTALL_DIR" != "/usr/local/bin" ]; then
-    color_echo "cyan" "🚀 To use RF-Swift, you can:"
-    color_echo "cyan" "   - Run it directly: ${INSTALL_DIR}/rfswift"
-    color_echo "cyan" "   - Add ${INSTALL_DIR} to your PATH"
-    if is_arch_linux; then
-      color_echo "cyan" "   - Or use the alias if you set it up: rfswift"
+  # Final instructions should only advertise components actually requested.
+  if [ "$INSTALL_COMPONENTS" = "cli" ] || [ "$INSTALL_COMPONENTS" = "both" ]; then
+    if [ "$NATIVE_INSTALLED" != true ] && ! dir_on_path "$INSTALL_DIR"; then
+      color_echo "cyan" "🚀 To use RF-Swift, you can:"
+      color_echo "cyan" "   - Run it directly: ${INSTALL_DIR}/rfswift"
+      color_echo "cyan" "   - Add ${INSTALL_DIR} to your PATH"
+      if is_arch_linux; then
+        color_echo "cyan" "   - Or use the alias if you set it up: rfswift"
+      fi
+    else
+      color_echo "cyan" "🚀 You can now run RF-Swift by simply typing: rfswift"
     fi
-  else
-    color_echo "cyan" "🚀 You can now run RF-Swift by simply typing: rfswift"
+  fi
+  if [ "$INSTALL_COMPONENTS" = "workbench" ] || [ "$INSTALL_COMPONENTS" = "both" ]; then
+    case "$(uname -s)" in
+      Darwin*) color_echo "cyan" "🖥️  Open RF Swift Workbench from Applications." ;;
+      *) color_echo "cyan" "🖥️  Start the GUI with: ${INSTALL_DIR}/rfswift-workbench" ;;
+    esac
   fi
   
   # Show container engine status
@@ -2497,13 +3706,18 @@ main() {
     color_echo "cyan" "💡 Tip: You may need to reboot or log out/in for Docker group changes to take effect."
   fi
 
-  # Suggest profile initialization/update
-  echo ""
-  color_echo "cyan" "📋 Default profiles provide quick-start presets for common RF tasks."
-  color_echo "cyan" "   Initialize or update them with: rfswift profile init --force"
+  # Suggest profile initialization/update when the CLI was installed.
+  if [ "$INSTALL_COMPONENTS" = "cli" ] || [ "$INSTALL_COMPONENTS" = "both" ]; then
+    echo ""
+    color_echo "cyan" "📋 Default profiles provide quick-start presets for common RF tasks."
+    color_echo "cyan" "   Initialize or update them with: rfswift profile init --force"
+  fi
 
   color_echo "cyan" "📡 Happy RF hacking! 🚀"
 }
 
-# Run the main function
-main
+# Run normally, while allowing the installer test suite to source the validated
+# helper functions without performing network or system changes.
+if [ "${RFSWIFT_INSTALLER_LIB_ONLY:-0}" != "1" ]; then
+  main
+fi

@@ -151,11 +151,19 @@ func (e *LimaEngine) GetSocketPath() string {
 func (e *LimaEngine) StartService() error {
 	instance := e.getInstance()
 
+	// Step 0: Without limactl every step below fails confusingly — a failing
+	// `limactl list` makes an existing instance look absent, so we would try
+	// (and fail) to create one. GUI apps launched from Finder are the common
+	// case: they inherit a minimal PATH without Homebrew or /usr/local.
+	if !rfutils.IsLimaInstalled() {
+		return fmt.Errorf("limactl not found (looked in PATH, /opt/homebrew/bin, /usr/local/bin) — install Lima with: brew install lima qemu")
+	}
+
 	// Step 1: Check if Lima instance exists
 	if !limaInstanceExists(instance) {
 		common.PrintInfoMessage(fmt.Sprintf("Lima instance '%s' not found. Creating it...", instance))
 		if err := e.createInstance(); err != nil {
-			return fmt.Errorf("failed to create Lima instance: %w", err)
+			return err
 		}
 		common.PrintSuccessMessage(fmt.Sprintf("Lima instance '%s' created and started", instance))
 		// Wait for Docker to be ready inside the VM
@@ -181,10 +189,10 @@ func (e *LimaEngine) RestartService() error {
 	instance := e.getInstance()
 
 	common.PrintInfoMessage(fmt.Sprintf("Restarting Docker inside Lima instance '%s'...", instance))
-	if err := exec.Command("limactl", "shell", instance, "sudo", "systemctl", "restart", "docker").Run(); err != nil {
+	if err := exec.Command(rfutils.LimaCtl(), "shell", instance, "sudo", "systemctl", "restart", "docker").Run(); err != nil {
 		// Fall back to full VM restart if in-VM restart fails
 		common.PrintWarningMessage("In-VM Docker restart failed, falling back to full VM restart...")
-		_ = exec.Command("limactl", "stop", instance).Run()
+		_ = exec.Command(rfutils.LimaCtl(), "stop", instance).Run()
 		time.Sleep(2 * time.Second)
 		if err := rfutils.StartLimaInstance(instance); err != nil {
 			return fmt.Errorf("failed to restart Lima instance: %w", err)
@@ -219,7 +227,7 @@ func (e *LimaEngine) GetStorageRoot() string {
 //	in(1): string path - absolute path inside the VM
 //	out: ([]byte, error)
 func (e *LimaEngine) ReadFile(path string) ([]byte, error) {
-	out, err := exec.Command("limactl", "shell", e.getInstance(), "sudo", "cat", path).Output()
+	out, err := exec.Command(rfutils.LimaCtl(), "shell", e.getInstance(), "sudo", "cat", path).Output()
 	if err != nil {
 		return nil, fmt.Errorf("failed to read %s inside Lima VM: %w", path, err)
 	}
@@ -232,7 +240,7 @@ func (e *LimaEngine) ReadFile(path string) ([]byte, error) {
 //	in(2): []byte data - content to write
 //	out: error
 func (e *LimaEngine) WriteFile(path string, data []byte) error {
-	cmd := exec.Command("limactl", "shell", e.getInstance(), "sudo", "sh", "-c",
+	cmd := exec.Command(rfutils.LimaCtl(), "shell", e.getInstance(), "sudo", "sh", "-c",
 		fmt.Sprintf("cat > %s", path))
 	cmd.Stdin = strings.NewReader(string(data))
 	if err := cmd.Run(); err != nil {
@@ -502,7 +510,7 @@ func (e *LimaEngine) waitForDocker() error {
 
 // limaInstanceExists checks if a Lima instance has been created (regardless of state).
 func limaInstanceExists(instance string) bool {
-	out, err := exec.Command("limactl", "list", "--json").Output()
+	out, err := exec.Command(rfutils.LimaCtl(), "list", "--json").Output()
 	if err != nil {
 		return false
 	}

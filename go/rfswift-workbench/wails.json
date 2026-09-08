@@ -1,0 +1,17 @@
+{
+  "$schema": "https://wails.io/schemas/config.v2.json",
+  "name": "rfswift-workbench",
+  "outputfilename": "rfswift-workbench",
+  "frontend:install": "",
+  "frontend:build": "",
+  "frontend:dir": "frontend",
+  "wailsjsdir": "./frontend",
+  "author": {
+    "name": "Penthertz",
+    "email": "contact@penthertz.com"
+  },
+  "info": {
+    "productName": "RF Swift Workbench",
+    "comments": "Research and assessment workspace for RF Swift"
+  }
+}

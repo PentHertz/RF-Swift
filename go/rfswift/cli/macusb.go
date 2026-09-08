@@ -10,7 +10,7 @@ import (
 	"runtime"
 	"strings"
 
-	"github.com/charmbracelet/huh"
+	huh "charm.land/huh/v2"
 	"github.com/spf13/cobra"
 	rfutils "penthertz/rfswift/rfutils"
 	"penthertz/rfswift/tui"

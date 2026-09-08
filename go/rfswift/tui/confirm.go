@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/charmbracelet/huh"
+	huh "charm.land/huh/v2"
 	"github.com/charmbracelet/lipgloss"
 )
 
@@ -54,6 +54,27 @@ func SelectOne(title string, options []string) (string, error) {
 	return result, err
 }
 
+// SelectOneFilterable presents a select with the search field focused from the
+// start. It is intended for catalogs where scrolling alone is cumbersome.
+func SelectOneFilterable(title string, options []string) (string, error) {
+	if !IsInteractive() || len(options) == 0 {
+		return "", fmt.Errorf("no interactive terminal or empty options")
+	}
+	opts := make([]huh.Option[string], len(options))
+	for i, option := range options {
+		opts[i] = huh.NewOption(option, option)
+	}
+	var result string
+	err := huh.NewSelect[string]().
+		Title(title).
+		Description("Type to filter environments").
+		Options(opts...).
+		Filtering(true).
+		Value(&result).
+		Run()
+	return result, err
+}
+
 // PromptInput prompts the user for a text value with a placeholder default.
 func PromptInput(title string, placeholder string) (string, error) {
 	if !IsInteractive() {
@@ -61,7 +82,7 @@ func PromptInput(title string, placeholder string) (string, error) {
 	}
 
 	var result string
-	err := newInput().
+	err := huh.NewInput().
 		Title(title).
 		Placeholder(placeholder).
 		Value(&result).
@@ -137,4 +158,24 @@ func PrintCLIEquivalent(cmd string) {
 		Foreground(ColorPrimary).
 		Render(cmd)
 	fmt.Printf("\n  %s\n  %s\n\n", label, command)
+}
+
+// ConfirmDefault is Confirm with a preselected answer, so a recommended
+// step reads "Yes" by default and a risky one "No". Non-interactive
+// sessions get the default.
+func ConfirmDefault(message string, def bool) bool {
+	if !IsInteractive() {
+		return def
+	}
+	result := def
+	err := huh.NewConfirm().
+		Title(message).
+		Affirmative("Yes").
+		Negative("No").
+		Value(&result).
+		Run()
+	if err != nil {
+		return false
+	}
+	return result
 }

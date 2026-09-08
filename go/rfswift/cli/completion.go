@@ -6,6 +6,7 @@ package cli
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -16,10 +17,13 @@ import (
 	common "penthertz/rfswift/common"
 )
 
+var completionInstall bool
+
 var completionCmd = &cobra.Command{
 	Use:   "completion [bash|zsh|fish|powershell]",
-	Short: "Generate and install completion script",
-	Long: `Generate and install completion script for rfswift.
+	Short: "Generate a shell completion script",
+	Long: `Generate a shell completion script for rfswift on stdout.
+Pass --install to install it into a platform-appropriate completion directory.
 To load completions:
 
 Bash:
@@ -40,17 +44,37 @@ PowerShell:
 `,
 	ValidArgs: []string{"bash", "zsh", "fish", "powershell"},
 	Args:      cobra.MaximumNArgs(1),
-	Run: func(cmd *cobra.Command, args []string) {
+	RunE: func(cmd *cobra.Command, args []string) error {
 		var shell string
 		if len(args) > 0 {
 			shell = args[0]
 		} else {
 			shell = detectShell()
-			common.PrintInfoMessage(fmt.Sprintf("Detected shell: %s", shell))
 		}
 
-		installCompletion(shell)
+		if completionInstall {
+			installCompletion(shell)
+			return nil
+		}
+		return generateCompletion(shell, cmd.OutOrStdout())
 	},
+}
+
+// generateCompletion writes a completion program without modifying the host.
+// This is the default behavior expected by shell package managers and redirection.
+func generateCompletion(shell string, out io.Writer) error {
+	switch shell {
+	case "bash":
+		return rootCmd.GenBashCompletion(out)
+	case "zsh":
+		return rootCmd.GenZshCompletion(out)
+	case "fish":
+		return rootCmd.GenFishCompletion(out, true)
+	case "powershell":
+		return rootCmd.GenPowerShellCompletion(out)
+	default:
+		return fmt.Errorf("unsupported shell: %s", shell)
+	}
 }
 
 // detectShell determines the current user's shell by inspecting the SHELL environment
@@ -191,22 +215,9 @@ func installCompletion(shell string) {
 
 	// Generate completion script
 	common.PrintInfoMessage(fmt.Sprintf("Generating completion script for %s...", shell))
-
-	switch shell {
-	case "bash":
-		rootCmd.GenBashCompletion(file)
-	case "zsh":
-		rootCmd.GenZshCompletion(file)
-		// Add compdef line at the beginning
-		content, err := os.ReadFile(filepath)
-		if err == nil {
-			newContent := []byte("#compdef rfswift\n" + string(content))
-			os.WriteFile(filepath, newContent, 0644)
-		}
-	case "fish":
-		rootCmd.GenFishCompletion(file, true)
-	case "powershell":
-		rootCmd.GenPowerShellCompletion(file)
+	if err := generateCompletion(shell, file); err != nil {
+		common.PrintErrorMessage(err)
+		return
 	}
 
 	os.Chmod(filepath, 0644)
@@ -238,4 +249,6 @@ func installCompletion(shell string) {
 
 func registerCompletionCommands() {
 	rootCmd.AddCommand(completionCmd)
+	completionCmd.Flags().BoolVar(&completionInstall, "install", false,
+		"install into the platform-appropriate completion directory")
 }

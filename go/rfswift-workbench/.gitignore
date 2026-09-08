@@ -1,0 +1,13 @@
+/build/bin/
+# Resized hicolor icons staged by scripts/mkpackages.sh.
+/build/package-icons/
+# Wails regenerates build/darwin on the fly; only the Info.plist template is
+# ours (PentHertz bundle identifier for the signed .app, see
+# docs/macos-signing.md). A "/build/darwin/" rule would hide it for good.
+/build/darwin/*
+!/build/darwin/Info.plist
+/build/windows/
+/build/linux/
+/frontend/wailsjs/
+node_modules/
+*.syso

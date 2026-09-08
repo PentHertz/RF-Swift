@@ -1,4 +1,4 @@
-name: Publish github release
+name: Release
 
 on:
   push:
@@ -6,23 +6,218 @@ on:
 
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  # ---- Module audit gate ---------------------------------------------------
-  # Runs the full modules audit (go.sum integrity, banned/deprecated
-  # modules, govulncheck CVE scan, OSV malicious-package scan) before
-  # anything is built or published. A release tag cannot ship if any
-  # dependency is vulnerable, tampered with, or known-malicious.
-  audit:
-    name: Module audit gate
+  # The dependency audits, security scans and regression checks already gate
+  # CI (ci.yml) on every push to main and v*-dev, so a tagged revision has
+  # been through them before the tag lands. They are repeated here for the
+  # record only: the build and publish jobs do not wait for them, and a
+  # failure here never blocks a release.
+  modules:
+    strategy:
+      matrix:
+        module: [go/rfswift, go/rfswift-workbench]
+    uses: ./.github/workflows/modules-audit.yml
+    with:
+      module: ${{ matrix.module }}
+
+  security:
     permissions:
       contents: read
-    uses: ./.github/workflows/modules-audit.yml
+      security-events: write
+    uses: ./.github/workflows/security.yml
+
+  regression:
+    uses: ./.github/workflows/regression.yml
+
+  workbench-linux:
+    name: Workbench Linux
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: go/rfswift-workbench
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go/rfswift-workbench/go.mod
+          cache-dependency-path: go/rfswift-workbench/go.sum
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev imagemagick
+      - name: Install Wails
+        run: go install github.com/wailsapp/wails/v2/cmd/wails@v2.15.0
+      - name: Build Linux archive
+        run: |
+          make linux_amd64
+          mkdir -p build/package
+          cp build/bin/rfswift-workbench_linux_amd64 build/package/rfswift-workbench
+          cp ../../README.md ../../LICENSE build/package/
+          tar -C build/package -czf build/bin/rfswift-workbench_Linux_x86_64.tar.gz .
+      - name: Build Linux packages (deb, rpm, pacman)
+        run: |
+          go install github.com/goreleaser/nfpm/v2/cmd/nfpm@v2.47.0
+          PATH="$(go env GOPATH)/bin:$PATH" VERSION="${GITHUB_REF_NAME#v}" \
+            scripts/mkpackages.sh build/bin/rfswift-workbench_linux_amd64 amd64
+      - name: Install pinned AppImage tools
+        env:
+          LINUXDEPLOY_SHA256: c20cd71e3a4e3b80c3483cef793cda3f4e990aca14014d23c544ca3ce1270b4d
+          GTK_PLUGIN_SHA256: b0f4cbc684a0103a9651f0955b635eaea0096b3a66c0f5a2c2aa337960375171
+          APPIMAGE_RUNTIME_SHA256: 2fca8b443c92510f1483a883f60061ad09b46b978b2631c807cd873a47ec260d
+        run: |
+          mkdir -p build/appimage-tools
+          curl -fsSL --retry 3 -o build/appimage-tools/linuxdeploy https://github.com/linuxdeploy/linuxdeploy/releases/download/1-alpha-20251107-1/linuxdeploy-x86_64.AppImage
+          curl -fsSL --retry 3 -o build/appimage-tools/linuxdeploy-plugin-gtk.sh https://raw.githubusercontent.com/linuxdeploy/linuxdeploy-plugin-gtk/7a3fbc31a9e5075073ff8790f26effbac5f84453/linuxdeploy-plugin-gtk.sh
+          curl -fsSL --retry 3 -o build/appimage-tools/runtime-x86_64 https://github.com/AppImage/type2-runtime/releases/download/20251108/runtime-x86_64
+          echo "$LINUXDEPLOY_SHA256  build/appimage-tools/linuxdeploy" | sha256sum -c -
+          echo "$GTK_PLUGIN_SHA256  build/appimage-tools/linuxdeploy-plugin-gtk.sh" | sha256sum -c -
+          echo "$APPIMAGE_RUNTIME_SHA256  build/appimage-tools/runtime-x86_64" | sha256sum -c -
+          chmod 0755 build/appimage-tools/linuxdeploy build/appimage-tools/linuxdeploy-plugin-gtk.sh
+      - name: Build AppImage
+        env:
+          APPIMAGE_EXTRACT_AND_RUN: 1
+          LDAI_RUNTIME_FILE: build/appimage-tools/runtime-x86_64
+        run: |
+          export PATH="$PWD/build/appimage-tools:$PATH"
+          rm -f ./*.AppImage
+          make appimage
+          appimage=$(find . -maxdepth 2 -type f -name '*.AppImage' ! -path './build/appimage-tools/*' -print -quit)
+          test -n "$appimage"
+          mv "$appimage" build/bin/rfswift-workbench_Linux_x86_64.AppImage
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: rfswift-workbench-linux-amd64
+          path: |
+            go/rfswift-workbench/build/bin/rfswift-workbench_Linux_x86_64.tar.gz
+            go/rfswift-workbench/build/bin/rfswift-workbench_Linux_x86_64.AppImage
+            go/rfswift-workbench/build/bin/*.deb
+            go/rfswift-workbench/build/bin/*.rpm
+            go/rfswift-workbench/build/bin/*.pkg.tar.zst
+
+  workbench-windows:
+    name: Workbench Windows
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: go/rfswift-workbench
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go/rfswift-workbench/go.mod
+          cache-dependency-path: go/rfswift-workbench/go.sum
+      - name: Install Wails
+        run: go install github.com/wailsapp/wails/v2/cmd/wails@v2.15.0
+      - name: Build Windows binaries
+        shell: bash
+        run: |
+          make windows_amd64
+          make windows_arm64
+      - name: Package Windows binaries
+        shell: pwsh
+        run: |
+          Compress-Archive build/bin/rfswift-workbench_windows_amd64.exe build/bin/rfswift-workbench_Windows_x86_64.zip
+          Compress-Archive build/bin/rfswift-workbench_windows_arm64.exe build/bin/rfswift-workbench_Windows_arm64.zip
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: rfswift-workbench-windows
+          path: go/rfswift-workbench/build/bin/rfswift-workbench_Windows_*.zip
+
+  workbench-linux-arm64:
+    name: Workbench Linux ARM64
+    runs-on: ubuntu-24.04-arm
+    defaults:
+      run:
+        working-directory: go/rfswift-workbench
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go/rfswift-workbench/go.mod
+          cache-dependency-path: go/rfswift-workbench/go.sum
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev imagemagick
+      - name: Install Wails
+        run: go install github.com/wailsapp/wails/v2/cmd/wails@v2.15.0
+      - name: Build and package native Linux ARM64 binary
+        run: |
+          make linux_arm64
+          mkdir -p build/package-arm64
+          cp build/bin/rfswift-workbench_linux_arm64 build/package-arm64/rfswift-workbench
+          cp ../../README.md ../../LICENSE build/package-arm64/
+          tar -C build/package-arm64 -czf build/bin/rfswift-workbench_Linux_arm64.tar.gz .
+      - name: Build Linux packages (deb, rpm, pacman)
+        run: |
+          go install github.com/goreleaser/nfpm/v2/cmd/nfpm@v2.47.0
+          PATH="$(go env GOPATH)/bin:$PATH" VERSION="${GITHUB_REF_NAME#v}" \
+            scripts/mkpackages.sh build/bin/rfswift-workbench_linux_arm64 arm64
+      - name: Install pinned ARM64 AppImage tools
+        env:
+          LINUXDEPLOY_SHA256: 620095110d693282b8ebeb244a95b5e911cf8f65f76c88b4b47d16ae6346fcff
+          GTK_PLUGIN_SHA256: b0f4cbc684a0103a9651f0955b635eaea0096b3a66c0f5a2c2aa337960375171
+          APPIMAGE_RUNTIME_SHA256: 00cbdfcf917cc6c0ff6d3347d59e0ca1f7f45a6df1a428a0d6d8a78664d87444
+        run: |
+          mkdir -p build/appimage-tools
+          curl -fsSL --retry 3 -o build/appimage-tools/linuxdeploy https://github.com/linuxdeploy/linuxdeploy/releases/download/1-alpha-20251107-1/linuxdeploy-aarch64.AppImage
+          curl -fsSL --retry 3 -o build/appimage-tools/linuxdeploy-plugin-gtk.sh https://raw.githubusercontent.com/linuxdeploy/linuxdeploy-plugin-gtk/7a3fbc31a9e5075073ff8790f26effbac5f84453/linuxdeploy-plugin-gtk.sh
+          curl -fsSL --retry 3 -o build/appimage-tools/runtime-aarch64 https://github.com/AppImage/type2-runtime/releases/download/20251108/runtime-aarch64
+          echo "$LINUXDEPLOY_SHA256  build/appimage-tools/linuxdeploy" | sha256sum -c -
+          echo "$GTK_PLUGIN_SHA256  build/appimage-tools/linuxdeploy-plugin-gtk.sh" | sha256sum -c -
+          echo "$APPIMAGE_RUNTIME_SHA256  build/appimage-tools/runtime-aarch64" | sha256sum -c -
+          chmod 0755 build/appimage-tools/linuxdeploy build/appimage-tools/linuxdeploy-plugin-gtk.sh
+      - name: Build ARM64 AppImage
+        env:
+          APPIMAGE_EXTRACT_AND_RUN: 1
+          LDAI_RUNTIME_FILE: build/appimage-tools/runtime-aarch64
+          ARCH: aarch64
+        run: |
+          export PATH="$PWD/build/appimage-tools:$PATH"
+          rm -f ./*.AppImage
+          scripts/mkappimage.sh build/bin/rfswift-workbench_linux_arm64
+          appimage=$(find . -maxdepth 2 -type f -name '*.AppImage' ! -path './build/appimage-tools/*' -print -quit)
+          test -n "$appimage"
+          mv "$appimage" build/bin/rfswift-workbench_Linux_arm64.AppImage
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: rfswift-workbench-linux-arm64
+          path: |
+            go/rfswift-workbench/build/bin/rfswift-workbench_Linux_arm64.tar.gz
+            go/rfswift-workbench/build/bin/rfswift-workbench_Linux_arm64.AppImage
+            go/rfswift-workbench/build/bin/*.deb
+            go/rfswift-workbench/build/bin/*.rpm
+            go/rfswift-workbench/build/bin/*.pkg.tar.zst
+
+  workbench-macos:
+    name: Workbench macOS
+    runs-on: macos-14
+    defaults:
+      run:
+        working-directory: go/rfswift-workbench
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go/rfswift-workbench/go.mod
+          cache-dependency-path: go/rfswift-workbench/go.sum
+      - name: Install Wails
+        run: go install github.com/wailsapp/wails/v2/cmd/wails@v2.15.0
+      - name: Build and package universal application
+        run: |
+          make darwin_universal
+          cd build/bin
+          ditto -c -k --sequesterRsrc --keepParent rfswift-workbench.app rfswift-workbench_Darwin_universal.zip
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: rfswift-workbench-macos
+          path: go/rfswift-workbench/build/bin/rfswift-workbench_Darwin_universal.zip
 
   generate-artifacts:
-    name: Generate cross-platform builds
-    needs: audit
+    name: Build CLI/TUI release archives
+    needs: [workbench-linux, workbench-linux-arm64, workbench-windows, workbench-macos]
     runs-on: ubuntu-latest
     permissions:
       contents: write      # create the GitHub release (goreleaser)
@@ -39,12 +234,6 @@ jobs:
         with:
           go-version-file: go/rfswift/go.mod
           cache-dependency-path: go/rfswift/go.sum
-
-      # Gate the release on the unit tests - a tag cannot ship if tests fail.
-      - name: Run unit tests
-        run: |
-          cd go/rfswift
-          go test -race ./...
 
       - name: Run GoReleaser
         uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7.2.3
@@ -63,4 +252,73 @@ jobs:
           subject-path: |
             dist/*.tar.gz
             dist/*.zip
+            dist/*.deb
+            dist/*.rpm
+            dist/*.pkg.tar.zst
             dist/*checksums.txt
+
+  publish-workbench:
+    name: Attach Workbench assets
+    needs: generate-artifacts
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - name: Download Workbench artifacts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: rfswift-workbench-*
+          path: release-assets
+          merge-multiple: true
+
+      - name: Generate Workbench checksums
+        # No underscore in the glob: the .rpm and .pkg.tar.zst names use
+        # dashes (rfswift-workbench-<ver>-1.<arch>.*).
+        run: |
+          cd release-assets
+          sha256sum rfswift-workbench* > "RF-Swift_${GITHUB_REF_NAME#v}_workbench_checksums.txt"
+
+      - name: Attest Workbench provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: release-assets/rfswift-workbench*
+
+      - name: Upload Workbench assets to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: gh release upload "$GITHUB_REF_NAME" release-assets/* --clobber
+
+  # Build, sign and notarize the macOS .dmg as part of the release flowgraph.
+  # Gated on generate-artifacts so the GitHub release already exists when the
+  # .dmg is attached (no cross-workflow race to poll around). The reusable
+  # workflow skips the module-audit gate that CI already runs.
+  macos-dmg:
+    name: macOS signed DMG
+    needs: generate-artifacts
+    permissions:
+      contents: write      # attach the .dmg to the release
+      id-token: write      # Sigstore OIDC token for build provenance
+      attestations: write  # write the artifact attestation
+    uses: ./.github/workflows/macos-dmg.yml
+    with:
+      upload_to_release: true
+    secrets: inherit
+
+  # Windows MSI + dependency bundle, mirroring the macOS DMG flow. Gated on
+  # generate-artifacts so the GitHub release exists (for upload) and the Windows
+  # Workbench artifact from workbench-windows is available to download. Signing
+  # is secret-gated inside the reusable workflow.
+  windows-installer:
+    name: Windows installer
+    needs: generate-artifacts
+    permissions:
+      contents: write      # attach the .msi/.exe to the release
+      id-token: write      # Sigstore OIDC token for build provenance
+      attestations: write  # write the artifact attestation
+    uses: ./.github/workflows/windows-installer.yml
+    with:
+      upload_to_release: true
+    secrets: inherit

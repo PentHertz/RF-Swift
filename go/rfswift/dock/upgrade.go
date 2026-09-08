@@ -172,7 +172,8 @@ func ContainerUpgrade(containerIdentifier string, repositoriesToPreserve string,
 
 	// Create temporary directory to store preserved data
 	var tempDir string
-	var preservedData = make(map[string]string) // map[containerPath]hostTempPath
+	var preservedData = make(map[string]string) // map[containerPath]hostArchivePath
+	preservationComplete := false
 
 	if len(reposToCopy) > 0 {
 		tempDir, err = os.MkdirTemp("", "rfswift-upgrade-*")
@@ -180,7 +181,13 @@ func ContainerUpgrade(containerIdentifier string, repositoriesToPreserve string,
 			common.PrintErrorMessage(fmt.Errorf("failed to create temp directory: %v", err))
 			return err
 		}
-		defer os.RemoveAll(tempDir) // Clean up on exit
+		defer func() {
+			if preservationComplete {
+				_ = os.RemoveAll(tempDir)
+			} else {
+				common.PrintWarningMessage("Upgrade did not complete; recovery archives retained at " + tempDir)
+			}
+		}()
 
 		common.PrintInfoMessage(fmt.Sprintf("Created temporary storage: %s", tempDir))
 
@@ -191,43 +198,26 @@ func ContainerUpgrade(containerIdentifier string, repositoriesToPreserve string,
 				common.PrintErrorMessage(fmt.Errorf("failed to start container: %v", err))
 				return err
 			}
+			syncSerialAfterStart(ctx, cli, containerIdentifier)
 		}
 
 		// Copy data from old container to temp directory
 		for _, repoPath := range reposToCopy {
 			common.PrintInfoMessage(fmt.Sprintf("Backing up: %s", repoPath))
 
-			// Create subdirectory in temp for this path
-			safeName := strings.ReplaceAll(strings.Trim(repoPath, "/"), "/", "_")
-			hostPath := filepath.Join(tempDir, safeName)
-
-			// Check if directory exists in container
-			checkCmd := fmt.Sprintf("[ -d '%s' ] && echo 'exists' || echo 'not_found'", repoPath)
-			exists, err := execCommandWithOutput(ctx, cli, containerIdentifier, []string{"/bin/bash", "-c", checkCmd})
-			if err != nil || !strings.Contains(exists, "exists") {
-				common.PrintWarningMessage(fmt.Sprintf("Directory '%s' not found in container, skipping", repoPath))
-				continue
-			}
-
-			// Use docker cp to copy from container to host
+			// Keep Docker's original archive: unpacking/repacking loses ownership,
+			// executable permissions and link topology (and is unnecessary).
 			copyRes, err := cli.CopyFromContainer(ctx, containerIdentifier, client.CopyFromContainerOptions{SourcePath: repoPath})
 			if err != nil {
-				common.PrintWarningMessage(fmt.Sprintf("Failed to copy %s: %v", repoPath, err))
-				continue
+				return fmt.Errorf("cannot preserve %s; old container retained: %w", repoPath, err)
 			}
-			reader := copyRes.Content
-			defer reader.Close()
-
-			// Create the host directory
-			if err := os.MkdirAll(hostPath, 0755); err != nil {
-				common.PrintWarningMessage(fmt.Sprintf("Failed to create directory %s: %v", hostPath, err))
-				continue
+			hostPath, err := saveUpgradeArchive(copyRes.Content, tempDir)
+			closeErr := copyRes.Content.Close()
+			if err != nil {
+				return fmt.Errorf("preserve %s: %w", repoPath, err)
 			}
-
-			// Extract the tar archive
-			if err := extractTarArchive(reader, hostPath); err != nil {
-				common.PrintWarningMessage(fmt.Sprintf("Failed to extract %s: %v", repoPath, err))
-				continue
+			if closeErr != nil {
+				return fmt.Errorf("finish preserving %s: %w", repoPath, closeErr)
 			}
 
 			preservedData[repoPath] = hostPath
@@ -320,6 +310,17 @@ func ContainerUpgrade(containerIdentifier string, repositoriesToPreserve string,
 	exposedPorts := ParseExposedPorts(props["ExposedPorts"])
 	bindedPorts := ParseBindedPorts(props["PortBindings"])
 	devices := getDeviceMappingsFromString(props["Devices"])
+	// Device nodes that were bind mounts become device mappings; a missing or
+	// stray one is dropped with an explanation (devbinds.go).
+	keptBinds, devBinds, bindRules, devWarnings := SanitizeDeviceBinds(bindingsToKeep)
+	bindingsToKeep = keptBinds
+	for _, w := range devWarnings {
+		common.PrintWarningMessage(w.String())
+	}
+	devices = append(devices, getDeviceMappingsFromString(strings.Join(devBinds, ","))...)
+	if len(bindRules) > 0 {
+		props["Cgroups"] = strings.Join(appendMissing(splitSummaryList(props["Cgroups"], ","), bindRules...), ",")
+	}
 
 	privileged := props["Privileged"] == "true"
 
@@ -344,6 +345,8 @@ func ContainerUpgrade(containerIdentifier string, repositoriesToPreserve string,
 		if props["Cgroups"] != "" {
 			hostConfig.DeviceCgroupRules = strings.Split(props["Cgroups"], ",")
 		}
+		// Serial ports are attached on demand where possible (serialhotplug.go).
+		props["SerialPorts"] = MergeSerialPorts(props["SerialPorts"], applySerialHotplug(hostConfig), nil)
 		if props["Seccomp"] != "" && props["Seccomp"] != "(Default)" {
 			hostConfig.SecurityOpt = []string{"seccomp=" + props["Seccomp"]}
 		}
@@ -363,9 +366,7 @@ func ContainerUpgrade(containerIdentifier string, repositoriesToPreserve string,
 		AttachStdout: true,
 		AttachStderr: true,
 		Tty:          true,
-		Labels: map[string]string{
-			"org.container.project": "rfswift",
-		},
+		Labels:       upgradeLabels(props),
 	}, HostConfig: hostConfig, NetworkingConfig: &network.NetworkingConfig{}, Name: containerName})
 
 	if err != nil {
@@ -376,14 +377,6 @@ func ContainerUpgrade(containerIdentifier string, repositoriesToPreserve string,
 
 	common.PrintSuccessMessage(fmt.Sprintf("New container '%s' created", containerName))
 
-	// Start the new container
-	common.PrintInfoMessage("Starting new container...")
-	if _, err := cli.ContainerStart(ctx, resp.ID, client.ContainerStartOptions{}); err != nil {
-		common.PrintErrorMessage(fmt.Errorf("failed to start new container: %v", err))
-		return err
-	}
-	common.PrintSuccessMessage(fmt.Sprintf("Container '%s' started successfully", containerName))
-
 	// Restore preserved data to new container
 	if len(preservedData) > 0 {
 		fmt.Println()
@@ -392,11 +385,10 @@ func ContainerUpgrade(containerIdentifier string, repositoriesToPreserve string,
 		for containerPath, hostPath := range preservedData {
 			common.PrintInfoMessage(fmt.Sprintf("Restoring: %s", containerPath))
 
-			// Create tar archive from host path
-			tarReader, err := createTarArchive(hostPath, containerPath)
+			// Replay the untouched archive produced by the old container.
+			tarReader, err := os.Open(hostPath)
 			if err != nil {
-				common.PrintWarningMessage(fmt.Sprintf("Failed to create archive for %s: %v", containerPath, err))
-				continue
+				return fmt.Errorf("open preserved archive for %s (backup %s): %w", containerPath, backupTag, err)
 			}
 
 			// Copy to new container
@@ -407,13 +399,23 @@ func ContainerUpgrade(containerIdentifier string, repositoriesToPreserve string,
 			tarReader.Close()
 
 			if err != nil {
-				common.PrintWarningMessage(fmt.Sprintf("Failed to restore %s: %v", containerPath, err))
-				continue
+				return fmt.Errorf("restore %s failed; backup image %s and local archives retained: %w", containerPath, backupTag, err)
 			}
 
 			common.PrintSuccessMessage(fmt.Sprintf("Restored: %s", containerPath))
 		}
 	}
+
+	// Start the new container
+	common.PrintInfoMessage("Starting new container...")
+	if _, err := cli.ContainerStart(ctx, resp.ID, client.ContainerStartOptions{}); err != nil {
+		common.PrintErrorMessage(fmt.Errorf("failed to start new container: %v", err))
+		return err
+	}
+	syncSerialAfterStart(ctx, cli, resp.ID)
+	common.PrintSuccessMessage(fmt.Sprintf("Container '%s' started successfully", containerName))
+
+	preservationComplete = true
 
 	// Print summary
 	fmt.Println()
@@ -428,4 +430,13 @@ func ContainerUpgrade(containerIdentifier string, repositoriesToPreserve string,
 	common.PrintInfoMessage("═══════════════════════════════════════")
 
 	return nil
+}
+
+// upgradeLabels are the labels an upgraded container carries over.
+func upgradeLabels(props map[string]string) map[string]string {
+	labels := map[string]string{"org.container.project": "rfswift"}
+	if ports := props["SerialPorts"]; ports != "" {
+		labels[SerialPortsLabel] = ports
+	}
+	return labels
 }

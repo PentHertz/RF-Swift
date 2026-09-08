@@ -1,0 +1,507 @@
+// Package remote implements the transport shared by the RF Swift CLI, agent,
+// and Workbench. It deliberately has no GUI dependencies.
+package remote
+
+import (
+	"context"
+	"crypto/sha256"
+	"crypto/tls"
+	"crypto/x509"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"log"
+	"net"
+	"net/http"
+	"net/url"
+	"os"
+	"strings"
+	"time"
+)
+
+const Protocol = "rfswift-agent/v1"
+
+// Limits distinguish raw data from its encoded JSON representation. JSON can
+// expand one raw byte to six bytes (for example, a NUL becomes \\u0000).
+const (
+	MaxCommandOutput   = 16 << 20
+	MaxArtifactBytes   = 16 << 20
+	MaxTerminalOutput  = 4 << 20
+	maxCommandResponse = 6*MaxCommandOutput + (64 << 10)
+	maxControlResponse = max(4*((MaxArtifactBytes+2)/3), 6*MaxTerminalOutput) + (1 << 20)
+)
+
+// AuthPolicy is deliberately small: a verified client certificate is the sole
+// network authentication mechanism. Its private key remains encrypted at rest.
+type AuthPolicy struct {
+	ClientCertificateRequired bool `json:"clientCertificateRequired"`
+}
+
+func (p AuthPolicy) Validate() error {
+	if !p.ClientCertificateRequired {
+		return errors.New("remote access requires a client certificate")
+	}
+	return nil
+}
+
+type Info struct {
+	Protocol, Version, Name, Exposure string
+	RateLimit, ClientCertRequired     bool
+	Engines                           []string
+	Authentication                    AuthPolicy `json:"authentication"`
+}
+type ClientConfig struct{ Endpoint, Fingerprint, CAFile, ClientCert, ClientKey, ClientKeyRef string }
+type Probe struct {
+	Info                     Info
+	Fingerprint, TLS, Cipher string
+	CertDays                 int
+}
+type ServerConfig struct {
+	Bind, CertFile, KeyFile, KeySecretRef, ClientCA, Name, Version string
+	SecretStore                                                    SecretStore
+	Authentication                                                 AuthPolicy
+	RunCommand                                                     func(context.Context, []string) (string, error)
+	Control                                                        func(context.Context, ControlRequest) (any, error)
+	// OnListen is called with the bound address once the credentials are
+	// loaded and the socket is open, i.e. when "listening" is true.
+	OnListen func(addr string)
+}
+
+type CommandRequest struct {
+	Args []string `json:"args"`
+}
+type CommandResult struct {
+	Output string `json:"output"`
+	Error  string `json:"error,omitempty"`
+}
+
+type ControlRequest struct {
+	Method string          `json:"method"`
+	Params json.RawMessage `json:"params,omitempty"`
+}
+type ControlResult struct {
+	Result json.RawMessage `json:"result,omitempty"`
+	Error  string          `json:"error,omitempty"`
+}
+
+func Fingerprint(cert *x509.Certificate) string {
+	sum := sha256.Sum256(cert.Raw)
+	return strings.ToUpper(hex.EncodeToString(sum[:]))
+}
+
+func NewClient(c ClientConfig, allowUnpinned bool) (*http.Client, error) {
+	tc, err := newTLSConfig(c, allowUnpinned)
+	if err != nil {
+		return nil, err
+	}
+	return &http.Client{Timeout: 8 * time.Second, Transport: &http.Transport{
+		TLSClientConfig:     tc,
+		DialContext:         (&net.Dialer{Timeout: 8 * time.Second, KeepAlive: 30 * time.Second}).DialContext,
+		TLSHandshakeTimeout: 8 * time.Second,
+		IdleConnTimeout:     30 * time.Second,
+	}}, nil
+}
+
+// normalizeEndpoint canonicalizes an agent endpoint to an https:// URL and
+// hard-fails anything that is not https. Without this a caller-supplied
+// "http://host" endpoint would parse fine and be used verbatim by
+// http.Transport as PLAINTEXT HTTP, silently bypassing the pinned, mutually
+// authenticated TLS config assembled below (the transport only applies
+// TLSClientConfig to https:// URLs). The control channel must never fall back
+// to cleartext, so an explicit non-https scheme is rejected rather than
+// upgraded. The rfswifts:// alias rewrites to https://; a bare host without a
+// scheme defaults to https://.
+func normalizeEndpoint(endpoint string) (*url.URL, error) {
+	raw := strings.Replace(endpoint, "rfswifts://", "https://", 1)
+	if !strings.Contains(raw, "://") {
+		raw = "https://" + raw
+	}
+	u, err := url.Parse(raw)
+	if err != nil || u.Hostname() == "" {
+		return nil, errors.New("invalid agent endpoint")
+	}
+	if u.Scheme != "https" {
+		return nil, fmt.Errorf("agent endpoint must use https (got %q); cleartext transport is not allowed", u.Scheme)
+	}
+	if u.User != nil || (u.Path != "" && u.Path != "/") || u.RawQuery != "" || u.Fragment != "" {
+		return nil, errors.New("agent endpoint must be an https origin without credentials, path, query, or fragment")
+	}
+	// Probing and HTTP operations must use the same default agent port.
+	if u.Port() == "" {
+		u.Host = net.JoinHostPort(u.Hostname(), "8443")
+	}
+	return u, nil
+}
+
+func newTLSConfig(c ClientConfig, allowUnpinned bool) (*tls.Config, error) {
+	u, err := normalizeEndpoint(c.Endpoint)
+	if err != nil {
+		return nil, err
+	}
+	host := u.Hostname()
+	tc := &tls.Config{MinVersion: tls.VersionTLS13, MaxVersion: tls.VersionTLS13, ServerName: host}
+	if c.CAFile != "" {
+		pem, e := os.ReadFile(c.CAFile)
+		if e != nil {
+			return nil, e
+		}
+		pool, _ := x509.SystemCertPool()
+		if pool == nil {
+			pool = x509.NewCertPool()
+		}
+		if !pool.AppendCertsFromPEM(pem) {
+			return nil, errors.New("invalid agent CA")
+		}
+		tc.RootCAs = pool
+	}
+	if c.ClientCert != "" || c.ClientKey != "" {
+		cert, e := loadEncryptedKeyPair(c.ClientCert, c.ClientKey, c.ClientKeyRef, OSSecretStore{})
+		if e != nil {
+			return nil, e
+		}
+		tc.Certificates = []tls.Certificate{cert}
+	}
+	if c.Fingerprint != "" || allowUnpinned {
+		tc.InsecureSkipVerify = true
+		tc.VerifyConnection = func(cs tls.ConnectionState) error {
+			if len(cs.PeerCertificates) == 0 {
+				return errors.New("agent sent no certificate")
+			}
+			got := Fingerprint(cs.PeerCertificates[0])
+			if c.Fingerprint != "" && !strings.EqualFold(strings.ReplaceAll(c.Fingerprint, ":", ""), got) {
+				return fmt.Errorf("agent certificate pin changed: the agent presented %s. Pin the fingerprint of the agent's own server certificate (printed by `certs init` on the agent host, and carried by a client credential file issued from that bundle); a bundle generated on another machine has a different certificate", got)
+			}
+			leaf := cs.PeerCertificates[0]
+			now := time.Now()
+			if now.Before(leaf.NotBefore) || now.After(leaf.NotAfter) {
+				return errors.New("agent certificate is not currently valid")
+			}
+			if c.CAFile != "" {
+				intermediates := x509.NewCertPool()
+				for _, cert := range cs.PeerCertificates[1:] {
+					intermediates.AddCert(cert)
+				}
+				if _, err := leaf.Verify(x509.VerifyOptions{DNSName: host, Roots: tc.RootCAs, Intermediates: intermediates}); err != nil {
+					return fmt.Errorf("agent certificate verification failed: %w", err)
+				}
+			}
+			return nil
+		}
+	}
+	return tc, nil
+}
+
+// ProbeAgent performs only the mutually authenticated TLS handshake and derives
+// certificate posture locally without relying on an application endpoint.
+func ProbeAgent(ctx context.Context, c ClientConfig, allowUnpinned bool) (Probe, error) {
+	tc, e := newTLSConfig(c, allowUnpinned)
+	if e != nil {
+		return Probe{}, e
+	}
+	u, e := normalizeEndpoint(c.Endpoint)
+	if e != nil {
+		return Probe{}, e
+	}
+	address := u.Host
+	if _, _, e = net.SplitHostPort(address); e != nil {
+		address = net.JoinHostPort(u.Hostname(), "8443")
+	}
+	dialer := &tls.Dialer{Config: tc}
+	conn, e := dialer.DialContext(ctx, "tcp", address)
+	if e != nil {
+		return Probe{}, e
+	}
+	defer conn.Close()
+	state := conn.(*tls.Conn).ConnectionState()
+	cert := state.PeerCertificates[0]
+	probe := Probe{Info: Info{Name: u.Hostname(), Exposure: "unknown", ClientCertRequired: true}, Fingerprint: Fingerprint(cert), TLS: "1.3", Cipher: tls.CipherSuiteName(state.CipherSuite), CertDays: int(time.Until(cert.NotAfter).Hours() / 24)}
+	client, e := NewClient(c, allowUnpinned)
+	if e != nil {
+		return Probe{}, e
+	}
+	defer client.CloseIdleConnections()
+	endpoint := strings.TrimSuffix(u.String(), "/")
+	req, e := http.NewRequestWithContext(ctx, http.MethodGet, endpoint+"/v1/info", nil)
+	if e != nil {
+		return Probe{}, e
+	}
+	resp, e := client.Do(req)
+	if e != nil {
+		return Probe{}, e
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return Probe{}, fmt.Errorf("authenticated agent returned %s", resp.Status)
+	}
+	if e = json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&probe.Info); e != nil {
+		return Probe{}, e
+	}
+	if probe.Info.Protocol != Protocol {
+		return Probe{}, fmt.Errorf("incompatible protocol %q", probe.Info.Protocol)
+	}
+	return probe, nil
+}
+
+func Serve(c ServerConfig) error {
+	if c.CertFile == "" || c.KeyFile == "" {
+		return errors.New("TLS certificate and key are required")
+	}
+	if err := c.Authentication.Validate(); err != nil {
+		return fmt.Errorf("unsafe authentication policy: %w", err)
+	}
+	if c.ClientCA == "" {
+		return errors.New("client CA is required by the authentication policy")
+	}
+	if c.Bind == "" {
+		c.Bind = "127.0.0.1:8443"
+	}
+	if c.Name == "" {
+		c.Name = "RF Swift agent"
+	}
+	if c.Version == "" {
+		c.Version = "development"
+	}
+	store := c.SecretStore
+	if store == nil {
+		store = OSSecretStore{}
+	}
+	cert, e := loadEncryptedKeyPair(c.CertFile, c.KeyFile, c.KeySecretRef, store)
+	if e != nil {
+		return e
+	}
+	tc := &tls.Config{MinVersion: tls.VersionTLS13, MaxVersion: tls.VersionTLS13, Certificates: []tls.Certificate{cert}}
+	if c.ClientCA != "" {
+		pem, e := os.ReadFile(c.ClientCA)
+		if e != nil {
+			return fmt.Errorf("read client CA (--client-ca must be the bundle's ca.pem): %w", e)
+		}
+		pool := x509.NewCertPool()
+		if !pool.AppendCertsFromPEM(pem) {
+			return fmt.Errorf("invalid client CA: %s holds no certificate", c.ClientCA)
+		}
+		tc.ClientCAs = pool
+		tc.ClientAuth = tls.RequireAndVerifyClientCert
+	}
+	// Reaching this handler already requires a CA-verified client certificate.
+	mux := authenticatedHandler(c)
+	// Disable HTTP/2 before authentication so the handler can always hijack and
+	// close without emitting an HTTP response or protocol metadata.
+	server := &http.Server{
+		Addr:              c.Bind,
+		Handler:           mux,
+		TLSConfig:         tc,
+		TLSNextProto:      make(map[string]func(*http.Server, *tls.Conn, http.Handler)),
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       15 * time.Second,
+		IdleTimeout:       30 * time.Second,
+		MaxHeaderBytes:    16 << 10,
+	}
+	ln, e := tls.Listen("tcp", c.Bind, tc)
+	if e != nil {
+		return e
+	}
+	if c.OnListen != nil {
+		c.OnListen(ln.Addr().String())
+	}
+	return server.Serve(ln)
+}
+
+// clientID names the authenticated client in the access log: the first 16
+// hex digits of its certificate's SHA-256 fingerprint (the whole one is what
+// `certs client` printed when the credential was issued).
+func clientID(r *http.Request) string {
+	if r.TLS != nil && len(r.TLS.PeerCertificates) > 0 {
+		return Fingerprint(r.TLS.PeerCertificates[0])[:16]
+	}
+	return "-"
+}
+
+// logAccess records who asked for what. Every request reaching a handler was
+// authenticated by its client certificate, so this is the agent's audit
+// trail; it goes to the standard logger (stderr) like the TLS handshake
+// errors the HTTP server prints for rejected clients.
+func logAccess(r *http.Request, what string) {
+	log.Printf("agent: client %s from %s: %s", clientID(r), r.RemoteAddr, what)
+}
+
+func authenticatedHandler(c ServerConfig) http.Handler {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/v1/info", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			closeWithoutResponse(w)
+			return
+		}
+		logAccess(r, "info")
+		host, _, _ := net.SplitHostPort(c.Bind)
+		exposure := "lan"
+		if ip := net.ParseIP(host); ip != nil && ip.IsLoopback() {
+			exposure = "loopback"
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(Info{Protocol: Protocol, Version: c.Version, Name: c.Name, Exposure: exposure, RateLimit: false, ClientCertRequired: true, Authentication: c.Authentication, Engines: []string{"docker", "podman", "lima", "nix"}})
+	})
+	mux.HandleFunc("/v1/command", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || c.RunCommand == nil {
+			closeWithoutResponse(w)
+			return
+		}
+		r.Body = http.MaxBytesReader(w, r.Body, 64<<10)
+		var input CommandRequest
+		if err := json.NewDecoder(r.Body).Decode(&input); err != nil || len(input.Args) == 0 || len(input.Args) > 128 {
+			http.Error(w, "invalid request", http.StatusBadRequest)
+			return
+		}
+		for _, arg := range input.Args {
+			if len(arg) > 8192 || strings.IndexByte(arg, 0) >= 0 {
+				http.Error(w, "invalid request", http.StatusBadRequest)
+				return
+			}
+		}
+		logAccess(r, "command "+strings.Join(input.Args, " "))
+		out, err := c.RunCommand(r.Context(), input.Args)
+		result := CommandResult{Output: out}
+		if err != nil {
+			result.Error = err.Error()
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(result)
+	})
+	mux.HandleFunc("/v1/control", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || c.Control == nil {
+			closeWithoutResponse(w)
+			return
+		}
+		r.Body = http.MaxBytesReader(w, r.Body, 2<<20)
+		var input ControlRequest
+		if err := json.NewDecoder(r.Body).Decode(&input); err != nil || strings.TrimSpace(input.Method) == "" {
+			http.Error(w, "invalid request", http.StatusBadRequest)
+			return
+		}
+		logAccess(r, "control "+input.Method)
+		value, err := c.Control(r.Context(), input)
+		result := ControlResult{}
+		if err != nil {
+			result.Error = err.Error()
+		} else if value != nil {
+			result.Result, err = json.Marshal(value)
+			if err != nil {
+				result.Error = err.Error()
+			}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(result)
+	})
+	mux.HandleFunc("/", func(w http.ResponseWriter, _ *http.Request) { closeWithoutResponse(w) })
+	return mux
+}
+
+func Control(ctx context.Context, c ClientConfig, method string, params, result any) error {
+	client, err := NewClient(c, false)
+	if err != nil {
+		return err
+	}
+	// Long operations (Nix builds and image pulls) are bounded by the caller's
+	// context, not the short probe timeout used by NewClient.
+	client.Timeout = 0
+	defer client.CloseIdleConnections()
+	raw, err := json.Marshal(params)
+	if err != nil {
+		return err
+	}
+	body, err := json.Marshal(ControlRequest{Method: method, Params: raw})
+	if err != nil {
+		return err
+	}
+	u, err := normalizeEndpoint(c.Endpoint)
+	if err != nil {
+		return err
+	}
+	endpoint := strings.TrimSuffix(u.String(), "/")
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint+"/v1/control", strings.NewReader(string(body)))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("agent control returned %s", resp.Status)
+	}
+	var envelope ControlResult
+	if err = decodeResponse(resp.Body, maxControlResponse, &envelope); err != nil {
+		return err
+	}
+	if envelope.Error != "" {
+		return errors.New(envelope.Error)
+	}
+	if result != nil && len(envelope.Result) > 0 {
+		return json.Unmarshal(envelope.Result, result)
+	}
+	return nil
+}
+
+func RunCommand(ctx context.Context, c ClientConfig, args []string) (CommandResult, error) {
+	client, err := NewClient(c, false)
+	if err != nil {
+		return CommandResult{}, err
+	}
+	client.Timeout = 0 // execution is bounded by the caller, not the probe timeout
+	defer client.CloseIdleConnections()
+	body, err := json.Marshal(CommandRequest{Args: args})
+	if err != nil {
+		return CommandResult{}, err
+	}
+	u, err := normalizeEndpoint(c.Endpoint)
+	if err != nil {
+		return CommandResult{}, err
+	}
+	endpoint := strings.TrimSuffix(u.String(), "/")
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint+"/v1/command", strings.NewReader(string(body)))
+	if err != nil {
+		return CommandResult{}, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := client.Do(req)
+	if err != nil {
+		return CommandResult{}, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		b, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return CommandResult{}, fmt.Errorf("agent command returned %s: %s", resp.Status, strings.TrimSpace(string(b)))
+	}
+	var result CommandResult
+	if err = decodeResponse(resp.Body, maxCommandResponse, &result); err != nil {
+		return CommandResult{}, err
+	}
+	return result, nil
+}
+
+func decodeResponse(r io.Reader, limit int64, result any) error {
+	b, err := io.ReadAll(io.LimitReader(r, limit+1))
+	if err != nil {
+		return err
+	}
+	if int64(len(b)) > limit {
+		return fmt.Errorf("agent response exceeds the %d-byte wire limit", limit)
+	}
+	return json.Unmarshal(b, result)
+}
+
+func closeWithoutResponse(w http.ResponseWriter) {
+	// Do not emit a status line, headers, Date, Server, body, redirect, or
+	// route hint for unknown paths.
+	h, ok := w.(http.Hijacker)
+	if !ok {
+		return
+	}
+	conn, _, err := h.Hijack()
+	if err == nil {
+		_ = conn.Close()
+	}
+}

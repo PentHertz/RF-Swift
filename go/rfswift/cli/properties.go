@@ -5,9 +5,13 @@
 package cli
 
 import (
+	"errors"
+	"fmt"
 	"os"
+	"strings"
 
 	"github.com/spf13/cobra"
+	common "penthertz/rfswift/common"
 	rfdock "penthertz/rfswift/dock"
 )
 
@@ -26,12 +30,39 @@ var BindingsAddCmd = &cobra.Command{
 		bsource, _ := cmd.Flags().GetString("source")
 		btarget, _ := cmd.Flags().GetString("target")
 		isADevice, _ := cmd.Flags().GetBool("devices")
-		if isADevice {
-			rfdock.UpdateDeviceBinding(contID, bsource, btarget, true)
-		} else {
-			rfdock.UpdateMountBinding(contID, bsource, btarget, true)
-		}
+		applyBindingChange(contID, bsource, btarget, isADevice, true)
 	},
+}
+
+// applyBindingChange goes through the same code as the Workbench's Configure
+// dialog (rfdock.UpdateBinding): a serial port is attached on demand when
+// absent and mapped when present, a device node given as a volume is
+// bind-mounted with its cgroup rule, and the change is applied by the file
+// edit or the re-creation the engine calls for.
+func applyBindingChange(contID, source, target string, device, add bool) {
+	kind := "volume"
+	if device {
+		kind = "device"
+	}
+	if target == "" {
+		target = source
+	}
+	if source == "" {
+		source = target
+	}
+	if err := rfdock.UpdateBinding(contID, kind, source, target, add); err != nil {
+		common.PrintErrorMessage(err)
+		os.Exit(1)
+	}
+	what := "bind mount"
+	if device {
+		what = "device"
+	}
+	if add {
+		common.PrintSuccessMessage(fmt.Sprintf("%s %s -> %s added to '%s'", what, source, target, contID))
+	} else {
+		common.PrintSuccessMessage(fmt.Sprintf("%s %s removed from '%s'", what, target, contID))
+	}
 }
 
 var BindingsRmCmd = &cobra.Command{
@@ -43,11 +74,43 @@ var BindingsRmCmd = &cobra.Command{
 		bsource, _ := cmd.Flags().GetString("source")
 		btarget, _ := cmd.Flags().GetString("target")
 		isADevice, _ := cmd.Flags().GetBool("devices")
-		if isADevice {
-			rfdock.UpdateDeviceBinding(contID, bsource, btarget, false)
-		} else {
-			rfdock.UpdateMountBinding(contID, bsource, btarget, false)
+		applyBindingChange(contID, bsource, btarget, isADevice, false)
+	},
+}
+
+var SerialHotplugCmd = &cobra.Command{
+	Use:   "serial-hotplug on|off",
+	Short: "Switch a container's serial hot-plug on or off",
+	Long: `With the hot-plug on (the default when a mission names a serial port), the
+container may open serial ports (/dev/ttyACM*, /dev/ttyUSB*, /dev/ttyAMA*)
+through its device cgroup and RF Swift creates their nodes inside it when it
+starts and whenever a terminal opens, so a port plugged in later works without
+re-creating the container. Off removes those cgroup rules and leaves the
+container's /dev alone; ports must then be mapped or bind-mounted explicitly.`,
+	Args:         cobra.ExactArgs(1),
+	SilenceUsage: true,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		contID, _ := cmd.Flags().GetString("container")
+		if contID == "" {
+			return errors.New("-c/--container is required")
 		}
+		var on bool
+		switch strings.ToLower(args[0]) {
+		case "on", "enable", "enabled":
+			on = true
+		case "off", "disable", "disabled":
+		default:
+			return fmt.Errorf("say on or off, not %q", args[0])
+		}
+		if err := rfdock.UpdateSerialHotplug(contID, on); err != nil {
+			return err
+		}
+		if on {
+			common.PrintSuccessMessage(fmt.Sprintf("Serial hot-plug on for '%s': plug a serial device in and open a terminal to use it.", contID))
+		} else {
+			common.PrintSuccessMessage(fmt.Sprintf("Serial hot-plug off for '%s': serial ports must be mapped or bind-mounted explicitly.", contID))
+		}
+		return nil
 	},
 }
 

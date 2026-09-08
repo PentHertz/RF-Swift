@@ -16,6 +16,7 @@ import (
 
 	"github.com/moby/moby/client"
 	common "penthertz/rfswift/common"
+	"penthertz/rfswift/hostsetup"
 	rfutils "penthertz/rfswift/rfutils"
 	"penthertz/rfswift/tui"
 )
@@ -64,11 +65,65 @@ func RunDoctor() {
 	checkAudioSystem(report)
 	checkAudioServer(report)
 	checkUSBDevices(report)
+	checkHostUdevRules(report)
+	checkNixEngine(report)
+	checkIsolation(report)
 	checkConfigFile(report)
 	checkKernelModules(report)
 
 	// Print results
 	printReport(report)
+}
+
+// checkNixEngine reports whether the Nix engine can run. On Linux and macOS
+// that is a nix binary on PATH; on Windows the engine lives inside a WSL 2
+// distribution provisioned with nix and the Linux rfswift (rfswift nix wsl).
+func checkNixEngine(report *DoctorReport) {
+	if runtime.GOOS != "windows" {
+		if path, err := exec.LookPath("nix"); err == nil {
+			report.add(CheckResult{"Nix engine", "ok", fmt.Sprintf("nix found at %s ('rfswift run --engine nix' runs tools natively)", path)})
+		} else {
+			report.add(CheckResult{"Nix engine", "skip", "nix not installed (optional: native environments with --engine nix, see docs/nix-engine.md)"})
+		}
+		return
+	}
+	st, err := rfutils.ResolveWSLNix(common.ConfigFileByPlatform())
+	if err != nil {
+		report.add(CheckResult{"Nix engine (WSL 2)", "warn", fmt.Sprintf("%v", err)})
+		return
+	}
+	if !st.Ready() {
+		report.add(CheckResult{"Nix engine (WSL 2)", "warn", fmt.Sprintf("distribution %s lacks %s - set it up with 'rfswift nix wsl setup'", st.Distro, strings.Join(st.Missing(), " and "))})
+		return
+	}
+	extras := []string{}
+	if st.Systemd {
+		extras = append(extras, "systemd")
+	} else {
+		extras = append(extras, "no systemd (udev rules not applied automatically)")
+	}
+	if st.X11 && st.Audio {
+		extras = append(extras, "WSLg display+audio")
+	}
+	if st.GPULibs {
+		extras = append(extras, "WSLg GPU libs")
+	}
+	report.add(CheckResult{"Nix engine (WSL 2)", "ok", fmt.Sprintf("%s: %s, rfswift %s (%s)", st.Distro, st.NixVersion, st.RFSwiftVersion, strings.Join(extras, ", "))})
+	// WSLg's display client: when it has stopped painting after an RDP
+	// graphics error, GUI tools show only a taskbar icon.
+	if display, derr := rfutils.WSLgDisplayStatus(); derr == nil {
+		switch {
+		case display.Degraded:
+			report.add(CheckResult{"WSLg display client", "warn", fmt.Sprintf("stopped painting windows at %s (%s): GUI tools show only a taskbar icon - run 'rfswift nix wsl display-reset'", display.LastGfxError.Local().Format("15:04:05"), display.LastGfxErrorText)})
+		case display.ClientRunning:
+			report.add(CheckResult{"WSLg display client", "ok", "msrdc.exe connected, GUI windows are painted ('rfswift nix wsl display-reset' restarts it if one ever shows only a taskbar icon)"})
+		default:
+			report.add(CheckResult{"WSLg display client", "skip", "not running yet (WSL starts it with the first GUI window)"})
+		}
+	}
+	if st.RFSwiftVersion != "unknown" && st.RFSwiftVersion != common.Version {
+		report.add(CheckResult{"Nix engine (WSL 2)", "warn", fmt.Sprintf("the Linux rfswift in %s is %s while this one is %s; align them with 'rfswift nix wsl setup --update'", st.Distro, st.RFSwiftVersion, common.Version)})
+	}
 }
 
 func printReport(report *DoctorReport) {
@@ -188,16 +243,70 @@ func checkDockerPermissions(report *DoctorReport) {
 		return
 	}
 
+	access := hostsetup.GetDockerAccess()
 	for _, gid := range groups {
 		if gid == dockerGroup.Gid {
+			if access.SocketFound && !access.Accessible {
+				// Joined after this session started: the kernel still has the
+				// old group list. rfswift host docker-access adds a socket ACL.
+				report.add(CheckResult{"Docker permissions", "warn",
+					fmt.Sprintf("User '%s' is in the docker group but this session predates it: 'rfswift host docker-access' makes it work now (or 'newgrp docker' / log in again)", currentUser.Username)})
+				return
+			}
 			report.add(CheckResult{"Docker permissions", "ok",
 				fmt.Sprintf("User '%s' is in docker group", currentUser.Username)})
 			return
 		}
 	}
 
+	if access.Accessible {
+		report.add(CheckResult{"Docker permissions", "warn",
+			fmt.Sprintf("User '%s' can use the socket in this session only (ACL); 'rfswift host docker-access' makes it permanent", currentUser.Username)})
+		return
+	}
 	report.add(CheckResult{"Docker permissions", "warn",
-		fmt.Sprintf("User '%s' not in docker group (sudo usermod -aG docker %s)", currentUser.Username, currentUser.Username)})
+		fmt.Sprintf("User '%s' not in docker group: 'rfswift host docker-access' fixes it without logging out (or sudo usermod -aG docker %s)", currentUser.Username, currentUser.Username)})
+}
+
+// checkHostUdevRules reports whether RF Swift's udev rules (SDR/RF hardware
+// without root for rootless Podman and Nix environments) are installed on a
+// Linux host. Docker needs none, so a missing file is only a warning.
+func checkHostUdevRules(report *DoctorReport) {
+	if runtime.GOOS != "linux" {
+		return
+	}
+	st := hostsetup.GetUdevStatus()
+	switch {
+	case st.Ready:
+		report.add(CheckResult{"udev rules", "ok", st.Path + " installed, group " + strings.Join(st.Groups, ", ") + " in place"})
+	case st.State == hostsetup.UdevInstalled:
+		report.add(CheckResult{"udev rules", "warn", st.Detail + " - fix with 'rfswift host udev'"})
+	case st.State == hostsetup.UdevForeign:
+		report.add(CheckResult{"udev rules", "warn", st.Detail})
+	default:
+		report.add(CheckResult{"udev rules", "warn", st.Detail + " - install with 'rfswift host udev' (or 'rfswift host setup')"})
+	}
+}
+
+// checkIsolation reports whether the Nix engine's --isolate jail (bubblewrap)
+// can be created by this user. Ubuntu 24.04+ lets only the AppArmor-profiled
+// /usr/bin/bwrap create user namespaces, so a missing profile (or a bwrap from
+// a Nix profile) blocks the jail; 'rfswift host isolate' applies the fix.
+func checkIsolation(report *DoctorReport) {
+	if runtime.GOOS != "linux" {
+		return
+	}
+	st := hostsetup.GetIsolationStatus()
+	switch {
+	case st.Ready:
+		report.add(CheckResult{"Nix jail (--isolate)", "ok", st.Detail})
+	case st.Cause == hostsetup.IsolationNoBwrap && !st.AppArmorRestricted:
+		report.add(CheckResult{"Nix jail (--isolate)", "skip", "bubblewrap not installed (optional: --isolate builds it from nixpkgs at first use; 'rfswift host isolate' installs the package)"})
+	case st.CanFix:
+		report.add(CheckResult{"Nix jail (--isolate)", "warn", st.Detail + " - fix with 'rfswift host isolate'"})
+	default:
+		report.add(CheckResult{"Nix jail (--isolate)", "warn", st.Detail})
+	}
 }
 
 func checkContainerImages(report *DoctorReport) {
@@ -241,13 +350,34 @@ func checkContainerImages(report *DoctorReport) {
 	}
 }
 
+// wslgProbe caches the WSLg query for the checks that need it (one wsl.exe
+// round-trip per doctor run).
+var wslgProbe struct {
+	done   bool
+	status rfutils.WSLgStatus
+	err    error
+}
+
+func wslgStatus() (rfutils.WSLgStatus, error) {
+	if !wslgProbe.done {
+		wslgProbe.status, wslgProbe.err = rfutils.CheckWSLg()
+		wslgProbe.done = true
+	}
+	return wslgProbe.status, wslgProbe.err
+}
+
 func checkX11Display(report *DoctorReport) {
 	if runtime.GOOS == "windows" {
-		// Check for WSLg
-		if _, err := os.Stat("/run/desktop/mnt/host/wslg/.X11-unix"); err == nil {
-			report.add(CheckResult{"X11 display", "ok", "WSLg X11 socket found"})
-		} else {
-			report.add(CheckResult{"X11 display", "warn", "WSLg X11 socket not found (install WSLg or use --desktop)"})
+		// The sockets live inside the WSL 2 VM, so ask WSL rather than the
+		// Windows filesystem.
+		status, err := wslgStatus()
+		switch {
+		case err != nil:
+			report.add(CheckResult{"X11 display", "warn", fmt.Sprintf("WSLg not reachable: %v", err)})
+		case status.X11:
+			report.add(CheckResult{"X11 display", "ok", "WSLg X11 socket (/mnt/wslg/.X11-unix, DISPLAY=:0) mounted into containers"})
+		default:
+			report.add(CheckResult{"X11 display", "warn", "WSLg X11 socket not found in WSL (wsl --update, then wsl --shutdown; or use --desktop)"})
 		}
 		return
 	}
@@ -284,6 +414,18 @@ func checkXhost(report *DoctorReport) {
 }
 
 func checkAudioSystem(report *DoctorReport) {
+	if runtime.GOOS == "windows" {
+		status, err := wslgStatus()
+		switch {
+		case err != nil:
+			report.add(CheckResult{"Audio system", "warn", fmt.Sprintf("WSLg not reachable: %v", err)})
+		case status.Audio:
+			report.add(CheckResult{"Audio system", "ok", "WSLg PulseAudio (containers use PULSE_SERVER=" + WSLgPulseServer + ")"})
+		default:
+			report.add(CheckResult{"Audio system", "warn", "WSLg PulseAudio socket not found in WSL (wsl --update, then wsl --shutdown)"})
+		}
+		return
+	}
 	status := rfutils.GetAudioSystemStatus()
 
 	if strings.Contains(status, "No audio") {
@@ -298,6 +440,10 @@ func checkAudioSystem(report *DoctorReport) {
 }
 
 func checkAudioServer(report *DoctorReport) {
+	if UsesWSLgAudio(containerCfg.pulseServer) {
+		report.add(CheckResult{"Audio TCP server", "skip", "Not needed on Windows: audio uses the WSLg socket instead of a TCP module"})
+		return
+	}
 	parts := strings.Split(containerCfg.pulseServer, ":")
 	if len(parts) != 3 {
 		report.add(CheckResult{"Audio TCP server", "warn",
@@ -371,11 +517,43 @@ func checkLimaVM(report *DoctorReport) {
 
 func checkUSBDevices(report *DoctorReport) {
 	if runtime.GOOS == "windows" {
-		// Check usbipd availability
-		if _, err := exec.LookPath("usbipd.exe"); err != nil {
-			report.add(CheckResult{"USB devices", "warn", "usbipd not installed (needed for USB passthrough on Windows)"})
+		// Containers live in the WSL 2 VM; usbipd-win forwards host devices into
+		// it. Sharing needs administrator rights once per device, attach/detach
+		// never do - so the doctor only checks the tooling and reports counts.
+		if !rfutils.IsUsbipdInstalled() {
+			report.add(CheckResult{"USB devices", "warn", "usbipd-win not installed (winget install usbipd) - needed to forward USB devices into WSL 2 containers"})
+			return
+		}
+		version, _ := rfutils.UsbipdVersion()
+		devices, err := rfutils.ListUSBDevices()
+		if err != nil {
+			report.add(CheckResult{"USB devices", "warn", fmt.Sprintf("usbipd %s installed but not usable: %v", version, err)})
+			return
+		}
+		var connected, shared, attached int
+		for _, d := range devices {
+			if d.Connected {
+				connected++
+			}
+			if d.Shared {
+				shared++
+			}
+			if d.Attached {
+				attached++
+			}
+		}
+		report.add(CheckResult{"USB devices", "ok",
+			fmt.Sprintf("usbipd %s: %d connected, %d shared, %d attached to WSL 2 (use 'rfswift usb attach')", version, connected, shared, attached)})
+		if wsl, err := rfutils.WSLDistributions(); err != nil {
+			report.add(CheckResult{"WSL 2", "warn", fmt.Sprintf("%v", err)})
+		} else if !wsl.HasWSL2Distribution() {
+			report.add(CheckResult{"WSL 2", "warn", "no WSL 2 distribution found; usbipd attaches devices to the default one (wsl --install -d Ubuntu)"})
 		} else {
-			report.add(CheckResult{"USB devices", "ok", "usbipd available"})
+			name := wsl.DefaultDistro
+			if name == "" {
+				name = "(no default set: wsl --set-default <name>)"
+			}
+			report.add(CheckResult{"WSL 2", "ok", "default distribution: " + name})
 		}
 		return
 	}

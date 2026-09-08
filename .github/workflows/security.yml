@@ -19,12 +19,9 @@
 
 name: Security
 
+# Reusable implementation invoked by the unified CI workflow.
 on:
-  push:
-    branches: ["main", "v3.0.0-dev"]
-  pull_request:
-    branches: ["main", "v3.0.0-dev"]
-  workflow_dispatch:
+  workflow_call:
 
 permissions:
   contents: read
@@ -54,7 +51,7 @@ jobs:
         run: gosec -no-fail -fmt sarif -out "$GITHUB_WORKSPACE/gosec.sarif" ./...
 
       - name: Upload gosec SARIF
-        uses: github/codeql-action/upload-sarif@db488ddef3bf6cb639b32c2e9a7c0a7ea8271d28 # v3
+        uses: github/codeql-action/upload-sarif@cdf488f595d80d6e07e03d4674febd5ab45fa938 # v4.37.9
         # Best effort: code scanning upload needs security-events:write, which a
         # PR from a fork does not get. Never fail the job on the upload itself.
         continue-on-error: true
@@ -73,3 +70,6 @@ jobs:
         # gates on genuine breakage; portability warnings are pre-existing and
         # out of scope here.
         run: shellcheck --severity=error get_rfswift.sh scripts/*.sh
+
+      - name: Test installer archive and development-channel guards
+        run: ./scripts/test-installer.sh

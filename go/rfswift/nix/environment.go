@@ -1,0 +1,1168 @@
+/* This code is part of RF Swift by @Penthertz
+*  Author(s): Sébastien Dudek (@FlUxIuS)
+*
+*  Nix engine - lifecycle of dedicated named environments.
+*
+*  An environment is the Nix analogue of an RF Swift container: created once,
+*  re-entered, and removed. Each lives in ~/.rfswift/nix/environments/<name> and
+*  is realised as a buildEnv closure pinned by a gcroot symlink (./profile), so
+*  it survives `nix store gc` and works offline after the first build.
+ */
+
+package nix
+
+import (
+	"bytes"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"os"
+	"os/exec"
+	"os/user"
+	"path/filepath"
+	"regexp"
+	"runtime"
+	"sort"
+	"strings"
+	"time"
+
+	common "penthertz/rfswift/common"
+)
+
+// environmentNamePattern constrains environment names to a shell- and
+// filesystem-safe charset. A name flows unquoted into the generated bash
+// rcfile that is sourced on interactive entry (writeBashRC) and into
+// filesystem paths (EnvDir), so a name containing shell metacharacters would
+// execute as the operator on `nix shell`/`enter`, and one containing path
+// separators or ".." would traverse. The name is chosen by callers that are
+// not always the operator - the remote-agent create handler passes a
+// network-peer-supplied name, the Workbench passes a GUI value, and
+// GetEnvironment reads it from an on-disk manifest that the import/export
+// feature copies between machines - so it must be validated at every trust
+// boundary, not assumed safe. The pattern requires a leading alphanumeric
+// (rejecting "", ".", ".." and hidden names) and otherwise allows only
+// letters, digits, '.', '_' and '-'.
+var environmentNamePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
+
+// ValidateEnvironmentName returns an error if name is not shell- and
+// filesystem-safe. See environmentNamePattern.
+func ValidateEnvironmentName(name string) error {
+	if !environmentNamePattern.MatchString(name) {
+		return fmt.Errorf("invalid environment name %q: use only letters, digits, '.', '_' and '-', starting with a letter or digit", name)
+	}
+	return nil
+}
+
+// RunEnvironment creates (if needed), realises, and enters an environment.
+func RunEnvironment(opts RunOptions) error {
+	if useWSL() {
+		return wslRunEnvironment(opts)
+	}
+	if !IsAvailable() {
+		return fmt.Errorf("nix is not installed or not on PATH.\n" +
+			"  Install it from https://nixos.org/download (multi-user recommended):\n" +
+			"    sh <(curl -L https://nixos.org/nix/install) --daemon\n" +
+			"  or use the Determinate installer, then re-run: rfswift run --engine nix")
+	}
+	if strings.TrimSpace(opts.Name) == "" {
+		return fmt.Errorf("environment name is required (use -n)")
+	}
+	if err := ValidateEnvironmentName(opts.Name); err != nil {
+		return err
+	}
+	if strings.TrimSpace(opts.Image) == "" {
+		return fmt.Errorf("an environment image is required (use -i, e.g. -i sdr_light)")
+	}
+
+	cat, err := LoadCatalog()
+	if err != nil {
+		return fmt.Errorf("failed to load environment catalog: %w", err)
+	}
+	entry := cat.Find(opts.Image)
+	if entry == nil {
+		return fmt.Errorf("unknown environment '%s'. See available ones with: rfswift nix catalog", opts.Image)
+	}
+
+	flakeRef := ResolveFlakeRef(opts.FlakeRef)
+	// A `run` on an existing name re-realises it; what it was pinned to before
+	// decides whether already-built on-demand tools must be rebuilt.
+	previous, _ := GetEnvironment(opts.Name)
+	envdir := EnvDir(opts.Name)
+	if err := ensureDir(envdir); err != nil {
+		return fmt.Errorf("failed to create environment dir: %w", err)
+	}
+
+	// A front end following the build also gets the full log on disk, next to
+	// the manifest, for when the environment fails to build.
+	build := opts.BuildOptions
+	if build.observed() {
+		if f, err := os.Create(BuildLogPath(opts.Name)); err == nil {
+			defer f.Close()
+			build.BuildLog = multiWriter(f, opts.BuildLog)
+		}
+	}
+
+	// Resolve and prepare the workspace (working directory).
+	workspace := resolveWorkspace(opts.Name, opts.Workspace)
+	if workspace != "" {
+		if err := ensureDir(workspace); err != nil {
+			return fmt.Errorf("failed to create workspace %s: %w", workspace, err)
+		}
+	}
+
+	env := &Environment{
+		Name:          opts.Name,
+		Image:         entry.Name,
+		FlakeRef:      flakeRef,
+		Packages:      entry.Packages,
+		Prerequisites: entry.Prerequisites,
+		Workspace:     workspace,
+		Command:       opts.Command,
+		Created:       time.Now(),
+		Isolate:       opts.Isolate,
+	}
+
+	// Realise the environment. Three modes:
+	switch {
+	case opts.Lazy:
+		// On-demand: the application tools are not prebuilt - each becomes a shim
+		// that builds and runs it the first time it is called. The prerequisite
+		// device/driver layer (small: drivers, libraries and their udev rules) is
+		// still realised up front, so hardware works and `rfswift nix udev` /
+		// the entry-time rule offer can see the rules even in lazy mode.
+		env.Lazy = true
+		env.ProfilePath = ""
+		// Pin to the revision the reference resolves to now (pin.go), so the
+		// tools built on demand stay consistent until `rfswift env update`.
+		if pinned, origin := pinLazyFlake(flakeRef); origin != "" {
+			env.FlakeRef, env.FlakeOrigin = pinned, origin
+			flakeRef = pinned
+			common.PrintInfoMessage(fmt.Sprintf("Pinned to %s (move it with: rfswift env update %s).", shortRev(pinned), opts.Name))
+		}
+		common.PrintInfoMessage(fmt.Sprintf("Preparing on-demand environment '%s' (%s). Tools build the first time you call them.", entry.Name, opts.Image))
+		if err := buildPrerequisites(build, flakeRef, entry.Name, entry.Prerequisites, prerequisitesLink(opts.Name)); err != nil {
+			return err
+		}
+		env.Commands = resolveCommands(flakeRef, entry.Packages)
+		if err := writeShims(env); err != nil {
+			return fmt.Errorf("failed to set up on-demand environment: %w", err)
+		}
+		// Re-created under another pin, or with --rebuild: the tools already
+		// built are rebuilt now rather than staying at the previous pin.
+		if opts.Rebuild || (previous != nil && previous.FlakeRef != env.FlakeRef) {
+			if err := rebuildLinkedTools(env); err != nil {
+				return err
+			}
+		}
+	case opts.Pure:
+		// Pure mode does not use a prebuilt profile; it evaluates the devShell
+		// fresh each time with a clean environment.
+		env.ProfilePath = ""
+		if err := buildPrerequisites(build, flakeRef, entry.Name, entry.Prerequisites, prerequisitesLink(opts.Name)); err != nil {
+			return err
+		}
+	default:
+		// Eager: build (or refresh) the whole tool closure and pin it. We always
+		// realise on `run`, so re-running with an existing name picks up catalog
+		// or flake changes instead of silently reusing a stale profile. When
+		// nothing changed this is a fast no-op against the Nix cache. Use `exec`
+		// to re-enter without rebuilding.
+		profile := profileLink(opts.Name)
+		if err := buildPrerequisites(build, flakeRef, entry.Name, entry.Prerequisites, prerequisitesLink(opts.Name)); err != nil {
+			return err
+		}
+		common.PrintInfoMessage(fmt.Sprintf("Realising environment '%s' (%s) from %s ...", entry.Name, opts.Image, flakeRef))
+		common.PrintInfoMessage("First build fetches and compiles; refreshing an unchanged env is near-instant.")
+		if err := buildProfile(build, flakeRef, entry.Name, profile); err != nil {
+			return err
+		}
+		env.ProfilePath = profile
+	}
+
+	if err := writeManifest(env); err != nil {
+		return fmt.Errorf("failed to write manifest: %w", err)
+	}
+	if hint := wslWorkspaceHint(env.Workspace); hint != "" {
+		common.PrintInfoMessage(hint)
+	}
+
+	// Make security awareness routine: surface the environment's posture (or a
+	// nudge to check it) right after building, without blocking entry.
+	if PostureIsStale(env.Name) {
+		common.PrintInfoMessage(fmt.Sprintf("Security: not yet audited - check this environment with: rfswift nix audit %s", env.Name))
+	} else {
+		common.PrintInfoMessage("Security: " + SecurityPosture(env.Name))
+	}
+
+	if opts.CreateOnly {
+		common.PrintSuccessMessage(fmt.Sprintf("Environment '%s' is ready.", opts.Name))
+		return nil
+	}
+	if opts.PreEnter != nil {
+		opts.PreEnter(env)
+	}
+	common.PrintInfoMessage(WorkspaceHint(env))
+	common.PrintSuccessMessage(fmt.Sprintf("Environment '%s' ready. Entering shell (exit to leave).", opts.Name))
+	return enter(env, opts.Command, opts.Pure, GLEnvironment(env, true))
+}
+
+// ExecEnvironment re-enters an existing environment, optionally running a command.
+func ExecEnvironment(name, command string) error {
+	if useWSL() {
+		return wslExecEnvironment(name, command)
+	}
+	if !IsAvailable() {
+		return fmt.Errorf("nix is not installed or not on PATH")
+	}
+	env, err := GetEnvironment(name)
+	if err != nil {
+		return err
+	}
+	switch {
+	case env.Lazy:
+		// Regenerate the shims if they were lost (e.g. manifest copied between
+		// machines) or predate the current layout, so tools remain callable.
+		if err := ensureShims(env); err != nil {
+			return err
+		}
+	case env.ProfilePath != "":
+		// Eager: make sure it is realised (a user may have run `nix store gc`
+		// after the gcroot was removed, or copied the manifest between machines).
+		if !pathExists(env.ProfilePath) {
+			common.PrintInfoMessage(fmt.Sprintf("Environment '%s' not realised yet, building ...", name))
+			if err := buildProfile(BuildOptions{}, env.FlakeRef, env.Image, env.ProfilePath); err != nil {
+				return err
+			}
+		}
+	}
+	// pure only when it is neither a profile nor a lazy environment.
+	pure := env.ProfilePath == "" && !env.Lazy
+	return enter(env, command, pure, GLEnvironment(env, false))
+}
+
+// ListEnvironments returns all created environments, newest first.
+func ListEnvironments() ([]*Environment, error) {
+	dir := EnvironmentsDir()
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	var envs []*Environment
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		env, err := GetEnvironment(e.Name())
+		if err != nil {
+			continue // skip unreadable/partial dirs
+		}
+		envs = append(envs, env)
+	}
+	sort.Slice(envs, func(i, j int) bool { return envs[i].Created.After(envs[j].Created) })
+	return envs, nil
+}
+
+// Realised reports whether a profile-based environment has its closure built
+// and pinned on disk. Pure environments (no ProfilePath) are built on demand
+// and always report false.
+func (e *Environment) Realised() bool {
+	return e.ProfilePath != "" && pathExists(e.ProfilePath)
+}
+
+// NotFoundError reports an environment that does not exist (any more).
+// Callers that only need it gone, such as the Workbench deleting a mission
+// whose environment was already removed, test for it with IsNotFound.
+type NotFoundError struct {
+	Name string
+	Hint string
+}
+
+func (e *NotFoundError) Error() string {
+	if e.Hint != "" {
+		return fmt.Sprintf("environment '%s' not found. %s", e.Name, e.Hint)
+	}
+	return fmt.Sprintf("environment '%s' not found", e.Name)
+}
+
+// IsNotFound reports whether err says an environment does not exist.
+func IsNotFound(err error) bool {
+	var nf *NotFoundError
+	return errors.As(err, &nf)
+}
+
+// GetEnvironment loads one environment's manifest.
+func GetEnvironment(name string) (*Environment, error) {
+	data, err := os.ReadFile(manifestPath(name))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, &NotFoundError{Name: name, Hint: "List them with: rfswift nix list"}
+		}
+		return nil, err
+	}
+	var env Environment
+	if err := json.Unmarshal(data, &env); err != nil {
+		return nil, fmt.Errorf("environment '%s' has a corrupt manifest: %w", name, err)
+	}
+	if env.Name == "" {
+		env.Name = name
+	}
+	// The manifest is on-disk state that the import/export feature copies
+	// between machines, so its Name is untrusted here even though it was
+	// validated at creation on the origin host. Re-check before it reaches
+	// writeBashRC / path construction, so a hand-crafted manifest cannot
+	// smuggle a shell-injecting or traversing name through import.
+	if err := ValidateEnvironmentName(env.Name); err != nil {
+		return nil, fmt.Errorf("environment '%s' has an unsafe manifest name: %w", name, err)
+	}
+	return &env, nil
+}
+
+// RemoveEnvironment deletes an environment and its gcroot. The underlying store
+// paths are freed by the next `nix store gc`.
+func RemoveEnvironment(name string) error {
+	if useWSL() {
+		return wslRemoveEnvironment(name)
+	}
+	dir := EnvDir(name)
+	if !pathExists(dir) {
+		return &NotFoundError{Name: name}
+	}
+	if err := os.RemoveAll(dir); err != nil {
+		return fmt.Errorf("failed to remove environment '%s': %w", name, err)
+	}
+	common.PrintSuccessMessage(fmt.Sprintf("Removed environment '%s'", name))
+	return nil
+}
+
+// RemoveWorkspaceDir deletes an environment's workspace directory - the
+// user's captures, so only ever on their explicit request (`remove
+// --workspace`, the Workbench's ticked option). It refuses the targets a
+// hand-edited manifest or a careless path could name: a home directory, a
+// filesystem root, or a symlink (the link's target is not ours to delete).
+// A workspace that is already gone is not an error.
+func RemoveWorkspaceDir(path string) error {
+	if path == "" || path == "none" {
+		return nil
+	}
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return err
+	}
+	clean := filepath.Clean(abs)
+	if clean == filepath.Clean(homeDir()) {
+		return fmt.Errorf("refusing to delete %s: it is the home directory", clean)
+	}
+	if home, err := os.UserHomeDir(); err == nil && clean == filepath.Clean(home) {
+		return fmt.Errorf("refusing to delete %s: it is the home directory", clean)
+	}
+	if clean == filepath.VolumeName(clean)+string(filepath.Separator) || clean == filepath.Dir(clean) {
+		return fmt.Errorf("refusing to delete %s: it is a filesystem root", clean)
+	}
+	fi, err := os.Lstat(clean)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	if fi.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("refusing to delete %s: it is a symlink; remove it yourself if that is intended", clean)
+	}
+	if !fi.IsDir() {
+		return fmt.Errorf("refusing to delete %s: not a directory", clean)
+	}
+	if err := os.RemoveAll(clean); err != nil {
+		return fmt.Errorf("failed to delete workspace %s: %w", clean, err)
+	}
+	return nil
+}
+
+// ---------------------------------------------------------------------------
+// Internals
+// ---------------------------------------------------------------------------
+
+// buildProfile realises packages.<currentSystem>.<image> into a gcroot symlink.
+// build carries a front end's progress observer and cancellation (progress.go);
+// the zero value streams Nix's output to the terminal.
+func buildProfile(build BuildOptions, flakeRef, image, outLink string) error {
+	installable := fmt.Sprintf("%s#%s", flakeRef, image)
+	args := append(experimentalArgs(), "build", installable, "--out-link", outLink)
+	if err := runNixBuild(build, "environment", installable, args...); err != nil {
+		if build.observed() {
+			return err
+		}
+		return fmt.Errorf("%w\n"+
+			"  If this is a hash-mismatch on a source package, pin it (see RF-Swift-nix/pkgs/README.md).", err)
+	}
+	return nil
+}
+
+// buildPrerequisites realises the environment's declared runtime driver and
+// library layer before applications. Nix still owns dependency correctness;
+// this extra phase primarily guarantees separately packaged runtime plugins
+// (for example SoapySDR modules) are present before GUI tools start probing.
+// outLink pins the layer (its udev rules are read from there); "" for no link.
+func buildPrerequisites(build BuildOptions, flakeRef, image string, prerequisites []string, outLink string) error {
+	if len(prerequisites) == 0 {
+		return nil
+	}
+	installable := fmt.Sprintf("%s#%s-prerequisites", flakeRef, image)
+	common.PrintInfoMessage(fmt.Sprintf("Realising device/library prerequisites for '%s' ...", image))
+	link := []string{"--no-link"}
+	if outLink != "" {
+		link = []string{"--out-link", outLink}
+	}
+	args := append(experimentalArgs(), "build", installable)
+	args = append(args, link...)
+	if err := runNixBuild(build, "prerequisites", installable, args...); err != nil {
+		return fmt.Errorf("prerequisite %w", err)
+	}
+	return nil
+}
+
+// resolveCommands maps each tool that has a main program to the flake attribute
+// that provides it, by evaluating meta.mainProgram against the pinned package
+// set. Best-effort: on any failure it falls back to a heuristic (the last path
+// component of each attribute) so shims are still created.
+func resolveCommands(flakeRef string, packages []string) map[string]string {
+	out := map[string]string{}
+	if data, err := evalMainPrograms(flakeRef, packages); err == nil {
+		for attr, main := range data {
+			if main != "" {
+				out[main] = attr
+			}
+		}
+		if len(out) > 0 {
+			return out
+		}
+	}
+	common.PrintWarningMessage("Could not resolve tool command names from the flake; using attribute names for shims.")
+	for _, p := range packages {
+		name := p
+		if i := strings.LastIndexByte(p, '.'); i >= 0 {
+			name = p[i+1:]
+		}
+		out[name] = p
+	}
+	return out
+}
+
+// EvalVersions resolves each package's version in a single nix evaluation,
+// returning a map of attribute path -> version string ("" when unknown). Used by
+// `nix info --versions` to show what's in an environment without a build.
+func EvalVersions(flakeRef string, packages []string) map[string]string {
+	names, _ := json.Marshal(packages)
+	expr := fmt.Sprintf(`
+let
+  f = builtins.getFlake %q;
+  lib = f.inputs.nixpkgs.lib;
+  sys = builtins.currentSystem;
+  lp = f.legacyPackages.${sys};
+  names = builtins.fromJSON ''%s'';
+  ver = n: let t = builtins.tryEval (let p = lib.attrByPath (lib.splitString "." n) null lp; in if p == null then null else (p.version or (p.name or null))); in if t.success && t.value != null then t.value else "";
+in builtins.listToAttrs (map (n: { name = n; value = ver n; }) names)
+`, flakeRef, string(names))
+	args := append(experimentalArgs(), "eval", "--impure", "--json", "--expr", expr)
+	cmd := nixCommand(args...)
+	var buf bytes.Buffer
+	cmd.Stdout = &buf
+	cmd.Stderr = io.Discard
+	if err := cmd.Run(); err != nil {
+		return map[string]string{}
+	}
+	var m map[string]string
+	if err := json.Unmarshal(buf.Bytes(), &m); err != nil {
+		return map[string]string{}
+	}
+	return m
+}
+
+// evalMainPrograms asks nix for the meta.mainProgram of each package in one
+// evaluation. Returns a map of attribute path -> command name (empty when the
+// package has no main program, e.g. a library).
+func evalMainPrograms(flakeRef string, packages []string) (map[string]string, error) {
+	names, _ := json.Marshal(packages)
+	expr := fmt.Sprintf(`
+let
+  f = builtins.getFlake %q;
+  lib = f.inputs.nixpkgs.lib;
+  sys = builtins.currentSystem;
+  lp = f.legacyPackages.${sys};
+  names = builtins.fromJSON ''%s'';
+  main = n: let t = builtins.tryEval (let p = lib.attrByPath (lib.splitString "." n) null lp; in if p == null then null else (p.meta.mainProgram or null)); in if t.success && t.value != null then t.value else "";
+in builtins.listToAttrs (map (n: { name = n; value = main n; }) names)
+`, flakeRef, string(names))
+	args := append(experimentalArgs(), "eval", "--impure", "--json", "--expr", expr)
+	cmd := nixCommand(args...)
+	var buf bytes.Buffer
+	cmd.Stdout = &buf
+	cmd.Stderr = io.Discard
+	if err := cmd.Run(); err != nil {
+		return nil, err
+	}
+	var m map[string]string
+	if err := json.Unmarshal(buf.Bytes(), &m); err != nil {
+		return nil, err
+	}
+	return m, nil
+}
+
+// shimFormat identifies the shim script layout. Shims of an older format are
+// regenerated on the next entry (ensureShims), so an environment created by
+// an earlier RF Swift gets the pinned, GC-safe layout without being recreated.
+const shimFormat = "3"
+
+// shimFormatMarker is the line ensureShims looks for in an existing shim.
+const shimFormatMarker = "# rfswift-shim-format: " + shimFormat
+
+// shimNamePattern constrains the command names and flake attributes that are
+// interpolated into a shim script and its tools/ link path. Both come from
+// the manifest, which is untrusted after an import.
+var shimNamePattern = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9._+-]*$`)
+
+// nixFeatureArgs enables flakes on the nix calls written into shell scripts.
+const nixFeatureArgs = `--extra-experimental-features "nix-command flakes"`
+
+// writeShims creates the build-on-first-call wrapper scripts for a lazy
+// environment: one per command in env.Commands. A shim builds its tool with
+// an out-link under the environment (tools/<attr>): that link is a Nix
+// gcroot, so `rfswift env gc` keeps the tool, and every later call execs the
+// linked program directly, with no nix invocation at all.
+func writeShims(env *Environment) error {
+	dir := shimsDir(env.Name)
+	if err := ensureDir(dir); err != nil {
+		return err
+	}
+	if err := ensureDir(toolsDir(env.Name)); err != nil {
+		return err
+	}
+	nixbin := NixBinary()
+	for command, attr := range env.Commands {
+		// Anything but a plain name would break out of the quoted shell words
+		// (or, for attr, the comment line) it is written into.
+		if !shimNamePattern.MatchString(command) || !shimNamePattern.MatchString(attr) {
+			continue
+		}
+		installable := fmt.Sprintf("%s#%s", env.FlakeRef, attr)
+		prereq := fmt.Sprintf("%s#%s-prerequisites", env.FlakeRef, env.Image)
+		prereqStep := ""
+		if len(env.Prerequisites) > 0 {
+			// The layer is realised at creation (and by updates), outside any
+			// jail; only re-pin it when its gcroot is gone (a store GC after
+			// the link was removed, a manifest copied between machines). A
+			// jail exposes the environment's state read-only apart from
+			// tools/, so an unconditional --out-link there would fail.
+			prereqStep = fmt.Sprintf("  if [ ! -e %q ]; then %s %s build --out-link %q %q || exit $?; fi\n", prerequisitesLink(env.Name), nixbin, nixFeatureArgs, prerequisitesLink(env.Name), prereq)
+		}
+		script := fmt.Sprintf(`#!/bin/sh
+%s
+# RF Swift lazy tool shim: builds %s the first time it is called, pins it under
+# the environment (a Nix gcroot, so 'rfswift env gc' keeps it) and runs it from
+# there; later calls involve no nix at all.
+link=%q
+if [ ! -x "$link/bin/%s" ]; then
+%s  %s %s build --out-link "$link" %q || exit $?
+fi
+if [ -x "$link/bin/%s" ]; then
+  exec "$link/bin/%s" "$@"
+fi
+# The package provides no bin/%s of its own: let nix run its main program.
+exec %s %s run %q -- "$@"
+`, shimFormatMarker, attr, toolLink(env.Name, attr), command, prereqStep, nixbin, nixFeatureArgs, installable, command, command, command, nixbin, nixFeatureArgs, installable)
+		if err := os.WriteFile(filepath.Join(dir, command), []byte(script), 0o755); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// shimsCurrent reports whether an environment's shims exist and carry the
+// current format marker (all are written together, so one is inspected).
+func shimsCurrent(env *Environment) bool {
+	dir := hostPath(shimsDir(env.Name))
+	entries, err := os.ReadDir(dir)
+	if err != nil || len(entries) == 0 {
+		return false
+	}
+	data, err := os.ReadFile(filepath.Join(dir, entries[0].Name()))
+	return err == nil && strings.Contains(string(data), shimFormatMarker)
+}
+
+// ensureShims (re)generates an on-demand environment's shims when they are
+// missing (a manifest copied between machines) or of an older format. An
+// environment created before pins existed still follows an unpinned
+// reference; it is pinned on this occasion, as a new one is at creation, and
+// the manifest is rewritten accordingly.
+func ensureShims(env *Environment) error {
+	if shimsCurrent(env) {
+		return nil
+	}
+	if env.FlakeOrigin == "" {
+		if pinned, origin := pinLazyFlake(env.FlakeRef); origin != "" {
+			env.FlakeRef, env.FlakeOrigin = pinned, origin
+			common.PrintInfoMessage(fmt.Sprintf("Pinned on-demand environment '%s' to %s (it followed %s; move it with: rfswift env update %s).", env.Name, shortRev(pinned), origin, env.Name))
+		}
+	}
+	if env.Commands == nil {
+		env.Commands = resolveCommands(env.FlakeRef, env.Packages)
+	}
+	if err := writeShims(env); err != nil {
+		return err
+	}
+	return writeManifest(env)
+}
+
+// ToolAttribute returns the flake attribute among packages whose main
+// program is command, "" when none is or the evaluation fails. It lets
+// `rfswift nix run <image> <command>` run the image's own tool (sdrpp is
+// provided by sdrpp-hydrasdr in sdr_light) rather than a same-named attribute.
+func ToolAttribute(flakeRef string, packages []string, command string) string {
+	data, err := evalMainPrograms(flakeRef, packages)
+	if err != nil {
+		return ""
+	}
+	for attr, main := range data {
+		if main == command {
+			return attr
+		}
+	}
+	return ""
+}
+
+// RunEnvironmentTool runs one tool of an existing environment the way the
+// environment's own shell would: through its on-demand shim (build, pin,
+// exec) or the eager profile's program, with the OpenGL and display runtime
+// of gl.go, in the caller's working directory. A name that is neither is a
+// flake attribute of the environment's (pinned) flake.
+func RunEnvironmentTool(env *Environment, tool string, args []string) error {
+	attr := tool
+	if a, ok := env.Commands[tool]; ok && a != "" {
+		attr = a
+	}
+	if useWSL() {
+		return wslRunTool(env.FlakeRef, attr, args)
+	}
+	if !IsAvailable() {
+		return fmt.Errorf("nix is not installed or not on PATH")
+	}
+	program := ""
+	switch {
+	case env.Lazy:
+		if err := ensureShims(env); err != nil {
+			return err
+		}
+		if p := filepath.Join(shimsDir(env.Name), tool); pathExists(p) {
+			program = p
+		}
+	case env.ProfilePath != "":
+		if p := filepath.Join(env.ProfilePath, "bin", tool); pathExists(p) {
+			program = p
+		}
+	}
+	if program == "" {
+		return RunTool(env.FlakeRef, attr, args)
+	}
+	setupX11()
+	vars := map[string]string{"RFSWIFT_NIX_ENV": env.Name, "RFSWIFT_ENGINE": "nix"}
+	for k, v := range GLEnvironment(env, false) {
+		vars[k] = v
+	}
+	for k, v := range pluginPathEnv(env) {
+		vars[k] = v
+	}
+	cmd := exec.Command(program, args...)
+	cmd.Env = withEnv(os.Environ(), vars)
+	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
+	return cmd.Run()
+}
+
+// setupX11 best-effort grants local clients access to the X server so GUI RF
+// tools (gqrx, sdrpp, wireshark, ...) can open a window. It only acts when a
+// DISPLAY is present; on a headless session there is nothing to connect to and
+// GUI tools cannot run regardless.
+func setupX11() {
+	if runtime.GOOS != "linux" {
+		return
+	}
+	if os.Getenv("DISPLAY") == "" {
+		return
+	}
+	xhostBin, err := exec.LookPath("xhost")
+	if err != nil {
+		return
+	}
+	// Grant X access narrowly, not to every local user. The old "+local:"
+	// authorized ANY local client, so a different user on a shared host could
+	// connect to this X server and keylog or screenshot the RF GUI tools
+	// (gqrx, wireshark, ...). Nix tools run under the operator's own uid, and
+	// via rfsudo as root, so a server-interpreted grant for exactly those two
+	// principals is sufficient - matching the scoped "local:root" the
+	// container path already uses (rfutils.SetXHostForContainer) instead of a
+	// blanket grant. If the current user cannot be resolved, grant nothing
+	// rather than fall back to a broad grant.
+	if u, e := user.Current(); e == nil && u.Username != "" {
+		_ = exec.Command(xhostBin, "+si:localuser:"+u.Username).Run()
+		_ = exec.Command(xhostBin, "+si:localuser:root").Run()
+	}
+}
+
+// warnIfNoDisplay nudges the user when a GUI tool has nowhere to draw, with the
+// options that need no host X server.
+func warnIfNoDisplay() {
+	if runtime.GOOS != "linux" {
+		return
+	}
+	if os.Getenv("DISPLAY") != "" || os.Getenv("WAYLAND_DISPLAY") != "" {
+		return
+	}
+	common.PrintInfoMessage("No display detected (DISPLAY unset). For GUI tools: reconnect with 'ssh -X', set DISPLAY, or run a Qt tool headless with 'QT_QPA_PLATFORM=vnc <tool>' and connect a VNC client to port 5900.")
+}
+
+// enter launches an interactive shell (or runs a command) inside the
+// environment. gl holds the OpenGL runtime variables for non-NixOS hosts (see
+// gl.go), nil when none are needed.
+func enter(env *Environment, command string, pure bool, gl map[string]string) error {
+	setupX11()
+	warnIfNoDisplay()
+
+	workdir := env.Workspace
+	if workdir == "" || !pathExists(workdir) {
+		workdir, _ = os.Getwd()
+	}
+
+	if pure {
+		// Evaluate the devShell fresh, with a clean environment.
+		shell := userShell()
+		nixArgs := append(experimentalArgs(),
+			"develop", fmt.Sprintf("%s#%s", env.FlakeRef, env.Image),
+			"--ignore-environment",
+		)
+		keep := shellEnv(env, workdir, gl)
+		for k, v := range zshEnv(env, shell, "") {
+			keep[k] = v
+		}
+		for _, key := range glEnvKeys(keep) {
+			nixArgs = append(nixArgs, "--keep", key)
+		}
+		if command != "" {
+			nixArgs = append(nixArgs, "--command", shell, "-c", command)
+		} else {
+			nixArgs = append(nixArgs, "--command", shell)
+		}
+		cmd := nixCommand(nixArgs...)
+		cmd.Env = withEnv(os.Environ(), keep)
+		cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
+		cmd.Dir = workdir
+		if env.Isolate {
+			jailed, err := IsolateCommand(cmd, env, workdir)
+			if err != nil {
+				return err
+			}
+			cmd = jailed
+		}
+		return cmd.Run()
+	}
+
+	// Lazy environments put their build-on-first-call shims on PATH; eager ones
+	// put the realised profile's bin dir.
+	binDir := filepath.Join(env.ProfilePath, "bin")
+	if env.Lazy {
+		binDir = shimsDir(env.Name)
+	}
+	// Prepend any packages the user added with `rfswift nix install` - both the
+	// per-environment extras and the shared ones - so they are on PATH too.
+	pathParts := []string{binDir}
+	if p := filepath.Join(EnvExtrasProfile(env.Name), "bin"); pathExists(p) {
+		pathParts = append(pathParts, p)
+	}
+	if p := filepath.Join(SharedExtrasProfile(), "bin"); pathExists(p) {
+		pathParts = append(pathParts, p)
+	}
+	pathParts = append(pathParts, os.Getenv("PATH"))
+	vars := map[string]string{
+		"PATH":            strings.Join(pathParts, string(os.PathListSeparator)),
+		"RFSWIFT_NIX_ENV": env.Name,
+		"RFSWIFT_ENGINE":  "nix",
+	}
+	for k, v := range shellEnv(env, workdir, gl) {
+		vars[k] = v
+	}
+	for k, v := range pluginPathEnv(env) {
+		vars[k] = v
+	}
+
+	shell := userShell()
+	var cmd *exec.Cmd
+	if command != "" {
+		cmd = exec.Command(shell, "-c", command)
+	} else if filepath.Base(shell) == "bash" {
+		rc, err := writeBashRC(env, binDir)
+		if err == nil {
+			cmd = exec.Command(shell, "--rcfile", rc, "-i")
+		} else {
+			cmd = exec.Command(shell, "-i")
+		}
+	} else {
+		for k, v := range zshEnv(env, shell, binDir) {
+			vars[k] = v
+		}
+		cmd = exec.Command(shell, "-i")
+	}
+	cmd.Env = withEnv(os.Environ(), vars)
+	cmd.Dir = workdir
+	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
+	if env.Isolate {
+		jailed, err := IsolateCommand(cmd, env, workdir)
+		if err != nil {
+			return err
+		}
+		cmd = jailed
+	}
+	return cmd.Run()
+}
+
+// soapyModulesGlob matches SoapySDR's per-ABI module directory (modules0.8-3, ...).
+const soapyModulesGlob = "lib/SoapySDR/modules*"
+
+// pluginPathEnv returns the search-path variables for libraries that find
+// their device modules by directory, for an environment's realised profiles.
+// SoapySDR (SOAPY_SDR_PLUGIN_PATH): every tool in the environment is linked
+// against RF Swift's own plugin set already, so this adds what that set cannot
+// know about - a Soapy module the user installed later with `rfswift nix
+// install` (the extras profiles) or one shipped by a package a tool was not
+// linked against. The profile merges every package's module directory, so a
+// single path covers them all; the host's own value stays behind it.
+func pluginPathEnv(env *Environment) map[string]string {
+	if env == nil {
+		return nil
+	}
+	var roots []string
+	if env.ProfilePath != "" {
+		roots = append(roots, env.ProfilePath)
+	}
+	roots = append(roots, EnvExtrasProfile(env.Name), SharedExtrasProfile())
+	var dirs []string
+	for _, root := range roots {
+		matches, _ := filepath.Glob(filepath.Join(root, soapyModulesGlob))
+		for _, m := range matches {
+			if fi, err := os.Stat(m); err == nil && fi.IsDir() {
+				dirs = append(dirs, m)
+			}
+		}
+	}
+	if len(dirs) == 0 {
+		return nil
+	}
+	value := strings.Join(dirs, string(os.PathListSeparator))
+	if cur := os.Getenv("SOAPY_SDR_PLUGIN_PATH"); cur != "" {
+		value += string(os.PathListSeparator) + cur
+	}
+	return map[string]string{"SOAPY_SDR_PLUGIN_PATH": value}
+}
+
+// writeBashRC creates a throwaway rcfile that sources the user's own bashrc,
+// shows a short banner, and marks the prompt so it is obvious you are inside an
+// RF Swift Nix environment.
+func writeBashRC(env *Environment, binDir string) (string, error) {
+	rc := filepath.Join(EnvDir(env.Name), "bashrc")
+	toolLine := fmt.Sprintf("~%d tools on PATH. Type 'exit' to leave.", len(env.Packages))
+	if env.Lazy {
+		toolLine = fmt.Sprintf("%d tools available; each builds the first time you call it. Type 'exit' to leave.", len(env.Commands))
+	}
+	content := fmt.Sprintf(`# Generated by RF Swift (nix engine). Do not edit.
+if [ -f /etc/bashrc ]; then . /etc/bashrc; fi
+if [ -f "$HOME/.bashrc" ]; then . "$HOME/.bashrc"; fi
+export PATH=%q:"$PATH"
+export RFSWIFT_NIX_ENV=%q
+PS1="(rfswift:%s) $PS1"
+# Run an environment tool as root: sudo resets the environment, so pass PATH,
+# the display and the OpenGL runtime (non-NixOS hosts) through.
+rfsudo() {
+  local keep=() v
+  for v in DISPLAY XAUTHORITY WAYLAND_DISPLAY LD_LIBRARY_PATH LIBGL_DRIVERS_PATH LIBVA_DRIVERS_PATH GBM_BACKENDS_PATH __EGL_VENDOR_LIBRARY_FILENAMES; do
+    [ -n "${!v:-}" ] && keep+=("$v=${!v}")
+  done
+  sudo env "PATH=$PATH" "${keep[@]}" "$@"
+}
+echo ""
+echo "  RF Swift (nix) - environment '%s' [%s]"
+echo "  %s"
+echo "  Root: run a tool with sudo via 'rfsudo <tool>' (e.g. rfsudo airmon-ng)."
+if [ -n "${RFSWIFT_WORKSPACE:-}" ]; then echo "  Workspace: $RFSWIFT_WORKSPACE (shared with the host; the Workbench Captures tab inventories it)."; fi
+if [ -n "${RFSWIFT_NIX_GL_RUNTIME:-}" ]; then echo "  OpenGL: nix GL runtime active for GUI tools (rfswift nix gl %s)."; fi
+echo ""
+`, binDir, env.Name, env.Name, env.Name, env.Image, toolLine, env.Name)
+
+	// Lazy environments only pre-create shims for tools that declare a main
+	// program. Add a fallback so ANY command builds the package that provides
+	// it on first use, even multi-binary packages (gnuradio -> gnuradio-companion)
+	// or ones with no declared main program (urh).
+	if env.Lazy {
+		content += lazyHandler(env)
+	}
+
+	if err := os.WriteFile(rc, []byte(content), 0o644); err != nil {
+		return "", err
+	}
+	return rc, nil
+}
+
+// lazyHandler generates a bash command_not_found_handle that, for a command not
+// on PATH, builds the environment's package that ships it, pins it under
+// tools/ like a shim would, and runs it. Packages whose name relates to the
+// command are tried first so it stays close to on-demand rather than building
+// everything.
+// zshDir is the private ZDOTDIR an environment's zsh starts from.
+func zshDir(name string) string { return filepath.Join(EnvDir(name), "zsh") }
+
+// zshEnv returns the variables that give zsh the same environment shell as
+// bash gets through --rcfile: ZDOTDIR pointing at a generated .zshrc (which
+// sources the user's own first). Empty for other shells or when the rc cannot
+// be written, so the shell still opens, just without the banner. binDir may be
+// "" (pure `nix develop`, which puts the tools on PATH itself).
+func zshEnv(env *Environment, shell, binDir string) map[string]string {
+	if filepath.Base(shell) != "zsh" {
+		return nil
+	}
+	dir, err := writeZshRC(env, binDir)
+	if err != nil {
+		return nil
+	}
+	// macOS Terminal's session save/restore (/etc/zshrc_Apple_Terminal) keeps
+	// its files under ZDOTDIR, which here is the environment's read-only state
+	// dir; it is meaningless for an environment shell, so switch it off rather
+	// than let it fail noisily on exit.
+	return map[string]string{"ZDOTDIR": dir, "RFSWIFT_USER_ZDOTDIR": os.Getenv("ZDOTDIR"), "SHELL_SESSIONS_DISABLE": "1"}
+}
+
+// writeZshRC generates <env>/zsh/.zshrc - zsh's counterpart of writeBashRC,
+// since zsh has no --rcfile - and returns its directory for ZDOTDIR. It sources
+// the user's own .zshrc (from their ZDOTDIR or HOME - a jail's private HOME has
+// none, like the bash rc), then adds PATH, the prompt prefix, rfsudo, the
+// banner naming the workspace, and the lazy build-on-first-call hook.
+func writeZshRC(env *Environment, binDir string) (string, error) {
+	dir := zshDir(env.Name)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", err
+	}
+	toolLine := fmt.Sprintf("~%d tools on PATH. Type 'exit' to leave.", len(env.Packages))
+	if env.Lazy {
+		toolLine = fmt.Sprintf("%d tools available; each builds the first time you call it. Type 'exit' to leave.", len(env.Commands))
+	}
+	pathLine := ""
+	if binDir != "" {
+		pathLine = fmt.Sprintf("export PATH=%q:\"$PATH\"\n", binDir)
+	}
+	content := fmt.Sprintf(`# Generated by RF Swift (nix engine). Do not edit.
+# The user's own zsh setup first (their ZDOTDIR, else HOME), then ours.
+_rfx_zdotdir="${RFSWIFT_USER_ZDOTDIR:-$HOME}"
+if [ -f "$_rfx_zdotdir/.zshrc" ]; then ZDOTDIR="$_rfx_zdotdir" . "$_rfx_zdotdir/.zshrc"; fi
+if [ -n "${RFSWIFT_USER_ZDOTDIR:-}" ]; then export ZDOTDIR="$RFSWIFT_USER_ZDOTDIR"; else unset ZDOTDIR; fi
+# /etc/zshrc derives HISTFILE from ZDOTDIR; keep history with the user, not in
+# the environment's state dir.
+if [ "${HISTFILE:-}" = %q ]; then HISTFILE="$_rfx_zdotdir/.zsh_history"; fi
+unset _rfx_zdotdir RFSWIFT_USER_ZDOTDIR
+# Accept modified arrow sequences emitted by xterm and macOS terminal hosts.
+# Keep the user's editing mode; bind both standard editing keymaps.
+for _rfx_keymap in emacs viins; do
+  bindkey -M "$_rfx_keymap" $'\e[1;3D' backward-word
+  bindkey -M "$_rfx_keymap" $'\e[1;3C' forward-word
+  bindkey -M "$_rfx_keymap" $'\eb' backward-word
+  bindkey -M "$_rfx_keymap" $'\ef' forward-word
+done
+unset _rfx_keymap
+%sexport RFSWIFT_NIX_ENV=%q
+PROMPT="(rfswift:%s) $PROMPT"
+# Run an environment tool as root: sudo resets the environment, so pass PATH,
+# the display and the OpenGL runtime (non-NixOS hosts) through.
+rfsudo() {
+  local -a keep; local v
+  for v in DISPLAY XAUTHORITY WAYLAND_DISPLAY LD_LIBRARY_PATH LIBGL_DRIVERS_PATH LIBVA_DRIVERS_PATH GBM_BACKENDS_PATH __EGL_VENDOR_LIBRARY_FILENAMES; do
+    [ -n "${(P)v:-}" ] && keep+=("$v=${(P)v}")
+  done
+  sudo env "PATH=$PATH" "${keep[@]}" "$@"
+}
+echo ""
+echo "  RF Swift (nix) - environment '%s' [%s]"
+echo "  %s"
+echo "  Root: run a tool with sudo via 'rfsudo <tool>' (e.g. rfsudo airmon-ng)."
+if [ -n "${RFSWIFT_WORKSPACE:-}" ]; then echo "  Workspace: $RFSWIFT_WORKSPACE (shared with the host; the Workbench Captures tab inventories it)."; fi
+if [ -n "${RFSWIFT_NIX_GL_RUNTIME:-}" ]; then echo "  OpenGL: nix GL runtime active for GUI tools (rfswift nix gl %s)."; fi
+echo ""
+`, filepath.Join(dir, ".zsh_history"), pathLine, env.Name, env.Name, env.Name, env.Image, toolLine, env.Name)
+	if env.Lazy {
+		content += lazyHandlerFor(env, "zsh")
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".zshrc"), []byte(content), 0o644); err != nil {
+		return "", err
+	}
+	return dir, nil
+}
+
+func lazyHandler(env *Environment) string { return lazyHandlerFor(env, "bash") }
+
+// lazyHandlerFor renders the build-on-first-call fallback for bash or zsh. The
+// two differ only in the hook's name and in how a local array is declared;
+// everything else is common shell syntax.
+func lazyHandlerFor(env *Environment, shell string) string {
+	handler, locals := "command_not_found_handle", "local a leaf out link ordered=()"
+	if shell == "zsh" {
+		handler, locals = "command_not_found_handler", "local a leaf out link; local -a ordered; ordered=()"
+	}
+	quoted := make([]string, 0, len(env.Packages))
+	for _, p := range env.Packages {
+		quoted = append(quoted, fmt.Sprintf("%q", p))
+	}
+	attrs := strings.Join(quoted, " ")
+	prereqStep := ""
+	if len(env.Prerequisites) > 0 {
+		prereqStep = fmt.Sprintf("  if [ ! -e %q ]; then \"$__rfx_nix\" %s build --out-link %q %q || return $?; fi\n", prerequisitesLink(env.Name), nixFeatureArgs, prerequisitesLink(env.Name), fmt.Sprintf("%s#%s-prerequisites", env.FlakeRef, env.Image))
+	}
+	return fmt.Sprintf(`
+__rfx_flake=%q
+__rfx_nix=%q
+__rfx_tools=%q
+__rfx_attrs=(%s)
+%s() {
+  local cmd="$1"; shift
+  %s
+%s
+  # Try packages whose name relates to the command first.
+  for a in "${__rfx_attrs[@]}"; do
+    leaf="${a##*.}"
+    if [[ "$leaf" == *"$cmd"* || "$cmd" == *"$leaf"* ]]; then ordered+=("$a"); fi
+  done
+  ordered+=("${__rfx_attrs[@]}")
+  echo "rfswift: '$cmd' not built yet; building the tool that provides it..." >&2
+  for a in "${ordered[@]}"; do
+    out=$("$__rfx_nix" %s build --no-link --print-out-paths "$__rfx_flake#$a" 2>/dev/null) || continue
+    if [ -n "$out" ] && [ -x "$out/bin/$cmd" ]; then
+      # Pin the package under the environment (a gcroot, so a store GC keeps
+      # it) and put its programs on PATH for the rest of this shell.
+      link="$__rfx_tools/$a"
+      "$__rfx_nix" %s build --out-link "$link" "$__rfx_flake#$a" >/dev/null 2>&1 || link="$out"
+      export PATH="$link/bin:$PATH"
+      "$link/bin/$cmd" "$@"; return $?
+    fi
+  done
+  echo "rfswift: '$cmd' is not provided by environment '$RFSWIFT_NIX_ENV'." >&2
+  return 127
+}
+`, env.FlakeRef, NixBinary(), toolsDir(env.Name), attrs, handler, locals, prereqStep, nixFeatureArgs, nixFeatureArgs)
+}
+
+// shellWorkspaceVar is the RFSWIFT_WORKSPACE value for a shell that starts in
+// workdir: the workspace's host path when that is where the shell starts, ""
+// when the environment has no workspace (or it is missing on disk). A Linux
+// jail remaps the value to /workspace with the other path-bearing variables,
+// so the shell banner always names the path the user actually sees.
+func shellWorkspaceVar(env *Environment, workdir string) string {
+	ws := env.Workspace
+	if ws == "" || ws == "none" || workdir != ws {
+		return ""
+	}
+	return ws
+}
+
+// shellEnv merges the OpenGL runtime variables with RFSWIFT_WORKSPACE: the
+// variables an environment shell gets on top of the host's, and that a pure
+// `nix develop` keeps through --ignore-environment.
+func shellEnv(env *Environment, workdir string, gl map[string]string) map[string]string {
+	out := make(map[string]string, len(gl)+1)
+	for k, v := range gl {
+		out[k] = v
+	}
+	if ws := shellWorkspaceVar(env, workdir); ws != "" {
+		out["RFSWIFT_WORKSPACE"] = ws
+	}
+	return out
+}
+
+// WorkspaceHint is the one-line "where is my workspace" note shown before an
+// environment shell opens: the host directory shared with the host tools and
+// inventoried by the Workbench Captures tab, and - in a jail - the path it is
+// mounted at inside, since that is the only one the shell shows.
+func WorkspaceHint(env *Environment) string {
+	ws := env.Workspace
+	if ws == "" || ws == "none" {
+		return "Workspace: none (tools write wherever they run; create with --workspace <dir> to share a directory with the host)"
+	}
+	if in := WorkspaceInShell(env); in != ws {
+		return fmt.Sprintf("Workspace: %s (mounted at %s inside the jail)", ws, in)
+	}
+	return "Workspace: " + ws
+}
+
+// userShell picks the interactive shell to launch.
+func userShell() string {
+	if s := os.Getenv("SHELL"); s != "" {
+		return s
+	}
+	if _, err := exec.LookPath("bash"); err == nil {
+		return "bash"
+	}
+	return "sh"
+}
+
+// resolveWorkspace mirrors the container workspace semantics: "" = default
+// (~/rfswift-workspace/<name>), "none" = no workspace, else the given path.
+func resolveWorkspace(name, cfg string) string {
+	switch cfg {
+	case "none":
+		return ""
+	case "":
+		return filepath.Join(homeDir(), "rfswift-workspace", name)
+	default:
+		abs, err := filepath.Abs(cfg)
+		if err != nil {
+			return cfg
+		}
+		return abs
+	}
+}
+
+func writeManifest(env *Environment) error {
+	if err := ensureDir(EnvDir(env.Name)); err != nil {
+		return err
+	}
+	data, err := json.MarshalIndent(env, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(manifestPath(env.Name), data, 0o644)
+}
+
+// pathExists reports whether p exists, p being a path as the Linux side of the
+// engine sees it (on Windows it is read through the distribution's share).
+func pathExists(p string) bool {
+	_, err := os.Lstat(hostPath(p))
+	return err == nil
+}
+
+// withEnv returns a copy of env with the given keys upserted.
+func withEnv(env []string, kv map[string]string) []string {
+	out := make([]string, 0, len(env)+len(kv))
+	seen := map[string]bool{}
+	for _, e := range env {
+		key := e
+		if i := strings.IndexByte(e, '='); i >= 0 {
+			key = e[:i]
+		}
+		if v, ok := kv[key]; ok {
+			out = append(out, key+"="+v)
+			seen[key] = true
+		} else {
+			out = append(out, e)
+		}
+	}
+	for k, v := range kv {
+		if !seen[k] {
+			out = append(out, k+"="+v)
+		}
+	}
+	return out
+}

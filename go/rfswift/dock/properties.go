@@ -184,21 +184,23 @@ func getContainerProperties(ctx context.Context, cli *client.Client, containerID
 	}
 
 	props := map[string]string{
-		"XDisplay":     xdisplay,
-		"Shell":        containerJSON.Path,
-		"Privileged":   fmt.Sprintf("%v", containerJSON.HostConfig.Privileged),
-		"NetworkMode":  string(containerJSON.HostConfig.NetworkMode),
-		"ExposedPorts": getExposedPortsFromLabel(containerJSON),
-		"PortBindings": convertPortBindingsToRoundTrip(containerJSON.HostConfig.PortBindings),
-		"ImageName":    getDisplayImageName(containerJSON),
-		"ImageHash":    imageInfo.ID,
-		"Bindings":     strings.Join(containerJSON.HostConfig.Binds, ";;"),
-		"ExtraHosts":   strings.Join(containerJSON.HostConfig.ExtraHosts, ","),
-		"Size":         imageSize,
-		"Devices":      convertDevicesToString(containerJSON.HostConfig.Devices),
-		"Caps":         convertCapsToString(containerJSON.HostConfig.CapAdd),
-		"Seccomp":      convertSecurityOptToString(containerJSON.HostConfig.SecurityOpt),
-		"Cgroups":      cgroupRules,
+		"XDisplay":      xdisplay,
+		"Shell":         containerJSON.Path,
+		"Privileged":    fmt.Sprintf("%v", containerJSON.HostConfig.Privileged),
+		"NetworkMode":   string(containerJSON.HostConfig.NetworkMode),
+		"ExposedPorts":  getExposedPortsFromLabel(containerJSON),
+		"PortBindings":  convertPortBindingsToRoundTrip(containerJSON.HostConfig.PortBindings),
+		"ImageName":     getDisplayImageName(containerJSON),
+		"ImageHash":     imageInfo.ID,
+		"Bindings":      strings.Join(containerJSON.HostConfig.Binds, ";;"),
+		"ExtraHosts":    strings.Join(containerJSON.HostConfig.ExtraHosts, ","),
+		"Size":          imageSize,
+		"Devices":       convertDevicesToString(containerJSON.HostConfig.Devices),
+		"Caps":          convertCapsToString(containerJSON.HostConfig.CapAdd),
+		"Seccomp":       convertSecurityOptToString(containerJSON.HostConfig.SecurityOpt),
+		"Cgroups":       cgroupRules,
+		"SerialPorts":   containerJSON.Config.Labels[SerialPortsLabel],
+		"SerialHotplug": containerJSON.Config.Labels[SerialHotplugLabel],
 	}
 
 	// NAT subnet from label
@@ -245,12 +247,14 @@ func getContainerProperties(ctx context.Context, cli *client.Client, containerID
 		// Check for AMD GPU: /dev/kfd is never in defaults, so it's a reliable indicator
 		for _, d := range containerJSON.HostConfig.Devices {
 			if d.PathOnHost == "/dev/kfd" {
-				gpuSpec = "all (amd)"
+				gpuSpec = "all"
 				break
 			}
 		}
 	}
-	props["GPUs"] = gpuSpec
+	// The value is what a re-creation feeds back into applyGPUConfig, so it is
+	// the plain request ("all", "0,1"), never a display string.
+	props["GPUs"] = NormalizeGPUSpec(gpuSpec)
 
 	return props, nil
 }
@@ -336,9 +340,9 @@ func UpdateMountBinding(containerName string, source string, target string, add 
 	// Docker:  edit hostconfig.json + config.v2.json on disk, restart daemon
 	// Podman:  recreate the container with updated bind mounts (no direct edit)
 	//
-	if !EngineSupportsDirectConfigEdit() {
+	if !useDirectConfigEdit() {
 		// ── Podman path: container recreation ──────────────────────────
-		common.PrintInfoMessage(fmt.Sprintf("%s does not support direct config editing — using container recreation", GetEngine().Name()))
+		common.PrintInfoMessage(fmt.Sprintf("Re-creating the container with the updated configuration (%s, no root needed; changes made inside it are kept)", GetEngine().Name()))
 
 		// Get current container config for recreation
 		inspectData, err := inspectContainer(ctx, cli, containerID)
@@ -553,9 +557,9 @@ func UpdateDeviceBinding(containerName string, deviceHost string, deviceContaine
 	// Docker:  edit hostconfig.json + config.v2.json on disk, restart daemon
 	// Podman:  recreate the container with updated devices (no direct edit)
 	//
-	if !EngineSupportsDirectConfigEdit() {
+	if !useDirectConfigEdit() {
 		// ── Podman path: container recreation ──────────────────────────
-		common.PrintInfoMessage(fmt.Sprintf("%s does not support direct config editing — using container recreation", GetEngine().Name()))
+		common.PrintInfoMessage(fmt.Sprintf("Re-creating the container with the updated configuration (%s, no root needed; changes made inside it are kept)", GetEngine().Name()))
 
 		// Get current container config for recreation
 		inspectData, err := inspectContainer(ctx, cli, containerID)
@@ -715,7 +719,19 @@ func removeDeviceMappingFromSlice(devices []container.DeviceMapping, hostPath, c
 // (changed bool, err error). If changed is false, no files are saved and
 // the service is not restarted.
 func directEditContainer(ctx context.Context, cli *client.Client, containerID string, containerName string, mutate func(*HostConfigFull, map[string]interface{}) (bool, error)) error {
+	// Refuse before touching the container: the caller elevates and retries.
+	if NeedsRootForConfigEdit() {
+		return ErrNeedsRoot
+	}
 	timeout := 10
+
+	// The daemon restart below stops every container; remember which ones
+	// were running so they come back afterwards, the edited one first.
+	running := runningContainerIDs(ctx, cli)
+	wasRunning := false
+	if before, err := inspectContainer(ctx, cli, containerID); err == nil && before.State != nil {
+		wasRunning = before.State.Running
+	}
 
 	// Stop the container
 	common.PrintInfoMessage("Stopping the container...")
@@ -799,7 +815,42 @@ func directEditContainer(ctx context.Context, cli *client.Client, containerID st
 		return err
 	}
 	common.PrintSuccessMessage(fmt.Sprintf("%s service restarted successfully.", engineName))
+
+	// Bring the containers back: the edited one if it was running (its new
+	// configuration applies at this start), then the others the restart
+	// stopped. Containers with a restart policy are already on their way.
+	if wasRunning {
+		if _, err := cli.ContainerStart(ctx, fullID, client.ContainerStartOptions{}); err != nil {
+			common.PrintWarningMessage(fmt.Sprintf("Container '%s' could not be started again: %v", containerName, err))
+		} else {
+			common.PrintSuccessMessage(fmt.Sprintf("Container '%s' is running with its new configuration.", containerName))
+			syncSerialAfterStart(ctx, cli, fullID)
+		}
+	}
+	for _, id := range running {
+		if id == fullID {
+			continue
+		}
+		if res, err := cli.ContainerInspect(ctx, id, client.ContainerInspectOptions{}); err == nil && res.Container.State != nil && !res.Container.State.Running {
+			if _, err := cli.ContainerStart(ctx, id, client.ContainerStartOptions{}); err != nil {
+				common.PrintWarningMessage(fmt.Sprintf("Container %s was running before the service restart and could not be started again: %v", strings.TrimPrefix(res.Container.Name, "/"), err))
+			}
+		}
+	}
 	return nil
+}
+
+// runningContainerIDs lists the containers running right now.
+func runningContainerIDs(ctx context.Context, cli *client.Client) []string {
+	res, err := cli.ContainerList(ctx, client.ContainerListOptions{})
+	if err != nil {
+		return nil
+	}
+	var ids []string
+	for _, c := range res.Items {
+		ids = append(ids, c.ID)
+	}
+	return ids
 }
 
 // UpdateCapability adds or removes a Linux capability from a container.
@@ -826,9 +877,9 @@ func UpdateCapability(containerID string, capability string, add bool) error {
 	}
 	containerName := strings.TrimPrefix(containerJSON.Name, "/")
 
-	if !EngineSupportsDirectConfigEdit() {
+	if !useDirectConfigEdit() {
 		// Podman path: fall back to container recreation
-		common.PrintInfoMessage(fmt.Sprintf("%s does not support direct config editing — using container recreation", GetEngine().Name()))
+		common.PrintInfoMessage(fmt.Sprintf("Re-creating the container with the updated configuration (%s, no root needed; changes made inside it are kept)", GetEngine().Name()))
 		props, err := getContainerProperties(ctx, cli, containerID)
 		if err != nil {
 			return err
@@ -839,7 +890,7 @@ func UpdateCapability(containerID string, capability string, add bool) error {
 		}
 		if add {
 			for _, cap := range capabilities {
-				if strings.TrimSpace(cap) == capability {
+				if NormalizeCapName(cap) == NormalizeCapName(capability) {
 					common.PrintInfoMessage(fmt.Sprintf("Capability '%s' already exists in container '%s'", capability, containerName))
 					return nil
 				}
@@ -849,7 +900,7 @@ func UpdateCapability(containerID string, capability string, add bool) error {
 			newCaps := []string{}
 			found := false
 			for _, cap := range capabilities {
-				if strings.TrimSpace(cap) != capability {
+				if NormalizeCapName(cap) != NormalizeCapName(capability) {
 					newCaps = append(newCaps, cap)
 				} else {
 					found = true
@@ -869,7 +920,7 @@ func UpdateCapability(containerID string, capability string, add bool) error {
 	return directEditContainer(ctx, cli, containerID, containerName, func(hostConfig *HostConfigFull, _ map[string]interface{}) (bool, error) {
 		if add {
 			for _, cap := range hostConfig.CapAdd {
-				if strings.TrimSpace(cap) == capability {
+				if NormalizeCapName(cap) == NormalizeCapName(capability) {
 					common.PrintInfoMessage(fmt.Sprintf("Capability '%s' already exists in container '%s'", capability, containerName))
 					return false, nil
 				}
@@ -880,7 +931,7 @@ func UpdateCapability(containerID string, capability string, add bool) error {
 			newCaps := []string{}
 			found := false
 			for _, cap := range hostConfig.CapAdd {
-				if strings.TrimSpace(cap) != capability {
+				if NormalizeCapName(cap) != NormalizeCapName(capability) {
 					newCaps = append(newCaps, cap)
 				} else {
 					found = true
@@ -921,8 +972,8 @@ func UpdateCgroupRule(containerID string, rule string, add bool) error {
 	}
 	containerName := strings.TrimPrefix(containerJSON.Name, "/")
 
-	if !EngineSupportsDirectConfigEdit() {
-		common.PrintInfoMessage(fmt.Sprintf("%s does not support direct config editing — using container recreation", GetEngine().Name()))
+	if !useDirectConfigEdit() {
+		common.PrintInfoMessage(fmt.Sprintf("Re-creating the container with the updated configuration (%s, no root needed; changes made inside it are kept)", GetEngine().Name()))
 		props, err := getContainerProperties(ctx, cli, containerID)
 		if err != nil {
 			return err
@@ -1021,8 +1072,8 @@ func UpdateGPUs(containerID string, gpus string, add bool) error {
 		return fmt.Errorf("GPU passthrough not supported on %s", runtime.GOOS)
 	}
 
-	if !EngineSupportsDirectConfigEdit() {
-		common.PrintInfoMessage(fmt.Sprintf("%s does not support direct config editing — using container recreation", GetEngine().Name()))
+	if !useDirectConfigEdit() {
+		common.PrintInfoMessage(fmt.Sprintf("Re-creating the container with the updated configuration (%s, no root needed; changes made inside it are kept)", GetEngine().Name()))
 		props, err := getContainerProperties(ctx, cli, containerID)
 		if err != nil {
 			return err
@@ -1170,8 +1221,8 @@ func UpdateExposedPort(containerID string, port string, add bool) error {
 	}
 	containerName := strings.TrimPrefix(containerJSON.Name, "/")
 
-	if !EngineSupportsDirectConfigEdit() {
-		common.PrintInfoMessage(fmt.Sprintf("%s does not support direct config editing — using container recreation", GetEngine().Name()))
+	if !useDirectConfigEdit() {
+		common.PrintInfoMessage(fmt.Sprintf("Re-creating the container with the updated configuration (%s, no root needed; changes made inside it are kept)", GetEngine().Name()))
 		props, err := getContainerProperties(ctx, cli, containerID)
 		if err != nil {
 			return err
@@ -1276,8 +1327,8 @@ func UpdatePortBinding(containerID string, binding string, add bool) error {
 	}
 	containerName := strings.TrimPrefix(containerJSON.Name, "/")
 
-	if !EngineSupportsDirectConfigEdit() {
-		common.PrintInfoMessage(fmt.Sprintf("%s does not support direct config editing — using container recreation", GetEngine().Name()))
+	if !useDirectConfigEdit() {
+		common.PrintInfoMessage(fmt.Sprintf("Re-creating the container with the updated configuration (%s, no root needed; changes made inside it are kept)", GetEngine().Name()))
 		props, err := getContainerProperties(ctx, cli, containerID)
 		if err != nil {
 			return err
@@ -1524,6 +1575,17 @@ func recreateContainerWithProperties(ctx context.Context, cli *client.Client, co
 	exposedPorts := ParseExposedPorts(props["ExposedPorts"])
 	bindedPorts := ParseBindedPorts(props["PortBindings"])
 	devices := getDeviceMappingsFromString(props["Devices"])
+	// Device nodes that were bind mounts become device mappings; a missing or
+	// stray one is dropped with an explanation (devbinds.go).
+	keptBinds, devBinds, bindRules, devWarnings := SanitizeDeviceBinds(bindings)
+	bindings = keptBinds
+	for _, w := range devWarnings {
+		common.PrintWarningMessage(w.String())
+	}
+	devices = append(devices, getDeviceMappingsFromString(strings.Join(devBinds, ","))...)
+	if len(bindRules) > 0 {
+		props["Cgroups"] = strings.Join(appendMissing(splitSummaryList(props["Cgroups"], ","), bindRules...), ",")
+	}
 
 	privileged := props["Privileged"] == "true"
 
@@ -1551,6 +1613,8 @@ func recreateContainerWithProperties(ctx context.Context, cli *client.Client, co
 		if props["Cgroups"] != "" {
 			hostConfig.DeviceCgroupRules = strings.Split(props["Cgroups"], ",")
 		}
+		// Serial ports are attached on demand where possible (serialhotplug.go).
+		props["SerialPorts"] = MergeSerialPorts(props["SerialPorts"], applySerialHotplug(hostConfig), nil)
 		if props["Seccomp"] != "" && props["Seccomp"] != "(Default)" {
 			hostConfig.SecurityOpt = []string{"seccomp=" + props["Seccomp"]}
 		}
@@ -1576,6 +1640,14 @@ func recreateContainerWithProperties(ctx context.Context, cli *client.Client, co
 	if len(hostConfig.DeviceCgroupRules) > 0 {
 		containerLabels["org.rfswift.cgroup_rules"] = strings.Join(hostConfig.DeviceCgroupRules, ",")
 	}
+	// The new container is created from the committed snapshot image, and a
+	// container inherits its image's labels: a label that was removed must be
+	// written empty, not left out, or the image brings it back.
+	containerLabels[SerialPortsLabel] = props["SerialPorts"]
+	containerLabels[SerialHotplugLabel] = props["SerialHotplug"]
+	// The GPU request is recorded the way creation records it, so the next
+	// inspection shows the request and not a guess from the device list.
+	containerLabels["org.rfswift.gpus"] = NormalizeGPUSpec(props["GPUs"])
 
 	if props["ExposedPorts"] == "" {
 		containerLabels["org.rfswift.exposed_ports"] = "none"
@@ -1589,7 +1661,7 @@ func recreateContainerWithProperties(ctx context.Context, cli *client.Client, co
 		shell = containerJSON.Path
 	}
 	if shell == "" {
-		shell = "/bin/bash"
+		shell = "/bin/zsh"
 	}
 
 	containerConfig := &container.Config{
@@ -1612,7 +1684,7 @@ func recreateContainerWithProperties(ctx context.Context, cli *client.Client, co
 	}
 
 	// ── Sanitize HostConfig for Podman cgroup v2 compat ──
-	if !EngineSupportsDirectConfigEdit() {
+	if !useDirectConfigEdit() {
 		sanitizeHostConfigForPodman(hostConfig)
 	}
 
@@ -1676,16 +1748,12 @@ func recreateContainerWithProperties(ctx context.Context, cli *client.Client, co
 		return err
 	}
 
-	// ── 7. Clean up the temporary image ──
-	// Docker allows removing an image tag while a container uses it (layers stay).
-	// Podman does not — skip the attempt; cleanupStaleTempImages handles it next time.
-	if GetEngine().Type() != EnginePodman {
-		if _, err := cli.ImageRemove(ctx, tempImageTag, client.ImageRemoveOptions{Force: false}); err != nil {
-			common.PrintWarningMessage(fmt.Sprintf("Could not remove temp image '%s': %v (you can remove it manually)", tempImageTag, err))
-		} else {
-			common.PrintSuccessMessage(fmt.Sprintf("Cleaned up temporary image: %s", tempImageTag))
-		}
-	}
+	// ── 7. The snapshot image stays ──
+	// The re-created container runs from it (that is how everything installed
+	// inside survives the change); the daemon refuses to delete an image a
+	// container uses, so no attempt is made. The original image name lives in
+	// the org.rfswift.original_image label, and cleanupStaleTempImages removes
+	// snapshots no container uses any more.
 
 	common.PrintSuccessMessage(fmt.Sprintf("Container '%s' updated successfully!", containerName))
 	return nil
@@ -1715,7 +1783,7 @@ func rollbackContainer(ctx context.Context, cli *client.Client, containerName st
 	}
 
 	// Sanitize for Podman if needed
-	if !EngineSupportsDirectConfigEdit() {
+	if !useDirectConfigEdit() {
 		sanitizeHostConfigForPodman(rollbackHostConfig)
 	}
 
@@ -2028,14 +2096,10 @@ func recreateContainerWithUpdatedBinds(ctx context.Context, cli *client.Client, 
 	common.PrintSuccessMessage("Container started with updated mount bindings.")
 
 	// Clean up the temporary image.
-	// Docker allows removing a tag while the container uses it; Podman does not.
-	if GetEngine().Type() != EnginePodman {
-		if _, err := cli.ImageRemove(ctx, tempImageTag, client.ImageRemoveOptions{Force: false}); err != nil {
-			common.PrintWarningMessage(fmt.Sprintf("Could not remove temp image '%s': %v (will be cleaned up next time)", tempImageTag, err))
-		} else {
-			common.PrintSuccessMessage(fmt.Sprintf("Cleaned up temporary image: %s", tempImageTag))
-		}
-	}
-
+	// The re-created container runs from the snapshot image, so it stays (the
+	// daemon refuses to delete an image a container uses); the original image
+	// name is in the org.rfswift.original_image label, and stale snapshots
+	// are removed by cleanupStaleTempImages.
+	_ = tempImageTag
 	return nil
 }

@@ -432,12 +432,45 @@ func ListUSBInLimaVM(instance string) (string, error) {
 	return result, nil
 }
 
+// limaCtlPath caches the resolved limactl location for the process lifetime.
+var limaCtlPath string
+
+// LimaCtl returns the limactl executable to invoke. GUI apps launched from
+// Finder/launchd inherit a minimal PATH without Homebrew or /usr/local, so a
+// plain exec.Command("limactl", ...) fails there even though Lima is
+// installed. Falls back to the standard install locations, and to the bare
+// name (so errors still mention limactl) when nothing is found.
+//
+//	out: string limactl path or "limactl"
+func LimaCtl() string {
+	if limaCtlPath != "" {
+		return limaCtlPath
+	}
+	if p, err := exec.LookPath("limactl"); err == nil {
+		limaCtlPath = p
+		return p
+	}
+	for _, p := range []string{
+		"/opt/homebrew/bin/limactl",
+		"/usr/local/bin/limactl",
+		"/opt/local/bin/limactl",
+	} {
+		if st, err := os.Stat(p); err == nil && !st.IsDir() {
+			limaCtlPath = p
+			return p
+		}
+	}
+	return "limactl"
+}
+
 // IsLimaInstalled checks if Lima is installed and available.
 //
-//	out: bool true if limactl is found in PATH
+//	out: bool true if limactl is found in PATH or a standard install location
 func IsLimaInstalled() bool {
-	_, err := exec.LookPath("limactl")
-	return err == nil
+	if _, err := exec.LookPath(LimaCtl()); err == nil {
+		return true
+	}
+	return false
 }
 
 // IsQEMUInstalled checks if QEMU is installed (required by Lima with vmType: qemu).
@@ -468,7 +501,7 @@ func IsKrunkitInstalled() bool {
 //	in(1): string instance the Lima instance name
 //	out: bool true if the instance is running
 func IsLimaInstanceRunning(instance string) bool {
-	cmd := exec.Command("limactl", "list", "--json")
+	cmd := exec.Command(LimaCtl(), "list", "--json")
 	output, err := cmd.Output()
 	if err != nil {
 		return false
@@ -496,7 +529,7 @@ func IsLimaInstanceRunning(instance string) bool {
 //	in(1): string instance name of the Lima instance to start
 //	out: error
 func StartLimaInstance(instance string) error {
-	cmd := exec.Command("limactl", "start", instance)
+	cmd := exec.Command(LimaCtl(), "start", instance)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	return cmd.Run()
@@ -508,7 +541,7 @@ func StartLimaInstance(instance string) error {
 //	in(2): string instance name for the new instance
 //	out: error
 func CreateLimaInstance(yamlPath, instance string) error {
-	cmd := exec.Command("limactl", "create", "--name", instance, yamlPath)
+	cmd := exec.Command(LimaCtl(), "create", "--name", instance, yamlPath)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
@@ -523,7 +556,7 @@ func CreateLimaInstance(yamlPath, instance string) error {
 //	in(1): string instance name of the Lima instance to stop
 //	out: error
 func StopLimaInstance(instance string) error {
-	cmd := exec.Command("limactl", "stop", instance)
+	cmd := exec.Command(LimaCtl(), "stop", instance)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
@@ -537,7 +570,7 @@ func StopLimaInstance(instance string) error {
 //	in(1): string instance name of the Lima instance to delete
 //	out: error
 func DeleteLimaInstance(instance string) error {
-	cmd := exec.Command("limactl", "delete", instance)
+	cmd := exec.Command(LimaCtl(), "delete", instance)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {

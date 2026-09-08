@@ -1,0 +1,602 @@
+package nix
+
+import (
+	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
+	"sort"
+	"strings"
+	"time"
+
+	common "penthertz/rfswift/common"
+)
+
+type UpdateOptions struct {
+	Check bool
+	Input string
+	// Build: a front end's live progress and cancellation of the rebuild.
+	Build BuildOptions
+}
+
+// localFlakePath resolves a writable filesystem flake reference. Updating a
+// remote reference would not have a lock file RF Swift can persist.
+func localFlakePath(ref string) (string, bool) {
+	ref = strings.TrimSpace(strings.TrimPrefix(ref, "path:"))
+	if ref == "" || looksLikeFlakeURL(ref) {
+		return "", false
+	}
+	// On Windows a manifest written by the Linux side names a checkout inside
+	// the WSL distribution; keep it as that Linux path (filepath.Abs would
+	// glue a drive letter onto it) and look for flake.nix through the share.
+	if useWSL() && strings.HasPrefix(ref, "/") {
+		if hasFlake(ref) {
+			return ref, true
+		}
+		return "", false
+	}
+	abs, err := filepath.Abs(ref)
+	if err != nil || !hasFlake(abs) {
+		return "", false
+	}
+	return abs, true
+}
+
+// EnvironmentFlakeInputs returns selectable top-level input names from the
+// environment's actual lock graph. It supports writable local flakes and remote
+// flakes through `nix flake metadata --json`.
+func EnvironmentFlakeInputs(name string) ([]string, error) {
+	env, err := GetEnvironment(name)
+	if err != nil {
+		return nil, err
+	}
+	var data []byte
+	if dir, ok := localFlakePath(env.FlakeRef); ok {
+		data, err = os.ReadFile(filepath.Join(hostPath(dir), "flake.lock"))
+	} else {
+		args := append(experimentalArgs(), "flake", "metadata", "--json", env.FlakeRef)
+		cmd := nixCommand(args...)
+		data, err = cmd.Output()
+	}
+	if err != nil {
+		return nil, fmt.Errorf("read flake inputs: %w", err)
+	}
+	var doc struct {
+		Root  string `json:"root"`
+		Nodes map[string]struct {
+			Inputs map[string]any `json:"inputs"`
+		} `json:"nodes"`
+		Locks *struct {
+			Root  string `json:"root"`
+			Nodes map[string]struct {
+				Inputs map[string]any `json:"inputs"`
+			} `json:"nodes"`
+		} `json:"locks"`
+	}
+	if err := json.Unmarshal(data, &doc); err != nil {
+		return nil, fmt.Errorf("parse flake inputs: %w", err)
+	}
+	root, nodes := doc.Root, doc.Nodes
+	if doc.Locks != nil {
+		root, nodes = doc.Locks.Root, doc.Locks.Nodes
+	}
+	if root == "" {
+		root = "root"
+	}
+	inputs := make([]string, 0, len(nodes[root].Inputs))
+	for input := range nodes[root].Inputs {
+		inputs = append(inputs, input)
+	}
+	sort.Strings(inputs)
+	return inputs, nil
+}
+
+func EnvironmentUsesLocalFlake(name string) bool {
+	env, err := GetEnvironment(name)
+	if err != nil {
+		return false
+	}
+	_, ok := localFlakePath(env.FlakeRef)
+	return ok
+}
+
+// runNixStreaming runs nix on the console, or with its output captured when
+// the process has none (the Workbench on Windows; see runInteractive).
+func runNixStreaming(dir string, args ...string) error {
+	cmd := nixCommand(append(experimentalArgs(), args...)...)
+	cmd.Dir = hostPath(dir)
+	return runInteractive(cmd)
+}
+
+// CheckEnvironmentUpdate asks Nix for lock changes without modifying the lock.
+func CheckEnvironmentUpdate(name, input string) error {
+	if useWSL() {
+		return wslUpdateEnvironment(name, UpdateOptions{Check: true, Input: input})
+	}
+	env, err := GetEnvironment(name)
+	if err != nil {
+		return err
+	}
+	dir, ok := localFlakePath(env.FlakeRef)
+	if !ok {
+		if input != "" {
+			return fmt.Errorf("--input requires a writable local flake; environment %q uses %s", name, env.FlakeRef)
+		}
+		if env.Lazy && env.FlakeOrigin != "" {
+			report, err := lazyPinReport(env)
+			if err != nil {
+				return err
+			}
+			common.PrintInfoMessage(report)
+			return nil
+		}
+		common.PrintInfoMessage("Remote flake: checking refreshed metadata (no local lock file is modified).")
+		return runNixStreaming("", "flake", "metadata", "--refresh", env.FlakeRef)
+	}
+	report, err := previewLockUpdate(dir, input)
+	if err != nil {
+		return err
+	}
+	common.PrintInfoMessage(report)
+	return nil
+}
+
+// CheckEnvironmentUpdateOutput is CheckEnvironmentUpdate for GUI clients: the
+// same dry-run, but Nix's report is returned instead of streamed to the
+// terminal, so it can be shown in a dialog before the user decides to update.
+func CheckEnvironmentUpdateOutput(name, input string) (string, error) {
+	if useWSL() {
+		return wslCheckEnvironmentUpdateOutput(name, input)
+	}
+	env, err := GetEnvironment(name)
+	if err != nil {
+		return "", err
+	}
+	dir, ok := localFlakePath(env.FlakeRef)
+	if !ok {
+		if input != "" {
+			return "", fmt.Errorf("--input requires a writable local flake; environment %q uses %s", name, env.FlakeRef)
+		}
+		if env.Lazy && env.FlakeOrigin != "" {
+			return lazyPinReport(env)
+		}
+		out, err := runNixCapture("", "flake", "metadata", "--refresh", env.FlakeRef)
+		if err != nil {
+			return out, err
+		}
+		return "Remote flake " + env.FlakeRef + " (refreshed metadata; no local lock is modified):\n" + out, nil
+	}
+	return previewLockUpdate(dir, input)
+}
+
+// runNixCapture runs nix like runNixStreaming but returns its combined output
+// (nix reports lock changes on stderr) instead of writing to the terminal.
+func runNixCapture(dir string, args ...string) (string, error) {
+	cmd := nixCommand(append(experimentalArgs(), args...)...)
+	cmd.Dir = hostPath(dir)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return string(out), fmt.Errorf("%w: %s", err, strings.TrimSpace(string(out)))
+	}
+	return string(out), nil
+}
+
+// previewLockUpdate reports what `nix flake update` would change for a
+// writable local flake without touching its flake.lock. `nix flake update` has
+// no --dry-run flag; instead Nix is asked to write the candidate lock to a
+// temporary file (--output-lock-file) and the two locks are compared input by
+// input. An empty input means every input.
+func previewLockUpdate(dir, input string) (string, error) {
+	tmp, err := os.CreateTemp("", "rfswift-flake-*.lock")
+	if err != nil {
+		return "", err
+	}
+	tmpPath := tmp.Name()
+	tmp.Close()
+	defer os.Remove(tmpPath)
+
+	args := []string{"flake", "update"}
+	if input != "" {
+		args = append(args, input)
+	}
+	args = append(args, "--flake", dir, "--output-lock-file", tmpPath)
+	if out, err := runNixCapture(dir, args...); err != nil {
+		return out, err
+	}
+	before, err := os.ReadFile(filepath.Join(dir, "flake.lock"))
+	if err != nil && !os.IsNotExist(err) {
+		return "", fmt.Errorf("read flake lock: %w", err)
+	}
+	after, err := os.ReadFile(tmpPath)
+	if err != nil {
+		return "", fmt.Errorf("read candidate flake lock: %w", err)
+	}
+	return diffFlakeLocks(before, after), nil
+}
+
+// flakeLock is the subset of flake.lock needed to compare pinned inputs.
+type flakeLock struct {
+	Nodes map[string]struct {
+		Locked *struct {
+			Rev          string `json:"rev"`
+			LastModified int64  `json:"lastModified"`
+		} `json:"locked"`
+	} `json:"nodes"`
+}
+
+// diffFlakeLocks renders the inputs whose pinned revision differs between two
+// lock files, oldest -> newest, in a form suitable for a terminal or a dialog.
+func diffFlakeLocks(before, after []byte) string {
+	var b, a flakeLock
+	_ = json.Unmarshal(before, &b) // a missing/unparseable current lock reads as "no pins yet"
+	if err := json.Unmarshal(after, &a); err != nil {
+		return "could not parse the candidate flake.lock: " + err.Error()
+	}
+	pin := func(l flakeLock, name string) string {
+		n, ok := l.Nodes[name]
+		if !ok || n.Locked == nil {
+			return "(unpinned)"
+		}
+		if n.Locked.Rev != "" {
+			if len(n.Locked.Rev) > 12 {
+				return n.Locked.Rev[:12]
+			}
+			return n.Locked.Rev
+		}
+		if n.Locked.LastModified > 0 {
+			return time.Unix(n.Locked.LastModified, 0).UTC().Format("2006-01-02")
+		}
+		return "(pinned)"
+	}
+	names := map[string]struct{}{}
+	for k := range b.Nodes {
+		names[k] = struct{}{}
+	}
+	for k := range a.Nodes {
+		names[k] = struct{}{}
+	}
+	var changed []string
+	for k := range names {
+		if k == "root" {
+			continue
+		}
+		if from, to := pin(b, k), pin(a, k); from != to {
+			changed = append(changed, fmt.Sprintf("%s: %s -> %s", k, from, to))
+		}
+	}
+	if len(changed) == 0 {
+		return "flake.lock is already up to date; nothing would change."
+	}
+	sort.Strings(changed)
+	return "Inputs that would be updated:\n  " + strings.Join(changed, "\n  ")
+}
+
+// UpdateEnvironment updates the writable flake lock (optionally one input) and
+// transactionally rebuilds the named environment. A failed build keeps the
+// current profile and manifest untouched.
+func UpdateEnvironment(name string, opts UpdateOptions) error {
+	if opts.Check {
+		return CheckEnvironmentUpdate(name, opts.Input)
+	}
+	if useWSL() {
+		return wslUpdateEnvironment(name, opts)
+	}
+	env, err := GetEnvironment(name)
+	if err != nil {
+		return err
+	}
+	// Lazy environments have no eager profile to transactionally rebuild, but
+	// they can still be updated: refresh the flake so the on-demand shims build
+	// newer tools next call, and upgrade any explicitly-installed extras.
+	if env.Lazy {
+		return updateLazyEnvironment(env, opts.Input)
+	}
+	if env.ProfilePath == "" {
+		return fmt.Errorf("environment %q is pure; update requires an eager or lazy environment (recreate it without --pure)", name)
+	}
+	dir, ok := localFlakePath(env.FlakeRef)
+	var lockPath string
+	var oldLock []byte
+	lockExisted := false
+	if !ok {
+		if opts.Input != "" {
+			return fmt.Errorf("--input requires a writable local flake; environment %q uses %s", name, env.FlakeRef)
+		}
+		common.PrintInfoMessage("Refreshing the remote flake reference before rebuilding.")
+		if err := runNixStreaming("", "flake", "metadata", "--refresh", env.FlakeRef); err != nil {
+			return err
+		}
+	} else {
+		lockPath = filepath.Join(dir, "flake.lock")
+		oldLock, err = os.ReadFile(lockPath)
+		if err == nil {
+			lockExisted = true
+		} else if !os.IsNotExist(err) {
+			return fmt.Errorf("read flake lock: %w", err)
+		}
+		args := []string{"flake", "update", "--flake", dir}
+		if opts.Input != "" {
+			args = append(args, opts.Input)
+		}
+		if err := runNixStreaming(dir, args...); err != nil {
+			return fmt.Errorf("flake lock update failed: %w", err)
+		}
+	}
+	if err := rebuildEnvironment(env, opts.Input, opts.Build); err != nil {
+		// A source update that does not build must not leave the project pinned to
+		// a broken lock. Restore the exact prior bytes (or remove a newly-created
+		// lock) while the active profile remains untouched.
+		if lockPath != "" {
+			if lockExisted {
+				_ = os.WriteFile(lockPath, oldLock, 0o644)
+			} else {
+				_ = os.Remove(lockPath)
+			}
+		}
+		return fmt.Errorf("updated environment did not build; active generation kept and flake.lock restored: %w", err)
+	}
+	return nil
+}
+
+// updateLazyEnvironment refreshes an on-demand environment. Its tools are
+// built on first call and pinned under tools/ (see pin.go), so an update is:
+// move what the shims build from - the lock of a writable local flake, or the
+// pin of a remote one to the current tip of the reference it came from - then
+// rebuild the tools already built against it, so their next call runs the new
+// version instead of the pinned old one. Tools the user explicitly installed
+// live in the environment's extras profile and are upgraded with `nix profile
+// upgrade`. So a lazy update covers BOTH the base on-demand tools and the
+// installed extras.
+func updateLazyEnvironment(env *Environment, input string) error {
+	changed := false
+	if dir, ok := localFlakePath(env.FlakeRef); ok {
+		args := []string{"flake", "update", "--flake", dir}
+		if input != "" {
+			args = append(args, input)
+		}
+		if err := runNixStreaming(dir, args...); err != nil {
+			return fmt.Errorf("flake lock update failed: %w", err)
+		}
+		changed = true
+	} else {
+		if input != "" {
+			return fmt.Errorf("--input requires a writable local flake; environment %q uses %s", env.Name, env.FlakeRef)
+		}
+		origin := env.FlakeOrigin
+		if origin == "" {
+			// Created before pins existed: it followed this reference; pin it
+			// now, as creation does, so the update is the last silent rebuild.
+			origin = env.FlakeRef
+		}
+		current, ok, err := lockedFlakeRef(origin, true)
+		if err != nil {
+			return err
+		}
+		switch {
+		case !ok:
+			common.PrintInfoMessage(fmt.Sprintf("%s resolves to no revision; the tools rebuild from it on their next call.", origin))
+		case current == env.FlakeRef:
+			common.PrintInfoMessage(fmt.Sprintf("'%s' is already pinned at the tip of %s (%s).", env.Name, origin, shortRev(current)))
+		default:
+			common.PrintInfoMessage(fmt.Sprintf("Moving the pin of '%s' from %s to %s.", env.Name, shortRev(env.FlakeRef), shortRev(current)))
+			env.FlakeRef, env.FlakeOrigin = current, origin
+			changed = true
+		}
+	}
+	env.Updated = time.Now()
+	env.LastUpdateInput = input
+	if changed {
+		// The pin is the source of truth: record it before rebuilding, so a
+		// tool that fails to rebuild (its link is dropped) is retried from the
+		// new pin on its next call rather than the environment staying behind.
+		env.Commands = resolveCommands(env.FlakeRef, env.Packages)
+		if err := writeManifest(env); err != nil {
+			return err
+		}
+		if err := writeShims(env); err != nil {
+			return err
+		}
+		if err := rebuildLinkedTools(env); err != nil {
+			return err
+		}
+	}
+	// Upgrade tools the user installed into this environment, if any.
+	if extras := EnvExtrasProfile(env.Name); pathExists(extras) {
+		common.PrintInfoMessage("Upgrading tools installed into this environment ...")
+		if err := runNixStreaming("", "profile", "upgrade", "--profile", extras, "--all"); err != nil {
+			return fmt.Errorf("upgrading installed tools failed: %w", err)
+		}
+	}
+	// Keep the shims in sync with any command changes in the refreshed flake.
+	if err := writeShims(env); err != nil {
+		return err
+	}
+	return writeManifest(env)
+}
+
+// RebuildEnvironment rebuilds against the currently pinned flake without
+// changing flake.lock.
+func RebuildEnvironment(name string) error { return RebuildEnvironmentWith(name, BuildOptions{}) }
+
+// RebuildEnvironmentWith is RebuildEnvironment with a front end's progress
+// observer and cancellation (progress.go).
+func RebuildEnvironmentWith(name string, build BuildOptions) error {
+	if useWSL() {
+		return wslRebuildEnvironment(name)
+	}
+	env, err := GetEnvironment(name)
+	if err != nil {
+		return err
+	}
+	if env.Lazy || env.ProfilePath == "" {
+		return fmt.Errorf("environment %q has no eager profile to rebuild", name)
+	}
+	return rebuildEnvironment(env, "", build)
+}
+
+func rebuildEnvironment(env *Environment, input string, build BuildOptions) error {
+	if err := buildPrerequisites(build, env.FlakeRef, env.Image, env.Prerequisites, prerequisitesLink(env.Name)); err != nil {
+		return err
+	}
+	tmpDir, err := os.MkdirTemp(EnvDir(env.Name), ".update-")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(tmpDir)
+	candidate := filepath.Join(tmpDir, "profile")
+	common.PrintInfoMessage(fmt.Sprintf("Building updated environment %q without replacing the active generation...", env.Name))
+	if err := buildProfile(build, env.FlakeRef, env.Image, candidate); err != nil {
+		return err
+	}
+	storePath, err := filepath.EvalSymlinks(candidate)
+	if err != nil {
+		return fmt.Errorf("resolve updated profile: %w", err)
+	}
+	if active, activeErr := filepath.EvalSymlinks(profileLink(env.Name)); activeErr == nil && active == storePath {
+		env.Updated = time.Now()
+		env.LastUpdateInput = input
+		if err := writeManifest(env); err != nil {
+			return err
+		}
+		common.PrintSuccessMessage(fmt.Sprintf("Environment %q is already at the requested generation.", env.Name))
+		return nil
+	}
+	if err := archiveCurrentProfile(env.Name); err != nil {
+		return err
+	}
+	if err := switchProfile(profileLink(env.Name), storePath); err != nil {
+		return err
+	}
+	env.ProfilePath = profileLink(env.Name)
+	env.Updated = time.Now()
+	env.LastUpdateInput = input
+	if err := writeManifest(env); err != nil {
+		return err
+	}
+	markAuditStale(env.Name)
+	common.PrintSuccessMessage(fmt.Sprintf("Environment %q rebuilt; the previous closure is available with 'rfswift env rollback %s'.", env.Name, env.Name))
+	return nil
+}
+
+func switchProfile(link, storePath string) error {
+	tmp := link + ".new"
+	_ = os.Remove(tmp)
+	if err := os.Symlink(storePath, tmp); err != nil {
+		return err
+	}
+	if err := os.Rename(tmp, link); err != nil {
+		_ = os.Remove(tmp)
+		return err
+	}
+	return nil
+}
+
+func archiveCurrentProfile(name string) error {
+	profile := profileLink(name)
+	storePath, err := filepath.EvalSymlinks(profile)
+	if err != nil {
+		return fmt.Errorf("active profile cannot be archived: %w", err)
+	}
+	dir := generationsDir(name)
+	if err := ensureDir(dir); err != nil {
+		return err
+	}
+	stamp := time.Now().UTC().Format("20060102T150405.000000000Z")
+	// Let Nix create and register the indirect root before moving the active
+	// profile. An ordinary symlink outside Nix's gcroots is not a GC root.
+	link := filepath.Join(dir, stamp)
+	args := append(experimentalArgs(), "build", "--out-link", link, storePath)
+	if out, err := nixCommand(args...).CombinedOutput(); err != nil {
+		return fmt.Errorf("register rollback generation: %w: %s", err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+func ListGenerations(name string) ([]Generation, error) {
+	if useWSL() {
+		// Generation links point into the distribution's /nix/store, which the
+		// share cannot resolve; the Linux side lists them.
+		return wslListGenerations(name)
+	}
+	if _, err := GetEnvironment(name); err != nil {
+		return nil, err
+	}
+	entries, err := os.ReadDir(generationsDir(name))
+	if os.IsNotExist(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	gens := make([]Generation, 0, len(entries))
+	for _, entry := range entries {
+		path := filepath.Join(generationsDir(name), entry.Name())
+		store, err := filepath.EvalSymlinks(path)
+		if err != nil {
+			continue
+		}
+		created, _ := time.Parse("20060102T150405.000000000Z", entry.Name())
+		gens = append(gens, Generation{Name: entry.Name(), StorePath: store, Created: created})
+	}
+	sort.Slice(gens, func(i, j int) bool { return gens[i].Name > gens[j].Name })
+	return gens, nil
+}
+
+// RollbackEnvironment switches to a saved generation. Empty generation means
+// the newest saved one. The displaced current closure is itself preserved.
+func RollbackEnvironment(name, generation string) error {
+	if useWSL() {
+		return wslRollbackEnvironment(name, generation)
+	}
+	env, err := GetEnvironment(name)
+	if err != nil {
+		return err
+	}
+	gens, err := ListGenerations(name)
+	if err != nil {
+		return err
+	}
+	if len(gens) == 0 {
+		return fmt.Errorf("environment %q has no previous generations", name)
+	}
+	target := gens[0]
+	if generation != "" {
+		found := false
+		for _, g := range gens {
+			if g.Name == generation {
+				target, found = g, true
+				break
+			}
+		}
+		if !found {
+			return fmt.Errorf("generation %q not found; list them with: rfswift env generations %s", generation, name)
+		}
+	}
+	if err := archiveCurrentProfile(name); err != nil {
+		return err
+	}
+	if err := switchProfile(profileLink(name), target.StorePath); err != nil {
+		return err
+	}
+	env.Updated = time.Now()
+	env.LastUpdateInput = "rollback:" + target.Name
+	if err := writeManifest(env); err != nil {
+		return err
+	}
+	markAuditStale(name)
+	common.PrintSuccessMessage(fmt.Sprintf("Environment %q rolled back to %s.", name, target.Name))
+	return nil
+}
+
+func markAuditStale(name string) {
+	src := EnvReportDir(name)
+	if _, err := os.Stat(src); err != nil {
+		return
+	}
+	dst := filepath.Join(EnvDir(name), "security-report.stale-"+time.Now().UTC().Format("20060102T150405Z"))
+	_ = os.Rename(src, dst)
+}
+
+// MarshalGenerations is useful to GUI/agent callers without duplicating the
+// stable JSON representation.
+func MarshalGenerations(g []Generation) ([]byte, error) { return json.Marshal(g) }
