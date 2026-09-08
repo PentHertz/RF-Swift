@@ -3,8 +3,16 @@
 # PRs instead of being discovered by the weekly modules-audit run.
 version: 2
 updates:
+  # Both Go modules are listed together on purpose: rfswift-workbench links
+  # the CLI through `replace penthertz/rfswift => ../rfswift`, so a bump in
+  # go/rfswift alone leaves the Workbench go.mod/go.sum stale and every
+  # Workbench CI job fails with "updates to go.mod needed" (see PR #52).
+  # With `directories` + groups, Dependabot updates both modules in a
+  # single PR.
   - package-ecosystem: gomod
-    directory: /go/rfswift
+    directories:
+      - /go/rfswift
+      - /go/rfswift-workbench
     schedule:
       interval: weekly
       day: monday

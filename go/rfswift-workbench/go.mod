@@ -15,7 +15,7 @@ require (
 	filippo.io/age v1.3.2
 	github.com/moby/moby/client v0.6.0
 	github.com/wailsapp/wails/v2 v2.15.0
-	golang.org/x/sys v0.47.0
+	golang.org/x/sys v0.48.0
 	penthertz/rfswift v0.0.0
 )
 
