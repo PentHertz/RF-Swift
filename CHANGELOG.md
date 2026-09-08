@@ -28,7 +28,11 @@ branch.
   way `rfswift image pull -V` does. The list comes from the agent host when a
   remote agent is connected (new `images.versions` control method, backed by
   the shared `dock.ImageVersions` helper); custom and imported images show no
-  picker.
+  picker. The Config & network summary's "Image version" row now names the
+  release the container runs: the tag's version for a pinned release, and for
+  a rolling tag such as `rfid` the release whose published digest the local
+  image carries (it used to read "unknown" for every rolling tag), with the
+  newest published release next to the "update available" chip.
 - Security review of the remote agent protocol as it will be exposed:
   [docs/remote-agent-security-audit-2026-09.md](docs/remote-agent-security-audit-2026-09.md)
   records the controls verified against a live agent (TLS 1.3 only, mTLS
@@ -121,6 +125,14 @@ branch.
   is retiring; every job logged a deprecation warning.
 
 ### Fixed
+
+- Workbench: the image check behind mission creation and the summary card
+  returned its fields with Go casing (`Present`, `UpdateAvailable`), while the
+  frontend read `present` and `updateAvailable`. As a result every container
+  creation re-downloaded the image as "not local", the "Newer image available"
+  prompt never showed, and the summary's freshness chip stayed hidden. The
+  fields now carry the JSON names the frontend reads, with a test that keeps
+  them so.
 
 - Workbench on macOS: exporting a Nix environment or a container, importing
   one, and exporting or importing a Workbench project no longer crash the app

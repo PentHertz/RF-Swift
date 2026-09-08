@@ -1,6 +1,8 @@
 package dock
 
 import (
+	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 	"time"
@@ -44,5 +46,42 @@ func TestImageVersionsRejectsCustomImages(t *testing.T) {
 	}
 	if _, err := ImageVersions(""); err == nil {
 		t.Error("empty image name accepted")
+	}
+}
+
+func TestLocalImageVersionFromTagAndDigest(t *testing.T) {
+	published := ImageVersionMap{"sdr_full": {
+		{Version: "0.0.9", Digest: "sha256:old"},
+		{Version: "latest", Digest: "sha256:new"},
+		{Version: "0.1.1", Digest: "sha256:new"},
+	}}
+	// A pinned tag names its release without touching the engine (nil client).
+	version, latest, pinned := localImageVersion(context.Background(), nil, "penthertz/rfswift_resolute", "sdr_full_0.0.9", published)
+	if version != "0.0.9" || latest != "0.1.1" || !pinned {
+		t.Fatalf("pinned tag: got %q latest %q pinned %v", version, latest, pinned)
+	}
+	// A rolling tag is identified by digest, never by the "latest" alias.
+	if got := matchPublishedVersion([]string{"sha256:new"}, published["sdr_full"]); got != "0.1.1" {
+		t.Fatalf("digest match = %q, want 0.1.1", got)
+	}
+	if got := matchPublishedVersion([]string{"sha256:unlisted"}, published["sdr_full"]); got != "" {
+		t.Fatalf("unlisted digest matched %q", got)
+	}
+	if got := newestPublished(nil); got != "" {
+		t.Fatalf("newest of nothing = %q", got)
+	}
+}
+
+// The Workbench frontend reads these keys; Wails and the agent both encode
+// with encoding/json, so the names must be tagged, not Go-cased.
+func TestImageAvailabilityJSONKeysMatchWorkbench(t *testing.T) {
+	raw, err := json.Marshal(ImageAvailability{Resolved: "x", Present: true, Version: "0.1.1", Latest: "0.1.2", Pinned: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{`"resolved"`, `"present"`, `"updateAvailable"`, `"custom"`, `"version"`, `"latest"`, `"pinned"`} {
+		if !strings.Contains(string(raw), key) {
+			t.Errorf("missing key %s in %s", key, raw)
+		}
 	}
 }

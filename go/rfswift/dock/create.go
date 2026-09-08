@@ -31,11 +31,23 @@ type PullProgress struct {
 	Total   int64
 }
 
+// ImageAvailability is what the Workbench learns about a mission's image.
+// The JSON names are the ones its frontend reads (Wails and the remote
+// agent both serialise with encoding/json, so untagged fields would arrive
+// with Go casing).
 type ImageAvailability struct {
-	Resolved        string
-	Present         bool
-	UpdateAvailable bool
-	Custom          bool
+	Resolved        string `json:"resolved"`
+	Present         bool   `json:"present"`
+	UpdateAvailable bool   `json:"updateAvailable"`
+	Custom          bool   `json:"custom"`
+	// Version is the release the local image is: the tag's version for a
+	// pinned release, otherwise the release whose published digest the local
+	// image carries. Empty when it matches no listed release.
+	Version string `json:"version,omitempty"`
+	// Latest is the newest release published for this image and architecture.
+	Latest string `json:"latest,omitempty"`
+	// Pinned reports a versioned tag (repo:base_version).
+	Pinned bool `json:"pinned"`
 }
 
 // CheckImage reports local presence and, for official RF-Swift images, whether
@@ -78,12 +90,21 @@ func CheckImage(engineName, imageName string) (ImageAvailability, error) {
 		return result, nil
 	}
 	repo, tag := parseImageName(resolved)
-	current, custom, err := checkImageStatus(context.Background(), cli, repo, tag)
+	if common.Disconnected {
+		result.Custom = true
+		return result, nil
+	}
+	arch := getArchitecture()
+	byRepo := GetAllRemoteVersionsByRepo(arch)
+	current, custom, err := checkImageStatusWithCache(context.Background(), cli, repo, tag, arch, byRepo)
 	if err != nil {
 		return result, err
 	}
 	result.Custom = custom
 	result.UpdateAvailable = !custom && !current
+	if !custom {
+		result.Version, result.Latest, result.Pinned = localImageVersion(context.Background(), cli, repo, tag, byRepo[repo])
+	}
 	return result, nil
 }
 

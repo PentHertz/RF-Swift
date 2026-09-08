@@ -11,10 +11,13 @@
 package dock
 
 import (
+	"context"
 	"fmt"
 	"runtime"
 	"strings"
 	"time"
+
+	"github.com/moby/moby/client"
 )
 
 // ImageVersionEntry is one published version of an official image. Ref is
@@ -94,4 +97,53 @@ func imageVersionEntries(repo, base string, versions []VersionInfo) []ImageVersi
 		out = append(out, e)
 	}
 	return out
+}
+
+// localImageVersion says which release a local official image is, for the
+// Workbench summary: the tag's version for a pinned release; for a rolling
+// tag (repo:sdr_full is whatever release was newest when it was pulled) the
+// release whose published digest the local image carries. latest is the
+// newest release published for that toolset.
+func localImageVersion(ctx context.Context, cli *client.Client, repo, tag string, versions ImageVersionMap) (version, latest string, pinned bool) {
+	base, tagVersion := parseTagVersion(tag)
+	published := versions[base]
+	latest = newestPublished(published)
+	if tagVersion != "" {
+		return tagVersion, latest, true
+	}
+	img, err := inspectImage(ctx, cli, repo+":"+tag)
+	if err != nil {
+		return "", latest, false
+	}
+	var digests []string
+	for _, repoDigest := range img.RepoDigests {
+		if i := strings.Index(repoDigest, "@"); i != -1 {
+			digests = append(digests, repoDigest[i+1:])
+		}
+	}
+	return matchPublishedVersion(digests, published), latest, false
+}
+
+// newestPublished is the highest release in a published list.
+func newestPublished(published []VersionInfo) string {
+	sorted := append([]VersionInfo(nil), published...)
+	sortVersionInfos(sorted)
+	for _, v := range sorted {
+		if v.Version != "" && v.Version != "latest" {
+			return v.Version
+		}
+	}
+	return ""
+}
+
+// matchPublishedVersion names the release whose published digest a local
+// image carries, or "" when the image matches no listed release (a build
+// published only under the rolling tag, or one no longer listed).
+func matchPublishedVersion(localDigests []string, published []VersionInfo) string {
+	for _, v := range published {
+		if v.Version != "" && v.Version != "latest" && digestMatches(localDigests, v.Digest) {
+			return v.Version
+		}
+	}
+	return ""
 }
