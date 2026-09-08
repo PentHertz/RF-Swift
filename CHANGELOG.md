@@ -12,6 +12,21 @@ branch.
 
 ### Added
 
+- Remote agent: every authenticated request is logged to stderr with the
+  client certificate's fingerprint prefix, the source address and the method
+  (`agent: client 3F2A... from 10.8.0.2:51234: control targets.create.start`),
+  next to the TLS handshake errors the HTTP server already printed for
+  rejected clients, so an exposed agent has an audit trail. The agent now
+  reports its real version in `/v1/info` (it always said "development"), and
+  the Workbench's "Agent version" check compares it with its own instead of
+  always passing.
+- Security review of the remote agent protocol as it will be exposed:
+  [docs/remote-agent-security-audit-2026-09.md](docs/remote-agent-security-audit-2026-09.md)
+  records the controls verified against a live agent (TLS 1.3 only, mTLS
+  before HTTP, silent unknown routes, request and connection limits, pinning)
+  and the findings fixed below, and rfswift.io gained hardening guides for the
+  agent and for the MCP bridge.
+
 - Workbench: the Nix build log and its "now" line show plain text. Terminal
   escape sequences (test runners' coloured dots), carriage-return redraws and
   control characters are stripped before a line reaches the panel or
@@ -593,6 +608,22 @@ branch.
   metadata, embedded role text, and tool requests as evidence - not instructions.
 
 ### Security
+
+- Remote agent credential files (`rfswift agent certs client` / `export`)
+  now carry an integrity tag: an HMAC-SHA256 under a key derived from the
+  transfer passphrase (scrypt, same cost as the key's own encryption) over
+  the CA, the certificate, the endpoint, the fingerprints and the metadata.
+  Before, only the private key was bound to the passphrase: anyone who could
+  edit the file in transit could replace the CA and re-sign the file's own
+  public key with it, pointing a Workbench at a rogue agent or making an
+  agent accept the attacker's clients, and the import accepted it with the
+  genuine passphrase (confirmed by test). Import now refuses a modified file
+  ("wrong passphrase, or the credential file was modified after it was
+  issued"); a file from an older release, which has no tag, still imports
+  and the CLI and the Workbench tell you to compare the endpoint and the
+  server fingerprint with the values printed where it was issued.
+- `rfswift agent certs init` makes the bundle directory owner-only even when
+  it already existed (`MkdirAll` left a pre-existing directory's mode alone).
 
 - Installer downloads now fail closed on missing/mismatched checksums and
   reject absolute, parent-traversing, or link-bearing archive members before

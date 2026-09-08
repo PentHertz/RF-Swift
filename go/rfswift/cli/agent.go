@@ -15,6 +15,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
+	common "penthertz/rfswift/common"
 	"penthertz/rfswift/remote"
 )
 
@@ -69,7 +70,7 @@ var agentCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		return remote.Serve(remote.ServerConfig{Bind: bind, CertFile: creds.cert, KeyFile: creds.key, KeySecretRef: creds.keyRef, ClientCA: creds.clientCA, Name: name,
+		return remote.Serve(remote.ServerConfig{Bind: bind, CertFile: creds.cert, KeyFile: creds.key, KeySecretRef: creds.keyRef, ClientCA: creds.clientCA, Name: name, Version: common.Version,
 			Authentication: remote.AuthPolicy{ClientCertificateRequired: true}, RunCommand: runAgentCommand, Control: agentControl,
 			// Printed only once the key is decrypted and the socket is bound:
 			// a "listening" line above an error misled people.
@@ -318,6 +319,9 @@ var agentCertsImportCmd = &cobra.Command{
 		imported, err := remote.ImportCredentials(file, dir, passphrase, remote.OSSecretStore{})
 		if err != nil {
 			return err
+		}
+		if imported.Warning != "" {
+			fmt.Fprintln(os.Stderr, "WARNING: "+imported.Warning)
 		}
 		switch imported.Role {
 		case "server":

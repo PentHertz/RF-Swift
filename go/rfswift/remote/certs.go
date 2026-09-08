@@ -49,6 +49,9 @@ func GenerateCertificateBundle(dir, name, host string, store SecretStore) (Certi
 	if err = os.MkdirAll(abs, 0700); err != nil {
 		return CertificateBundle{}, err
 	}
+	// MkdirAll leaves the mode of a directory that already existed alone;
+	// the keys below must not be readable by other accounts.
+	_ = os.Chmod(abs, 0700)
 	for _, existing := range []string{"ca.pem", "server.pem", "client.pem", "bundle.json"} {
 		if _, statErr := os.Stat(filepath.Join(abs, existing)); statErr == nil {
 			return CertificateBundle{}, fmt.Errorf("certificate directory already contains %s; choose a new directory or use an explicit rotation workflow", existing)

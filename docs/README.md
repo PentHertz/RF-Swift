@@ -4,6 +4,7 @@
 
 - [Current security ground truth (2026-08-31)](security-ground-truth-2026-08-31.md)
 - [Remote-agent security model and setup](remote-agent.md)
+- [Remote-agent protocol security audit (2026-09)](remote-agent-security-audit-2026-09.md)
 - [Installer trust model](installer-security.md)
 - [macOS signing and notarization](macos-signing.md)
 

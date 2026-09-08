@@ -15,8 +15,13 @@ package remote
 
 import (
 	"crypto/ecdsa"
+	"crypto/hmac"
+	"crypto/rand"
+	"crypto/sha256"
+	"crypto/subtle"
 	"crypto/x509"
 	"encoding/base64"
+	"encoding/binary"
 	"encoding/json"
 	"encoding/pem"
 	"errors"
@@ -28,6 +33,7 @@ import (
 	"time"
 
 	"github.com/youmark/pkcs8"
+	"golang.org/x/crypto/scrypt"
 )
 
 // RoleFileFormat identifies the JSON layout; bump it on incompatible changes.
@@ -53,10 +59,23 @@ type RoleFile struct {
 
 	ServerFingerprint string `json:"serverFingerprint"`           // SHA-256 of the server certificate: the client pins it
 	ClientFingerprint string `json:"clientFingerprint,omitempty"` // SHA-256 of the client certificate: lets the agent operator recognise it
+
+	// Salt and MAC bind every field above to the passphrase: the CA that
+	// verifies the other side, the certificate, the endpoint and the pins are
+	// what a client or an agent will trust, and the encrypted key alone did
+	// not protect them. A file written before they existed carries neither
+	// and is imported with a warning (see ImportedCredentials.Warning).
+	Salt string `json:"salt,omitempty"` // base64: KDF salt of the MAC key
+	MAC  string `json:"mac,omitempty"`  // base64: HMAC-SHA256 of the fields under a key derived from the passphrase
 }
 
 // ImportedCredentials says where ImportCredentials put a RoleFile's content.
 type ImportedCredentials struct {
+	// Warning is set when the file could not be authenticated against the
+	// passphrase (an older file without an integrity tag): the operator must
+	// compare the endpoint and fingerprints with the values printed where the
+	// file was issued.
+	Warning           string `json:"warning,omitempty"`
 	Role              string `json:"role"`
 	Directory         string `json:"directory"`
 	Agent             string `json:"agent"`
@@ -100,6 +119,68 @@ func decryptKeyWithPassphrase(keyPEM string, passphrase []byte) (any, error) {
 		return nil, errors.New("wrong passphrase, or the credential file is damaged")
 	}
 	return key, nil
+}
+
+// roleFileMACParams are the scrypt parameters of the MAC key: the same cost
+// as the key's own encryption, so the tag is no cheaper an oracle for
+// guessing the passphrase than the key already is.
+const roleFileMACCost = 1 << 17
+
+// roleFileMAC authenticates every field a client or an agent will trust with
+// a key derived from the passphrase and salt. Fields are length-prefixed so
+// no two field sequences share an encoding.
+func roleFileMAC(f RoleFile, passphrase, salt []byte) ([]byte, error) {
+	key, err := scrypt.Key(passphrase, salt, roleFileMACCost, 8, 1, 32)
+	if err != nil {
+		return nil, err
+	}
+	defer wipe(key)
+	mac := hmac.New(sha256.New, key)
+	for _, field := range []string{f.Format, f.Role, f.Agent, f.Host, f.Endpoint, f.Created.UTC().Format(time.RFC3339), f.Expires.UTC().Format(time.RFC3339), f.CA, f.Certificate, f.EncryptedKey, f.ServerFingerprint, f.ClientFingerprint} {
+		var n [8]byte
+		binary.BigEndian.PutUint64(n[:], uint64(len(field)))
+		mac.Write(n[:])
+		mac.Write([]byte(field))
+	}
+	return mac.Sum(nil), nil
+}
+
+// sealRoleFile computes the file's integrity tag. Call it last, once every
+// other field is final.
+func sealRoleFile(f *RoleFile, passphrase []byte) error {
+	salt := make([]byte, 16)
+	if _, err := rand.Read(salt); err != nil {
+		return err
+	}
+	mac, err := roleFileMAC(*f, passphrase, salt)
+	if err != nil {
+		return err
+	}
+	f.Salt = base64.StdEncoding.EncodeToString(salt)
+	f.MAC = base64.StdEncoding.EncodeToString(mac)
+	return nil
+}
+
+// verifyRoleFile checks the integrity tag under the passphrase. A file
+// without one (written by an older RF Swift) is accepted, and the returned
+// warning tells the operator what to verify by hand.
+func verifyRoleFile(f RoleFile, passphrase []byte) (string, error) {
+	if f.MAC == "" && f.Salt == "" {
+		return "the credential file carries no integrity tag (it was issued by an older RF Swift): before using it, compare the agent endpoint and the server fingerprint with the values printed where it was issued", nil
+	}
+	salt, err := base64.StdEncoding.DecodeString(f.Salt)
+	want, err2 := base64.StdEncoding.DecodeString(f.MAC)
+	if err != nil || err2 != nil || len(salt) < 8 || len(want) != sha256.Size {
+		return "", errors.New("the credential file's integrity tag is malformed")
+	}
+	got, err := roleFileMAC(f, passphrase, salt)
+	if err != nil {
+		return "", err
+	}
+	if subtle.ConstantTimeCompare(got, want) != 1 {
+		return "", errors.New("wrong passphrase, or the credential file was modified after it was issued")
+	}
+	return "", nil
 }
 
 // vaultKey decrypts a bundle's private key with the password in the vault and
@@ -229,12 +310,16 @@ func IssueClientCredentials(bundleDir, clientName, endpoint string, passphrase [
 	if strings.TrimSpace(endpoint) == "" {
 		endpoint = DefaultEndpoint(host)
 	}
-	return RoleFile{
+	f := RoleFile{
 		Format: RoleFileFormat, Role: "client", Agent: b.Name, Host: host, Endpoint: strings.TrimSpace(endpoint),
 		Created: time.Now().UTC().Truncate(time.Second), Expires: clientCert.NotAfter,
 		CA: caPEM, Certificate: string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: clientDER})), EncryptedKey: encrypted,
 		ServerFingerprint: Fingerprint(serverCert), ClientFingerprint: Fingerprint(clientCert),
-	}, nil
+	}
+	if err := sealRoleFile(&f, passphrase); err != nil {
+		return RoleFile{}, err
+	}
+	return f, nil
 }
 
 // ExportServerCredentials packs the agent's own side: CA (to verify clients),
@@ -274,11 +359,15 @@ func ExportServerCredentials(bundleDir string, passphrase []byte, store SecretSt
 	if host == "" {
 		host = serverHost(serverCert)
 	}
-	return RoleFile{
+	f := RoleFile{
 		Format: RoleFileFormat, Role: "server", Agent: b.Name, Host: host, Endpoint: DefaultEndpoint(host),
 		Created: time.Now().UTC().Truncate(time.Second), Expires: serverCert.NotAfter,
 		CA: caPEM, Certificate: serverPEM, EncryptedKey: encrypted, ServerFingerprint: Fingerprint(serverCert),
-	}, nil
+	}
+	if err := sealRoleFile(&f, passphrase); err != nil {
+		return RoleFile{}, err
+	}
+	return f, nil
 }
 
 // WriteRoleFile writes f as JSON, readable by its owner only, refusing to
@@ -338,6 +427,12 @@ func ImportCredentials(f RoleFile, dir string, passphrase []byte, store SecretSt
 	if f.Format != RoleFileFormat || (f.Role != "server" && f.Role != "client") {
 		return ImportedCredentials{}, errors.New("not an RF Swift credential file")
 	}
+	// Before trusting the CA, the certificate, the endpoint or the pins,
+	// make sure they are the ones the passphrase holder issued.
+	warning, err := verifyRoleFile(f, passphrase)
+	if err != nil {
+		return ImportedCredentials{}, err
+	}
 	caCert, err := parseCertificatePEM(f.CA)
 	if err != nil {
 		return ImportedCredentials{}, fmt.Errorf("credential file CA: %w", err)
@@ -382,7 +477,7 @@ func ImportCredentials(f RoleFile, dir string, passphrase []byte, store SecretSt
 	if f.Role == "server" {
 		side = "server"
 	}
-	out := ImportedCredentials{Role: f.Role, Directory: abs, Agent: f.Agent, Endpoint: f.Endpoint, ServerFingerprint: f.ServerFingerprint,
+	out := ImportedCredentials{Warning: warning, Role: f.Role, Directory: abs, Agent: f.Agent, Endpoint: f.Endpoint, ServerFingerprint: f.ServerFingerprint,
 		CAFile: filepath.Join(abs, "ca.pem"), CertFile: filepath.Join(abs, side+".pem"), KeyFile: filepath.Join(abs, side+"-key.pem")}
 	for _, existing := range []string{out.CAFile, out.CertFile, out.KeyFile} {
 		if _, statErr := os.Stat(existing); statErr == nil {

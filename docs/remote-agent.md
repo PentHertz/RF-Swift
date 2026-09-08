@@ -26,6 +26,18 @@ flowchart LR
 - The password protecting `client-key.pem` protects the credential at rest. It
   is retrieved locally and is never sent to the agent.
 - There is no network-password, FIDO2, bearer-token, or plaintext-key fallback.
+- Every authenticated request is logged (`agent: client <fingerprint prefix>
+  from <address>: <method>`), rejected handshakes too; ship the agent's stderr
+  or journal somewhere you read it.
+- Credential files that travel between machines (`certs client`, `certs
+  export`) bind the CA, certificate, endpoint and fingerprints to the transfer
+  passphrase with an integrity tag; a file modified in transit is refused at
+  import. Files from releases before the tag existed import with a warning:
+  compare the endpoint and fingerprint by hand.
+- Authorization is coarse on purpose: every CA-signed client has the same
+  rights, and revoking one means rotating the bundle. The deployment guide
+  (https://rfswift.io/docs/security/remote-agent/) and the audit
+  (remote-agent-security-audit-2026-09.md) say how to live with that.
 
 ## VPN-first deployment
 
@@ -138,7 +150,7 @@ It asks for a transfer passphrase (12 characters or more) and writes
 `clients/laptop-client.json`: one JSON file with the CA, a client certificate
 signed for `laptop`, that client's private key encrypted with the passphrase
 (PKCS#8, scrypt and AES-256-GCM), the agent address and the server fingerprint
-to pin. Move the file to the laptop and import it there, either in the
+to pin, all sealed by an integrity tag derived from the same passphrase. Move the file to the laptop and import it there, either in the
 Workbench (**Connection & security → Add agent → Import client credentials**,
 which fills the endpoint, fingerprint and secrets location) or on the command
 line:

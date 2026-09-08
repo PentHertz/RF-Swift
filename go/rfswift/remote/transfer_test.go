@@ -188,8 +188,15 @@ func TestReadRoleFileRejectsForeignAndTamperedFiles(t *testing.T) {
 	tampered := file
 	tampered.Certificate = string(otherCert)
 	tampered.ClientFingerprint = ""
-	if _, err := ImportCredentials(tampered, filepath.Join(dir, "t1"), []byte(testPassphrase), memoryStore{}); err == nil || !strings.Contains(err.Error(), "not signed by its CA") {
+	// The integrity tag catches the swap first; a file without one falls
+	// through to the CA check (see transfer_integrity_test.go).
+	if _, err := ImportCredentials(tampered, filepath.Join(dir, "t1"), []byte(testPassphrase), memoryStore{}); err == nil || !(strings.Contains(err.Error(), "modified after it was issued") || strings.Contains(err.Error(), "not signed by its CA")) {
 		t.Errorf("tampered certificate accepted: %v", err)
+	}
+	untagged := tampered
+	untagged.MAC, untagged.Salt = "", ""
+	if _, err := ImportCredentials(untagged, filepath.Join(dir, "t1b"), []byte(testPassphrase), memoryStore{}); err == nil || !strings.Contains(err.Error(), "not signed by its CA") {
+		t.Errorf("tampered untagged certificate accepted: %v", err)
 	}
 	tampered = file
 	tampered.ServerFingerprint = strings.Repeat("A", 64)

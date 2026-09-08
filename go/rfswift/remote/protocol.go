@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"net/http"
 	"net/url"
@@ -307,6 +308,24 @@ func Serve(c ServerConfig) error {
 	return server.Serve(ln)
 }
 
+// clientID names the authenticated client in the access log: the first 16
+// hex digits of its certificate's SHA-256 fingerprint (the whole one is what
+// `certs client` printed when the credential was issued).
+func clientID(r *http.Request) string {
+	if r.TLS != nil && len(r.TLS.PeerCertificates) > 0 {
+		return Fingerprint(r.TLS.PeerCertificates[0])[:16]
+	}
+	return "-"
+}
+
+// logAccess records who asked for what. Every request reaching a handler was
+// authenticated by its client certificate, so this is the agent's audit
+// trail; it goes to the standard logger (stderr) like the TLS handshake
+// errors the HTTP server prints for rejected clients.
+func logAccess(r *http.Request, what string) {
+	log.Printf("agent: client %s from %s: %s", clientID(r), r.RemoteAddr, what)
+}
+
 func authenticatedHandler(c ServerConfig) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/v1/info", func(w http.ResponseWriter, r *http.Request) {
@@ -314,6 +333,7 @@ func authenticatedHandler(c ServerConfig) http.Handler {
 			closeWithoutResponse(w)
 			return
 		}
+		logAccess(r, "info")
 		host, _, _ := net.SplitHostPort(c.Bind)
 		exposure := "lan"
 		if ip := net.ParseIP(host); ip != nil && ip.IsLoopback() {
@@ -339,6 +359,7 @@ func authenticatedHandler(c ServerConfig) http.Handler {
 				return
 			}
 		}
+		logAccess(r, "command "+strings.Join(input.Args, " "))
 		out, err := c.RunCommand(r.Context(), input.Args)
 		result := CommandResult{Output: out}
 		if err != nil {
@@ -358,6 +379,7 @@ func authenticatedHandler(c ServerConfig) http.Handler {
 			http.Error(w, "invalid request", http.StatusBadRequest)
 			return
 		}
+		logAccess(r, "control "+input.Method)
 		value, err := c.Control(r.Context(), input)
 		result := ControlResult{}
 		if err != nil {

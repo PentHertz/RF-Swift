@@ -11,8 +11,23 @@ import (
 	"time"
 
 	wruntime "github.com/wailsapp/wails/v2/pkg/runtime"
+	common "penthertz/rfswift/common"
 	"penthertz/rfswift/remote"
 )
+
+// agentVersionState compares what the agent reports with this Workbench's
+// own version for the connection audit: "up-to-date" when they match,
+// "mismatch:<agent version>" when they differ, "unknown" for an agent too
+// old to report one.
+func agentVersionState(agent string) string {
+	switch {
+	case agent == "" || agent == "development":
+		return "unknown"
+	case agent == common.Version:
+		return "up-to-date"
+	}
+	return "mismatch:" + agent
+}
 
 type RemoteCertificateRequest struct {
 	Directory string `json:"directory"`
@@ -143,7 +158,7 @@ func (a *App) ConnectRemoteAgent(req RemoteConnectRequest) (Connection, error) {
 		return Connection{}, err
 	}
 	a.setEngine(&RemoteEngine{Config: cfg})
-	conn := Connection{ID: "remote-" + strings.ToLower(strings.ReplaceAll(p.Info.Name, " ", "-")), Name: p.Info.Name, Host: req.Endpoint, Kind: "remote", TLS: p.TLS, Cipher: p.Cipher, Cert: p.Fingerprint, CertDays: p.CertDays, CertPin: true, Auth: []string{"mTLS client certificate"}, Bind: p.Info.Exposure, RateLimit: p.Info.RateLimit, Version: "up-to-date"}
+	conn := Connection{ID: "remote-" + strings.ToLower(strings.ReplaceAll(p.Info.Name, " ", "-")), Name: p.Info.Name, Host: req.Endpoint, Kind: "remote", TLS: p.TLS, Cipher: p.Cipher, Cert: p.Fingerprint, CertDays: p.CertDays, CertPin: true, Auth: []string{"mTLS client certificate"}, Bind: p.Info.Exposure, RateLimit: p.Info.RateLimit, Version: agentVersionState(p.Info.Version)}
 	a.rememberRemote(conn, cfg, req)
 	return conn, nil
 }
@@ -244,5 +259,5 @@ func (a *App) ProbeRemoteAgent(req RemoteProbeRequest) (Connection, error) {
 	if err != nil {
 		return Connection{}, err
 	}
-	return Connection{ID: "remote-" + strings.ToLower(strings.ReplaceAll(p.Info.Name, " ", "-")), Name: p.Info.Name, Host: req.Endpoint, Kind: "remote", TLS: p.TLS, Cipher: p.Cipher, Cert: p.Fingerprint, CertDays: p.CertDays, CertPin: true, Auth: []string{"mTLS client certificate"}, Bind: p.Info.Exposure, RateLimit: p.Info.RateLimit, Version: "up-to-date"}, nil
+	return Connection{ID: "remote-" + strings.ToLower(strings.ReplaceAll(p.Info.Name, " ", "-")), Name: p.Info.Name, Host: req.Endpoint, Kind: "remote", TLS: p.TLS, Cipher: p.Cipher, Cert: p.Fingerprint, CertDays: p.CertDays, CertPin: true, Auth: []string{"mTLS client certificate"}, Bind: p.Info.Exposure, RateLimit: p.Info.RateLimit, Version: agentVersionState(p.Info.Version)}, nil
 }

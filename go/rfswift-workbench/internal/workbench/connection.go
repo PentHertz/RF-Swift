@@ -1,5 +1,11 @@
 package workbench
 
+import (
+	"strings"
+
+	common "penthertz/rfswift/common"
+)
+
 // Connection describes an rfswift agent the Workbench can attach to (local or
 // remote). Security is first-class: the client audits the live connection before
 // any work runs. See docs/remote-agent.md.
@@ -106,10 +112,13 @@ func AuditConnection(c Connection) ConnAudit {
 	default:
 		ch = append(ch, Check{"warn", "Brute-force protection", "No rate limiting.", "Enable auth rate limiting and account lockout."})
 	}
-	if c.Version == "up-to-date" {
-		ch = append(ch, Check{"ok", "Agent version", "Agent is up to date.", ""})
-	} else {
-		ch = append(ch, Check{"warn", "Agent version", "Agent is outdated.", "Update the RF Swift agent to pick up security fixes."})
+	switch {
+	case c.Kind == "local" || c.Version == "up-to-date":
+		ch = append(ch, Check{"ok", "Agent version", "Agent and Workbench run the same RF Swift version (" + common.Version + ").", ""})
+	case strings.HasPrefix(c.Version, "mismatch:"):
+		ch = append(ch, Check{"warn", "Agent version", "Agent reports " + strings.TrimPrefix(c.Version, "mismatch:") + "; this Workbench is " + common.Version + ".", "Run the same RF Swift release on both sides so the creation schema and the security fixes match."})
+	default:
+		ch = append(ch, Check{"warn", "Agent version", "Agent did not report its version (an older release).", "Update the RF Swift agent to pick up security fixes."})
 	}
 	return ConnAudit{Posture: worstOf(ch), Checks: ch}
 }
