@@ -74,6 +74,7 @@
   <div class="u9"><label class="fld u10">Name<input id="cm_name" placeholder="e.g. nfc-assessment"></label><label class="fld u11">Title<input id="cm_title" placeholder="Assessment title"></label></div>
   <div class="u12"><label class="fld">Engine<select id="cm_engine"><option value="nix">Nix</option><option value="docker">Docker</option><option value="podman">Podman</option><option value="lima">Lima</option></select></label><label class="fld u10">Environment / image<input id="cm_template" list="cm_templates" placeholder="rfid, sdr_light, ..."><datalist id="cm_templates"></datalist><input id="cm_image" list="cm_templates" placeholder="short name (rfid, sdr_light) or full image reference" class="u13"></label></div>
   <div id="cm_hint" class="u14"></div>
+  <div id="cm_imgversionrow" class="u23" style="display:none;margin-top:8px"><label class="fld u10">Image version<select id="cm_imgversion"><option value="">Latest</option></select></label><button class="btn ghost sm" id="cm_imgversions_refresh" type="button" title="Reload the versions published for this image">Refresh</button></div><div id="cm_imgversion_hint" class="u16" style="display:none"></div>
   <div id="cm_usbrow" class="u15"><button class="btn ghost sm" id="cm_usb" type="button">USB passthrough...</button><span id="cm_usbhint" class="u16">Forward host USB devices (SDR, Proxmark...) into the VM that runs the container so it can reach them.</span></div>
   <div id="cm_usbaccess" class="u17"></div>
   <div id="cm_devicecheck" class="u17"></div>

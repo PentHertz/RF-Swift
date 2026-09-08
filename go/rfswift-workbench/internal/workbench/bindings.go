@@ -457,6 +457,27 @@ func (a *App) CheckMissionImage(engine, image string) (rfdock.ImageAvailability,
 	return rfdock.CheckImage(engine, image)
 }
 
+// MissionImageVersions lists the versions published for an official image,
+// for the create dialog's "Image version" picker: the rolling latest and every
+// release, each with the local tag it pulls as. Through a remote agent the
+// list comes from the agent host (its architecture is what the container
+// runs on).
+func (a *App) MissionImageVersions(engine, image string) (rfdock.ImageVersionList, error) {
+	if engine != "docker" && engine != "podman" && engine != "lima" {
+		return rfdock.ImageVersionList{}, errors.New("select Docker, Podman, or Lima")
+	}
+	if strings.TrimSpace(image) == "" {
+		return rfdock.ImageVersionList{}, errors.New("image name is required")
+	}
+	if remoteEngine, ok := a.engine().(*RemoteEngine); ok {
+		var list rfdock.ImageVersionList
+		err := remoteEngine.call("images.versions", map[string]string{"engine": engine, "image": image}, &list)
+		return list, err
+	}
+	resetEngineEnv()
+	return rfdock.ImageVersions(image)
+}
+
 // InspectMission returns a mission's full configuration and network.
 func (a *App) InspectMission(id string) (Mission, error) {
 	if err := a.requireMission(id); err != nil {

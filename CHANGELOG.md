@@ -20,6 +20,15 @@ branch.
   reports its real version in `/v1/info` (it always said "development"), and
   the Workbench's "Agent version" check compares it with its own instead of
   always passing.
+- Workbench: an **Image version** picker in the create dialog for Docker,
+  Podman and Lima missions. Latest (the default) follows the newest published
+  build as before; the list also offers every release published on Docker Hub
+  for the host's architecture, with its date, and a pinned release is pulled
+  and kept as its own local tag (`sdr_full_0.1.1` next to `sdr_full`), the
+  way `rfswift image pull -V` does. The list comes from the agent host when a
+  remote agent is connected (new `images.versions` control method, backed by
+  the shared `dock.ImageVersions` helper); custom and imported images show no
+  picker.
 - Security review of the remote agent protocol as it will be exposed:
   [docs/remote-agent-security-audit-2026-09.md](docs/remote-agent-security-audit-2026-09.md)
   records the controls verified against a live agent (TLS 1.3 only, mTLS
