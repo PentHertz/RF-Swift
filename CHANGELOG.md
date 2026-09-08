@@ -1113,8 +1113,6 @@ branch.
 
 ### Documentation
 
-- `docs/roadmap.md`: positioning vs Kali/DragonOS and Exegol, plus the
-  UX improvement backlog.
 - `docs/nix-engine.md`: the `--engine nix` architecture.
 
 ## Notes
