@@ -95,6 +95,15 @@ branch.
 
 ### Changed
 
+- Both Go modules build with Go 1.27.1 (the `go` directive, which every
+  workflow reads through `go-version-file`, moved from 1.27.0) and their
+  dependencies were brought to the latest minor releases: the Moby SDK
+  (`moby/moby/api` v1.56.0, `moby/moby/client` v0.6.0), `go-keyring` v0.2.8,
+  `golang.org/x/crypto` v0.56.0 (clears the GO-2026-6354 and GO-2026-6355
+  advisories `govulncheck` reported in unreached code), `age` v1.3.2,
+  `cheggaaa/pb` v3.2.1, the Charm terminal libraries and the OpenTelemetry
+  packages the SDK pulls in. `go test ./...`, `go vet` and the security suite
+  pass on both modules.
 - CI: the remaining GitHub Actions still referenced by major tag
   (`actions/checkout@v4`, `setup-go@v5`, `upload-artifact@v4`,
   `download-artifact@v4`, `setup-node@v4`, `setup-dotnet@v4`,

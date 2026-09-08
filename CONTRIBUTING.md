@@ -4,7 +4,7 @@ RF Swift is a cross-platform CLI tool for managing containerised RF/SDR and hard
 
 ## Prerequisites
 
-- Go 1.22+
+- Go 1.27+
 - Docker or Podman running on the host
 - `make` (for cross-compilation targets)
 
