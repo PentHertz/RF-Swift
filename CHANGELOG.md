@@ -4,7 +4,7 @@ All notable changes to RF Swift are recorded here. The format is based on
 Keep a Changelog (https://keepachangelog.com), and the project aims to follow
 semantic versioning. Dates are ISO-8601 (YYYY-MM-DD).
 
-## [Unreleased] - v4.0.0-dev
+## [09/08/2026] - v4.0.2
 
 Development toward the 4.0.0 "Nucleus" release. The Nix engine and its
 environment flake (RF-Swift-nix) track a parallel v1.0.0-dev from its `main`
