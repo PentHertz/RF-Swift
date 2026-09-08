@@ -52,7 +52,9 @@ Unlike traditional approaches that force you to sacrifice your primary OS, RF Sw
 
 > **🆕 v4.0 "Nucleus"** (current release v4.0.2) - a native **Nix engine** that runs the tool sets without containers, the **RF Swift Workbench** desktop GUI for assessments, a **remote agent** to drive a lab machine from your laptop over mutual TLS, an **AI assistant** bridged into missions, a resource-first CLI with the old commands kept, built-in **security audits**, and native packages and installers for the three operating systems. See [What's new in v4.0](#-whats-new-in-v40-nucleus).
 
-### ⚡ Why RF Swift Outperforms Dedicated OS Solutions
+### ⚡ What a lab looks like in 2026
+
+Dedicated distributions carried this field for twenty-five years, and RF Swift runs on them as happily as next to them. What changed is what a lab is expected to be; here is the difference at a glance.
 
 | Feature | RF Swift | Dedicated OS |
 |---------|---------|------------------------------|
@@ -69,6 +71,8 @@ Unlike traditional approaches that force you to sacrifice your primary OS, RF Sw
 | **❄️ Native Option** | ✅ Nix engine: the same tool sets without a container, pinned and roll-backable | ❌ The OS is the environment |
 | **🖥️ Ways to Work** | ✅ CLI, TUI wizards, desktop Workbench, remote lab machine | ❌ One desktop session |
 | **🎯 One Tool, Not a Distro** | ✅ `rfswift env run sdr_light sdrpp` fetches one tool's closure; images are task-sized | ❌ A full system install to get one tool |
+
+Already on Kali, Parrot or DragonOS? Keep it, and add RF Swift on top. The RF stack is where a distribution is weakest (its GNU Radio is whatever the release froze, and srsRAN, OCUDU or patched SDR forks are not in the repositories) and where RF Swift is strongest, and the Nix engine brings it in without a container engine, a VM or a single change to the distribution's packages. You get one pinned environment per engagement instead of one shared home, tools you can try and roll back without breaking tomorrow's work, a jail for the ones you do not trust, and an audit of what you run: `rfswift host setup --engine none --nix yes`, then `rfswift env run sdr_light sdrpp`. Remove it and nothing is left behind. Not on a dedicated distribution? A minimal Arch, Debian, Fedora or Ubuntu, a Mac or a Windows laptop becomes the same lab, lighter than any dedicated image, since you install only the tool sets you use. Both routes: [Two ways to get the lab](https://rfswift.io/docs/comparisons/#two-ways-to-get-the-lab).
 
 ## 🆕 What's new in v4.0 "Nucleus"
 
@@ -228,7 +232,7 @@ rfswift env rollback mysdr                     # restore the previous closure
 rfswift env export mysdr -o mysdr.rfenv        # move it to another machine
 ```
 
-Tools can build on first use (`--lazy`), and `--isolate` runs the environment in a bubblewrap jail on Linux or a Seatbelt sandbox on macOS that hides your home and the host filesystem while keeping USB, display and network. Requires a [Nix](https://nixos.org/download) install with flakes on Linux and macOS (`rfswift host setup` offers to install it). On Windows the engine runs inside a WSL 2 distribution that `rfswift env wsl setup` (or the installer) provisions, and the same commands work from any Windows console and from the Workbench. The `rfswift nix ...` spellings from v3 still work. Prebuilt binaries come from cache.nixos.org and, with a token, from the PentHertz binary cache; a team can run its own cache or image registry ([Caches and fast delivery](https://rfswift.io/docs/guide/caches/)). Full guide: [docs/nix-engine.md](docs/nix-engine.md).
+Tools can build on first use (`--lazy`), and `--isolate` runs the environment in a bubblewrap jail on Linux or a Seatbelt sandbox on macOS that hides your home and the host filesystem while keeping USB, display and network. Requires a [Nix](https://nixos.org/download) install with flakes on Linux and macOS (`rfswift host setup` offers to install it). On Windows the engine runs inside a WSL 2 distribution that `rfswift env wsl setup` (or the installer) provisions, and the same commands work from any Windows console and from the Workbench. The `rfswift nix ...` spellings from v3 still work. Prebuilt binaries come from cache.nixos.org; RF Swift's own patched tools build once and stay in the local store, and a team can run its own binary cache or image registry ([Caches and fast delivery](https://rfswift.io/docs/guide/caches/)). Full guide: [docs/nix-engine.md](docs/nix-engine.md).
 
 #### 🔒 Native, and isolated when you want it: the `--isolate` jail
 
