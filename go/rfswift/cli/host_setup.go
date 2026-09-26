@@ -46,9 +46,20 @@ func maybeOfferPackagedHostSetup(cmd *cobra.Command) {
 	if data, err := os.ReadFile(seen); err == nil && strings.TrimSpace(string(data)) == common.Version {
 		return
 	}
-	_ = os.MkdirAll(filepath.Dir(seen), 0700)
+	// The package marker is never removed, so this file is what makes the offer
+	// once per version. Record it before asking: when it cannot be written
+	// (typically ~/.config/rfswift created as root by an earlier sudo run, which
+	// WarnForeignOwnedConfig reports with the fix), the offer would come back on
+	// every launch, so skip it instead.
+	err = common.MkdirAllForInvokingUser(filepath.Dir(seen), 0700)
+	if err == nil {
+		err = os.WriteFile(seen, []byte(common.Version+"\n"), 0600)
+	}
+	if err != nil {
+		common.PrintWarningMessage(fmt.Sprintf("Package setup offer skipped: it cannot be recorded (%v). Run 'rfswift host setup' when you want it.", err))
+		return
+	}
 	run := tui.ConfirmDefault("RF Swift was installed from a package. Configure xhost/pactl checks, Nix, Docker/Podman and hardware access now?", true)
-	_ = os.WriteFile(seen, []byte(common.Version+"\n"), 0600)
 	if run {
 		hostSetupCmd.Run(hostSetupCmd, nil)
 		fmt.Println()

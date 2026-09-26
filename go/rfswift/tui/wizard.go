@@ -529,17 +529,15 @@ func RunWizard(images []string, defaults *RunWizardDefaults, existingNets []stri
 	if result.GPUs != "" {
 		features = append(features, "gpus")
 	}
-	err = huh.NewMultiSelect[string]().
-		Title("Enable features").
-		Options(
-			huh.NewOption("Remote Desktop (VNC/noVNC)", "desktop"),
-			huh.NewOption("Desktop SSL/TLS", "desktop-ssl"),
-			huh.NewOption("Disable X11 forwarding", "no-x11"),
-			huh.NewOption("Privileged mode", "privileged"),
-			huh.NewOption("Realtime mode (audio/SDR)", "realtime"),
-			huh.NewOption("GPU passthrough", "gpus"),
-			huh.NewOption("VPN (WireGuard/OpenVPN/Tailscale/Netbird)", "vpn"),
-		).
+	err = MultiSelect("Enable features", "",
+		huh.NewOption("Remote Desktop (VNC/noVNC)", "desktop"),
+		huh.NewOption("Desktop SSL/TLS", "desktop-ssl"),
+		huh.NewOption("Disable X11 forwarding", "no-x11"),
+		huh.NewOption("Privileged mode", "privileged"),
+		huh.NewOption("Realtime mode (audio/SDR)", "realtime"),
+		huh.NewOption("GPU passthrough", "gpus"),
+		huh.NewOption("VPN (WireGuard/OpenVPN/Tailscale/Netbird)", "vpn"),
+	).
 		Value(&features).
 		Run()
 	if err != nil {
@@ -722,29 +720,26 @@ func RunWizard(images []string, defaults *RunWizardDefaults, existingNets []stri
 		selectedCaps := make([]string, len(existingCaps))
 		copy(selectedCaps, existingCaps)
 
-		err = huh.NewMultiSelect[string]().
-			Title("Select capabilities").
-			Description("Common capabilities for RF/hardware work. Pre-selected are from your config.").
-			Options(
-				huh.NewOption("NET_ADMIN — network config, monitor mode, packet capture", "NET_ADMIN"),
-				huh.NewOption("NET_RAW — raw sockets, packet injection", "NET_RAW"),
-				huh.NewOption("SYS_RAWIO — raw I/O port access (SDR, hardware)", "SYS_RAWIO"),
-				huh.NewOption("SYS_ADMIN — mount, BPF, perf events, namespace ops", "SYS_ADMIN"),
-				huh.NewOption("SYS_PTRACE — process tracing and debugging", "SYS_PTRACE"),
-				huh.NewOption("SYS_NICE — set realtime scheduling priority", "SYS_NICE"),
-				huh.NewOption("SYS_TTY_CONFIG — virtual terminal config", "SYS_TTY_CONFIG"),
-				huh.NewOption("SYS_RESOURCE — override resource limits", "SYS_RESOURCE"),
-				huh.NewOption("SYS_MODULE — load/unload kernel modules", "SYS_MODULE"),
-				huh.NewOption("IPC_LOCK — lock memory (mlock, mlockall)", "IPC_LOCK"),
-				huh.NewOption("DAC_OVERRIDE — bypass file permission checks", "DAC_OVERRIDE"),
-				huh.NewOption("MKNOD — create special device files", "MKNOD"),
-				huh.NewOption("SETUID — set UID of process", "SETUID"),
-				huh.NewOption("SETGID — set GID of process", "SETGID"),
-				huh.NewOption("CHOWN — change file ownership", "CHOWN"),
-				huh.NewOption("FOWNER — bypass permission checks on file owner", "FOWNER"),
-				huh.NewOption("KILL — send signals to any process", "KILL"),
-				huh.NewOption("AUDIT_WRITE — write to the kernel audit log", "AUDIT_WRITE"),
-			).
+		err = MultiSelect("Select capabilities", "Common capabilities for RF/hardware work. Pre-selected are from your config.",
+			huh.NewOption("NET_ADMIN: network config, monitor mode, packet capture", "NET_ADMIN"),
+			huh.NewOption("NET_RAW: raw sockets, packet injection", "NET_RAW"),
+			huh.NewOption("SYS_RAWIO: raw I/O port access (SDR, hardware)", "SYS_RAWIO"),
+			huh.NewOption("SYS_ADMIN: mount, BPF, perf events, namespace ops", "SYS_ADMIN"),
+			huh.NewOption("SYS_PTRACE: process tracing and debugging", "SYS_PTRACE"),
+			huh.NewOption("SYS_NICE: set realtime scheduling priority", "SYS_NICE"),
+			huh.NewOption("SYS_TTY_CONFIG: virtual terminal config", "SYS_TTY_CONFIG"),
+			huh.NewOption("SYS_RESOURCE: override resource limits", "SYS_RESOURCE"),
+			huh.NewOption("SYS_MODULE: load/unload kernel modules", "SYS_MODULE"),
+			huh.NewOption("IPC_LOCK: lock memory (mlock, mlockall)", "IPC_LOCK"),
+			huh.NewOption("DAC_OVERRIDE: bypass file permission checks", "DAC_OVERRIDE"),
+			huh.NewOption("MKNOD: create special device files", "MKNOD"),
+			huh.NewOption("SETUID: set UID of process", "SETUID"),
+			huh.NewOption("SETGID: set GID of process", "SETGID"),
+			huh.NewOption("CHOWN: change file ownership", "CHOWN"),
+			huh.NewOption("FOWNER: bypass permission checks on file owner", "FOWNER"),
+			huh.NewOption("KILL: send signals to any process", "KILL"),
+			huh.NewOption("AUDIT_WRITE: write to the kernel audit log", "AUDIT_WRITE"),
+		).
 			Value(&selectedCaps).
 			Run()
 		if err != nil {
@@ -781,10 +776,7 @@ func RunWizard(images []string, defaults *RunWizardDefaults, existingNets []stri
 		selectedCgroups := make([]string, len(existingCgroups))
 		copy(selectedCgroups, existingCgroups)
 
-		err = huh.NewMultiSelect[string]().
-			Title("Select cgroup rules").
-			Description("Common device access rules for RF/hardware work. Pre-selected are from your config.").
-			Options(cgroupRuleOptions()...).
+		err = MultiSelect("Select cgroup rules", "Common device access rules for RF/hardware work. Pre-selected are from your config.", cgroupRuleOptions()...).
 			Value(&selectedCgroups).
 			Run()
 		if err != nil {
@@ -1122,16 +1114,14 @@ func ProfileCreateWizard(images []string, existingNets []string) (*ProfileCreate
 
 	// Step 5: Feature toggles
 	var features []string
-	err = huh.NewMultiSelect[string]().
-		Title("Enable features").
-		Options(
-			huh.NewOption("Remote Desktop (VNC/noVNC)", "desktop"),
-			huh.NewOption("Desktop SSL/TLS", "desktop-ssl"),
-			huh.NewOption("Disable X11 forwarding", "no-x11"),
-			huh.NewOption("Privileged mode", "privileged"),
-			huh.NewOption("Realtime mode (audio/SDR)", "realtime"),
-			huh.NewOption("GPU passthrough", "gpus"),
-		).
+	err = MultiSelect("Enable features", "",
+		huh.NewOption("Remote Desktop (VNC/noVNC)", "desktop"),
+		huh.NewOption("Desktop SSL/TLS", "desktop-ssl"),
+		huh.NewOption("Disable X11 forwarding", "no-x11"),
+		huh.NewOption("Privileged mode", "privileged"),
+		huh.NewOption("Realtime mode (audio/SDR)", "realtime"),
+		huh.NewOption("GPU passthrough", "gpus"),
+	).
 		Value(&features).
 		Run()
 	if err != nil {
@@ -1247,28 +1237,26 @@ func ProfileCreateWizard(images []string, existingNets []string) (*ProfileCreate
 	}
 	if addCaps {
 		var selectedCaps []string
-		err = huh.NewMultiSelect[string]().
-			Title("Select capabilities").
-			Options(
-				huh.NewOption("NET_ADMIN — network config, monitor mode, packet capture", "NET_ADMIN"),
-				huh.NewOption("NET_RAW — raw sockets, packet injection", "NET_RAW"),
-				huh.NewOption("SYS_RAWIO — raw I/O port access (SDR, hardware)", "SYS_RAWIO"),
-				huh.NewOption("SYS_ADMIN — mount, BPF, perf events, namespace ops", "SYS_ADMIN"),
-				huh.NewOption("SYS_PTRACE — process tracing and debugging", "SYS_PTRACE"),
-				huh.NewOption("SYS_NICE — set realtime scheduling priority", "SYS_NICE"),
-				huh.NewOption("SYS_TTY_CONFIG — virtual terminal config", "SYS_TTY_CONFIG"),
-				huh.NewOption("SYS_RESOURCE — override resource limits", "SYS_RESOURCE"),
-				huh.NewOption("SYS_MODULE — load/unload kernel modules", "SYS_MODULE"),
-				huh.NewOption("IPC_LOCK — lock memory (mlock, mlockall)", "IPC_LOCK"),
-				huh.NewOption("DAC_OVERRIDE — bypass file permission checks", "DAC_OVERRIDE"),
-				huh.NewOption("MKNOD — create special device files", "MKNOD"),
-				huh.NewOption("SETUID — set UID of process", "SETUID"),
-				huh.NewOption("SETGID — set GID of process", "SETGID"),
-				huh.NewOption("CHOWN — change file ownership", "CHOWN"),
-				huh.NewOption("FOWNER — bypass permission checks on file owner", "FOWNER"),
-				huh.NewOption("KILL — send signals to any process", "KILL"),
-				huh.NewOption("AUDIT_WRITE — write to the kernel audit log", "AUDIT_WRITE"),
-			).
+		err = MultiSelect("Select capabilities", "",
+			huh.NewOption("NET_ADMIN: network config, monitor mode, packet capture", "NET_ADMIN"),
+			huh.NewOption("NET_RAW: raw sockets, packet injection", "NET_RAW"),
+			huh.NewOption("SYS_RAWIO: raw I/O port access (SDR, hardware)", "SYS_RAWIO"),
+			huh.NewOption("SYS_ADMIN: mount, BPF, perf events, namespace ops", "SYS_ADMIN"),
+			huh.NewOption("SYS_PTRACE: process tracing and debugging", "SYS_PTRACE"),
+			huh.NewOption("SYS_NICE: set realtime scheduling priority", "SYS_NICE"),
+			huh.NewOption("SYS_TTY_CONFIG: virtual terminal config", "SYS_TTY_CONFIG"),
+			huh.NewOption("SYS_RESOURCE: override resource limits", "SYS_RESOURCE"),
+			huh.NewOption("SYS_MODULE: load/unload kernel modules", "SYS_MODULE"),
+			huh.NewOption("IPC_LOCK: lock memory (mlock, mlockall)", "IPC_LOCK"),
+			huh.NewOption("DAC_OVERRIDE: bypass file permission checks", "DAC_OVERRIDE"),
+			huh.NewOption("MKNOD: create special device files", "MKNOD"),
+			huh.NewOption("SETUID: set UID of process", "SETUID"),
+			huh.NewOption("SETGID: set GID of process", "SETGID"),
+			huh.NewOption("CHOWN: change file ownership", "CHOWN"),
+			huh.NewOption("FOWNER: bypass permission checks on file owner", "FOWNER"),
+			huh.NewOption("KILL: send signals to any process", "KILL"),
+			huh.NewOption("AUDIT_WRITE: write to the kernel audit log", "AUDIT_WRITE"),
+		).
 			Value(&selectedCaps).
 			Run()
 		if err != nil {
@@ -1291,9 +1279,7 @@ func ProfileCreateWizard(images []string, existingNets []string) (*ProfileCreate
 	}
 	if addCgroups {
 		var selectedCgroups []string
-		err = huh.NewMultiSelect[string]().
-			Title("Select cgroup rules").
-			Options(cgroupRuleOptions()...).
+		err = MultiSelect("Select cgroup rules", "", cgroupRuleOptions()...).
 			Value(&selectedCgroups).
 			Run()
 		if err != nil {

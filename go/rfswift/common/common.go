@@ -15,7 +15,7 @@ import (
 // RF Swift repo
 // Version is the single application version used by the CLI, remote agent and
 // Workbench. Keep it without a leading "v"; presentation layers add that.
-var Version = "4.0.2"
+var Version = "4.0.3"
 var Codename = "Nucleus"
 var Branch = "main"
 var Owner = "PentHertz"

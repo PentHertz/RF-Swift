@@ -209,6 +209,7 @@ func combineEnv(xdisplay, pulseServer, extraenv string) []string {
 	// has no usable GLX (XQuartz), see x11gl.go.
 	if xdisplay != "" {
 		dockerenv = withX11GLEnv(dockerenv)
+		dockerenv = withX11SHMEnv(dockerenv)
 	}
 	return dockerenv
 }

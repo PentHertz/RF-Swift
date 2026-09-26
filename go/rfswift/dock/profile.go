@@ -352,7 +352,7 @@ func GetProfileByName(name string) (*Profile, error) {
 // If a permission error occurs, the user is prompted to retry with elevated privileges.
 func SaveProfile(p *Profile) error {
 	dir := ProfilesDirByPlatform()
-	if err := os.MkdirAll(dir, 0755); err != nil {
+	if err := common.MkdirAllForInvokingUser(dir, 0755); err != nil {
 		if !errors.Is(err, os.ErrPermission) {
 			return fmt.Errorf("failed to create profiles directory: %w", err)
 		}
@@ -379,6 +379,7 @@ func SaveProfile(p *Profile) error {
 		}
 		return writeProfileElevated(p, "")
 	}
+	common.ChownToInvokingUser(path)
 
 	return nil
 }
@@ -422,6 +423,7 @@ func writeProfileElevated(p *Profile, dir string) error {
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("failed to write profile with sudo: %w", err)
 	}
+	common.GiveConfigDirBackAfterSudo()
 	return nil
 }
 
@@ -458,7 +460,7 @@ func InitDefaultProfiles(force bool) (created, updated, skipped int, stale []str
 	dir := ProfilesDirByPlatform()
 	elevated := false
 
-	if err := os.MkdirAll(dir, 0755); err != nil {
+	if err := common.MkdirAllForInvokingUser(dir, 0755); err != nil {
 		if !errors.Is(err, os.ErrPermission) {
 			common.PrintErrorMessage(fmt.Errorf("failed to create profiles directory: %w", err))
 			return 0, 0, 0, nil
@@ -542,11 +544,15 @@ func InitDefaultProfiles(force bool) (created, updated, skipped int, stale []str
 				}
 			}
 		}
+		common.ChownToInvokingUser(path)
 		if refresh {
 			updated++
 		} else {
 			created++
 		}
+	}
+	if elevated {
+		common.GiveConfigDirBackAfterSudo()
 	}
 	return created, updated, skipped, stale
 }

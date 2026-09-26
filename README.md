@@ -50,7 +50,7 @@ RF Swift builds you a **complete hardware and RF security lab in seconds** - on 
 
 Unlike traditional approaches that force you to sacrifice your primary OS, RF Swift brings **200+ RF, hardware and security tools** to your existing environment, as containers or as native Nix environments - on Linux, Windows and macOS, across x86_64, ARM64 and RISC-V64. 🏠 On Linux and macOS the native environments come in two flavours: as your user with your files and devices, or **isolated** in a jail (bubblewrap on Linux, Seatbelt on macOS) that hides your home and the host filesystem while the radios, the display and the network keep working.
 
-> **🆕 v4.0 "Nucleus"** (current release v4.0.2) - a native **Nix engine** that runs the tool sets without containers, the **RF Swift Workbench** desktop GUI for assessments, a **remote agent** to drive a lab machine from your laptop over mutual TLS, an **AI assistant** bridged into missions, a resource-first CLI with the old commands kept, built-in **security audits**, and native packages and installers for the three operating systems. See [What's new in v4.0](#-whats-new-in-v40-nucleus).
+> **🆕 v4.0 "Nucleus"** (current release v4.0.3) - a native **Nix engine** that runs the tool sets without containers, the **RF Swift Workbench** desktop GUI for assessments, a **remote agent** to drive a lab machine from your laptop over mutual TLS, an **AI assistant** bridged into missions, a resource-first CLI with the old commands kept, built-in **security audits**, and native packages and installers for the three operating systems. See [What's new in v4.0](#-whats-new-in-v40-nucleus).
 
 ### ⚡ What a lab looks like in 2026
 
@@ -76,7 +76,7 @@ Already on Kali, Parrot or DragonOS? Keep it, and add RF Swift on top. The RF st
 
 ## 🆕 What's new in v4.0 "Nucleus"
 
-v4.0 (current release **v4.0.2**) is the biggest change since the project started. In one line: the same RF and hardware lab, now as containers **or** native environments, on your machine **or** on a remote one, from the terminal **or** from a GUI. The full list is in the [CHANGELOG](CHANGELOG.md) and on [rfswift.io](https://rfswift.io/docs/release-notes-v4/).
+v4.0 (current release **v4.0.3**) is the biggest change since the project started. In one line: the same RF and hardware lab, now as containers **or** native environments, on your machine **or** on a remote one, from the terminal **or** from a GUI. The full list is in the [CHANGELOG](CHANGELOG.md) and on [rfswift.io](https://rfswift.io/docs/release-notes-v4/).
 
 ### ❄️ Nix engine: the tools without a container
 
@@ -340,7 +340,7 @@ The installer's optional **Set up Nix in WSL 2** step does the provisioning too.
 
 ## 📥 Install
 
-Current release: **v4.0.2**. Every artifact below comes from the [releases page](https://github.com/PentHertz/RF-Swift/releases); the script downloads from there too.
+Current release: **v4.0.3**. Every artifact below comes from the [releases page](https://github.com/PentHertz/RF-Swift/releases); the script downloads from there too.
 
 | Platform | Ways to install |
 |---|---|

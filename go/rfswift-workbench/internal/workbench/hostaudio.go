@@ -18,11 +18,12 @@ import (
 // container PULSE_SERVER points at the host (config [audio] pulse_server,
 // default tcp:localhost:34567); on the host that target only exists once the
 // audio server's module-native-protocol-tcp is loaded. The CLI loads it on
-// every `rfswift run`; these bindings do the same for the Workbench (create
-// and start), show the state in the engine doctor, and let a target's context
-// menu enable or disable it. Windows needs none of this: containers use the
-// WSLg PulseAudio socket. Nix environments run natively and play sound
-// directly.
+// every `rfswift run`; these bindings do the same for the Workbench (create,
+// start, and opening a terminal or console command, since the module is gone
+// once the host audio server restarts, e.g. after a reboot), show the state in
+// the engine doctor, and let a target's context menu enable or disable it.
+// Windows needs none of this: containers use the WSLg PulseAudio socket. Nix
+// environments run natively and play sound directly.
 
 // hostAudioApplies reports whether this App can act on the host audio server
 // at all (local engine, not Windows).
@@ -112,7 +113,8 @@ func (a *App) setMissionHostAudioOff(id string, off bool) error {
 }
 
 // ensureMissionHostAudio loads the host audio server's TCP module before a
-// container mission starts, unless the mission opted out (HostAudioOff).
+// container mission's tools run, unless the mission opted out (HostAudioOff,
+// set by "no audio" at creation or the context menu).
 // Best effort: a missing pactl or audio server never blocks the start; the
 // outcome is logged, and the engine doctor shows the state.
 func (a *App) ensureMissionHostAudio(id string) {

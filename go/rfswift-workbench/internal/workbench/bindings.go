@@ -500,8 +500,9 @@ func (a *App) StartMission(id string) error {
 		return err
 	}
 	// Like the CLI's run: make sure the host audio server the container's
-	// PULSE_SERVER points at is listening before the tools start. Best effort.
-	a.ensureMissionHostAudio(id)
+	// PULSE_SERVER points at is listening, and the host X server lets it in,
+	// before the tools start. Best effort.
+	a.ensureMissionHostServices(id)
 	return a.engine().Start(id)
 }
 func (a *App) StopMission(id string) error {
@@ -853,6 +854,7 @@ func (a *App) Exec(missionID, cmd string) (string, error) {
 	if err := a.requireMission(missionID); err != nil {
 		return "", err
 	}
+	a.ensureMissionHostServices(missionID)
 	out, err := a.engine().Exec(missionID, cmd)
 	if err != nil && strings.TrimSpace(out) != "" {
 		// Wails rejects the Promise when err is non-nil and otherwise discards the

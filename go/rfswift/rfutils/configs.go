@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"golang.org/x/term"
+	common "penthertz/rfswift/common"
 )
 
 type Config struct {
@@ -207,7 +208,11 @@ func SetConfigValue(filename, section, key, value string) error {
 }
 
 func writeConfigLines(filename string, lines []string) error {
-	return os.WriteFile(filename, []byte(strings.Join(lines, "\n")+"\n"), 0o644)
+	if err := os.WriteFile(filename, []byte(strings.Join(lines, "\n")+"\n"), 0o644); err != nil {
+		return err
+	}
+	common.ChownToInvokingUser(filename)
+	return nil
 }
 
 func ReadOrCreateConfig(filename string) (*Config, error) {
@@ -479,7 +484,7 @@ wsl_distro =
 `, defaultDevices)
 
 	dir := filepath.Dir(filename)
-	if err := os.MkdirAll(dir, os.ModePerm); err != nil {
+	if err := common.MkdirAllForInvokingUser(dir, os.ModePerm); err != nil {
 		if !errors.Is(err, os.ErrPermission) {
 			return fmt.Errorf("failed to create directory %s: %w", dir, err)
 		}
@@ -499,6 +504,7 @@ wsl_distro =
 		}
 		return writeFileElevated(filename, []byte(content), "")
 	}
+	common.ChownToInvokingUser(filename)
 	return nil
 }
 
@@ -533,6 +539,7 @@ func writeFileElevated(filename string, content []byte, dir string) error {
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("failed to write file with sudo: %w", err)
 	}
+	common.GiveConfigDirBackAfterSudo()
 	return nil
 }
 

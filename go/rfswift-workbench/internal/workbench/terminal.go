@@ -80,6 +80,9 @@ func (a *App) StartTerminal(missionID, shell string, record bool, recordingDir s
 	if err != nil {
 		return TerminalStartResult{}, err
 	}
+	// This may be the mission's first start since a reboot, which dropped the
+	// host audio module and X server grant that tools in this shell rely on.
+	a.ensureMissionHostServices(missionID)
 	ctx := context.Background()
 	if _, err = cli.ContainerStart(ctx, missionID, client.ContainerStartOptions{}); err != nil {
 		cli.Close()
@@ -384,15 +387,18 @@ func (a *App) StartAgentTerminal(missionID, clientID string, cols, rows int) (Ag
 }
 
 func (a *App) streamTerminal(s *terminalSession) {
+	out := newOutputCoalescer(func(data string) {
+		s.writeCast("o", data)
+		wruntime.EventsEmit(a.ctx, "rfswift:terminal:data", map[string]any{"id": s.id, "data": data})
+	})
 	buf := make([]byte, 32*1024)
 	for {
 		n, err := s.reader.Read(buf)
 		if n > 0 {
-			data := string(buf[:n])
-			s.writeCast("o", data)
-			wruntime.EventsEmit(a.ctx, "rfswift:terminal:data", map[string]any{"id": s.id, "data": data})
+			out.Write(buf[:n])
 		}
 		if err != nil {
+			out.Close()
 			if err != io.EOF && !errors.Is(err, net.ErrClosed) {
 				wruntime.EventsEmit(a.ctx, "rfswift:terminal:error", map[string]any{"id": s.id, "error": err.Error()})
 			}

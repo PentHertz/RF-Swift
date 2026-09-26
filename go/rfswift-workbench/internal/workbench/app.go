@@ -49,6 +49,10 @@ type App struct {
 	nixBuildLog nixBuildLogBatch
 	// Missions whose running audit reports real stages (audit_progress.go).
 	auditLiveStages sync.Map
+	// When each mission's host audio and X11 were last prepared (hostx11.go).
+	hostServicesAt sync.Map // mission -> time.Time
+	// Workbench self-update from the Engine doctor (selfupdate.go).
+	update updateState
 }
 
 func (a *App) currentScope() (string, Engine) {

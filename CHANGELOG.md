@@ -4,6 +4,38 @@ All notable changes to RF Swift are recorded here. The format is based on
 Keep a Changelog (https://keepachangelog.com), and the project aims to follow
 semantic versioning. Dates are ISO-8601 (YYYY-MM-DD).
 
+## [09-26-2026] - v4.0.3
+
+### Added
+
+- Workbench: the Engine doctor shows whether a newer release exists and can
+  install it. Downloads are only installed after their GitHub digest and
+  Sigstore build provenance (RF Swift release workflow) are verified.
+- CLI: a warning, with the fix, when `~/.config/rfswift` is owned by root after
+  a `sudo rfswift` run.
+
+### Changed
+
+- Workbench: console output is batched, so busy consoles no longer slow the
+  window down.
+- `scripts/common.sh` installs Go 1.27.1 and verifies its checksum.
+- Go dependencies updated.
+
+### Fixed
+
+- Workbench console: stray characters after zsh completion
+  (`ggnuradio-companion`), and garbled characters such as the prompt's
+  lightning glyph in busy output and in session recordings.
+- Workbench: GUI tools and sound failing in existing containers after a
+  reboot ("Authorization required, but no authorization protocol specified").
+- Workbench: the Penthertz logo and links in notes did nothing on Linux.
+- X11: GUI tools crashing or drawing badly on the host display ("BadAccess",
+  MIT-SHM), mostly after a reboot. Qt tools stop using MIT-SHM in containers
+  created from this release; GTK tools such as GRC need the updated images.
+- TUI: the last option of multi-select lists (VPN) was hidden.
+- CLI: the package setup ran on every launch when `~/.config/rfswift` was not
+  writable; files created by `sudo rfswift` now belong to the user.
+
 ## [09-08-2026] - v4.0.2
 
 Development toward the 4.0.0 "Nucleus" release. The Nix engine and its

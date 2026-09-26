@@ -1756,7 +1756,7 @@ install_go() {
     arch=$(uname -m)
     os=$(uname -s | tr '[:upper:]' '[:lower:]')
     prog=""
-    version="1.27.0"
+    version="1.27.1"
 
     case "$arch" in
         x86_64|amd64)  arch="amd64";;
@@ -1774,8 +1774,27 @@ install_go() {
             printf "${RED}❌ Unsupported OS: \"%s\" -> Unable to install Go ❌${NC}\n" "$os" >&2; exit 2;;
     esac
 
+    # Official SHA-256 of each archive (https://go.dev/dl/): the tarball is
+    # unpacked as root, so it must be the one the Go team published.
+    local sum=""
+    case "$prog" in
+        go1.27.1.linux-amd64.tar.gz)   sum="63d339f0da5ab53635a56f2490a7984dfe12dfcff22ad749f63edaf590168445";;
+        go1.27.1.linux-386.tar.gz)     sum="3b72028095439d2bc0ce84e271cc70328a878d879020c5721eaa46df5f72fbc0";;
+        go1.27.1.linux-arm64.tar.gz)   sum="3450b45a3f9ee8568792736a5c5e70a1f2e9b36c35a8f74958c03e51d7d92bec";;
+        go1.27.1.linux-riscv64.tar.gz) sum="62287667ee5e5f540f30fb9b7529a27fe582f22c6bfd726ece9b045f4c54ee61";;
+        go1.27.1.darwin-amd64.tar.gz)  sum="8f8f52c6649542cf027bbc9b9c68d1ec042f9f34808a40413f0b8b3f66f3caa4";;
+        go1.27.1.darwin-arm64.tar.gz)  sum="ee215d57e0ec269c60cc9ceca68e6bda321ba9ee5afe24f4b0988703c2d87d12";;
+        *)
+            printf "${RED}❌ No published checksum for %s -> Unable to install Go ❌${NC}\n" "$prog" >&2; exit 2;;
+    esac
+
     echo -e "${YELLOW}[+] 📥 Downloading Go from https://go.dev/dl/${prog} 📥${NC}"
     wget "https://go.dev/dl/${prog}"
+    if command -v sha256sum >/dev/null 2>&1; then
+        echo "${sum}  ${prog}" | sha256sum -c - || { printf "${RED}❌ Checksum mismatch for %s: not installing it ❌${NC}\n" "$prog" >&2; exit 2; }
+    else
+        echo "${sum}  ${prog}" | shasum -a 256 -c - || { printf "${RED}❌ Checksum mismatch for %s: not installing it ❌${NC}\n" "$prog" >&2; exit 2; }
+    fi
     sudo rm -rf /usr/local/go && sudo tar -C /usr/local -xzf $prog
     export PATH=$PATH:/usr/local/go/bin
     cd ..

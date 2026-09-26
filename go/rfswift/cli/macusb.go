@@ -286,10 +286,7 @@ func pickMacUSBDevices(title string) []rfutils.MacUSBDevice {
 	}
 
 	var selected []string
-	err = huh.NewMultiSelect[string]().
-		Title(title).
-		Description("Use space to select, enter to confirm").
-		Options(options...).
+	err = tui.MultiSelect(title, "Use space to select, enter to confirm", options...).
 		Value(&selected).
 		Run()
 	if err != nil || len(selected) == 0 {
