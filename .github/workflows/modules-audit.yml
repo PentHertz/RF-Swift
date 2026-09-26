@@ -143,7 +143,7 @@ jobs:
           cache-dependency-path: ${{ inputs.module }}/go.sum
 
       - name: Install osv-scanner (sumdb-verified)
-        run: go install github.com/google/osv-scanner/v2/cmd/osv-scanner@v2.3.8
+        run: go install github.com/google/osv-scanner/v2/cmd/osv-scanner@v2.6.0
 
       - name: Scan dependency graph against OSV.dev
         # Non-zero exit on any finding fails the job (and therefore
