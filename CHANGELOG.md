@@ -4,13 +4,17 @@ All notable changes to RF Swift are recorded here. The format is based on
 Keep a Changelog (https://keepachangelog.com), and the project aims to follow
 semantic versioning. Dates are ISO-8601 (YYYY-MM-DD).
 
-## [09-26-2026] - v4.0.3
+## [09-27-2026] - v4.0.3
 
 ### Added
 
 - Workbench: the Engine doctor shows whether a newer release exists and can
   install it. Downloads are only installed after their GitHub digest and
   Sigstore build provenance (RF Swift release workflow) are verified.
+- CLI: when several engines are installed and none is set, the `rfswift run`
+  wizard first asks which one to use and can keep it as the default.
+  `rfswift engine set <auto|docker|podman|lima|nix>` sets it directly (`auto`
+  brings the question back).
 - CLI: a warning, with the fix, when `~/.config/rfswift` is owned by root after
   a `sudo rfswift` run.
 
@@ -19,7 +23,9 @@ semantic versioning. Dates are ISO-8601 (YYYY-MM-DD).
 - Workbench: console output is batched, so busy consoles no longer slow the
   window down.
 - `scripts/common.sh` installs Go 1.27.1 and verifies its checksum.
-- Go dependencies updated.
+- Go dependencies updated; grpc stays on 1.83.2, the fixed release for
+  GO-2026-6443.
+- CI: osv-scanner 2.6.0 (the 2.3.8 call analysis crashed on Go 1.27 code).
 
 ### Fixed
 

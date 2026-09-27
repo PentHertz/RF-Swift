@@ -73,6 +73,9 @@ var (
 	activeEngine    ContainerEngine
 	activeEngineMu  sync.RWMutex
 	preferredEngine EngineType = EngineAuto
+	// engineDockerHost is set when GetEngine exported DOCKER_HOST for the
+	// engine it picked, so a later SetPreferredEngine can take it back.
+	engineDockerHost bool
 )
 
 // SetPreferredEngine sets the preferred engine type from a CLI flag or config.
@@ -94,8 +97,14 @@ func SetPreferredEngine(engine string) {
 	default:
 		preferredEngine = EngineAuto
 	}
-	// Reset cached engine so the next GetEngine() re-detects
+	// Reset cached engine so the next GetEngine() re-detects, without the
+	// DOCKER_HOST the previous engine exported (it would route Docker to the
+	// Podman or Lima socket).
 	activeEngine = nil
+	if engineDockerHost {
+		os.Unsetenv("DOCKER_HOST")
+		engineDockerHost = false
+	}
 }
 
 // GetEngine returns the active container engine, performing lazy detection on
@@ -131,6 +140,7 @@ func GetEngine() ContainerEngine {
 		socketPath := activeEngine.GetSocketPath()
 		if socketPath != "" && os.Getenv("DOCKER_HOST") == "" {
 			os.Setenv("DOCKER_HOST", socketPath)
+			engineDockerHost = true
 		}
 	}
 

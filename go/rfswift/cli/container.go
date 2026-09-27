@@ -23,6 +23,18 @@ var runCmd = &cobra.Command{
 	Short: "Create and run a program",
 	Long:  `Create a container and run a program inside the docker container`,
 	Run: func(cmd *cobra.Command, args []string) {
+		// Several engines installed and none chosen: the wizard starts by
+		// asking which one to use.
+		if !rfnix.IsSelected() {
+			name, _ := cmd.Flags().GetString("name")
+			image, _ := cmd.Flags().GetString("image")
+			if name == "" || image == "" {
+				if err := pickRunEngine(cmd); err != nil {
+					common.PrintErrorMessage(fmt.Errorf("wizard cancelled: %v", err))
+					return
+				}
+			}
+		}
 		// Nix engine: create/enter a native environment instead of a container.
 		if rfnix.IsSelected() {
 			if err := runNixEnvironment(cmd); err != nil {

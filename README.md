@@ -187,7 +187,7 @@ RF Swift supports **Docker, Podman and Lima** as container engines, and (since v
 
 #### Auto-detection
 
-RF Swift **automatically detects** the available engine at startup. If several are installed, Docker is used by default. Override with the flag, the `RFSWIFT_ENGINE` variable, or `[general] engine` in `config.ini`:
+RF Swift **automatically detects** the available engine at startup. If several are installed, the `rfswift run` wizard first asks which one to use (Docker is preselected) and can keep your answer as the default. Skip the question with the flag, the `RFSWIFT_ENGINE` variable, or a default engine:
 
 ```bash
 rfswift --engine podman container create -n mycontainer -i sdr_light
@@ -195,6 +195,8 @@ rfswift --engine docker container create -n mycontainer -i sdr_light
 rfswift --engine lima container create -n mycontainer -i sdr_light   # macOS USB
 rfswift --engine nix container create -n myenv -i sdr_light          # native, no container
 export RFSWIFT_ENGINE=podman                                          # for the whole shell session
+rfswift engine set podman                                             # default engine ([general] engine in config.ini)
+rfswift engine set auto                                               # ask again in the wizard
 ```
 
 #### Podman support example

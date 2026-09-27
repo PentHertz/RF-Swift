@@ -272,6 +272,7 @@ Examples:
 
 func registerEngineCommands() {
 	rootCmd.AddCommand(engineCmd)
+	engineCmd.AddCommand(engineSetDefaultCmd)
 
 	// Lima subcommands - macOS only
 	if runtime.GOOS == "darwin" {
