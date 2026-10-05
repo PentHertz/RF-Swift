@@ -13,7 +13,7 @@ go 1.27.1
 
 require (
 	filippo.io/age v1.3.2
-	github.com/moby/moby/client v0.6.0
+	github.com/moby/moby/client v0.6.1
 	github.com/sigstore/sigstore-go v1.3.0
 	github.com/wailsapp/wails/v2 v2.16.0
 	golang.org/x/sys v0.48.0
@@ -115,7 +115,7 @@ require (
 	github.com/mattn/go-runewidth v0.0.30 // indirect
 	github.com/mitchellh/hashstructure/v2 v2.0.2 // indirect
 	github.com/moby/docker-image-spec v1.3.1 // indirect
-	github.com/moby/moby/api v1.56.0 // indirect
+	github.com/moby/moby/api v1.56.1 // indirect
 	github.com/moby/term v0.5.2 // indirect
 	github.com/muesli/cancelreader v0.2.2 // indirect
 	github.com/muesli/termenv v0.16.0 // indirect
