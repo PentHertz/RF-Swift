@@ -13,7 +13,7 @@ go 1.27.1
 
 require (
 	filippo.io/age v1.3.2
-	github.com/moby/moby/client v0.6.1
+	github.com/moby/moby/client v0.6.2
 	github.com/sigstore/sigstore-go v1.3.0
 	github.com/wailsapp/wails/v2 v2.16.0
 	golang.org/x/sys v0.48.0
@@ -32,7 +32,7 @@ require (
 	charm.land/lipgloss/v2 v2.0.6 // indirect
 	filippo.io/hpke v0.4.0 // indirect
 	git.sr.ht/~jackmordaunt/go-toast/v2 v2.0.3 // indirect
-	github.com/Azure/go-ansiterm v0.0.0-20260917205352-e937bb47801a // indirect
+	github.com/Azure/go-ansiterm v0.0.0-20261006220739-8c912ac31dd4 // indirect
 	github.com/FlUxIuS/pulseaudio_2 v0.0.0-20250608163549-43fae16119df // indirect
 	github.com/Microsoft/go-winio v0.6.2 // indirect
 	github.com/UserExistsError/conpty v0.1.4 // indirect
@@ -65,7 +65,7 @@ require (
 	github.com/digitorus/pkcs7 v0.0.0-20260914070511-d678ea5ea03f // indirect
 	github.com/digitorus/timestamp v0.0.0-20260914073129-b4b58b92aa51 // indirect
 	github.com/distribution/reference v0.6.0 // indirect
-	github.com/docker/go-connections v0.8.1 // indirect
+	github.com/docker/go-connections v0.8.2 // indirect
 	github.com/docker/go-units v0.5.0 // indirect
 	github.com/dustin/go-humanize v1.1.0 // indirect
 	github.com/fatih/color v1.19.0 // indirect
