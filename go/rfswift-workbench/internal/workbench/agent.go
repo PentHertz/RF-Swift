@@ -52,6 +52,8 @@ func AgentClients() []AgentClient {
 		{ID: "claude", Label: "Claude Code", Command: "claude"},
 		{ID: "kimi", Label: "Kimi Code", Command: "kimi"},
 		{ID: "glm", Label: "GLM / Z.ai CLI", Command: "glm"},
+		{ID: "opencode", Label: "OpenCode", Command: "opencode"},
+		{ID: "mistral", Label: "Mistral Vibe", Command: "vibe"},
 	}
 	for i := range defs {
 		if path, err := exec.LookPath(defs[i].Command); err == nil {
@@ -105,7 +107,11 @@ func agentYoloArgs(clientID string) []string {
 		return []string{"--dangerously-skip-permissions"}
 	case "kimi", "glm":
 		return []string{"--yolo"}
+	case "mistral":
+		return []string{"--auto-approve"}
 	default:
+		// OpenCode has no such flag: its permissions live in the generated
+		// opencode.json (writeOpenCodeConfig).
 		return nil
 	}
 }
@@ -153,7 +159,7 @@ func (a *App) agentLaunchSpec(mission, requestedClient string) (AgentConnectResu
 	if err := os.WriteFile(filepath.Join(agentDir, agentTerminalEventsFile), nil, 0o600); err != nil {
 		return AgentConnectResult{}, "", nil, err
 	}
-	configPath, err := writeAgentMCPConfig(agentDir, clientID, executable, args)
+	configPath, err := writeAgentMCPConfig(agentDir, clientID, executable, args, cfg.Yolo[clientID])
 	if err != nil {
 		return AgentConnectResult{}, "", nil, err
 	}
@@ -226,9 +232,13 @@ func verifyMCPCommand(command string, args []string) error {
 	return nil
 }
 
-func writeAgentMCPConfig(agentDir, clientID, command string, args []string) (string, error) {
+func writeAgentMCPConfig(agentDir, clientID, command string, args []string, yolo bool) (string, error) {
 	entry := map[string]any{"command": command, "args": args, "cwd": agentDir}
 	switch clientID {
+	case "opencode":
+		return writeOpenCodeConfig(agentDir, command, args, yolo)
+	case "mistral":
+		return writeVibeConfig(agentDir, command, args)
 	case "claude":
 		return mergeMCPJSON(filepath.Join(agentDir, ".mcp.json"), entry)
 	case "kimi":
@@ -252,6 +262,103 @@ func writeAgentMCPConfig(agentDir, clientID, command string, args []string) (str
 	default:
 		return "", fmt.Errorf("automatic MCP configuration is not yet available for %s; use the displayed stdio command", clientID)
 	}
+}
+
+// writeOpenCodeConfig writes the mission's opencode.json, which OpenCode reads
+// from its start directory and merges over the user's global configuration.
+// OpenCode allows most actions without asking by default, so unless YOLO is
+// on the file makes it ask before edits, shell commands and web access, like
+// the other clients do out of the box. Other keys already in the file stay.
+func writeOpenCodeConfig(agentDir, command string, args []string, yolo bool) (string, error) {
+	path := filepath.Join(agentDir, "opencode.json")
+	root := map[string]any{}
+	if data, err := os.ReadFile(path); err == nil && len(data) > 0 {
+		if err := json.Unmarshal(data, &root); err != nil {
+			return "", fmt.Errorf("parse existing %s: %w", path, err)
+		}
+	} else if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return "", err
+	}
+	root["$schema"] = "https://opencode.ai/config.json"
+	servers, _ := root["mcp"].(map[string]any)
+	if servers == nil {
+		servers = map[string]any{}
+	}
+	servers["rfswift"] = map[string]any{
+		"type":    "local",
+		"command": append([]string{command}, args...),
+		"cwd":     agentDir,
+		"enabled": true,
+	}
+	root["mcp"] = servers
+	instructions, _ := root["instructions"].([]any)
+	hasAgents := false
+	for _, item := range instructions {
+		if item == "AGENTS.md" {
+			hasAgents = true
+		}
+	}
+	if !hasAgents {
+		root["instructions"] = append(instructions, "AGENTS.md")
+	}
+	if yolo {
+		root["permission"] = "allow"
+	} else {
+		root["permission"] = map[string]any{"edit": "ask", "bash": "ask", "webfetch": "ask", "websearch": "ask"}
+	}
+	data, err := json.MarshalIndent(root, "", "  ")
+	if err != nil {
+		return "", err
+	}
+	if err := os.WriteFile(path, append(data, '\n'), 0o600); err != nil {
+		return "", err
+	}
+	return path, nil
+}
+
+// writeVibeConfig writes the mission's .vibe/config.toml for Mistral Vibe.
+// Vibe reads a project config instead of ~/.vibe/config.toml rather than on
+// top of it, so the user's global file is copied first (model and provider
+// settings; API keys live in a separate .env) and the RF Swift server is
+// appended as one more [[mcp_servers]] table. Rebuilt on every connect.
+func writeVibeConfig(agentDir, command string, args []string) (string, error) {
+	path := filepath.Join(agentDir, ".vibe", "config.toml")
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return "", err
+	}
+	var contents strings.Builder
+	if global := vibeGlobalConfig(); global != "" {
+		if data, err := os.ReadFile(global); err == nil && len(data) > 0 {
+			contents.Write(data)
+			if data[len(data)-1] != '\n' {
+				contents.WriteByte('\n')
+			}
+			contents.WriteByte('\n')
+		}
+	}
+	quotedArgs := make([]string, len(args))
+	for i, arg := range args {
+		quotedArgs[i] = strconv.Quote(arg)
+	}
+	contents.WriteString("# Added by RF Swift Workbench for this mission only.\n" +
+		"[[mcp_servers]]\nname = \"rfswift\"\ntransport = \"stdio\"\ncommand = " + strconv.Quote(command) +
+		"\nargs = [" + strings.Join(quotedArgs, ", ") + "]\n")
+	if err := os.WriteFile(path, []byte(contents.String()), 0o600); err != nil {
+		return "", err
+	}
+	return path, nil
+}
+
+// vibeGlobalConfig is the user's Vibe configuration file ($VIBE_HOME, or
+// ~/.vibe), or "" when it cannot be located.
+func vibeGlobalConfig() string {
+	if home := strings.TrimSpace(os.Getenv("VIBE_HOME")); home != "" {
+		return filepath.Join(home, "config.toml")
+	}
+	if home, err := os.UserHomeDir(); err == nil {
+		return filepath.Join(home, ".vibe", "config.toml")
+	}
+	return ""
 }
 
 func mergeMCPJSON(path string, entry map[string]any) (string, error) {

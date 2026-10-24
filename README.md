@@ -50,7 +50,7 @@ RF Swift builds you a **complete hardware and RF security lab in seconds** - on 
 
 Unlike traditional approaches that force you to sacrifice your primary OS, RF Swift brings **200+ RF, hardware and security tools** to your existing environment, as containers or as native Nix environments - on Linux, Windows and macOS, across x86_64, ARM64 and RISC-V64. 🏠 On Linux and macOS the native environments come in two flavours: as your user with your files and devices, or **isolated** in a jail (bubblewrap on Linux, Seatbelt on macOS) that hides your home and the host filesystem while the radios, the display and the network keep working.
 
-> **🆕 v4.0 "Nucleus"** (current release v4.0.3) - a native **Nix engine** that runs the tool sets without containers, the **RF Swift Workbench** desktop GUI for assessments, a **remote agent** to drive a lab machine from your laptop over mutual TLS, an **AI assistant** bridged into missions, a resource-first CLI with the old commands kept, built-in **security audits**, and native packages and installers for the three operating systems. See [What's new in v4.0](#-whats-new-in-v40-nucleus).
+> **🆕 v4.0 "Nucleus"** (current release v4.0.4) - a native **Nix engine** that runs the tool sets without containers, the **RF Swift Workbench** desktop GUI for assessments, a **remote agent** to drive a lab machine from your laptop over mutual TLS, an **AI assistant** bridged into missions, a resource-first CLI with the old commands kept, built-in **security audits**, and native packages and installers for the three operating systems. See [What's new in v4.0](#-whats-new-in-v40-nucleus).
 
 ### ⚡ What a lab looks like in 2026
 
@@ -76,7 +76,7 @@ Already on Kali, Parrot or DragonOS? Keep it, and add RF Swift on top. The RF st
 
 ## 🆕 What's new in v4.0 "Nucleus"
 
-v4.0 (current release **v4.0.3**) is the biggest change since the project started. In one line: the same RF and hardware lab, now as containers **or** native environments, on your machine **or** on a remote one, from the terminal **or** from a GUI. The full list is in the [CHANGELOG](CHANGELOG.md) and on [rfswift.io](https://rfswift.io/docs/release-notes-v4/).
+v4.0 (current release **v4.0.4**) is the biggest change since the project started. In one line: the same RF and hardware lab, now as containers **or** native environments, on your machine **or** on a remote one, from the terminal **or** from a GUI. The full list is in the [CHANGELOG](CHANGELOG.md) and on [rfswift.io](https://rfswift.io/docs/release-notes-v4/).
 
 ### ❄️ Nix engine: the tools without a container
 
@@ -92,7 +92,7 @@ A desktop GUI for Linux, macOS and Windows that turns containers and environment
 
 ### 🤖 AI assistant in the loop
 
-A mission can host Codex, Claude Code, Kimi Code or GLM in its own terminal, bridged to the mission through a scoped MCP server: read-only by default, with write and command access you switch on for a task. Details below.
+A mission can host Codex, Claude Code, Kimi Code, GLM, OpenCode or Mistral Vibe in its own terminal, bridged to the mission through a scoped MCP server: read-only by default, with write and command access you switch on for a task. Details below.
 
 ### 🧭 Resource-first CLI
 
@@ -149,7 +149,7 @@ Every container and Nix environment of every engine appears as a **mission**, an
 | **Reports** | Branded Markdown, HTML and PDF reports, pwndoc export and import |
 | **Engine doctor** | Every engine's state, space reclaim, Lima VM lifecycle and settings, udev rules, Docker access, the Nix jail, host audio, Nix in WSL 2, WSLg display reset |
 | **Remote** | Connect to a lab machine over pinned TLS 1.3 and mutual TLS; missions, terminals, audits, pulls, artifacts and USB passthrough run there |
-| **Agent** | Codex, Claude Code, Kimi Code or GLM connected to the mission through a local, permission-gated MCP bridge; RF Swift never calls a model API itself |
+| **Agent** | Codex, Claude Code, Kimi Code, GLM, OpenCode or Mistral Vibe connected to the mission through a local, permission-gated MCP bridge; RF Swift never calls a model API itself |
 
 Missions travel: **Export archive** produces the container or environment archive plus a mission companion with notes, captures, findings, reports, recordings and audits, and **Import** restores the lot on another machine. Start the Workbench from your application menu ("RF Swift Workbench") or with `rfswift-workbench`; it needs the engines the CLI uses, and its Engine doctor sets them up when something is missing.
 
@@ -170,7 +170,7 @@ Guide and tour: [rfswift.io/docs/guide/workbench](https://rfswift.io/docs/guide/
 - **❄️ Native Nix Environments**: The same tool sets installed natively, pinned, updatable and roll-backable, with an optional jail
 - **🖥️ Workbench GUI**: Missions with terminals, recordings, notes, findings, captures and reports, on Linux, macOS and Windows
 - **📡 Remote Agent**: Drive the engines of a lab machine from your laptop over mutual TLS
-- **🤖 AI Assistant**: Codex, Claude Code, Kimi Code or GLM inside a mission, through a scoped MCP bridge
+- **🤖 AI Assistant**: Codex, Claude Code, Kimi Code, GLM, OpenCode or Mistral Vibe inside a mission, through a scoped MCP bridge
 - **🛡️ Built-in Audits**: One command scans an image, a container or a Nix environment for CVEs and attack surface
 - **📌 Pinned Image Versions**: Follow the latest build or pin a published release, from the CLI or the Workbench
 
@@ -342,7 +342,7 @@ The installer's optional **Set up Nix in WSL 2** step does the provisioning too.
 
 ## 📥 Install
 
-Current release: **v4.0.3**. Every artifact below comes from the [releases page](https://github.com/PentHertz/RF-Swift/releases); the script downloads from there too.
+Current release: **v4.0.4**. Every artifact below comes from the [releases page](https://github.com/PentHertz/RF-Swift/releases); the script downloads from there too.
 
 | Platform | Ways to install |
 |---|---|
@@ -423,7 +423,7 @@ The protocol is TLS 1.3 only with mandatory mutual TLS, a pinned server fingerpr
 
 ## 🤖 AI assistant (MCP)
 
-A mission can open a terminal running **Codex**, **Claude Code**, **Kimi Code** or **GLM**, bridged to that mission through a scoped MCP server: the agent reads the mission's notes, findings, captures and audit reports, and can draft notes and report sections back. Access is read-only by default; write and command access are switched on for a task and off afterwards. Everything the agent reads is untrusted evidence that may carry injected instructions, and it is sent to the CLI vendor under your account, so keep sensitive engagements on a read-only bridge. Setup: [docs/ai-assistant.md](docs/ai-assistant.md). Practices: [rfswift.io/docs/security/mcp](https://rfswift.io/docs/security/mcp/).
+A mission can open a terminal running **Codex**, **Claude Code**, **Kimi Code**, **GLM**, **OpenCode** or **Mistral Vibe**, bridged to that mission through a scoped MCP server: the agent reads the mission's notes, findings, captures and audit reports, and can draft notes and report sections back. Access is read-only by default; write and command access are switched on for a task and off afterwards. Everything the agent reads is untrusted evidence that may carry injected instructions, and it is sent to the CLI vendor under your account, so keep sensitive engagements on a read-only bridge. Setup: [docs/ai-assistant.md](docs/ai-assistant.md). Practices: [rfswift.io/docs/security/mcp](https://rfswift.io/docs/security/mcp/).
 
 ## 🛡️ Security audits
 
@@ -467,6 +467,7 @@ graph TD;
     H-->V[ad];
     I-->N[sdr_full];
     I-->W[sdr_gnuradio4];
+    I-->X[sdr_hacks];
     K-->P[telecom_2Gto3G];
     K-->Q[telecom_4G_5GNSA];
     K-->R[telecom_4Gto5G];
@@ -475,7 +476,8 @@ graph TD;
 
 | Category | Images | Key Tools |
 |----------|--------|-----------|
-| 📻 **SDR** | `sdr_light`, `sdr_full`, `sdr_gnuradio4` 🆕 | GNU Radio (3.10 + a dedicated GNU Radio 4 image), GQRX, SDR++, SDRangel, SigDigger, CyberEther, Inspectrum, URH, rtl_433, dump1090, GNSS-SDR, SatDump, Jupyter + 50+ GNU Radio OOT modules (gr-gsm, gr-lora, gr-satellites, gr-ieee802-11, gr-droneid, gr-tempest, ...) |
+| 📻 **SDR** | `sdr_light`, `sdr_full`, `sdr_gnuradio4` | GNU Radio (3.10 + a dedicated GNU Radio 4 image), GQRX, SDR++, SDRangel, SigDigger, CyberEther, Inspectrum, URH, rtl_433, dump1090, GNSS-SDR, SatDump, Jupyter + 50+ GNU Radio OOT modules (gr-gsm, gr-lora, gr-satellites, gr-ieee802-11, gr-droneid, gr-tempest, ...) |
+| 🛠️ **SDR hacks** 🆕 | `sdr_hacks` | Repurposed chips as SDRs: MediaTek Wi-Fi dongles and routers (BirriaSDR, Mtk79ICAP, W1700K), ESP32 radios (ESP-SDR, SoapyESPSDR) and the Semtech LR2021, with their flashing tools |
 | 📡 **SDR Devices** | `sdrsa_devices` | Drivers for USRP (UHD), RTL-SDR, HackRF, BladeRF, Airspy, LimeSDR, PlutoSDR, XTRX, RFNM, HydraSDR, LiteX M2SDR, SignalHound, Harogic, LibreSDR, SoapySDR |
 | 📱 **Telecom** | `telecom_utils`, `telecom_2Gto3G`, `telecom_4G_5GNSA`, `telecom_4Gto5G`, `telecom_5G` | PySIM, pycrate, srsRAN 4G, **OCUDU** 🆕 (5G SA CU/DU), Open5GS, UERANSIM, YateBTS, OpenBTS, OpenBTS-UMTS, OsmoCom BTS Suite, SigPloit, PyHSS, SCAT, jSS7, 5Greplay |
 | 📶 **Bluetooth** | `bluetooth` | BlueZ, WHAD, Mirage, Sniffle, Bluing, bdaddr, ice9-bluetooth, esp32 BT Classic sniffer |

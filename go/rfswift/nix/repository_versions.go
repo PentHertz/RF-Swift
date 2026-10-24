@@ -11,6 +11,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"golang.org/x/mod/semver"
 )
 
 // RepositoryVersion is a selectable, reproducible RF-Swift-nix revision.
@@ -100,18 +102,35 @@ func listRepositoryVersions(ctx context.Context, flakeRef, apiBase string, clien
 	if err != nil {
 		return RepositoryVersions{}, err
 	}
-	if found {
-		for index, release := range result.Releases {
-			if release.Name != published.TagName {
-				continue
-			}
-			release.Kind = "latest"
-			result.Latest = &release
-			result.Releases = append(result.Releases[:index], result.Releases[index+1:]...)
-			break
+	latest := published.TagName
+	if !found {
+		// No published GitHub release (RF-Swift-nix publishes tags only, and
+		// GitHub's latest release skips pre-releases): the newest version
+		// tag is the latest release, rather than leaving only Nightly.
+		latest = newestVersionTag(result.Releases)
+	}
+	for index, release := range result.Releases {
+		if latest == "" || release.Name != latest {
+			continue
 		}
+		release.Kind = "latest"
+		result.Latest = &release
+		result.Releases = append(result.Releases[:index], result.Releases[index+1:]...)
+		break
 	}
 	return result, nil
+}
+
+// newestVersionTag returns the highest semantic version among the tags
+// (v1.1.0 above v1.1.0-dev above v1.0.0), or "" when none is a version.
+func newestVersionTag(releases []RepositoryVersion) string {
+	best := ""
+	for _, r := range releases {
+		if semver.IsValid(r.Name) && (best == "" || semver.Compare(r.Name, best) > 0) {
+			best = r.Name
+		}
+	}
+	return best
 }
 
 func githubGetOptional(ctx context.Context, client *http.Client, endpoint string, dst any) (bool, error) {

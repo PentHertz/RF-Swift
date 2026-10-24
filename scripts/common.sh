@@ -1756,7 +1756,7 @@ install_go() {
     arch=$(uname -m)
     os=$(uname -s | tr '[:upper:]' '[:lower:]')
     prog=""
-    version="1.27.1"
+    version="1.27.3"
 
     case "$arch" in
         x86_64|amd64)  arch="amd64";;
@@ -1778,12 +1778,12 @@ install_go() {
     # unpacked as root, so it must be the one the Go team published.
     local sum=""
     case "$prog" in
-        go1.27.1.linux-amd64.tar.gz)   sum="63d339f0da5ab53635a56f2490a7984dfe12dfcff22ad749f63edaf590168445";;
-        go1.27.1.linux-386.tar.gz)     sum="3b72028095439d2bc0ce84e271cc70328a878d879020c5721eaa46df5f72fbc0";;
-        go1.27.1.linux-arm64.tar.gz)   sum="3450b45a3f9ee8568792736a5c5e70a1f2e9b36c35a8f74958c03e51d7d92bec";;
-        go1.27.1.linux-riscv64.tar.gz) sum="62287667ee5e5f540f30fb9b7529a27fe582f22c6bfd726ece9b045f4c54ee61";;
-        go1.27.1.darwin-amd64.tar.gz)  sum="8f8f52c6649542cf027bbc9b9c68d1ec042f9f34808a40413f0b8b3f66f3caa4";;
-        go1.27.1.darwin-arm64.tar.gz)  sum="ee215d57e0ec269c60cc9ceca68e6bda321ba9ee5afe24f4b0988703c2d87d12";;
+        go1.27.3.linux-amd64.tar.gz)   sum="65efbc80fdc1fa2cd2631cad5b481777a68e8725f34e89f50fc6ac714e379b40";;
+        go1.27.3.linux-386.tar.gz)     sum="cfc243057c03dd131413b91269d16b5061f87f312059c1ed78681cbb95d6afbf";;
+        go1.27.3.linux-arm64.tar.gz)   sum="a06e99309dbcbdca1a8ccd2282c3ee146e55930886e26b4f1193269587165f49";;
+        go1.27.3.linux-riscv64.tar.gz) sum="41fe171fb7fcf5574cba7d874c2732dca9161ce2dba631d754371951df9ea310";;
+        go1.27.3.darwin-amd64.tar.gz)  sum="b6f8e931e4ab497fcde6da8ae4499a58f9d258e55c8a80824a516eae5950a750";;
+        go1.27.3.darwin-arm64.tar.gz)  sum="dd3908cf20959d798c1e06ebe5b72213f0505ce01373b40ce3110975a6cd99c2";;
         *)
             printf "${RED}❌ No published checksum for %s -> Unable to install Go ❌${NC}\n" "$prog" >&2; exit 2;;
     esac

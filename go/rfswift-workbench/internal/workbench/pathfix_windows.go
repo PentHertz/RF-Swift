@@ -13,7 +13,7 @@ import (
 // platformPathCandidates returns the Windows install dirs of the coding-agent
 // CLIs plus the PATH entries recorded in the registry. The native Claude Code
 // installer drops claude.exe in %USERPROFILE%\.local\bin (already covered by
-// the shared list); npm -g (codex, older claude, kimi, glm) uses %APPDATA%\npm;
+// the shared list); npm -g (codex, older claude, kimi, glm, opencode) uses %APPDATA%\npm;
 // Volta uses %LOCALAPPDATA%\Volta\bin. The registry read matters because a
 // process started from Explorer or a shortcut keeps the PATH captured at its
 // own start-up, so anything installed afterwards is invisible until reboot.

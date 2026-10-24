@@ -78,6 +78,18 @@ func recommendRFSwiftTools(task, artifact string, limit int) ([]ToolRecommendati
 				matchedTools = append(matchedTools, pkg)
 			}
 		}
+		// Curated example commands say what an environment is for, so a
+		// match there counts on top of the package list. Otherwise a
+		// specialised superset (sdr_hacks is sdr_light plus repurposed-chip
+		// tools) outranks the general environment for any SDR task.
+		for _, example := range toolAdviceExamples[env.Name] {
+			for _, term := range terms {
+				if len(term) > 1 && strings.Contains(strings.ToLower(example), term) {
+					score += 3
+					break
+				}
+			}
+		}
 		if score == 0 {
 			continue
 		}

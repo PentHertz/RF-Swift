@@ -1,6 +1,6 @@
 module penthertz/rfswift-workbench
 
-go 1.27.1
+go 1.27.3
 
 // The Workbench GUI is a SEPARATE module and binary from the lean rfswift CLI
 // on purpose: it depends on Wails (cgo + an OS webview), which the CLI/agent
@@ -151,7 +151,7 @@ require (
 	go.opentelemetry.io/otel/trace v1.46.0 // indirect
 	go.yaml.in/yaml/v3 v3.0.5 // indirect
 	golang.org/x/crypto v0.58.0 // indirect
-	golang.org/x/mod v0.41.0 // indirect
+	golang.org/x/mod v0.42.0 // indirect
 	golang.org/x/net v0.60.0 // indirect
 	golang.org/x/sync v0.24.0 // indirect
 	golang.org/x/term v0.47.0 // indirect

@@ -37,3 +37,18 @@ func TestRecommendToolsRejectsEmptyTask(t *testing.T) {
 		t.Fatal("expected an empty-query error")
 	}
 }
+
+func TestRecommendToolsPrefersSpecialisedEnvironmentWhenAsked(t *testing.T) {
+	for _, c := range []struct{ task, want string }{
+		{"use an ESP32 or a MediaTek wifi dongle as an SDR", "sdr_hacks"},
+		{"LTE sniffing with a USRP", "telecom_ltesniffer"},
+	} {
+		got, err := recommendRFSwiftTools(c.task, "", 3)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(got) == 0 || got[0].Environment != c.want {
+			t.Errorf("%q: want %s first, got %#v", c.task, c.want, got)
+		}
+	}
+}

@@ -2,12 +2,13 @@
 
 RF Swift does not call a model API, select a model, store provider API keys, or
 charge for AI usage. Instead, the Workbench exposes an optional local MCP server
-to an external coding-agent CLI such as Codex, Claude Code, Kimi Code, or GLM.
+to an external coding-agent CLI such as Codex, Claude Code, Kimi Code, GLM,
+OpenCode or Mistral Vibe.
 That CLI owns its authentication, subscription, model choice, and billing.
 
 ```mermaid
 flowchart LR
-    U[User prompt] --> C[Codex / Claude / Kimi / GLM CLI]
+    U[User prompt] --> C[Codex / Claude / Kimi / GLM / OpenCode / Vibe CLI]
     C <-->|stdio MCP| M[RF Swift Workbench MCP]
     M --> N[Mission notes]
     M --> F[Structured findings]
@@ -33,14 +34,27 @@ entirely owned by the external client.
 
 ## Starting the server
 
-For Codex, Claude Code, and Kimi Code, press **Connect & launch** in the Agent
-panel. Workbench then:
+For Codex, Claude Code, Kimi Code, OpenCode and Mistral Vibe, press
+**Connect & launch** in the Agent panel. Workbench then:
 
 1. Detects the selected CLI on `PATH`.
 2. Creates or merges a private configuration under the mission's
    `agent-workspace` directory.
 3. Performs a real MCP `initialize` handshake with the mission-scoped server.
 4. Starts the client's interactive TUI in the embedded terminal.
+
+Where each client finds its configuration in `agent-workspace`:
+
+| Client | Command | Configuration | Approval without YOLO / with YOLO |
+|---|---|---|---|
+| Codex | `codex` | `.codex/config.toml` | asks; `--dangerously-bypass-approvals-and-sandbox` |
+| Claude Code | `claude` | `.mcp.json` | asks; `--dangerously-skip-permissions` |
+| Kimi Code | `kimi` | `.kimi-code/mcp.json` | asks; `--yolo` |
+| OpenCode | `opencode` | `opencode.json`, merged over your global config | asks before edits, shell commands and web access (OpenCode allows them by default); `"permission": "allow"` |
+| Mistral Vibe | `vibe` | `.vibe/config.toml`: a copy of your `~/.vibe/config.toml` (or `$VIBE_HOME`) plus the `rfswift` server, rebuilt on every connect, since Vibe reads a project config instead of the global one | its default agent auto-approves file edits in the launcher directory only; `--auto-approve` |
+
+Mission data never goes through those approvals alone: write and command access
+are enforced by the RF Swift MCP server itself.
 
 While the TUI is connected, Workbench refreshes mission notes and findings
 written by MCP so changes appear in their panels without switching missions.

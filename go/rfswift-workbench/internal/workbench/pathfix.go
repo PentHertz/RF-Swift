@@ -12,14 +12,15 @@ import (
 // system PATH (/usr/bin:/bin:...), which hides Homebrew, /usr/local and Nix —
 // so limactl, qemu, docker, podman and nix all appear "not installed" even
 // though the CLI works fine from a terminal. The same applies to coding-agent
-// CLIs (claude, codex, kimi, glm) installed under $HOME. Children (limactl,
+// CLIs (claude, codex, kimi, glm, opencode, vibe) installed under $HOME. Children (limactl,
 // nix, install scripts, agent terminals) inherit the fixed PATH too. Call
 // before any engine or agent detection.
 func EnsureStandardPath() {
 	home, _ := os.UserHomeDir()
 	candidates := []string{
 		// User-level CLI install dirs: the native Claude Code installer links
-		// ~/.local/bin/claude; npm -g, bun, cargo, go and volta use the rest.
+		// ~/.local/bin/claude (uv puts Mistral Vibe there too); npm -g, bun,
+		// cargo, go and volta use the rest.
 		// These come first so a user-installed agent CLI wins over a system one.
 		filepath.Join(home, ".local", "bin"),
 		filepath.Join(home, ".claude", "local"), // legacy claude migrate-installer target
@@ -28,6 +29,7 @@ func EnsureStandardPath() {
 		filepath.Join(home, ".cargo", "bin"),
 		filepath.Join(home, "go", "bin"),
 		filepath.Join(home, ".volta", "bin"),
+		filepath.Join(home, ".opencode", "bin"), // OpenCode's install script
 		"/opt/homebrew/bin",
 		"/opt/homebrew/sbin",
 		"/usr/local/bin",

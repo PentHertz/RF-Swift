@@ -4,6 +4,45 @@ All notable changes to RF Swift are recorded here. The format is based on
 Keep a Changelog (https://keepachangelog.com), and the project aims to follow
 semantic versioning. Dates are ISO-8601 (YYYY-MM-DD).
 
+## [10-24-2026] - v4.0.4
+
+### Added
+
+- Nix engine: the catalog follows RF-Swift-nix v1.1.0-dev, so the wizard and
+  the Workbench offer four new environments: `sdr_hacks` (repurposed chips as
+  SDRs: ESP32, Semtech LR2021, MediaTek Wi-Fi), `cyberether_release`,
+  `telecom_5g_oai` (5G SA with OpenAirInterface) and `telecom_ltesniffer`.
+  The other environments get their updated tool lists.
+- Workbench: OpenCode and Mistral Vibe join the AI assistants a mission can
+  host, with their MCP configuration written for the mission like the others.
+  OpenCode asks before edits, shell commands and web access unless YOLO is
+  on (it allows them by default); Mistral Vibe keeps your own settings and
+  auto-approves everything only with YOLO (`--auto-approve`).
+- Images: `sdr_hacks` from RF-Swift-images v1.3.0 is listed with the other
+  toolboxes; its version picker entries and new install functions (ESP32,
+  LR2021 and MediaTek SDR tools, `wifit3`, `decsat`, ...) appear in the CLI,
+  TUI and Workbench like any other image's.
+
+### Changed
+
+- Go 1.27.3 for both modules and in `scripts/common.sh` (checksum pinned).
+- CI: goreleaser-action 7.3.0.
+
+### Fixed
+
+- Nix version picker: with no published GitHub release (RF-Swift-nix only
+  pushes tags), "Latest" now follows the newest version tag. The Workbench
+  used to fall back to Nightly and say that no release tag existed.
+- Workbench tool advice: a general environment (`sdr_full`) is recommended
+  for everyday SDR tasks again; specialised sets such as `sdr_hacks` come
+  first when their hardware is mentioned.
+
+### Security
+
+- Go 1.27.3 fixes 12 standard library advisories reachable from RF Swift
+  (net/http and HTTP/2, crypto/tls, crypto/x509, net/textproto,
+  html/template), including GO-2026-6809 and GO-2026-6617.
+
 ## [09-27-2026] - v4.0.3
 
 ### Added
