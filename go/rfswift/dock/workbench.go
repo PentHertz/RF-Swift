@@ -62,6 +62,18 @@ func UpdateBinding(containerID, kind, source, target string, add bool) error {
 		return false
 	}
 	updated := strings.Join(updatePropertyItems(strings.Split(props[key], separator), entry, target, add), separator)
+	// The target leaves the other list, as the direct edit below does: a
+	// path is either mapped or mounted, so switching between -d and a bind
+	// mount replaces the old entry and a removal finds it either way.
+	otherKey, otherSeparator := "Devices", ","
+	if key == "Devices" {
+		otherKey, otherSeparator = "Bindings", ";;"
+	}
+	otherUpdated := props[otherKey]
+	if otherItems := strings.Split(props[otherKey], otherSeparator); propertyHasTarget(otherItems, target) {
+		otherUpdated = strings.Join(updatePropertyItems(otherItems, "", target, false), otherSeparator)
+	}
+	unchanged := updated == props[key] && otherUpdated == props[otherKey]
 	if serialPort {
 		var addPorts, removePorts []string
 		if add {
@@ -70,14 +82,15 @@ func UpdateBinding(containerID, kind, source, target string, add bool) error {
 			removePorts = []string{source}
 		}
 		merged := MergeSerialPorts(props["SerialPorts"], addPorts, removePorts)
-		if merged == props["SerialPorts"] && updated == props[key] && (!add || !rulesMissing()) {
+		if merged == props["SerialPorts"] && unchanged && (!add || !rulesMissing()) {
 			return nil
 		}
 		props["SerialPorts"] = merged
-	} else if updated == props[key] && (!add || !rulesMissing()) {
+	} else if unchanged && (!add || !rulesMissing()) {
 		return nil
 	}
 	props[key] = updated
+	props[otherKey] = otherUpdated
 	if add && len(bindRules) > 0 {
 		props["Cgroups"] = strings.Join(appendMissing(splitSummaryList(props["Cgroups"], ","), bindRules...), ",")
 	}
@@ -148,14 +161,24 @@ func UpdateBinding(containerID, kind, source, target string, add bool) error {
 	return recreateContainerWithProperties(ctx, cli, containerID, props)
 }
 
+// BindingKindFor says how UpdateBinding applies a binding: "device" for a
+// device mapping, "volume" for a bind mount (a serial port given as a volume
+// while unplugged is attached on demand, as a device). It touches nothing.
+func BindingKindFor(kind, source string, add bool) (string, error) {
+	resolved, _, err := resolveBindingKind(kind, source, add)
+	return resolved, err
+}
+
 // resolveBindingKind checks a /dev path handed to a binding setting and
 // says how it is applied, honouring the chosen setting: "device" maps a node
 // (a serial port is attached on demand when absent); "volume" and
 // "device-bind" bind-mount a node as asked, with the cgroup rule its major
 // needs, and mount a directory such as /dev/bus/usb as a tree with its rule.
-// A stray directory or an absent device is refused with the fix. Paths
-// outside /dev are plain volumes. It touches nothing, so a front end can
-// call it before asking for a password.
+// A directory given as a device is mapped as asked: the engine maps every
+// node under it when the container starts (docker --device /dev/bus/usb),
+// without the hot-plug the bind mount gives. A stray directory or an absent
+// device is refused with the fix. Paths outside /dev are plain volumes. It
+// touches nothing, so a front end can call it before asking for a password.
 func resolveBindingKind(kind, source string, add bool) (resolved string, rules []string, err error) {
 	source = strings.TrimSpace(source)
 	if source == "" {
@@ -194,7 +217,7 @@ func resolveBindingKind(kind, source string, add bool) (resolved string, rules [
 			return kind, nil, fmt.Errorf("%s is an empty directory left where a device node belongs, not a device; remove it with rfswift host devclean and plug the device in", source)
 		}
 		if kind == "device" {
-			return kind, nil, fmt.Errorf("%s is a directory: add it as a bind mount (it is mounted as a tree with its cgroup rule)", source)
+			return "device", nil, nil
 		}
 		if rule := devTreeRules[source]; rule != "" {
 			rules = append(rules, rule)
@@ -219,9 +242,6 @@ func resolveVMBindingKind(kind, source string) (resolved string, rules []string,
 	infos, ok := vmPathInfo([]string{source})
 	if !ok {
 		if kind == "device" {
-			if _, tree := devTreeRules[source]; tree {
-				return kind, nil, fmt.Errorf("%s is a device tree: add it as a bind mount (it is mounted with its cgroup rule)", source)
-			}
 			return "device", nil, nil
 		}
 		if rule := devTreeRules[source]; rule != "" {
@@ -247,7 +267,7 @@ func resolveVMBindingKind(kind, source string) (resolved string, rules []string,
 		return "volume", rules, nil
 	case info.IsDir:
 		if kind == "device" {
-			return kind, nil, fmt.Errorf("%s is a directory in the VM: add it as a bind mount (it is mounted as a tree with its cgroup rule)", source)
+			return "device", nil, nil
 		}
 		if rule := devTreeRules[source]; rule != "" {
 			rules = append(rules, rule)
@@ -300,6 +320,17 @@ func removeDevicesAtTarget(items []DeviceMapping, target string) []DeviceMapping
 		}
 	}
 	return out
+}
+
+// propertyHasTarget says whether a Bindings or Devices list has an entry
+// for the container path target.
+func propertyHasTarget(items []string, target string) bool {
+	for _, item := range items {
+		if parts := strings.Split(strings.TrimSpace(item), ":"); len(parts) > 1 && parts[1] == target {
+			return true
+		}
+	}
+	return false
 }
 
 func updatePropertyItems(items []string, entry, target string, add bool) []string {

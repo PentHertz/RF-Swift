@@ -40,7 +40,33 @@ var BindingsAddCmd = &cobra.Command{
 // bind-mounted with its cgroup rule, and the change is applied by the file
 // edit or the re-creation the engine calls for.
 func applyBindingChange(contID, source, target string, device, add bool) {
-	kind := "volume"
+	kind, source, target := bindingChangeArgs(source, target, device)
+	resolved, err := rfdock.BindingKindFor(kind, source, add)
+	if err == nil {
+		err = rfdock.UpdateBinding(contID, kind, source, target, add)
+	}
+	if err != nil {
+		common.PrintErrorMessage(err)
+		os.Exit(1)
+	}
+	what := "bind mount"
+	if resolved == "device" {
+		what = "device"
+		if info, statErr := os.Stat(source); add && statErr == nil && info.IsDir() {
+			common.PrintInfoMessage(fmt.Sprintf("%s is a directory: the devices under it are mapped when the container starts, so one plugged in later shows up after a restart. Without -d it is bind-mounted with its cgroup rule and follows hot-plug.", source))
+		}
+	}
+	if add {
+		common.PrintSuccessMessage(fmt.Sprintf("%s %s -> %s added to '%s'", what, source, target, contID))
+	} else {
+		common.PrintSuccessMessage(fmt.Sprintf("%s %s removed from '%s'", what, target, contID))
+	}
+}
+
+// bindingChangeArgs gives the binding kind for the -d flag and fills in a
+// missing source or target with the other one.
+func bindingChangeArgs(source, target string, device bool) (kind, src, dst string) {
+	kind = "volume"
 	if device {
 		kind = "device"
 	}
@@ -50,19 +76,7 @@ func applyBindingChange(contID, source, target string, device, add bool) {
 	if source == "" {
 		source = target
 	}
-	if err := rfdock.UpdateBinding(contID, kind, source, target, add); err != nil {
-		common.PrintErrorMessage(err)
-		os.Exit(1)
-	}
-	what := "bind mount"
-	if device {
-		what = "device"
-	}
-	if add {
-		common.PrintSuccessMessage(fmt.Sprintf("%s %s -> %s added to '%s'", what, source, target, contID))
-	} else {
-		common.PrintSuccessMessage(fmt.Sprintf("%s %s removed from '%s'", what, target, contID))
-	}
+	return kind, source, target
 }
 
 var BindingsRmCmd = &cobra.Command{

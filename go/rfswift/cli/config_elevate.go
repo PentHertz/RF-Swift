@@ -18,6 +18,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
+	common "penthertz/rfswift/common"
 	rfdock "penthertz/rfswift/dock"
 	"penthertz/rfswift/hostsetup"
 )
@@ -42,6 +43,12 @@ func elevateForConfigEdit(cmd *cobra.Command, args []string) error {
 	if os.Getenv("RFSWIFT_ELEVATED") != "" || !rfdock.NeedsRootForConfigEdit() {
 		return nil
 	}
+	// Refuse what the change itself would refuse before asking for a
+	// password, as the Workbench does, rather than after sudo.
+	if err := configPreflight(cmd); err != nil {
+		common.PrintErrorMessage(err)
+		os.Exit(1)
+	}
 	exe, err := os.Executable()
 	if err != nil {
 		return err
@@ -50,7 +57,7 @@ func elevateForConfigEdit(cmd *cobra.Command, args []string) error {
 	argv := append([]string{exe, "-q"}, os.Args[1:]...)
 	if os.Geteuid() != 0 {
 		if _, err := exec.LookPath("sudo"); err == nil && hostsetupTerminal() {
-			c := exec.Command("sudo", append([]string{"env", "RFSWIFT_ELEVATED=1"}, argv...)...)
+			c := exec.Command("sudo", append([]string{"env", "RFSWIFT_ELEVATED=1", "RFSWIFT_NO_BANNER=1"}, argv...)...)
 			c.Stdin, c.Stdout, c.Stderr = os.Stdin, os.Stdout, os.Stderr
 			if runErr := c.Run(); runErr != nil {
 				var exitErr *exec.ExitError
@@ -62,7 +69,7 @@ func elevateForConfigEdit(cmd *cobra.Command, args []string) error {
 			os.Exit(0)
 		}
 	}
-	out, runErr := hostsetup.RunPrivilegedCommand(append([]string{"env", "RFSWIFT_ELEVATED=1"}, argv...)...)
+	out, runErr := hostsetup.RunPrivilegedCommand(append([]string{"env", "RFSWIFT_ELEVATED=1", "RFSWIFT_NO_BANNER=1"}, argv...)...)
 	fmt.Fprint(os.Stdout, out)
 	if runErr != nil {
 		// Cobra would print the usage on a returned error; this is not a
@@ -78,6 +85,22 @@ func elevateForConfigEdit(cmd *cobra.Command, args []string) error {
 	}
 	os.Exit(0)
 	return nil
+}
+
+// configPreflight checks a configuration change the way the change itself
+// will, without touching the container. Only bindings depend on the host
+// (the path must exist and be a device or a directory); the other settings
+// are checked by the engine.
+func configPreflight(cmd *cobra.Command) error {
+	if cmd != BindingsAddCmd && cmd != BindingsRmCmd {
+		return nil
+	}
+	contID, _ := cmd.Flags().GetString("container")
+	source, _ := cmd.Flags().GetString("source")
+	target, _ := cmd.Flags().GetString("target")
+	device, _ := cmd.Flags().GetBool("devices")
+	kind, source, target := bindingChangeArgs(source, target, device)
+	return rfdock.ValidateConfigChange(rfdock.ConfigChange{Container: contID, Kind: kind, Source: source, Target: target, Add: cmd == BindingsAddCmd})
 }
 
 func hostsetupTerminal() bool { return term.IsTerminal(int(os.Stdin.Fd())) }

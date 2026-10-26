@@ -16,6 +16,7 @@
 package hostsetup
 
 import (
+	"bytes"
 	"fmt"
 	"golang.org/x/term"
 	"os"
@@ -126,8 +127,63 @@ func RunPrivileged(script string) error {
 // script: directly when already root, via sudo on a terminal, via pkexec
 // otherwise. Output is returned so a GUI can show what happened.
 func RunPrivilegedCommand(argv ...string) (string, error) {
+	cmd, err := privilegedCommand(argv)
+	if err != nil {
+		return "", err
+	}
+	out, err := cmd.CombinedOutput()
+	return string(out), err
+}
+
+// RunPrivilegedCommandLines is RunPrivilegedCommand that also hands every
+// output line to onLine as the program prints it, so a GUI can show progress
+// while it runs. (Through the macOS password dialog the output only arrives
+// at the end.)
+func RunPrivilegedCommandLines(onLine func(string), argv ...string) (string, error) {
+	cmd, err := privilegedCommand(argv)
+	if err != nil {
+		return "", err
+	}
+	w := &lineWriter{onLine: onLine}
+	// The same writer for both: exec then copies them from one goroutine.
+	cmd.Stdout, cmd.Stderr = w, w
+	err = cmd.Run()
+	w.flush()
+	return w.out.String(), err
+}
+
+// lineWriter keeps everything written and calls onLine for each full line.
+type lineWriter struct {
+	out     bytes.Buffer
+	partial []byte
+	onLine  func(string)
+}
+
+func (w *lineWriter) Write(p []byte) (int, error) {
+	w.out.Write(p)
+	w.partial = append(w.partial, p...)
+	for {
+		i := bytes.IndexByte(w.partial, '\n')
+		if i < 0 {
+			break
+		}
+		w.onLine(strings.TrimRight(string(w.partial[:i]), "\r"))
+		w.partial = w.partial[i+1:]
+	}
+	return len(p), nil
+}
+
+func (w *lineWriter) flush() {
+	if len(w.partial) > 0 {
+		w.onLine(string(w.partial))
+		w.partial = nil
+	}
+}
+
+// privilegedCommand builds the command that runs argv as root.
+func privilegedCommand(argv []string) (*exec.Cmd, error) {
 	if len(argv) == 0 {
-		return "", fmt.Errorf("no command")
+		return nil, fmt.Errorf("no command")
 	}
 	var cmd *exec.Cmd
 	switch {
@@ -135,7 +191,7 @@ func RunPrivilegedCommand(argv ...string) (string, error) {
 		cmd = exec.Command(argv[0], argv[1:]...)
 	case !wantsPkexecFirst():
 		if _, err := exec.LookPath("sudo"); err != nil {
-			return "", fmt.Errorf("root privileges are needed for this change: install sudo or re-run as root")
+			return nil, fmt.Errorf("root privileges are needed for this change: install sudo or re-run as root")
 		}
 		cmd = exec.Command("sudo", argv...)
 		cmd.Stdin = os.Stdin
@@ -147,18 +203,17 @@ func RunPrivilegedCommand(argv ...string) (string, error) {
 		pkexec, err := exec.LookPath("pkexec")
 		if err != nil {
 			if graphical {
-				return "", fmt.Errorf("root privileges are needed for this change and no graphical prompt is available: install polkit (pkexec), or apply the change with the CLI (rfswift config ...)")
+				return nil, fmt.Errorf("root privileges are needed for this change and no graphical prompt is available: install polkit (pkexec), or apply the change with the CLI (rfswift config ...)")
 			}
 			if _, sudoErr := exec.LookPath("sudo"); sudoErr != nil {
-				return "", fmt.Errorf("root privileges are needed for this change: install pkexec (polkit) or sudo")
+				return nil, fmt.Errorf("root privileges are needed for this change: install pkexec (polkit) or sudo")
 			}
 			cmd = exec.Command("sudo", argv...)
 		} else {
 			cmd = exec.Command(pkexec, argv...)
 		}
 	}
-	out, err := cmd.CombinedOutput()
-	return string(out), err
+	return cmd, nil
 }
 
 const osascriptBinary = "/usr/bin/osascript"

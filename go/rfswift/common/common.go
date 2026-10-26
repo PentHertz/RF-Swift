@@ -15,7 +15,7 @@ import (
 // RF Swift repo
 // Version is the single application version used by the CLI, remote agent and
 // Workbench. Keep it without a leading "v"; presentation layers add that.
-var Version = "4.0.4"
+var Version = "4.0.5-dev"
 var Codename = "Nucleus"
 var Branch = "main"
 var Owner = "PentHertz"
@@ -266,4 +266,33 @@ func ConfigFileByPlatform() string {
 		configPath = "config.ini"
 	}
 	return configPath
+}
+
+// CacheDirByPlatform returns the platform-appropriate directory for rfswift's
+// caches: $XDG_CACHE_HOME/rfswift or ~/.cache/rfswift on Linux,
+// ~/Library/Caches/rfswift on macOS, and %LocalAppData%\rfswift on Windows.
+// Like ConfigFileByPlatform, a run under sudo uses the original user's
+// directory (SUDO_USER), so it shares the user's cache instead of keeping its
+// own under /root. Create it with MkdirAllForInvokingUser so it stays theirs.
+//
+//	out: string absolute cache directory, or "" when none can be determined
+func CacheDirByPlatform() string {
+	if sudoUser := os.Getenv("SUDO_USER"); sudoUser != "" && runtime.GOOS != "windows" {
+		if userInfo, err := user.Lookup(sudoUser); err == nil {
+			switch {
+			case runtime.GOOS == "darwin":
+				return filepath.Join(userInfo.HomeDir, "Library", "Caches", "rfswift")
+			case os.Getenv("XDG_CACHE_HOME") == "":
+				// sudo resets the environment, so the user's own
+				// XDG_CACHE_HOME is only known when it was kept (sudo -E),
+				// and then os.UserCacheDir below already uses it.
+				return filepath.Join(userInfo.HomeDir, ".cache", "rfswift")
+			}
+		}
+	}
+	dir, err := os.UserCacheDir()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(dir, "rfswift")
 }

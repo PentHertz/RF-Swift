@@ -27,8 +27,13 @@ func TestResolveBindingKindClassifiesDevPaths(t *testing.T) {
 		if err != nil || got != "volume" || len(rules) != 1 || rules[0] != "c 189:* rwm" {
 			t.Errorf("/dev/bus/usb -> %s %v %v", got, rules, err)
 		}
-		if _, _, err := resolveBindingKind("device", "/dev/bus/usb", true); err == nil {
-			t.Error("a tree as a device mapping must be refused with advice")
+		// Asked for as a device (rfswift bindings add -d), it is mapped as a
+		// device: the engine maps the nodes under it when the container starts.
+		if got, rules, err := resolveBindingKind("device", "/dev/bus/usb", true); err != nil || got != "device" || len(rules) != 0 {
+			t.Errorf("device /dev/bus/usb -> %s %v %v", got, rules, err)
+		}
+		if got, err := BindingKindFor("device", "/dev/bus/usb", true); err != nil || got != "device" {
+			t.Errorf("BindingKindFor(device, /dev/bus/usb) = %s %v", got, err)
 		}
 	}
 	// Outside /dev: plain volume.
@@ -121,8 +126,8 @@ func TestResolveBindingKindLimaVM(t *testing.T) {
 			t.Errorf("%s /dev/bus/usb in the VM -> %s %v %v", kind, got, rules, err)
 		}
 	}
-	if _, _, err := resolveBindingKind("device", "/dev/bus/usb", true); err == nil {
-		t.Error("a VM directory as a device mapping must be refused with advice")
+	if got, rules, err := resolveBindingKind("device", "/dev/bus/usb", true); err != nil || got != "device" || len(rules) != 0 {
+		t.Errorf("device /dev/bus/usb in the VM -> %s %v %v", got, rules, err)
 	}
 	if got, rules, err := resolveBindingKind("device", "/dev/ttyACM0", true); err != nil || got != "device" || len(rules) != 0 {
 		t.Errorf("device node in the VM -> %s %v %v", got, rules, err)
@@ -149,8 +154,8 @@ func TestResolveBindingKindLimaVM(t *testing.T) {
 	if got, _, err := resolveBindingKind("device", "/dev/ttyACM0", true); err != nil || got != "device" {
 		t.Errorf("unreachable VM, device -> %s %v", got, err)
 	}
-	if _, _, err := resolveBindingKind("device", "/dev/bus/usb", true); err == nil {
-		t.Error("unreachable VM: the USB tree as a device mapping is still refused")
+	if got, err := BindingKindFor("device", "/dev/bus/usb", true); err != nil || got != "device" {
+		t.Errorf("unreachable VM, USB tree as a device -> %s %v", got, err)
 	}
 }
 
@@ -184,5 +189,20 @@ func TestParseVMPathInfo(t *testing.T) {
 	}
 	if len(got) != 3 {
 		t.Errorf("entries = %d", len(got))
+	}
+}
+
+// A path is either mapped or mounted: the recreate path finds a target in
+// either list, so a removal works whether it was added with -d or not.
+func TestPropertyHasTarget(t *testing.T) {
+	binds := strings.Split("/home/u/ws:/root/ws;;/dev/bus/usb:/dev/bus/usb:rw", ";;")
+	if !propertyHasTarget(binds, "/dev/bus/usb") || propertyHasTarget(binds, "/dev/snd") {
+		t.Fatalf("propertyHasTarget(%v)", binds)
+	}
+	if got := strings.Join(updatePropertyItems(binds, "", "/dev/bus/usb", false), ";;"); got != "/home/u/ws:/root/ws" {
+		t.Fatalf("removal left %q", got)
+	}
+	if propertyHasTarget(strings.Split("", ","), "/dev/bus/usb") {
+		t.Fatal("an empty list has no target")
 	}
 }

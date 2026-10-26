@@ -157,6 +157,12 @@ func agentControl(ctx context.Context, req remote.ControlRequest) (any, error) {
 			return nil, err
 		}
 		return rfdock.ImageVersions(p.Image)
+	case "images.published":
+		var p struct{ Refresh bool }
+		if err := decode(&p); err != nil {
+			return nil, err
+		}
+		return rfdock.PublishedImages(p.Refresh)
 	case "images.pull":
 		var p struct{ Engine, Image string }
 		if err := decode(&p); err != nil {

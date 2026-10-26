@@ -76,10 +76,18 @@ func TestLiveConfigureRecreatesContainer(t *testing.T) {
 		return false
 	}
 
-	// 1. Bind mount added from the GUI form.
+	// 1. Bind mount added from the GUI form, reporting the steps the
+	// Configure dialog's progress bar shows.
 	dir := t.TempDir()
+	var stages []string
+	SetConfigStageReporter(func(stage string, percent int) { stages = append(stages, stage) })
 	if err := UpdateBinding(name, "volume", dir, "/opt/added", true); err != nil {
 		t.Fatalf("add bind: %v", err)
+	}
+	SetConfigStageReporter(nil)
+	wantStages := []string{"Stopping the container", "Saving the container's contents as a snapshot image", "Removing the old container", "Creating the container with the new configuration", "Starting the container"}
+	if strings.Join(stages, " | ") != strings.Join(wantStages, " | ") {
+		t.Errorf("re-create steps = %q, want %q", stages, wantStages)
 	}
 	c := inspect()
 	if !has(c.HostConfig.Binds, dir+":/opt/added") || !has(c.HostConfig.Binds, "/tmp:/mnt/hosttmp") {
@@ -139,6 +147,30 @@ func TestLiveConfigureRecreatesContainer(t *testing.T) {
 	c = inspect()
 	if !has(c.HostConfig.Binds, "/dev/null:/dev/rfswift-volnull") || !has(c.HostConfig.DeviceCgroupRules, "c 1:* rwm") {
 		t.Fatalf("node as volume: binds=%v rules=%v", c.HostConfig.Binds, c.HostConfig.DeviceCgroupRules)
+	}
+
+	// 3c. A directory mapped as a device (rfswift bindings add -d): the
+	// engine maps the nodes under it, and removing it as a device works.
+	if info, err := os.Stat("/dev/bus/usb"); err == nil && info.IsDir() {
+		if err := UpdateBinding(name, "device", "/dev/bus/usb", "/dev/bus/usb", true); err != nil {
+			t.Fatalf("map /dev/bus/usb as a device: %v", err)
+		}
+		c = inspect()
+		mapped := false
+		for _, d := range c.HostConfig.Devices {
+			mapped = mapped || (d.PathOnHost == "/dev/bus/usb" && d.PathInContainer == "/dev/bus/usb")
+		}
+		if !mapped || has(c.HostConfig.Binds, "/dev/bus/usb:") || c.State == nil || !c.State.Running {
+			t.Fatalf("/dev/bus/usb as a device: devices=%+v binds=%v state=%+v", c.HostConfig.Devices, c.HostConfig.Binds, c.State)
+		}
+		if err := UpdateBinding(name, "device", "/dev/bus/usb", "/dev/bus/usb", false); err != nil {
+			t.Fatalf("unmap /dev/bus/usb: %v", err)
+		}
+		for _, d := range inspect().HostConfig.Devices {
+			if d.PathOnHost == "/dev/bus/usb" {
+				t.Fatalf("/dev/bus/usb still mapped after removal")
+			}
+		}
 	}
 
 	// 4. A serial port that is not plugged in: accepted, attached on demand.

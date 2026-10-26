@@ -734,6 +734,7 @@ func directEditContainer(ctx context.Context, cli *client.Client, containerID st
 	}
 
 	// Stop the container
+	reportConfigStage("Stopping the container", 15)
 	common.PrintInfoMessage("Stopping the container...")
 	if err := showLoadingIndicator(ctx, func() error {
 		_, err := cli.ContainerStop(ctx, containerID, client.ContainerStopOptions{Timeout: &timeout})
@@ -762,6 +763,7 @@ func directEditContainer(ctx context.Context, cli *client.Client, containerID st
 	fullID := containerJSON.ID
 
 	// Load hostconfig.json
+	reportConfigStage("Rewriting the container's configuration files", 35)
 	engine := GetEngine()
 	hostConfigPath, err := EngineGetHostConfigPath(fullID)
 	if err != nil {
@@ -808,6 +810,7 @@ func directEditContainer(ctx context.Context, cli *client.Client, containerID st
 
 	// Restart the engine service
 	engineName := GetEngine().Name()
+	reportConfigStage(fmt.Sprintf("Restarting the %s service (running containers stop and come back)", engineName), 55)
 	if err := showLoadingIndicator(ctx, func() error {
 		return EngineRestartService()
 	}, fmt.Sprintf("Restarting %s service...", engineName)); err != nil {
@@ -820,6 +823,7 @@ func directEditContainer(ctx context.Context, cli *client.Client, containerID st
 	// configuration applies at this start), then the others the restart
 	// stopped. Containers with a restart policy are already on their way.
 	if wasRunning {
+		reportConfigStage("Starting the container with its new configuration", 80)
 		if _, err := cli.ContainerStart(ctx, fullID, client.ContainerStartOptions{}); err != nil {
 			common.PrintWarningMessage(fmt.Sprintf("Container '%s' could not be started again: %v", containerName, err))
 		} else {
@@ -832,6 +836,7 @@ func directEditContainer(ctx context.Context, cli *client.Client, containerID st
 			continue
 		}
 		if res, err := cli.ContainerInspect(ctx, id, client.ContainerInspectOptions{}); err == nil && res.Container.State != nil && !res.Container.State.Running {
+			reportConfigStage("Starting the other containers the restart stopped", 90)
 			if _, err := cli.ContainerStart(ctx, id, client.ContainerStartOptions{}); err != nil {
 				common.PrintWarningMessage(fmt.Sprintf("Container %s was running before the service restart and could not be started again: %v", strings.TrimPrefix(res.Container.Name, "/"), err))
 			}
@@ -1480,6 +1485,7 @@ func recreateContainerWithProperties(ctx context.Context, cli *client.Client, co
 	common.PrintInfoMessage(fmt.Sprintf("Updating container '%s'", containerName))
 
 	// Stop the container
+	reportConfigStage("Stopping the container", 15)
 	common.PrintInfoMessage("Stopping container...")
 	timeout := 10
 	if _, err := cli.ContainerStop(ctx, containerID, client.ContainerStopOptions{Timeout: &timeout}); err != nil {
@@ -1502,6 +1508,7 @@ func recreateContainerWithProperties(ctx context.Context, cli *client.Client, co
 
 	// ── 1. Commit the container state to a temporary image ──
 	tempImageTag := fmt.Sprintf("localhost/%s:%s_temp_%s", repo, tag, time.Now().Format("20060102150405"))
+	reportConfigStage("Saving the container's contents as a snapshot image", 30)
 	common.PrintInfoMessage(fmt.Sprintf("Committing container state to temporary image: %s", tempImageTag))
 
 	commitLabels := make(map[string]string)
@@ -1530,6 +1537,7 @@ func recreateContainerWithProperties(ctx context.Context, cli *client.Client, co
 	common.PrintSuccessMessage(fmt.Sprintf("Committed as: %s (ID: %s)", tempImageTag, commitResp.ID[:12]))
 
 	// ── 2. Remove old container ──
+	reportConfigStage("Removing the old container", 50)
 	common.PrintInfoMessage("Removing old container...")
 	if _, err := cli.ContainerRemove(ctx, containerID, client.ContainerRemoveOptions{Force: true}); err != nil {
 		common.PrintErrorMessage(fmt.Errorf("failed to remove container: %v", err))
@@ -1689,6 +1697,7 @@ func recreateContainerWithProperties(ctx context.Context, cli *client.Client, co
 	}
 
 	// ── 4. Create the new container ──
+	reportConfigStage("Creating the container with the new configuration", 65)
 	common.PrintInfoMessage("Creating new container with updated configuration...")
 
 	tempContainerName := fmt.Sprintf("%s_rfswift_tmp_%d", containerName, time.Now().UnixNano())
@@ -1742,6 +1751,7 @@ func recreateContainerWithProperties(ctx context.Context, cli *client.Client, co
 	}
 
 	// ── 6. Start the new container ──
+	reportConfigStage("Starting the container", 85)
 	common.PrintInfoMessage("Starting new container...")
 	if _, err := cli.ContainerStart(ctx, newContainerID, client.ContainerStartOptions{}); err != nil {
 		common.PrintErrorMessage(fmt.Errorf("failed to start new container: %v", err))
