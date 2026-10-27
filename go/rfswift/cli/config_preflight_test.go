@@ -2,6 +2,7 @@ package cli
 
 import (
 	"os"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -33,6 +34,13 @@ func TestConfigPreflightChecksBindingsBeforeElevation(t *testing.T) {
 	rfdock.SetPreferredEngine("docker")
 
 	t.Run("absent device", func(t *testing.T) {
+		if runtime.GOOS != "linux" {
+			// Off Linux the /dev paths live in the engine's VM (Docker
+			// Desktop, WSL 2, Lima), not on this host: when the VM cannot be
+			// asked, the path is taken as named and the engine reports an
+			// absent one when the container starts.
+			t.Skip("device paths belong to the engine's VM on " + runtime.GOOS)
+		}
 		setCommandFlags(t, BindingsAddCmd, map[string]string{"container": "lab", "target": "/dev/rfswift-no-such-node"})
 		if err := configPreflight(BindingsAddCmd); err == nil || !strings.Contains(err.Error(), "not present") {
 			t.Fatalf("expected the absent-device error, got %v", err)

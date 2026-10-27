@@ -478,6 +478,19 @@ func (a *App) MissionImageVersions(engine, image string) (rfdock.ImageVersionLis
 	return rfdock.ImageVersions(image)
 }
 
+// MissionImages lists the official images a container mission can be created
+// from: the ones Docker Hub publishes for the engine host's architecture (the
+// agent's host when connected to one), as `rfswift images remote` shows them.
+// The list is cached for a few hours; refresh fetches it again.
+func (a *App) MissionImages(refresh bool) (rfdock.PublishedImageList, error) {
+	if remoteEngine, ok := a.engine().(*RemoteEngine); ok {
+		var list rfdock.PublishedImageList
+		err := remoteEngine.call("images.published", map[string]any{"refresh": refresh}, &list)
+		return list, err
+	}
+	return rfdock.PublishedImages(refresh)
+}
+
 // InspectMission returns a mission's full configuration and network.
 func (a *App) InspectMission(id string) (Mission, error) {
 	if err := a.requireMission(id); err != nil {
@@ -516,8 +529,12 @@ func (a *App) ConfigureContainer(id string, change ContainerChange) error {
 	if err := a.requireMission(id); err != nil {
 		return err
 	}
+	// The steps of the change drive the Configure dialog's progress bar
+	// (rfswift:operation-progress, operation "container-configure").
+	stage := func(name string, percent int) { a.emitOperationProgress("container-configure", id, percent, name) }
 	value := strings.TrimSpace(change.Value)
 	if remoteEngine, ok := a.engine().(*RemoteEngine); ok {
+		stage("Applying the change on the agent's host", 20)
 		return remoteEngine.Configure(id, change)
 	}
 	a.routeLocalMission(id)
@@ -534,8 +551,11 @@ func (a *App) ConfigureContainer(id string, change ContainerChange) error {
 		// Docker on Linux: the change rewrites files under /var/lib/docker and
 		// restarts the daemon. The Workbench runs itself headless as root
 		// through polkit (one password prompt) to apply it.
-		return applyContainerChangeAsRoot(c)
+		stage("Waiting for authorisation", 5)
+		return applyContainerChangeAsRoot(c, stage)
 	}
+	rfdock.SetConfigStageReporter(stage)
+	defer rfdock.SetConfigStageReporter(nil)
 	return rfdock.ApplyConfigChange(c)
 }
 
@@ -550,12 +570,16 @@ func (a *App) emitAuditStage(mission, stage string, percent int) {
 }
 
 // ApplyContainerChangeJSON is the headless entry point of the Workbench
-// binary run as root (main.go --apply-container-change).
+// binary run as root (main.go --apply-container-change). It prints each step
+// as a line the Workbench reads while the change runs.
 func ApplyContainerChangeJSON(raw string) error {
+	rfdock.SetConfigStageReporter(func(stage string, percent int) {
+		fmt.Println(rfdock.ConfigStageLine(stage, percent))
+	})
 	return rfdock.ApplyConfigChangeJSON(raw)
 }
 
-func applyContainerChangeAsRoot(c rfdock.ConfigChange) error {
+func applyContainerChangeAsRoot(c rfdock.ConfigChange, stage func(string, int)) error {
 	exe, err := os.Executable()
 	if err != nil {
 		return err
@@ -564,7 +588,11 @@ func applyContainerChangeAsRoot(c rfdock.ConfigChange) error {
 	if err != nil {
 		return err
 	}
-	out, err := hostsetup.RunPrivilegedCommand(exe, "--apply-container-change", string(payload))
+	out, err := hostsetup.RunPrivilegedCommandLines(func(line string) {
+		if name, percent, ok := rfdock.ParseConfigStageLine(line); ok {
+			stage(name, percent)
+		}
+	}, exe, "--apply-container-change", string(payload))
 	if err != nil {
 		log.Printf("configure %s as root failed: %v\n%s", c.Container, err, out)
 		msg := strings.TrimSpace(stripANSILines(out))
@@ -585,7 +613,7 @@ func stripANSILines(out string) string {
 	for _, line := range strings.Split(out, "\n") {
 		line = strings.TrimSpace(ansiRe.ReplaceAllString(line, ""))
 		line = strings.Trim(line, "│┌┐└┘├┤─ ")
-		if line == "" || strings.HasPrefix(line, "[i]") {
+		if _, _, isStage := rfdock.ParseConfigStageLine(line); line == "" || isStage || strings.HasPrefix(line, "[i]") {
 			continue
 		}
 		keep = append(keep, line)
