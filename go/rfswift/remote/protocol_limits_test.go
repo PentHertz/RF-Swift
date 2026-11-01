@@ -8,6 +8,7 @@ import (
 	"errors"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -22,6 +23,60 @@ func TestCommandCancellation(t *testing.T) {
 	if _, err := RunCommand(ctx, c, []string{"exec"}); !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("cancellation lost: %v", err)
 	}
+}
+
+// lateDeadline is a context whose deadline passes while the request is in
+// flight but whose Done channel never fires, so net/http keeps the reply.
+// That is what the client sees when the agent's reply races the deadline:
+// TestCommandCancellation hit it on a busy CI runner.
+type lateDeadline struct {
+	context.Context
+	expired atomic.Bool
+}
+
+func newLateDeadline() *lateDeadline { return &lateDeadline{Context: context.Background()} }
+
+func (c *lateDeadline) Done() <-chan struct{} { return nil }
+
+func (c *lateDeadline) Err() error {
+	if c.expired.Load() {
+		return context.DeadlineExceeded
+	}
+	return nil
+}
+
+func TestRegressionReplyRacingTheDeadline(t *testing.T) {
+	stopped := errors.New("context canceled")
+	t.Run("failed command", func(t *testing.T) {
+		ctx := newLateDeadline()
+		c := protocolTestServer(t, ServerConfig{RunCommand: func(context.Context, []string) (string, error) {
+			ctx.expired.Store(true)
+			return "", stopped
+		}})
+		if _, err := RunCommand(ctx, c, []string{"exec"}); !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("the agent's reply hid the caller's deadline: %v", err)
+		}
+	})
+	t.Run("command that finished in time", func(t *testing.T) {
+		ctx := newLateDeadline()
+		c := protocolTestServer(t, ServerConfig{RunCommand: func(context.Context, []string) (string, error) {
+			ctx.expired.Store(true)
+			return "done", nil
+		}})
+		if got, err := RunCommand(ctx, c, []string{"exec"}); err != nil || got.Output != "done" {
+			t.Fatalf("a finished command must keep its result: %+v %v", got, err)
+		}
+	})
+	t.Run("failed control call", func(t *testing.T) {
+		ctx := newLateDeadline()
+		c := protocolTestServer(t, ServerConfig{Control: func(context.Context, ControlRequest) (any, error) {
+			ctx.expired.Store(true)
+			return nil, stopped
+		}})
+		if err := Control(ctx, c, "targets.list", nil, nil); !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("the agent's reply hid the caller's deadline: %v", err)
+		}
+	})
 }
 
 func TestEncodedResponseLimits(t *testing.T) {

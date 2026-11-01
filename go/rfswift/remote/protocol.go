@@ -433,7 +433,13 @@ func Control(ctx context.Context, c ClientConfig, method string, params, result 
 		return fmt.Errorf("agent control returned %s", resp.Status)
 	}
 	var envelope ControlResult
-	if err = decodeResponse(resp.Body, maxControlResponse, &envelope); err != nil {
+	err = decodeResponse(resp.Body, maxControlResponse, &envelope)
+	if err != nil || envelope.Error != "" {
+		if stopped := stoppedByCaller(ctx); stopped != nil {
+			return stopped
+		}
+	}
+	if err != nil {
 		return err
 	}
 	if envelope.Error != "" {
@@ -476,10 +482,29 @@ func RunCommand(ctx context.Context, c ClientConfig, args []string) (CommandResu
 		return CommandResult{}, fmt.Errorf("agent command returned %s: %s", resp.Status, strings.TrimSpace(string(b)))
 	}
 	var result CommandResult
-	if err = decodeResponse(resp.Body, maxCommandResponse, &result); err != nil {
+	err = decodeResponse(resp.Body, maxCommandResponse, &result)
+	if err != nil || result.Error != "" {
+		if stopped := stoppedByCaller(ctx); stopped != nil {
+			return CommandResult{}, stopped
+		}
+	}
+	if err != nil {
 		return CommandResult{}, err
 	}
 	return result, nil
+}
+
+// stoppedByCaller returns why the caller's context ended, if it did, so a
+// failed call reports the caller's timeout or cancellation. The agent stops
+// the work as soon as the connection drops and answers "context canceled";
+// net/http hands that answer back instead of the deadline error when it
+// arrives in the same instant, which a busy machine makes possible. A call
+// that succeeded just before the deadline still returns its result.
+func stoppedByCaller(ctx context.Context) error {
+	if ctx.Err() == nil {
+		return nil
+	}
+	return context.Cause(ctx)
 }
 
 func decodeResponse(r io.Reader, limit int64, result any) error {
