@@ -4,6 +4,92 @@ All notable changes to RF Swift are recorded here. The format is based on
 Keep a Changelog (https://keepachangelog.com), and the project aims to follow
 semantic versioning. Dates are ISO-8601 (YYYY-MM-DD).
 
+## [11-01-2026] - v4.0.5
+
+### Added
+
+- Workbench: the image field of the create dialog (Docker, Podman and Lima
+  missions) suggests the official images Docker Hub publishes for the
+  host's architecture, the list `rfswift images remote` shows, instead of
+  names that did not always match a published image. With a remote agent
+  connected, the list comes from the agent's host (new `images.published`
+  control method). It is fetched once and cached for 6 hours in
+  `~/.cache/rfswift` (or `$XDG_CACHE_HOME/rfswift`) on Linux,
+  `~/Library/Caches/rfswift` on macOS and `%LocalAppData%\rfswift` on
+  Windows; **Refresh list** fetches it again, and the last list is still
+  offered when Docker Hub cannot be reached. A run under sudo shares the
+  user's cache.
+- Workbench: the Configure dialog shows a progress bar with the current step
+  (stopping the container, rewriting its configuration, restarting the
+  engine, starting it again...) while capabilities, devices, bind mounts and
+  other settings are added or removed, also when the change runs as root.
+- Workbench Agent settings: a program path for each coding-agent CLI, with a
+  **Browse...** button that shows hidden folders such as `.nvm`, for a CLI
+  installed where the Workbench does not look. Without one, the search now
+  also covers nvm and fnm Node versions (newest first), pnpm, yarn, deno
+  and mise, which a desktop launcher's `PATH` usually lacks, and the CLI
+  starts with its own folder first on `PATH` so an npm-installed CLI finds
+  its `node`. A wrong path is refused when the settings are saved.
+- Workbench terminals: zoom with Ctrl + / Ctrl - / Ctrl 0 (Cmd on macOS),
+  Ctrl + mouse wheel or a trackpad pinch, or the right-click menu. One size
+  (8 to 32 px) applies to every terminal and is remembered; the shell is
+  told its new size. Ctrl+Shift+- still reaches the shell.
+
+### Changed
+
+- Wails 2.17.1 for the Workbench, and in CI.
+- Workbench: CyberChef 11.5.0 is bundled (was 11.4.0).
+- `golang.org/x/net` 0.62.0 in both modules.
+- CI: govulncheck 1.9.0, osv-scanner 2.7.0 and gosec 2.30.0. The release job
+  now really runs goreleaser-action 7.3.0 (v4.0.4 listed it, but its release
+  workflow still pinned 7.2.3).
+- CI: macOS jobs run on macOS 15 runners, since GitHub retires the macOS 14
+  images on 2026-11-02. The Workbench still targets macOS 10.13 and later
+  as before.
+- macOS release: stapling and validating the notarization ticket are retried
+  when Apple's ticket service drops the connection, instead of failing the
+  release after notarization succeeded.
+
+### Fixed
+
+- `rfswift bindings add -d` refused a directory such as `/dev/bus/usb`. It
+  is now mapped as asked: the engine maps every device under it when the
+  container starts (`docker --device`), so a device plugged in later shows
+  up after a restart; the CLI says so and recalls that a bind mount
+  (without `-d`) follows hot-plug. Switching a path between `-d` and a bind
+  mount replaces the old entry instead of keeping both.
+- `rfswift bindings add/rm` checked the path only after asking for the sudo
+  password. A missing device or a stray directory is now refused first, as
+  in the Workbench, and the run under sudo no longer prints the banner a
+  second time.
+- Workbench: clicking outside the configuration window of a container or
+  environment, or outside another dialog, closed it and lost what was
+  typed. Dialogs now stay open until they are closed.
+- Workbench terminals: the arrows of Powerline prompts (agnoster theme) were
+  drawn as boxes on hosts without a Powerline font. The Powerline symbols
+  font (MIT, from powerline 2.8.4) is now bundled and used only for those
+  glyphs.
+- Workbench: Browse buttons as tall as their fields, select menus (such as
+  the Secrets type) styled like the other fields, and the same height for
+  every top bar control, including the connection button ("This machine").
+- Remote agent client: when a reply crossed the caller's deadline, a timed
+  out command could come back as successful with a "context canceled"
+  result, and a control call with the agent's "context canceled" instead of
+  the timeout. Both now report the caller's own timeout or cancellation; a
+  command that finished in time keeps its result.
+- Tests: the binding checks no longer fail on macOS and Windows, where
+  `/dev` belongs to the engine's VM.
+
+### Security
+
+- Workbench: echo 4.16.3 (a Wails dependency) fixes GHSA-246p-cpwv-v3jq and
+  GHSA-99jh-6h7p-pp36.
+- Workbench: Wails 2.17.1 fixes GHSA-r5j2-ghh9-2jqw, where child frames could
+  reach the IPC bridge on Linux. The Workbench was not exposed (it loads no
+  frames and its CSP forbids them), but takes the fix.
+- Workbench: CyberChef 11.5.0 no longer bakes automatically a recipe that
+  contains operations meant to run only on a manual Bake.
+
 ## [10-24-2026] - v4.0.4
 
 ### Added
