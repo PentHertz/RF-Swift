@@ -370,7 +370,7 @@ func (a *App) StartAgentTerminal(missionID, clientID string, cols, rows int) (Ag
 	}
 	cmd := exec.Command(command, args...)
 	cmd.Dir = connected.Workspace
-	cmd.Env = append(os.Environ(), "TERM=xterm-256color", "COLORTERM=truecolor")
+	cmd.Env = agentEnv(command)
 	// ptyx gives the coding-agent TUI a real pseudo-terminal on every platform
 	// (ConPTY on Windows), so the same panel works on a Windows Workbench.
 	ptmx, err := ptyx.Start(cmd, cols, rows)

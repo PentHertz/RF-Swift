@@ -69,6 +69,12 @@
  **/
 
 /**
+ * @author n1474335 [n1474335@gmail.com]
+ * @copyright Crown Copyright 2016
+ * @license Apache-2.0
+ */
+
+/**
  * Base64 functions.
  *
  * @author n1474335 [n1474335@gmail.com]
@@ -111,15 +117,5 @@
  *
  * @author n1474335 [n1474335@gmail.com]
  * @copyright Crown Copyright 2018
- * @license Apache-2.0
- */
-
-/**
- * Web worker to handle the inputs.
- * Handles storage, modification and retrieval of the inputs.
- *
- * @author j433866 [j433866@gmail.com]
- * @author n1474335 [n1474335@gmail.com]
- * @copyright Crown Copyright 2019
  * @license Apache-2.0
  */

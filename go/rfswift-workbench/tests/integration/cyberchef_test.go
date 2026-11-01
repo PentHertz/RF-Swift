@@ -21,7 +21,7 @@ func TestCyberChefLoopbackServer(t *testing.T) {
 	if !strings.HasPrefix(base, "http://127.0.0.1:") || !strings.HasSuffix(base, "/") {
 		t.Fatalf("unsafe CyberChef base URL %q", base)
 	}
-	res, err := http.Get(base + "CyberChef_v11.4.0.html")
+	res, err := http.Get(base + "CyberChef_v11.5.0.html")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -30,7 +30,7 @@ func TestCyberChefLoopbackServer(t *testing.T) {
 	if res.StatusCode != http.StatusOK || !strings.Contains(string(body), "CyberChef") {
 		t.Fatalf("CyberChef response = %d %q", res.StatusCode, body)
 	}
-	res, err = http.Get(strings.TrimSuffix(base, "/") + "-wrong/CyberChef_v11.4.0.html")
+	res, err = http.Get(strings.TrimSuffix(base, "/") + "-wrong/CyberChef_v11.5.0.html")
 	if err != nil {
 		t.Fatal(err)
 	}

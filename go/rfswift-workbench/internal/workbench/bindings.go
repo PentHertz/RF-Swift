@@ -1672,9 +1672,26 @@ func (a *App) ImportPwndoc(mission, data string) (int, error) {
 
 // --- optional external coding-agent / MCP bridge ---
 
-func (a *App) AgentClients() []AgentClient    { return AgentClients() }
-func (a *App) GetAgentCfg() AgentCfg          { return a.store.LoadAgentCfg() }
-func (a *App) SetAgentCfg(cfg AgentCfg) error { return a.store.SaveAgentCfg(cfg) }
+func (a *App) AgentClients() []AgentClient { return AgentClients(a.store.LoadAgentCfg().Paths) }
+func (a *App) GetAgentCfg() AgentCfg       { return a.store.LoadAgentCfg() }
+
+// SetAgentCfg saves the Agent settings. A program path is checked first, so
+// a typo is reported when saving rather than when launching.
+func (a *App) SetAgentCfg(cfg AgentCfg) error {
+	paths, err := cleanAgentPaths(cfg.Paths)
+	if err != nil {
+		return err
+	}
+	cfg.Paths = paths
+	return a.store.SaveAgentCfg(cfg)
+}
+
+// SelectAgentProgram picks a coding-agent program for the Agent settings.
+// Hidden folders are shown: CLIs live under ~/.local, ~/.nvm, ~/.bun ...
+func (a *App) SelectAgentProgram() (string, error) {
+	home, _ := os.UserHomeDir()
+	return wruntime.OpenFileDialog(a.ctx, wruntime.OpenDialogOptions{Title: "Select the coding-agent program", DefaultDirectory: home, ShowHiddenFiles: true})
+}
 func (a *App) MCPCommand(mission string) (string, error) {
 	if !validWorkspaceName(mission) {
 		return "", errors.New("invalid mission scope")

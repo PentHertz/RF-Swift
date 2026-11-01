@@ -37,6 +37,14 @@
  */
 
 /**
+ * Colossus - an emulation of the world's first electronic computer
+ *
+ * @author VirtualColossus [martin@virtualcolossus.co.uk]
+ * @copyright Crown Copyright 2019
+ * @license Apache-2.0
+ */
+
+/**
  * Custom error type for handling Dish type errors.
  * i.e. where the Dish cannot be successfully translated between types
  *
@@ -166,6 +174,15 @@
  *
  * @author hettysymes
  * @copyright hettysymes 2020
+ * @license Apache-2.0
+ */
+
+/**
+ * Emulation of the Typex machine.
+ *
+ * @author s2224834
+ * @author The National Museum of Computing - Bombe Rebuild Project
+ * @copyright Crown Copyright 2019
  * @license Apache-2.0
  */
 

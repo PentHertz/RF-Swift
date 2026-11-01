@@ -351,6 +351,13 @@
  */
 
 /**
+ * Utilities and operations utilized for SM2 encryption and decryption
+ * @author flakjacket95 [dflack95@gmail.com]
+ * @copyright Crown Copyright 2024
+ * @license Apache-2.0
+ */
+
+/**
  * Various delimiters
  *
  * @author n1474335 [n1474335@gmail.com]

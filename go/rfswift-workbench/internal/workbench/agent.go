@@ -21,6 +21,9 @@ type AgentCfg struct {
 	AllowWrite bool            `json:"allowWrite"`
 	AllowExec  bool            `json:"allowExec"`
 	Yolo       map[string]bool `json:"yolo,omitempty"`
+	// Paths holds the program chosen in the settings for a client, by
+	// client id, for a CLI the automatic search does not find.
+	Paths map[string]string `json:"paths,omitempty"`
 }
 
 type AgentClient struct {
@@ -29,6 +32,8 @@ type AgentClient struct {
 	Command   string `json:"command"`
 	Available bool   `json:"available"`
 	Path      string `json:"path"`
+	Custom    bool   `json:"custom,omitempty"`  // Path was set in the settings
+	Problem   string `json:"problem,omitempty"` // why that path cannot be used
 }
 
 type AgentConnectResult struct {
@@ -46,8 +51,8 @@ type AgentTerminalResult struct {
 	Verified   bool   `json:"verified"`
 }
 
-func AgentClients() []AgentClient {
-	defs := []AgentClient{
+func agentClientDefs() []AgentClient {
+	return []AgentClient{
 		{ID: "codex", Label: "Codex CLI", Command: "codex"},
 		{ID: "claude", Label: "Claude Code", Command: "claude"},
 		{ID: "kimi", Label: "Kimi Code", Command: "kimi"},
@@ -55,8 +60,24 @@ func AgentClients() []AgentClient {
 		{ID: "opencode", Label: "OpenCode", Command: "opencode"},
 		{ID: "mistral", Label: "Mistral Vibe", Command: "vibe"},
 	}
+}
+
+// AgentClients lists the supported coding-agent CLIs and where each one is:
+// the program set in the settings (paths, by client id) when there is one,
+// otherwise what findAgentCommand finds.
+func AgentClients(paths map[string]string) []AgentClient {
+	defs := agentClientDefs()
 	for i := range defs {
-		if path, err := exec.LookPath(defs[i].Command); err == nil {
+		if custom := strings.TrimSpace(paths[defs[i].ID]); custom != "" {
+			defs[i].Custom, defs[i].Path = true, custom
+			if resolved, err := checkAgentProgram(custom); err != nil {
+				defs[i].Problem = err.Error()
+			} else {
+				defs[i].Available, defs[i].Path = true, resolved
+			}
+			continue
+		}
+		if path, ok := findAgentCommand(defs[i].Command); ok {
 			defs[i].Available, defs[i].Path = true, path
 		}
 	}
@@ -129,7 +150,7 @@ func (a *App) agentLaunchSpec(mission, requestedClient string) (AgentConnectResu
 		clientID = cfg.Client
 	}
 	var selected AgentClient
-	for _, candidate := range AgentClients() {
+	for _, candidate := range AgentClients(cfg.Paths) {
 		if candidate.ID == clientID {
 			selected = candidate
 			break
@@ -139,7 +160,10 @@ func (a *App) agentLaunchSpec(mission, requestedClient string) (AgentConnectResu
 		return AgentConnectResult{}, "", nil, fmt.Errorf("unsupported coding-agent client %q", clientID)
 	}
 	if !selected.Available {
-		return AgentConnectResult{}, "", nil, fmt.Errorf("%s is not installed or is not on PATH", selected.Label)
+		if selected.Problem != "" {
+			return AgentConnectResult{}, "", nil, fmt.Errorf("%s: %s; fix the program path in the Agent settings", selected.Label, selected.Problem)
+		}
+		return AgentConnectResult{}, "", nil, fmt.Errorf("%s was not found: install it, or set the full path of its program in the Agent settings", selected.Label)
 	}
 	executable, err := os.Executable()
 	if err != nil {

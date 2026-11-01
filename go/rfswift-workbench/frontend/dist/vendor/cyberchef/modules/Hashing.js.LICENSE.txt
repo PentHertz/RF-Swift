@@ -86,6 +86,14 @@
  */
 
 /**
+ * Co-ordinate conversion resources.
+ *
+ * @author j433866 [j433866@gmail.com]
+ * @copyright Crown Copyright 2019
+ * @license Apache-2.0
+ */
+
+/**
  * Custom error type for handling Dish type errors.
  * i.e. where the Dish cannot be successfully translated between types
  *

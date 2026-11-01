@@ -15,7 +15,7 @@
 
 /*! ieee754. BSD-3-Clause License. Feross Aboukhadijeh <https://feross.org/opensource> */
 
-/*! js-yaml 5.3.0 https://github.com/nodeca/js-yaml @license MIT */
+/*! js-yaml 5.4.1 https://github.com/nodeca/js-yaml @license MIT */
 
 /*! regenerator-runtime -- Copyright (c) 2014-present, Facebook, Inc. -- license (MIT): https://github.com/babel/babel/blob/main/packages/babel-helpers/LICENSE */
 
@@ -593,6 +593,15 @@
  */
 
 /**
+ * A class for detecting encodings, file types and byte frequencies and
+ * speculatively executing recipes.
+ *
+ * @author n1474335 [n1474335@gmail.com]
+ * @copyright Crown Copyright 2018
+ * @license Apache-2.0
+ */
+
+/**
  * Base32 resources.
  *
  * @author Peter C-S [petercs@purelymail.com]
@@ -816,6 +825,18 @@
  */
 
 /**
+ * Protobuf lib. Contains functions to decode protobuf serialised
+ * data without a schema or .proto file.
+ *
+ * Provides utility functions to encode and decode variable length
+ * integers (varint).
+ *
+ * @author GCHQ Contributor [3]
+ * @copyright Crown Copyright 2019
+ * @license Apache-2.0
+ */
+
+/**
  * Protocol parsing functions.
  *
  * @author n1474335 [n1474335@gmail.com]
@@ -863,6 +884,16 @@
  *
  * @author n1474335 [n1474335@gmail.com]
  * @copyright Crown Copyright 2022
+ * @license Apache-2.0
+ *
+ */
+
+/**
+ * Stream class for parsing binary protocols.
+ *
+ * @author n1474335 [n1474335@gmail.com]
+ * @author tlwr [toby@toby.codes]
+ * @copyright Crown Copyright 2018
  * @license Apache-2.0
  *
  */

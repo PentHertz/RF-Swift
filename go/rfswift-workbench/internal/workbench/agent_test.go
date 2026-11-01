@@ -100,7 +100,7 @@ func TestAgentYoloArgsAreClientSpecific(t *testing.T) {
 
 func TestAgentClientsIncludeOpenCodeAndMistralVibe(t *testing.T) {
 	want := map[string]string{"opencode": "opencode", "mistral": "vibe"}
-	for _, c := range AgentClients() {
+	for _, c := range AgentClients(nil) {
 		if cmd, ok := want[c.ID]; ok {
 			if c.Command != cmd {
 				t.Fatalf("%s runs %q, want %q", c.ID, c.Command, cmd)

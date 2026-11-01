@@ -37,7 +37,13 @@ entirely owned by the external client.
 For Codex, Claude Code, Kimi Code, OpenCode and Mistral Vibe, press
 **Connect & launch** in the Agent panel. Workbench then:
 
-1. Detects the selected CLI on `PATH`.
+1. Finds the selected CLI: the program path set for it in the Agent settings,
+   otherwise `PATH`, then the user-level folders a desktop launcher's `PATH`
+   often lacks (nvm and fnm Node versions, newest first, pnpm, yarn, deno and
+   mise). Set the full path in the Agent settings (**Browse...** shows hidden
+   folders such as `.nvm` and `.local`) for a CLI installed anywhere else. The
+   CLI starts with its own folder first on `PATH`, so an npm-installed CLI
+   finds the `node` next to it.
 2. Creates or merges a private configuration under the mission's
    `agent-workspace` directory.
 3. Performs a real MCP `initialize` handshake with the mission-scoped server.

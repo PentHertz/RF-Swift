@@ -3,11 +3,11 @@
 RF Swift Workbench embeds the official CyberChef standalone distribution for
 local, offline artifact decoding.
 
-- Version: `v11.4.0`
+- Version: `v11.5.0`
 - Upstream: <https://github.com/gchq/CyberChef>
-- Release asset: `CyberChef_49d1a5634a67a3b806c6db0fdca7dcecb41a776c.zip`
-- Release SHA-256: `423635c4fe05eba1be1e000aae3a82c711c5599c1bc1c0b625a02d344bd51bc4`
-- Entry point SHA-256: `7a4b856f6104fdd7c0555c185fb06e82c05f0d1df14a6e1ec5c72c80bee4c0d3`
+- Release asset: `CyberChef_8cd426dd4f40f1423912d5fad91b578a86a65112.zip`
+- Release SHA-256: `f6478925d3eaa16ec08626a85f5b85eed10d531a5e18700615fed7ecb024cccf`
+- Entry point SHA-256: `809174936fd5f895e23f45e6d06448b6dc6f8f115cf7acc969029f3d894903e9`
 - License: Apache-2.0; see `LICENSE` and the generated `*.LICENSE.txt` files.
 
 The bundle is served only by Workbench's embedded asset server. Artifact bytes
