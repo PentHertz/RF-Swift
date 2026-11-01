@@ -805,11 +805,9 @@ func agentWorkspace(mission string) (string, error) {
 	if t.Engine == "nix" && len(t.Mounts) > 0 && t.Mounts[0] != "" && t.Mounts[0] != "none" {
 		return rfnix.WorkspaceHostPath(t.Mounts[0]), nil
 	}
-	h, e := os.UserHomeDir()
-	if e != nil {
-		return "", e
-	}
-	return filepath.Join(h, "rfswift-workspace", mission), nil
+	// Same default as container creation (sudo-aware: the invoking user's
+	// home, not root's, when the agent was started with sudo).
+	return filepath.Join(rfdock.DefaultWorkspaceRoot(), mission), nil
 }
 func agentSafeArtifact(mission, rel string) (string, error) {
 	root, e := agentWorkspace(mission)

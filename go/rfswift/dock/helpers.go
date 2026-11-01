@@ -303,12 +303,19 @@ func removeBindByPrefix(binds []string, mount string) []string {
 	return result
 }
 
-// IsRootlessPodman reports whether the current process is running under Podman
-// without root privileges.
+// IsRootlessPodman reports whether the active engine is the rootless Podman
+// service: Podman driven by a non-root user, unless that user is configured
+// for the system service (podman_mode = rootful, see podman_mode.go).
 //
-//	out: bool - true if the active engine is Podman and the effective UID is not 0
+//	out: bool
 func IsRootlessPodman() bool {
-	return GetEngine().Type() == EnginePodman && os.Getuid() != 0
+	eng := GetEngine()
+	if p, ok := eng.(*PodmanEngine); ok {
+		// A user configured with podman_mode = rootful drives the system
+		// service: none of the rootless restrictions apply.
+		return p.IsRootless()
+	}
+	return false
 }
 
 // ParseExposedPorts parses a comma-separated list of port/protocol entries into
@@ -934,14 +941,13 @@ const (
 	workspaceDirName       = "rfswift-workspace"
 )
 
-// DefaultWorkspaceRoot returns the default workspace root directory.
-// ~/rfswift-workspace/ on all platforms.
+// DefaultWorkspaceRoot returns the default workspace root directory:
+// ~/rfswift-workspace/ on all platforms. Under sudo "~" is the home of the
+// user who ran sudo, not root's (see common.InvokingHome), so a rootful
+// `sudo rfswift run` keeps the workspace where the user and the Workbench
+// look for it.
 func DefaultWorkspaceRoot() string {
-	home := os.Getenv("HOME")
-	if runtime.GOOS == "windows" {
-		home = os.Getenv("USERPROFILE")
-	}
-	return filepath.Join(home, workspaceDirName)
+	return filepath.Join(common.InvokingHome(), workspaceDirName)
 }
 
 // resolveWorkspacePath returns the host-side workspace path for a container.
@@ -966,11 +972,14 @@ func resolveWorkspacePath(containerName, workspaceCfg string) string {
 }
 
 // ensureWorkspaceDir creates the workspace directory if it doesn't exist.
+// Under sudo the directories it creates belong to the user who ran sudo, so
+// files can still be dropped into (or removed from) the workspace from the
+// host without root.
 //
 //	in(1): string path - directory to create
 //	out: error
 func ensureWorkspaceDir(path string) error {
-	return os.MkdirAll(path, 0755)
+	return common.MkdirAllForInvokingUser(path, 0755)
 }
 
 // injectWorkspaceBinding resolves and creates the workspace directory,

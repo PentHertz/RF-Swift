@@ -16,6 +16,7 @@ import (
 
 	"github.com/moby/moby/client"
 	common "penthertz/rfswift/common"
+	"penthertz/rfswift/hostsetup"
 )
 
 // PodmanEngine implements ContainerEngine for Podman.
@@ -100,6 +101,16 @@ func (e *PodmanEngine) IsServiceRunning() bool {
 	return engineIsServiceRunning(e)
 }
 
+// IsRootless reports whether this engine drives the rootless (per-user)
+// Podman service. False for root, and for a user configured with
+// podman_mode = rootful (the system service reached through its socket).
+//
+//	out: bool
+func (e *PodmanEngine) IsRootless() bool {
+	e.ensureDetected()
+	return e.cachedRootless
+}
+
 // GetClient returns a moby API client pointed at the Podman socket.
 //
 //	out: (*client.Client, error)
@@ -107,6 +118,9 @@ func (e *PodmanEngine) GetClient() (*client.Client, error) {
 	socketPath := e.GetSocketPath()
 	if socketPath == "" {
 		return nil, fmt.Errorf("podman socket not found — enable with: systemctl --user enable --now podman.socket")
+	}
+	if hint := e.AccessHint(); hint != "" {
+		return nil, fmt.Errorf("%s", hint)
 	}
 
 	return client.New(
@@ -141,7 +155,7 @@ func (e *PodmanEngine) StartService() error {
 			}
 			return nil
 		}
-		return exec.Command("sudo", "systemctl", "start", "podman.socket").Run()
+		return startRootfulPodmanSocket("start")
 
 	case "darwin", "windows":
 		return exec.Command("podman", "machine", "start").Run()
@@ -166,7 +180,7 @@ func (e *PodmanEngine) RestartService() error {
 			}
 			return nil
 		}
-		return exec.Command("sudo", "systemctl", "restart", "podman.socket").Run()
+		return startRootfulPodmanSocket("restart")
 
 	case "darwin", "windows":
 		// Podman machine: stop then start
@@ -271,6 +285,38 @@ func (e *PodmanEngine) ensureDetected() {
 	}
 	e.cachedSocket, e.cachedRootless = detectPodmanSocket()
 	e.detected = true
+	if runtime.GOOS != "linux" || os.Getuid() == 0 {
+		return
+	}
+	if !e.cachedRootless {
+		// A user on the system service: route the podman CLI there too.
+		exportRootfulContainerHost(e.cachedSocket)
+	} else {
+		withdrawContainerHost()
+	}
+}
+
+// AccessHint is the reason this engine cannot be used and the fix, for a
+// user configured for the rootful service whose socket is not usable; ""
+// otherwise.
+//
+//	out: string
+func (e *PodmanEngine) AccessHint() string {
+	e.ensureDetected()
+	if e.cachedRootless || runtime.GOOS != "linux" || os.Getuid() == 0 || !isRootfulPodmanURI(e.cachedSocket) {
+		return ""
+	}
+	return RootfulPodmanAccessHint()
+}
+
+// startRootfulPodmanSocket starts or restarts the system podman.socket.
+// As root directly; as a user through sudo, non-interactively (-n) so a GUI
+// or a script never waits on an invisible password prompt.
+func startRootfulPodmanSocket(action string) error {
+	if os.Getuid() == 0 {
+		return exec.Command("systemctl", action, "podman.socket").Run()
+	}
+	return exec.Command("sudo", "-n", "systemctl", action, "podman.socket").Run()
 }
 
 // queryStorageRoot asks podman for the GraphRoot
@@ -292,8 +338,12 @@ func (e *PodmanEngine) tryActivateSocket() bool {
 			err := exec.Command("systemctl", "--user", "start", "podman.socket").Run()
 			return err == nil
 		}
-		err := exec.Command("sudo", "systemctl", "start", "podman.socket").Run()
-		return err == nil
+		// A user who cannot reach the system socket gains nothing from
+		// starting it: the hint says what to change instead.
+		if os.Getuid() != 0 && hostsetup.ProbeRootfulPodmanSocket().Denied {
+			return false
+		}
+		return startRootfulPodmanSocket("start") == nil
 
 	case "darwin", "windows":
 		if !isPodmanMachineExists() {
@@ -329,16 +379,15 @@ func (e *PodmanEngine) tryActivateSocket() bool {
 // detectPodmanSocket finds the Podman API socket.
 // Returns (socket_uri, is_rootless).
 func detectPodmanSocket() (string, bool) {
-	// 1. CONTAINER_HOST — Podman's own env var
-	if host := os.Getenv("CONTAINER_HOST"); host != "" {
-		rootless := os.Getuid() != 0
-		return host, rootless
+	// 1. CONTAINER_HOST — Podman's own env var (unless RF Swift exported it
+	// itself for the rootful mode: then the mode decides again below).
+	if host := userContainerHost(); host != "" {
+		return host, podmanURIRootless(host)
 	}
 
 	// 2. DOCKER_HOST pointing at a Podman socket
 	if host := os.Getenv("DOCKER_HOST"); host != "" && strings.Contains(host, "podman") {
-		rootless := os.Getuid() != 0
-		return host, rootless
+		return host, podmanURIRootless(host)
 	}
 
 	switch runtime.GOOS {
@@ -356,7 +405,8 @@ func detectPodmanSocket() (string, bool) {
 func detectPodmanSocketLinux() (string, bool) {
 	uid := os.Getuid()
 
-	if uid != 0 {
+	// podman_mode = rootful: a user on the system service (see podman_mode.go).
+	if uid != 0 && !wantsRootfulPodmanAsUser() {
 		// Rootless mode
 		runtimeDir := os.Getenv("XDG_RUNTIME_DIR")
 		if runtimeDir == "" {
@@ -379,10 +429,7 @@ func detectPodmanSocketLinux() (string, bool) {
 	}
 
 	// Rootful mode
-	candidates := []string{
-		"/run/podman/podman.sock",
-		"/var/run/podman/podman.sock",
-	}
+	candidates := hostsetup.RootfulPodmanSocketPaths
 
 	for _, sock := range candidates {
 		if _, err := os.Stat(sock); err == nil {

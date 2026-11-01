@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"regexp"
+	"sort"
 	"strings"
 
 	"github.com/moby/moby/api/types/container"
@@ -84,9 +85,20 @@ func podmanCreateViaCLI(name string, imageName string, cfg *container.Config, hc
 		args = append(args, "-l", k+"="+v)
 	}
 
-	// Supplementary groups (rootless: "keep-groups", see restrictRootlessPodmanHostConfig)
+	// Supplementary groups
 	for _, g := range hc.GroupAdd {
 		args = append(args, "--group-add", g)
+	}
+
+	// OCI annotations (rootless: run.oci.keep_original_groups, see
+	// restrictRootlessPodmanHostConfig), sorted for a stable command line
+	annotationKeys := make([]string, 0, len(hc.Annotations))
+	for k := range hc.Annotations {
+		annotationKeys = append(annotationKeys, k)
+	}
+	sort.Strings(annotationKeys)
+	for _, k := range annotationKeys {
+		args = append(args, "--annotation", k+"="+hc.Annotations[k])
 	}
 
 	// Capabilities

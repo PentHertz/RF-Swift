@@ -482,6 +482,17 @@ var execCmd = &cobra.Command{
 		}
 
 		setupX11(noX11, "", false)
+		// The audio server's TCP module does not survive a reboot, a logout
+		// or an audio-server restart (a qube restart on Qubes OS): load it
+		// again for the container's PULSE_SERVER, as run does at creation.
+		// Best effort, never blocks entering the container.
+		if runtime.GOOS == "linux" {
+			if server := rfdock.ContainerPulseServer(contID); strings.HasPrefix(server, "tcp:") {
+				if err := rfutils.SetPulseCTL(server); err != nil {
+					common.PrintWarningMessage(fmt.Sprintf("Host audio not enabled for %s: %v", contID, err))
+				}
+			}
+		}
 		rfdock.ContainerSetShell(execCommand)
 		if desktop {
 			parseAndSetDesktop(desktopConfig)

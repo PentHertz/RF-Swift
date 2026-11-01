@@ -24,11 +24,14 @@ type DoctorSummary struct {
 }
 
 // PrintDoctorHeader prints the doctor command header.
-func PrintDoctorHeader() {
+func PrintDoctorHeader() { PrintDoctorHeaderTitle("RF Swift Doctor") }
+
+// PrintDoctorHeaderTitle prints a doctor-style header with its own title.
+func PrintDoctorHeaderTitle(title string) {
 	header := lipgloss.NewStyle().
 		Foreground(ColorPrimary).
 		Bold(true).
-		Render("🩺 RF Swift Doctor")
+		Render("🩺 " + title)
 	separator := lipgloss.NewStyle().
 		Foreground(ColorPrimary).
 		Render("══════════════════════════════════════════════════════════")

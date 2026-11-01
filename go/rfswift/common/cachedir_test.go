@@ -38,3 +38,23 @@ func TestCacheDirByPlatformUnderSudoUsesInvokingUser(t *testing.T) {
 		t.Fatalf("CacheDirByPlatform() under sudo = %q, want %q", got, want)
 	}
 }
+
+func TestInvokingHomeFollowsSudoUser(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("no sudo on Windows")
+	}
+	u, err := user.Current()
+	if err != nil || u.HomeDir == "" {
+		t.Skip("no current user")
+	}
+	t.Setenv("HOME", "/root")
+	t.Setenv("SUDO_USER", u.Username)
+	if got := InvokingHome(); got != u.HomeDir {
+		t.Fatalf("under sudo, InvokingHome = %q, want the caller's %q", got, u.HomeDir)
+	}
+	t.Setenv("SUDO_USER", "")
+	t.Setenv("HOME", "/tmp/somewhere")
+	if got := InvokingHome(); got != "/tmp/somewhere" {
+		t.Fatalf("without sudo, InvokingHome = %q, want $HOME", got)
+	}
+}

@@ -12,10 +12,10 @@ import (
 	"os/user"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
 
-	"github.com/FlUxIuS/pulseaudio_2"
 	common "penthertz/rfswift/common"
 )
 
@@ -51,14 +51,16 @@ func detectAudioSystem() AudioSystem {
 //
 //	out: bool true if PipeWire is running, false otherwise
 func isPipeWireRunning() bool {
-	// Check if pipewire process is running
-	cmd := exec.Command("pgrep", "-x", "pipewire")
-	if err := cmd.Run(); err == nil {
+	// Check if the session's pipewire process is running. Under sudo, look
+	// for the invoking user's daemon: root never has one, and any other
+	// user's would not be the one this desktop plays through.
+	if exec.Command("pgrep", "-u", strconv.Itoa(sessionUID()), "-x", "pipewire").Run() == nil {
 		return true
 	}
 
-	// Alternative check: try to connect to PipeWire socket
-	if _, err := os.Stat("/run/user/" + os.Getenv("USER") + "/pipewire-0"); err == nil {
+	// Alternative check: the PipeWire socket in the session's runtime
+	// directory (/run/user/<uid>, not /run/user/<name>).
+	if _, err := os.Stat(filepath.Join(sessionRuntimeDir(), "pipewire-0")); err == nil {
 		return true
 	}
 
@@ -74,7 +76,7 @@ func isPulseAudioRunning() bool {
 		cmd := exec.Command("pgrep", "-x", "pulseaudio")
 		return cmd.Run() == nil
 	}
-	cmd := exec.Command("pulseaudio", "--check")
+	cmd := sessionCommand("pulseaudio", "--check")
 	return cmd.Run() == nil
 }
 
@@ -388,10 +390,11 @@ func ensureAudioSystemRunning() error {
 //
 //	out: error
 func ensurePulseAudioRunning() error {
-	cmd := exec.Command("pulseaudio", "--check")
+	cmd := sessionCommand("pulseaudio", "--check")
 	if err := cmd.Run(); err != nil {
-		// If PulseAudio is not running, start it
-		startCmd := exec.Command("pulseaudio", "--start")
+		// If PulseAudio is not running, start it (in the user's session,
+		// never as root under sudo)
+		startCmd := sessionCommand("pulseaudio", "--start")
 		if startErr := startCmd.Run(); startErr != nil {
 			return fmt.Errorf("failed to start PulseAudio: %w", startErr)
 		}
@@ -488,7 +491,7 @@ func ensurePipeWireRunning() error {
 	}
 
 	// Fallback: try starting pipewire directly
-	directStartCmd := exec.Command("pipewire")
+	directStartCmd := sessionCommand("pipewire")
 	if err := directStartCmd.Start(); err != nil {
 		return fmt.Errorf("failed to start PipeWire directly: %w", err)
 	}
@@ -510,14 +513,14 @@ func startPipeWireSystemd() error {
 	services := []string{"pipewire.service", "pipewire-pulse.service"}
 
 	for _, service := range services {
-		cmd := exec.Command("systemctl", "--user", "start", service)
+		cmd := sessionCommand("systemctl", "--user", "start", service)
 		if err := cmd.Run(); err != nil {
 			return fmt.Errorf("failed to start %s: %w", service, err)
 		}
 	}
 
 	// Also try to start wireplumber if available (session manager)
-	wireplumberCmd := exec.Command("systemctl", "--user", "start", "wireplumber.service")
+	wireplumberCmd := sessionCommand("systemctl", "--user", "start", "wireplumber.service")
 	wireplumberCmd.Run() // Ignore errors as wireplumber might not be installed
 
 	return nil
@@ -532,7 +535,7 @@ func startRedHatPipeWireServices() {
 	}
 
 	for _, service := range additionalServices {
-		cmd := exec.Command("systemctl", "--user", "start", service)
+		cmd := sessionCommand("systemctl", "--user", "start", service)
 		cmd.Run() // Ignore errors as these services might not be available
 	}
 }
@@ -620,7 +623,7 @@ func SetPulseCTL(address string) error {
 //	out: error
 func setPulseAudioTCPModule(ip, port string) error {
 	// Connect to PulseAudio
-	client, err := pulseaudio.NewClient()
+	client, err := newPulseClient()
 	if err != nil {
 		return fmt.Errorf("failed to connect to PulseAudio: %w", err)
 	}
@@ -824,7 +827,7 @@ func UnloadPulseCTL() error {
 //	out(1): string the raw output from pw-cli info
 //	out(2): error
 func GetPipeWireInfo() (string, error) {
-	cmd := exec.Command("pw-cli", "info")
+	cmd := sessionCommand("pw-cli", "info")
 	output, err := cmd.Output()
 	if err != nil {
 		return "", fmt.Errorf("failed to get PipeWire info: %w", err)
@@ -837,7 +840,7 @@ func GetPipeWireInfo() (string, error) {
 //	out(1): string the raw output listing all Node objects
 //	out(2): error
 func ListPipeWireNodes() (string, error) {
-	cmd := exec.Command("pw-cli", "list-objects", "Node")
+	cmd := sessionCommand("pw-cli", "list-objects", "Node")
 	output, err := cmd.Output()
 	if err != nil {
 		return "", fmt.Errorf("failed to list PipeWire nodes: %w", err)

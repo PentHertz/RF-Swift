@@ -4,6 +4,118 @@ All notable changes to RF Swift are recorded here. The format is based on
 Keep a Changelog (https://keepachangelog.com), and the project aims to follow
 semantic versioning. Dates are ISO-8601 (YYYY-MM-DD).
 
+## [Unreleased] - v4.1.0
+
+### Added
+
+- Qubes OS: `rfswift host qubes` checks a qube for RF Swift (USB proxy and
+  attached devices, the virtual USB bus, rootful engine storage across AppVM
+  restarts, rootful Podman access, root-owned workspaces, default devices the
+  qube lacks), and `rfswift host qubes setup` fixes it in one root script it
+  prints first (`--dry-run` prints only): `vhci-hcd` loaded at every start so
+  `/dev/bus/usb` exists before a device is attached from sys-usb, bind-dirs
+  for `/var/lib/containers` and `/var/lib/docker`, the rootful Podman socket
+  usable by the user, docker group re-applied at boot, workspaces given back
+  to the user, `/dev/dri` dropped from the defaults. AppVMs get
+  `/rw/config/qubes-bind-dirs.d/50_rfswift.conf` and
+  `/rw/config/rc.local.d/50-rfswift.rc`; TemplateVMs and StandaloneVMs get
+  `/etc` directly. `rfswift doctor` and the Workbench's Engine doctor show the
+  same checks; the Workbench has a **Set up for Qubes** button (polkit).
+- Qubes OS, Nix engine: `rfswift host qubes setup` repairs the Nix daemon of
+  a Determinate Nix installed in the template. Its unit runs
+  `/usr/local/bin/determinate-nixd`, which no AppVM sees (an AppVM's
+  `/usr/local` is its own), so the daemon failed at boot and every Nix build
+  ended with "cannot open connection to remote store 'daemon'". When the
+  unit's binary is missing, a drop-in runs the Nix profile's own
+  `nix-daemon` (re-applied at every boot of an AppVM). `/nix` is kept across
+  restarts (bind-dirs), seeded from the live store so the environments built
+  before the setup survive the first restart.
+- Qubes OS, Docker: the setup starts `docker.socket` at every boot of an
+  AppVM (enables it in a TemplateVM or StandaloneVM), keeps
+  `/var/lib/docker` across restarts and gives the user the socket: the
+  `docker` group plus a `docker.socket` drop-in that re-applies the user's
+  ACL whenever the socket is created, so access survives a daemon restart
+  without a new login. It never restarts a running daemon.
+- Qubes OS: the engines' storage (`/var/lib/containers`, `/var/lib/docker`,
+  and `/var/lib/containerd`, where Docker's containerd image store keeps
+  images) and `/nix` are switched to their persistent copy right away
+  instead of at the next restart, keeping what they hold. Until then they
+  sat on the AppVM's root volume, as small as the template's root (often
+  too small for one RF Swift image: Docker failed with "no space left on
+  device") and discarded at the restart. A store whose engine runs
+  containers, or that does not fit in `/rw`, switches at the next restart
+  as before.
+- Qubes OS: `rfswift host qubes` warns when the private volume (where
+  bind-dirs keeps images and the Nix store) has less than 20 GiB free, with
+  the dom0 command to grow it.
+- Qubes OS: the setup blacklists `dvb_usb_rtl28xxu`, the DVB-T driver that
+  claims RTL2832U dongles on every attach. nixpkgs' rtl-sdr does not detach
+  it, so native tools failed with `usb_claim_interface error -6`;
+  `--no-rtl-blacklist` keeps it.
+- Podman: `podman_mode = auto|rootless|rootful` in `[general]` (env:
+  `RFSWIFT_PODMAN_MODE`). With `rootful`, a non-root RF Swift and the
+  Workbench drive the system Podman service through its socket: rootful
+  device access (cgroup rules, root-only nodes, realtime limits) without
+  sudo, while audio, X11, home, workspaces and config stay the user's. The
+  podman CLI calls RF Swift makes are routed to the same service
+  (`CONTAINER_HOST`); a `CONTAINER_HOST` you set yourself still wins.
+- SELinux: on a host with SELinux enforcing, unprivileged containers (Docker
+  and Podman) are created with `label=disable`; without it they could not
+  read their own workspace, reach the X11 socket or open USB nodes. Opt out
+  with `[container] selinux_label = keep` or `RFSWIFT_SELINUX_LABEL=keep`;
+  `rfswift doctor` reports which applies.
+- Qubes OS: with a device attached, `rfswift host qubes` shows how to stream
+  through sys-usb. librtlsdr's default async transfers (15 x 256 KiB) make the
+  USB proxy drop the device; 16 KiB transfers (`rtl_sdr -b 16384`, GQRX
+  `rtl=0,buflen=16384`) or sync mode stream at 1 MS/s.
+
+### Fixed
+
+- `sudo rfswift run|exec` and `sudo rfswift host audio enable|unload`: pactl,
+  `systemctl --user`, pw-cli and the PulseAudio client now run in the
+  invoking user's session (their uid, `XDG_RUNTIME_DIR` and session bus).
+  They used to talk to root's empty session, so the TCP module containers
+  play through was never loaded ("Connection refused"), and the fallback
+  could start an audio server as root.
+- `rfswift exec` (Linux) loads the audio server's TCP module again for the
+  container's `PULSE_SERVER`, as `run` does at creation: the module does not
+  survive a reboot, a logout or a PipeWire restart, so a container entered
+  again afterwards had no sound. The Workbench already did this for its
+  terminals.
+- Workspaces under sudo: the default `~/rfswift-workspace/<name>` is in the
+  invoking user's home instead of `/root`, and the directories created there
+  belong to the user. The remote agent's default workspace follows the same
+  rule.
+- Rootless detection: Podman counts as rootless only when the process really
+  uses the per-user service; device checks, serial hot-plug and the rootless
+  restrictions no longer assume "not root" means rootless.
+- PipeWire detection looked for `/run/user/<name>/pipewire-0`; it is
+  `/run/user/<uid>`.
+- Rootless Podman with crun: creating a container from the Workbench (or
+  with `rfswift run`) failed at start with "looking up supplemental groups
+  ... Unable to find group keep-groups". To keep the user's supplementary
+  groups (plugdev, dialout) inside the container RF Swift set
+  `GroupAdd: keep-groups`, but `keep-groups` is a podman CLI keyword that
+  the Docker-compatible API looks up as a group name. RF Swift now sets the
+  OCI annotation it stands for (`run.oci.keep_original_groups=1`), which
+  the API passes through: the container starts and keeps the groups.
+- Nix engine readiness: `rfswift doctor`, the Workbench's engine doctor and
+  `rfswift run|create --engine nix` asked only whether a `nix` binary
+  exists, so a multi-user install whose daemon cannot start showed "ready"
+  and then failed every build with a raw Nix error. They now ask the store
+  (`nix store info`) and say why it does not answer and how to fix it.
+- Workbench: confirmation dialogs without an option (Docker access, removing
+  device rules, stopping the Lima VM, ...) showed an empty checkbox; the
+  option row's inline style overrode its `hidden` attribute.
+- USB hot-plug with `rfswift run|create` (CLI): a device tree given as a
+  device mapping (`/dev/bus/usb`, `/dev/snd`, `/dev/input` in the default
+  `config.ini`) was expanded by Docker/Podman into the nodes present at
+  creation, so a dongle plugged in, re-plugged or forwarded later (sys-usb,
+  usbipd, the Lima VM) never appeared in the container. It is bind-mounted
+  now, with the cgroup rule of its major, as the Workbench and the profiles
+  already did. Verified with an RTL-SDR attached from sys-usb to a running
+  container.
+
 ## [11-01-2026] - v4.0.5
 
 ### Added

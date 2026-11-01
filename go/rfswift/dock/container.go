@@ -578,6 +578,13 @@ func ContainerRun(containerName string) {
 		}
 		devWarnings = nil
 	}
+	// A device tree (/dev/bus/usb, /dev/snd, ...) given as a device is a
+	// snapshot of today's nodes: bind-mount it instead so devices attached
+	// later (hot-plug, sys-usb on Qubes OS, usbipd) show up (devbinds.go).
+	// The cgroup rule for its major is added with the other tree rules below.
+	if !containerCfg.privileged {
+		bindings, containerCfg.devices = promoteDeviceTrees(bindings, containerCfg.devices, creationDeviceDirProbe(strings.Split(containerCfg.devices, ",")))
+	}
 	// Windows: sound comes from WSLg's PulseAudio socket under /mnt/wslg.
 	bindings = ensureWSLgMount(bindings, containerCfg.pulseServer)
 	extrahosts := splitAndCombine(containerCfg.extrahosts)
@@ -842,7 +849,7 @@ func ContainerRun(containerName string) {
 			common.PrintWarningMessage("Rootless Podman does not support device cgroup rules.")
 			common.PrintWarningMessage(fmt.Sprintf("Rules that will be dropped: %s", strings.Join(hostConfig.DeviceCgroupRules, ", ")))
 			common.PrintInfoMessage("Device hotplug (USB, SDR dongles) may not work without cgroup rules.")
-			common.PrintInfoMessage("To use cgroup rules, run RF Swift with sudo.")
+			common.PrintInfoMessage("To use cgroup rules, run RF Swift with sudo." + rootfulPodmanHint())
 			if !tui.Confirm("Continue without cgroup rules?") {
 				common.PrintInfoMessage("Aborted. Re-run with: sudo ./rfswift run ...")
 				return
@@ -856,6 +863,10 @@ func ContainerRun(containerName string) {
 		// honour (shared with the GUI/API path in CreateContainer).
 		restrictRootlessPodmanHostConfig(hostConfig, func(msg string) { common.PrintWarningMessage(msg) })
 	}
+
+	// SELinux enforcing (Fedora, Qubes OS templates): without this the
+	// container cannot use its workspace, the display or the devices.
+	applyHostSELinux(hostConfig, func(msg string) { common.PrintInfoMessage(msg) })
 
 	// Verify the image exists locally before attempting to create container
 	_, err = ImageInspectCompat(ctx, cli, containerCfg.imagename)

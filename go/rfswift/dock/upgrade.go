@@ -354,6 +354,9 @@ func ContainerUpgrade(containerIdentifier string, repositoriesToPreserve string,
 			hostConfig.CapAdd = strings.Split(props["Caps"], ",")
 		}
 	}
+	// Keep (or give, for containers from older releases) the SELinux
+	// opt-out that lets the container use its workspace and devices.
+	applyHostSELinux(hostConfig, nil)
 
 	resp, err := cli.ContainerCreate(ctx, client.ContainerCreateOptions{Config: &container.Config{
 		Image:        newImage,

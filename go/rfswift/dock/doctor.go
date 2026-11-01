@@ -17,6 +17,7 @@ import (
 	"github.com/moby/moby/client"
 	common "penthertz/rfswift/common"
 	"penthertz/rfswift/hostsetup"
+	rfnix "penthertz/rfswift/nix"
 	rfutils "penthertz/rfswift/rfutils"
 	"penthertz/rfswift/tui"
 )
@@ -70,6 +71,8 @@ func RunDoctor() {
 	checkIsolation(report)
 	checkConfigFile(report)
 	checkKernelModules(report)
+	checkSELinux(report)
+	checkQubes(report)
 
 	// Print results
 	printReport(report)
@@ -81,7 +84,13 @@ func RunDoctor() {
 func checkNixEngine(report *DoctorReport) {
 	if runtime.GOOS != "windows" {
 		if path, err := exec.LookPath("nix"); err == nil {
-			report.add(CheckResult{"Nix engine", "ok", fmt.Sprintf("nix found at %s ('rfswift run --engine nix' runs tools natively)", path)})
+			// The binary alone is not enough: a multi-user install whose
+			// daemon cannot start fails every build (nix/engine.go).
+			if herr := rfnix.StoreHealth(); herr != nil {
+				report.add(CheckResult{"Nix engine", "warn", fmt.Sprintf("nix found at %s, but %v", path, herr)})
+				return
+			}
+			report.add(CheckResult{"Nix engine", "ok", fmt.Sprintf("nix found at %s, store reachable ('rfswift run --engine nix' runs tools natively)", path)})
 		} else {
 			report.add(CheckResult{"Nix engine", "skip", "nix not installed (optional: native environments with --engine nix, see docs/nix-engine.md)"})
 		}
@@ -677,5 +686,43 @@ func checkKernelModules(report *DoctorReport) {
 	if len(missing) > 0 {
 		report.add(CheckResult{"Kernel modules (optional)", "warn",
 			fmt.Sprintf("Not loaded: %s", strings.Join(missing, ", "))})
+	}
+}
+
+// checkSELinux reports how RF Swift deals with an enforcing SELinux host:
+// unprivileged containers get label=disable, or cannot use their workspace,
+// display and devices (selinux.go).
+func checkSELinux(report *DoctorReport) {
+	if runtime.GOOS != "linux" || !selinuxEnforcing() {
+		return
+	}
+	if selinuxLabelPolicy() == "keep" {
+		report.add(CheckResult{"SELinux", "warn", "enforcing, and selinux_label = keep: unprivileged containers run as container_t and cannot read their workspace, the X11 socket or the USB nodes (only privileged ones can)"})
+		return
+	}
+	report.add(CheckResult{"SELinux", "ok", "enforcing: RF Swift containers get label=disable so they can use their workspace, the display and the devices (opt out: [container] selinux_label = keep)"})
+}
+
+// checkQubes adds the Qubes OS checks (hostsetup/qubes.go) when RF Swift
+// runs in a qube.
+func checkQubes(report *DoctorReport) {
+	if !hostsetup.IsQubes() {
+		return
+	}
+	st := QubesStatus()
+	for _, c := range st.Checks {
+		if c.ID == "qube" || c.ID == "root" {
+			continue // the summary line below says it
+		}
+		msg := c.Detail
+		if c.Fix != "" && c.Status != "ok" {
+			msg += " -> " + c.Fix
+		}
+		report.add(CheckResult{"Qubes: " + c.Name, c.Status, msg})
+	}
+	if st.Ready {
+		report.add(CheckResult{"Qubes OS", "ok", st.Info.Name + " (" + st.Info.Type + "): set up for RF Swift"})
+	} else {
+		report.add(CheckResult{"Qubes OS", "warn", fmt.Sprintf("%s (%s): %d step(s) left - see 'rfswift host qubes', apply with 'rfswift host qubes setup'", st.Info.Name, st.Info.Type, len(st.Plan))})
 	}
 }

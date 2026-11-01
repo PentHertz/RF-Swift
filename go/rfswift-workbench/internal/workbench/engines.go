@@ -80,6 +80,14 @@ func (a *App) NixEngineStatus() NixEngineStatus {
 			if st.Detail == "" {
 				st.Detail = "nix available"
 			}
+			// nix is installed, but can it reach its store? A daemon that
+			// cannot start (Determinate Nix installed in a Qubes template)
+			// fails every build; say so instead of showing "ready".
+			if err := rfnix.StoreHealth(); err != nil {
+				st.Ready = false
+				st.Missing = []string{"a running Nix daemon"}
+				st.Detail = err.Error()
+			}
 		} else {
 			st.Missing = []string{"nix"}
 			st.Detail = "nix is not installed (https://nixos.org/download)"

@@ -65,6 +65,9 @@ func RunEnvironment(opts RunOptions) error {
 			"    sh <(curl -L https://nixos.org/nix/install) --daemon\n" +
 			"  or use the Determinate installer, then re-run: rfswift run --engine nix")
 	}
+	if err := StoreHealth(); err != nil {
+		return err
+	}
 	if strings.TrimSpace(opts.Name) == "" {
 		return fmt.Errorf("environment name is required (use -n)")
 	}

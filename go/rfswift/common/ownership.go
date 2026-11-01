@@ -9,6 +9,7 @@ import (
 	"io/fs"
 	"os"
 	"os/exec"
+	"os/user"
 	"path/filepath"
 	"runtime"
 	"strconv"
@@ -41,6 +42,37 @@ func invokingIDs() (int, int, bool) {
 		return 0, 0, false
 	}
 	return uid, gid, true
+}
+
+// InvokingIDs returns the uid and gid of the user who ran sudo when this
+// process is root under sudo (ok is false otherwise, and when sudo was run
+// by root itself).
+func InvokingIDs() (uid, gid int, ok bool) { return invokingIDs() }
+
+// InvokingHome returns the home directory of the user RF Swift acts for: the
+// sudo caller's (SUDO_USER) when elevated, $HOME otherwise. sudo resets HOME
+// to /root on most distributions, so anything placed under "~" by a
+// `sudo rfswift ...` run (workspaces, recordings) would otherwise land in
+// root's home: invisible to the user and, on a Qubes OS AppVM, discarded at
+// the next reboot because /root is not on the persistent volume.
+func InvokingHome() string {
+	if runtime.GOOS != "windows" {
+		if sudoUser := os.Getenv("SUDO_USER"); sudoUser != "" && sudoUser != "root" {
+			if u, err := user.Lookup(sudoUser); err == nil && u.HomeDir != "" {
+				return u.HomeDir
+			}
+		}
+	}
+	if runtime.GOOS == "windows" {
+		if home := os.Getenv("USERPROFILE"); home != "" {
+			return home
+		}
+	}
+	if home := os.Getenv("HOME"); home != "" {
+		return home
+	}
+	home, _ := os.UserHomeDir()
+	return home
 }
 
 // ChownToInvokingUser gives paths written by a sudo-elevated run back to the

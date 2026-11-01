@@ -1630,6 +1630,9 @@ func recreateContainerWithProperties(ctx context.Context, cli *client.Client, co
 			hostConfig.CapAdd = strings.Split(props["Caps"], ",")
 		}
 	}
+	// Keep (or give, for containers from older releases) the SELinux
+	// opt-out that lets the container use its workspace and devices.
+	applyHostSELinux(hostConfig, nil)
 
 	// ── Restore cgroup rules from label if inspect returned empty ──
 	if len(hostConfig.DeviceCgroupRules) == 0 {

@@ -95,12 +95,23 @@ func ConfiguredEngine(filename string) string {
 	return strings.ToLower(configValue(filename, "general", "engine"))
 }
 
+// ConfiguredPodmanMode returns `[general] podman_mode` (auto, rootless or
+// rootful), lowercased, or "" when unset. Non-interactive, like
+// ConfiguredEngine.
+func ConfiguredPodmanMode(filename string) string {
+	return strings.ToLower(configValue(filename, "general", "podman_mode"))
+}
+
 // ConfiguredNixWSLDistro returns the WSL 2 distribution set under
 // `[nix] wsl_distro` (Windows: the distribution hosting the Nix engine), or ""
 // when unset. Non-interactive, like ConfiguredEngine.
 func ConfiguredNixWSLDistro(filename string) string {
 	return configValue(filename, "nix", "wsl_distro")
 }
+
+// ConfigValue reads one key of one section from config.ini without
+// prompting ("" when absent).
+func ConfigValue(filename, section, key string) string { return configValue(filename, section, key) }
 
 // configValue reads one key of one section from the INI-style config file
 // without prompting: "" when the file, section or key is absent.
@@ -450,6 +461,11 @@ repotag = penthertz/rfswift_resolute
 # Default engine when neither --engine nor RFSWIFT_ENGINE is set:
 # auto, docker, podman, lima, or nix (native environments).
 engine = auto
+# Linux, Podman run as a normal user: which Podman service RF Swift drives.
+# auto (rootless for a user, rootful for root), rootless, or rootful (the
+# system service, once its socket is made usable by you - 'rfswift host qubes
+# setup' does that on Qubes OS). Env: RFSWIFT_PODMAN_MODE.
+podman_mode = auto
 
 [container]
 shell = /bin/zsh
