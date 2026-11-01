@@ -340,8 +340,20 @@ jobs:
             --password "$APPLE_NOTARY_PASSWORD" \
             --team-id "$APPLE_NOTARY_TEAM_ID" \
             --wait --timeout 30m
-          xcrun stapler staple "$APP_PATH"
-          xcrun stapler validate "$APP_PATH"
+          # stapler fetches the ticket from Apple's CloudKit service, whose
+          # connection sometimes drops ("The network connection was lost",
+          # error 68) after notarization has already succeeded. Try again
+          # a few times rather than failing the release on it.
+          staple_retry() {
+            for attempt in 1 2 3 4; do
+              xcrun stapler "$@" && return 0
+              [ "$attempt" -lt 4 ] || return 1
+              echo "::warning::stapler $1 failed (attempt $attempt of 4), retrying in $((attempt * 20))s"
+              sleep $((attempt * 20))
+            done
+          }
+          staple_retry staple "$APP_PATH"
+          staple_retry validate "$APP_PATH"
           # Same assessment Gatekeeper runs on first launch. Expected:
           # "accepted ... source=Notarized Developer ID".
           spctl -a -t exec -vv "$APP_PATH"
@@ -476,8 +488,20 @@ jobs:
             --password "$APPLE_NOTARY_PASSWORD" \
             --team-id "$APPLE_NOTARY_TEAM_ID" \
             --wait --timeout 30m
-          xcrun stapler staple "$DMG_NAME"
-          xcrun stapler validate "$DMG_NAME"
+          # stapler fetches the ticket from Apple's CloudKit service, whose
+          # connection sometimes drops ("The network connection was lost",
+          # error 68) after notarization has already succeeded. Try again
+          # a few times rather than failing the release on it.
+          staple_retry() {
+            for attempt in 1 2 3 4; do
+              xcrun stapler "$@" && return 0
+              [ "$attempt" -lt 4 ] || return 1
+              echo "::warning::stapler $1 failed (attempt $attempt of 4), retrying in $((attempt * 20))s"
+              sleep $((attempt * 20))
+            done
+          }
+          staple_retry staple "$DMG_NAME"
+          staple_retry validate "$DMG_NAME"
 
       - name: Verify Gatekeeper acceptance
         if: env.MACOS_KEYCHAIN_PATH != '' && env.APPLE_NOTARY_USER != ''
