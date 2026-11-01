@@ -193,7 +193,7 @@ jobs:
 
   workbench-macos:
     name: Workbench macOS
-    runs-on: macos-14
+    runs-on: macos-15
     defaults:
       run:
         working-directory: go/rfswift-workbench

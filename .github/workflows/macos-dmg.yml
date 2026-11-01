@@ -60,7 +60,7 @@ permissions:
 jobs:
   macos-dmg:
     name: Build, sign and notarize macOS DMG
-    runs-on: macos-14
+    runs-on: macos-15
     permissions:
       contents: write      # upload the .dmg to the GitHub release
       id-token: write      # Sigstore OIDC token for build provenance
