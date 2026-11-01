@@ -67,7 +67,7 @@ jobs:
       attestations: write  # write the artifact attestation
     env:
       # Keep in sync with go/rfswift-workbench/Makefile and release.yml.
-      WAILS_VERSION: v2.15.0
+      WAILS_VERSION: v2.17.1
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

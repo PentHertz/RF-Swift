@@ -42,7 +42,7 @@ jobs:
           cache-dependency-path: go/rfswift/go.sum
 
       - name: Install gosec (sumdb-verified)
-        run: go install github.com/securego/gosec/v2/cmd/gosec@v2.27.1
+        run: go install github.com/securego/gosec/v2/cmd/gosec@v2.30.0
 
       - name: Run gosec
         working-directory: go/rfswift
