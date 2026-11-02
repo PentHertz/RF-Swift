@@ -1,24 +1,18 @@
 package rfutils
 
 import (
-	"archive/tar"
-	"archive/zip"
-	"compress/gzip"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
-	"path/filepath"
-	"runtime"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/cheggaaa/pb/v3"
 	"github.com/go-resty/resty/v2"
-
-	common "penthertz/rfswift/common"
+	"golang.org/x/term"
 )
 
 type Release struct {
@@ -27,14 +21,22 @@ type Release struct {
 
 // GetLatestRelease queries the GitHub Releases API for the most recent release
 // of the given repository and returns a Release value containing its tag name.
+// It gives up after 2 seconds: it runs before every command (the version
+// notice), which must not hang on a slow network.
 //
 //	in(1): string owner  GitHub organisation or user name that owns the repository
 //	in(2): string repo   repository name
 //	out: Release  the latest release metadata (currently only TagName is populated)
 //	out: error    non-nil if the HTTP request fails or the response cannot be decoded
 func GetLatestRelease(owner string, repo string) (Release, error) {
+	return getLatestRelease(owner, repo, 2*time.Second)
+}
+
+// getLatestRelease is GetLatestRelease with a caller-chosen timeout
+// (`rfswift update` waits longer than the startup notice).
+func getLatestRelease(owner, repo string, timeout time.Duration) (Release, error) {
 	client := resty.New().
-		SetTimeout(2 * time.Second).
+		SetTimeout(timeout).
 		SetRetryCount(0)
 
 	resp, err := client.R().
@@ -77,7 +79,14 @@ func ConstructDownloadURL(owner, repo, tag, fileName string) string {
 //	in(2): string dest  local filesystem path where the file should be written
 //	out: error  non-nil if the download, file creation, or copy fails
 func DownloadFile(url, dest string) error {
-	resp, err := http.Get(url)
+	// No overall deadline (a large file on a slow link is fine), but give up
+	// on a server that never answers.
+	client := &http.Client{Transport: &http.Transport{
+		Proxy:                 http.ProxyFromEnvironment,
+		TLSHandshakeTimeout:   30 * time.Second,
+		ResponseHeaderTimeout: 60 * time.Second,
+	}}
+	resp, err := client.Get(url)
 	if err != nil {
 		return err
 	}
@@ -87,10 +96,9 @@ func DownloadFile(url, dest string) error {
 		return fmt.Errorf("failed to download file: %s", resp.Status)
 	}
 
-	size, err := strconv.Atoi(resp.Header.Get("Content-Length"))
-	if err != nil {
-		return err
-	}
+	// -1 when the server sends no Content-Length: the bar then counts bytes
+	// without a total.
+	size := resp.ContentLength
 
 	out, err := os.Create(dest)
 	if err != nil {
@@ -98,12 +106,21 @@ func DownloadFile(url, dest string) error {
 	}
 	defer out.Close()
 
-	bar := pb.Full.Start64(int64(size))
+	// No bar when stdout is not a terminal (logs, pipes): pb then writes
+	// every refresh on the same line, without carriage returns.
+	if !term.IsTerminal(int(os.Stdout.Fd())) {
+		_, err = io.Copy(out, resp.Body)
+		return err
+	}
+
+	bar := pb.Full.Start64(size)
 	bar.Set(pb.Bytes, true)
 	go func() {
 		colors := []string{"\033[31m", "\033[32m", "\033[33m", "\033[34m", "\033[35m", "\033[36m"}
 		for i := 0; bar.IsStarted(); i++ {
-			bar.SetTemplateString(fmt.Sprintf("%s{{counters . }} {{bar . }} {{percent . }}%%", colors[i%len(colors)]))
+			// {{percent}} already ends with "%"; reset the color afterwards
+			// so it does not leak into the next line.
+			bar.SetTemplateString(fmt.Sprintf("%s{{counters . }} {{bar . }} {{percent . }}\033[0m", colors[i%len(colors)]))
 			time.Sleep(100 * time.Millisecond)
 		}
 	}()
@@ -113,92 +130,6 @@ func DownloadFile(url, dest string) error {
 	bar.Finish()
 
 	return err
-}
-
-// MakeExecutable sets the executable permission bits (0755) on the file at
-// path. On Windows this is a no-op because the OS does not use Unix
-// permission bits.
-//
-//	in(1): string path  filesystem path of the file to make executable
-//	out: error  non-nil if os.Chmod fails (always nil on Windows)
-func MakeExecutable(path string) error {
-	if runtime.GOOS == "windows" {
-		// No action needed on Windows
-		return nil
-	}
-
-	// Set executable bit on Unix-like systems
-	err := os.Chmod(path, 0755)
-	if err != nil {
-		return err
-	}
-	return nil
-}
-
-// ReplaceBinary replaces the running binary at currentBinaryPath with the new
-// binary at newBinaryPath. It first attempts an atomic rename; if that fails
-// (cross-device move or busy file) it falls back to copying the content and
-// cleaning up temporary files.
-//
-//	in(1): string newBinaryPath      filesystem path of the new binary to install
-//	in(2): string currentBinaryPath  filesystem path of the binary to be replaced
-//	out: error  non-nil if the replacement cannot be completed
-func ReplaceBinary(newBinaryPath, currentBinaryPath string) error {
-	err := MakeExecutable(newBinaryPath)
-	if err != nil {
-		return err
-	}
-
-	// Try rename first (works if same filesystem and not busy)
-	err = os.Rename(newBinaryPath, currentBinaryPath)
-	if err == nil {
-		return nil
-	}
-
-	// Cross-device or busy file handling
-	backupPath := currentBinaryPath + ".old"
-
-	// Remove any previous backup
-	os.Remove(backupPath)
-
-	// Rename current binary to .old (works on Windows even while running)
-	if err := os.Rename(currentBinaryPath, backupPath); err != nil && !os.IsNotExist(err) {
-		// Linux fallback: try removing directly (works for running binaries)
-		if err := os.Remove(currentBinaryPath); err != nil && !os.IsNotExist(err) {
-			return fmt.Errorf("failed to move/remove current binary: %v", err)
-		}
-	}
-
-	srcFile, err := os.Open(newBinaryPath)
-	if err != nil {
-		return fmt.Errorf("failed to open source binary: %v", err)
-	}
-	defer srcFile.Close()
-
-	srcInfo, err := srcFile.Stat()
-	if err != nil {
-		return fmt.Errorf("failed to stat source binary: %v", err)
-	}
-
-	dstFile, err := os.OpenFile(currentBinaryPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, srcInfo.Mode())
-	if err != nil {
-		return fmt.Errorf("failed to create destination binary: %v", err)
-	}
-	defer dstFile.Close()
-
-	if _, err := io.Copy(dstFile, srcFile); err != nil {
-		return fmt.Errorf("failed to copy binary: %v", err)
-	}
-
-	if err := dstFile.Sync(); err != nil {
-		return fmt.Errorf("failed to sync binary: %v", err)
-	}
-
-	// Cleanup
-	os.Remove(newBinaryPath)
-	os.Remove(backupPath) // Will fail on Windows (still running), cleaned up next run
-
-	return nil
 }
 
 // VersionCompare compares two semantic version strings and returns an integer
@@ -288,227 +219,4 @@ func VersionCompare(v1, v2 string) int {
 	}
 
 	return 0
-}
-
-// ExtractTarGz decompresses and extracts a gzip-compressed tar archive located
-// at src into destDir, recreating its directory structure.
-//
-//	in(1): string src      filesystem path of the source .tar.gz file
-//	in(2): string destDir  destination directory where archive contents are written
-//	out: error  non-nil if the archive cannot be opened, read, or extracted
-func ExtractTarGz(src, destDir string) error {
-	file, err := os.Open(src)
-	if err != nil {
-		return fmt.Errorf("error opening tar.gz file: %v", err)
-	}
-	defer file.Close()
-
-	gzr, err := gzip.NewReader(file)
-	if err != nil {
-		return fmt.Errorf("error creating gzip reader: %v", err)
-	}
-	defer gzr.Close()
-
-	tarReader := tar.NewReader(gzr)
-
-	for {
-		header, err := tarReader.Next()
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			return fmt.Errorf("error reading tar header: %v", err)
-		}
-
-		targetPath := filepath.Join(destDir, header.Name)
-
-		switch header.Typeflag {
-		case tar.TypeDir:
-			if err := os.MkdirAll(targetPath, os.FileMode(header.Mode)); err != nil {
-				return fmt.Errorf("error creating directory: %v", err)
-			}
-		case tar.TypeReg:
-			if err := os.MkdirAll(filepath.Dir(targetPath), 0o755); err != nil {
-				return fmt.Errorf("error creating parent directory: %v", err)
-			}
-			outFile, err := os.Create(targetPath)
-			if err != nil {
-				return fmt.Errorf("error creating file: %v", err)
-			}
-			if _, err := io.Copy(outFile, tarReader); err != nil {
-				return fmt.Errorf("error writing file: %v", err)
-			}
-			outFile.Close()
-		}
-	}
-	return nil
-}
-
-// ExtractZip extracts a ZIP archive located at src into destDir, recreating its
-// directory structure.
-//
-//	in(1): string src      filesystem path of the source .zip file
-//	in(2): string destDir  destination directory where archive contents are written
-//	out: error  non-nil if the archive cannot be opened, read, or extracted
-func ExtractZip(src, destDir string) error {
-	r, err := zip.OpenReader(src)
-	if err != nil {
-		return fmt.Errorf("error opening zip file: %v", err)
-	}
-	defer r.Close()
-
-	for _, file := range r.File {
-		targetPath := filepath.Join(destDir, file.Name)
-		if file.FileInfo().IsDir() {
-			if err := os.MkdirAll(targetPath, file.Mode()); err != nil {
-				return fmt.Errorf("error creating directory: %v", err)
-			}
-			continue
-		}
-
-		if err := os.MkdirAll(filepath.Dir(targetPath), 0o755); err != nil {
-			return fmt.Errorf("error creating parent directory: %v", err)
-		}
-
-		fileReader, err := file.Open()
-		if err != nil {
-			return fmt.Errorf("error opening file in zip: %v", err)
-		}
-		defer fileReader.Close()
-
-		outFile, err := os.Create(targetPath)
-		if err != nil {
-			return fmt.Errorf("error creating file: %v", err)
-		}
-		if _, err := io.Copy(outFile, fileReader); err != nil {
-			return fmt.Errorf("error writing file: %v", err)
-		}
-		outFile.Close()
-	}
-	return nil
-}
-
-// GetLatestRFSwift checks whether a newer RF-Swift release is available on
-// GitHub, prompts the user for confirmation, and if accepted downloads,
-// extracts, and replaces the running binary with the latest version for the
-// current OS and architecture.
-func GetLatestRFSwift() {
-	owner := "PentHertz"
-	repo := "RF-Swift"
-
-	release, err := GetLatestRelease(owner, repo)
-	if err != nil {
-		common.PrintErrorMessage(err)
-		return
-	}
-
-	compareResult := VersionCompare(common.Version, release.TagName)
-	if compareResult >= 0 {
-		common.PrintSuccessMessage(fmt.Sprintf("You already have the latest version: %s", common.Version))
-		return
-	} else {
-		common.PrintWarningMessage(fmt.Sprintf("Your current version is obsolete. Please update to version: %s", release.TagName))
-	}
-
-	common.PrintInfoMessage("Do you want to update to the latest version? (yes/no): ")
-	var updateResponse string
-	fmt.Scanln(&updateResponse)
-
-	if strings.ToLower(updateResponse) != "yes" {
-		common.PrintInfoMessage("Update aborted.")
-		return
-	}
-
-	arch := runtime.GOARCH
-	goos := runtime.GOOS
-
-	var fileName string
-
-	switch goos {
-	case "linux":
-		switch arch {
-		case "amd64":
-			fileName = "rfswift_Linux_x86_64.tar.gz"
-		case "arm64":
-			fileName = "rfswift_Linux_arm64.tar.gz"
-		default:
-			common.PrintErrorMessage(fmt.Errorf("Unsupported architecture: %s", arch))
-			return
-		}
-	case "darwin":
-		switch arch {
-		case "amd64":
-			fileName = "rfswift_Darwin_x86_64.tar.gz"
-		case "arm64":
-			fileName = "rfswift_Darwin_arm64.tar.gz"
-		default:
-			common.PrintErrorMessage(fmt.Errorf("Unsupported architecture: %s", arch))
-			return
-		}
-	case "windows":
-		switch arch {
-		case "amd64":
-			fileName = "rfswift_Windows_x86_64.zip"
-		case "arm64":
-			fileName = "rfswift_Windows_arm64.zip"
-		default:
-			common.PrintErrorMessage(fmt.Errorf("Unsupported architecture: %s", arch))
-			return
-		}
-	default:
-		common.PrintErrorMessage(fmt.Errorf("Unsupported operating system: %s", goos))
-		return
-	}
-
-	downloadURL := ConstructDownloadURL(owner, repo, release.TagName, fileName)
-	common.PrintInfoMessage(fmt.Sprintf("Latest release download URL: %s", downloadURL))
-
-	currentBinaryPath, err := os.Executable()
-	if err != nil {
-		common.PrintErrorMessage(fmt.Errorf("Error determining the current executable path: %v", err))
-		return
-	}
-	// A deb/rpm/pacman or Homebrew install is upgraded by its package, not by
-	// overwriting the packaged file (the package database would no longer
-	// match, and the next package upgrade would revert the binary).
-	if hint := packageManagedHint(currentBinaryPath); hint != "" {
-		common.PrintWarningMessage(hint)
-		return
-	}
-
-	tempDest := filepath.Join(os.TempDir(), fileName)
-	err = DownloadFile(downloadURL, tempDest)
-	if err != nil {
-		common.PrintErrorMessage(fmt.Errorf("Error downloading file: %v", err))
-		return
-	}
-
-	extractDir := filepath.Join(os.TempDir(), "rfswift_extracted")
-	if err := os.MkdirAll(extractDir, 0755); err != nil {
-		common.PrintErrorMessage(fmt.Errorf("Error creating extraction directory: %v", err))
-		return
-	}
-
-	// Extract the file based on extension
-	if strings.HasSuffix(fileName, ".tar.gz") {
-		err = ExtractTarGz(tempDest, extractDir)
-	} else if strings.HasSuffix(fileName, ".zip") {
-		err = ExtractZip(tempDest, extractDir)
-	} else {
-		common.PrintErrorMessage(fmt.Errorf("Unsupported file format: %s", fileName))
-		return
-	}
-	if err != nil {
-		common.PrintErrorMessage(fmt.Errorf("Error extracting file: %v", err))
-		return
-	}
-
-	newBinaryPath := filepath.Join(extractDir, "rfswift") // Adjust if the binary name differs
-	err = ReplaceBinary(newBinaryPath, currentBinaryPath)
-	if err != nil {
-		common.PrintErrorMessage(fmt.Errorf("Error replacing binary: %v", err))
-		return
-	}
-
-	common.PrintSuccessMessage("File downloaded, extracted, and replaced successfully.")
 }

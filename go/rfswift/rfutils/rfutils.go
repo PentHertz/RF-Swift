@@ -302,5 +302,6 @@ func DisplayVersion() {
 		return
 	}
 
-	common.PrintWarningMessage(fmt.Sprintf("Current version: %s\nLatest version: %s", currentVersion, latestVersion))
+	common.PrintWarningMessage(fmt.Sprintf("RF Swift %s is available (you have %s). Update with: rfswift update",
+		strings.TrimPrefix(latestVersion, "v"), strings.TrimPrefix(currentVersion, "v")))
 }

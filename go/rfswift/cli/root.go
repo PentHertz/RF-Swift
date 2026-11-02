@@ -120,15 +120,33 @@ var HostPulseAudioUnloadCmd = &cobra.Command{
 var UpdateCmd = &cobra.Command{
 	Use:   "update",
 	Short: "Update RF Swift",
-	Long:  `Update RF Swift binary from official Penthertz' repository`,
+	Long: `Update rfswift to the latest release from Penthertz' GitHub repository.
+
+The update follows the way rfswift was installed: a deb, rpm or pacman package
+is replaced by the release's package through apt-get, dnf/yum/zypper or pacman
+(with sudo), the Homebrew cask through 'brew upgrade --cask rfswift', and a
+standalone binary in place (with sudo when its directory needs it). Every
+download is checked against the release's SHA-256 checksums before anything
+is installed. Installs from the Windows installer are pointed at the new one.`,
+	Example: `  rfswift update           # show what changes, ask, then update
+  rfswift update --check   # only report whether an update exists
+  rfswift update --yes     # update without asking (scripts)`,
+	Args: cobra.NoArgs,
 	Run: func(cmd *cobra.Command, args []string) {
-		rfutils.GetLatestRFSwift()
+		yes, _ := cmd.Flags().GetBool("yes")
+		check, _ := cmd.Flags().GetBool("check")
+		if err := rfutils.SelfUpdate(rfutils.UpdateOptions{Yes: yes, Check: check}); err != nil {
+			common.PrintErrorMessage(err)
+			os.Exit(1)
+		}
 	},
 }
 
 func registerHostCommands() {
 	rootCmd.AddCommand(HostCmd)
 	rootCmd.AddCommand(UpdateCmd)
+	UpdateCmd.Flags().BoolP("yes", "y", false, "update without asking (scripts)")
+	UpdateCmd.Flags().Bool("check", false, "only report whether a newer release exists and how it would be installed")
 
 	HostCmd.AddCommand(HostPulseAudioCmd)
 	registerHostSetupCommands()
@@ -149,6 +167,11 @@ func init() {
 		isCompletion := len(os.Args) > 1 && (os.Args[1] == "completion" || os.Args[1] == "__complete")
 		if !isCompletion {
 			common.WarnForeignOwnedConfig()
+			// 'rfswift update' needs no container engine, reports the
+			// versions itself, and should not open the host setup offer.
+			if cmd == UpdateCmd {
+				return
+			}
 			maybeOfferPackagedHostSetup(cmd)
 			// Initialize container engine BEFORE anything else
 			engineType, _ := cmd.Flags().GetString("engine")

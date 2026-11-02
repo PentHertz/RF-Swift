@@ -69,7 +69,38 @@ semantic versioning. Dates are ISO-8601 (YYYY-MM-DD).
   USB proxy drop the device; 16 KiB transfers (`rtl_sdr -b 16384`, GQRX
   `rtl=0,buflen=16384`) or sync mode stream at 1 MS/s.
 
+### Changed
+
+- `rfswift update` updates the way rfswift was installed, after one Yes/No
+  question (`--yes` for scripts, `--check` to only look). A deb, rpm or
+  pacman install gets the release's package for its architecture, installed
+  with apt-get, dnf/yum/zypper or pacman through sudo; the Homebrew cask runs
+  `brew upgrade --cask rfswift`; a standalone binary is replaced in place,
+  with sudo when its directory needs it (`/usr/local/bin`). It used to ask
+  "Do you want to update?" and only then say a packaged install had to be
+  upgraded by hand, with placeholders instead of the package name. It shows
+  what it will do before asking, checks the result with `rfswift --version`,
+  and warns when another `rfswift` earlier in `PATH` would still start the
+  old version. The prompt accepts y/n (it wanted the word "yes"); the
+  update no longer detects a container engine or prints the version notice
+  twice. Installs from the Windows installer get the link to the new one.
+- The version notice shown by other commands says what to run:
+  "RF Swift 4.0.5 is available (you have 4.0.4). Update with: rfswift update".
+
 ### Fixed
+
+- `rfswift update` verifies every download against the release's SHA-256
+  checksums and refuses a file that does not match or is not listed. It
+  installed the archive without any check.
+- `rfswift update` on Windows looked for `rfswift` instead of `rfswift.exe`
+  in the release zip, and on Linux riscv64 it reported the architecture as
+  unsupported although the release ships it.
+- `rfswift update` downloaded and unpacked into fixed names in the shared
+  temporary directory (`/tmp/rfswift_extracted`), which another local user
+  could prepare in advance, and unpacked every archive entry as given. It
+  now uses a private directory and reads only the `rfswift` entry.
+- Download progress bar: the percentage ended in "%%" and its color leaked
+  into the next line; without a terminal (logs, pipes) no bar is drawn.
 
 - `sudo rfswift run|exec` and `sudo rfswift host audio enable|unload`: pactl,
   `systemctl --user`, pw-cli and the PulseAudio client now run in the
