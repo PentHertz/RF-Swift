@@ -7,7 +7,7 @@ require (
 	github.com/FlUxIuS/pulseaudio_2 v0.0.0-20250608163549-43fae16119df
 	github.com/UserExistsError/conpty v0.1.4
 	github.com/charmbracelet/lipgloss v1.1.0
-	github.com/cheggaaa/pb/v3 v3.2.1
+	github.com/cheggaaa/pb/v3 v3.3.0
 	github.com/creack/pty v1.1.24
 	github.com/go-resty/resty/v2 v2.17.2
 	github.com/moby/moby/api v1.56.1
@@ -61,9 +61,9 @@ require (
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/kr/text v0.2.0 // indirect
 	github.com/lucasb-eyer/go-colorful v1.4.1 // indirect
-	github.com/mattn/go-colorable v0.1.15 // indirect
+	github.com/mattn/go-colorable v0.1.16 // indirect
 	github.com/mattn/go-isatty v0.0.24 // indirect
-	github.com/mattn/go-runewidth v0.0.30 // indirect
+	github.com/mattn/go-runewidth v0.0.31 // indirect
 	github.com/mitchellh/hashstructure/v2 v2.0.2 // indirect
 	github.com/moby/docker-image-spec v1.3.1 // indirect
 	github.com/muesli/cancelreader v0.2.2 // indirect
