@@ -16,7 +16,7 @@ require (
 	github.com/moby/moby/client v0.6.2
 	github.com/sigstore/sigstore-go v1.3.0
 	github.com/wailsapp/wails/v2 v2.17.1
-	golang.org/x/sys v0.49.0
+	golang.org/x/sys v0.50.0
 	penthertz/rfswift v0.0.0
 )
 
