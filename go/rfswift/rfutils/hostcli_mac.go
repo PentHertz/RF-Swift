@@ -529,6 +529,9 @@ func IsLimaInstanceRunning(instance string) bool {
 //	in(1): string instance name of the Lima instance to start
 //	out: error
 func StartLimaInstance(instance string) error {
+	if limaProgressReporter() != nil {
+		return runLimactlWithProgress(instance, "start", "--tty=false", instance)
+	}
 	cmd := exec.Command(LimaCtl(), "start", instance)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
@@ -541,6 +544,13 @@ func StartLimaInstance(instance string) error {
 //	in(2): string instance name for the new instance
 //	out: error
 func CreateLimaInstance(yamlPath, instance string) error {
+	if limaProgressReporter() != nil {
+		ReportLimaProgress(instance, 1, "Creating the Lima VM (first start only)")
+		if err := runLimactlWithProgress(instance, "create", "--tty=false", "--name", instance, yamlPath); err != nil {
+			return fmt.Errorf("failed to create Lima instance: %w", err)
+		}
+		return StartLimaInstance(instance)
+	}
 	cmd := exec.Command(LimaCtl(), "create", "--name", instance, yamlPath)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr

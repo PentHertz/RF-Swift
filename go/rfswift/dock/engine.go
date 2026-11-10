@@ -241,9 +241,12 @@ func EnsureEngineRunning(engine ContainerEngine) error {
 		return fmt.Errorf("failed to start %s: %v", name, err)
 	}
 
-	// Wait for the service to become reachable
-	for i := 0; i < 15; i++ {
-		time.Sleep(2 * time.Second)
+	// Wait for the service to become reachable. StartService usually returns
+	// with it already up (Lima waits for Docker), so probe before sleeping.
+	for i := 0; i < 16; i++ {
+		if i > 0 {
+			time.Sleep(2 * time.Second)
+		}
 		if engine.IsServiceRunning() {
 			reportEngineStatus(fmt.Sprintf("%s is now running", name), true)
 			return nil

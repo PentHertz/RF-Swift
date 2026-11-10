@@ -481,12 +481,18 @@ portForwards:
 // waitForDocker waits for Docker to become reachable inside the Lima VM.
 func (e *LimaEngine) waitForDocker() error {
 	common.PrintInfoMessage("Waiting for Docker inside Lima VM...")
+	instance := e.getInstance()
 
 	// Re-detect socket after VM start
 	e.socket = ""
 
+	// limactl returns once its own checks pass, so Docker is usually up on
+	// the first try: probe before sleeping.
 	for i := 0; i < 30; i++ {
-		time.Sleep(2 * time.Second)
+		if i > 0 {
+			time.Sleep(2 * time.Second)
+		}
+		rfutils.ReportLimaProgress(instance, 92+i/5, "Waiting for Docker inside the VM")
 
 		// Try to get a fresh socket path
 		if e.GetSocketPath() == "" {
@@ -500,12 +506,15 @@ func (e *LimaEngine) waitForDocker() error {
 		if pingClient(cli) {
 			cli.Close()
 			common.PrintSuccessMessage("Docker is ready inside Lima VM")
+			rfutils.FinishLimaProgress(instance, nil)
 			return nil
 		}
 		cli.Close()
 	}
 
-	return fmt.Errorf("Docker did not become reachable inside Lima VM after 60 seconds")
+	err := fmt.Errorf("Docker did not become reachable inside Lima VM after 60 seconds")
+	rfutils.FinishLimaProgress(instance, err)
+	return err
 }
 
 // limaInstanceExists checks if a Lima instance has been created (regardless of state).

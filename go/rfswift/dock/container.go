@@ -864,6 +864,9 @@ func ContainerRun(containerName string) {
 		restrictRootlessPodmanHostConfig(hostConfig, func(msg string) { common.PrintWarningMessage(msg) })
 	}
 
+	// The container has a TTY: runc mounts its pty over /dev/console.
+	dropTTYConsoleDevice(hostConfig)
+
 	// SELinux enforcing (Fedora, Qubes OS templates): without this the
 	// container cannot use its workspace, the display or the devices.
 	applyHostSELinux(hostConfig, func(msg string) { common.PrintInfoMessage(msg) })

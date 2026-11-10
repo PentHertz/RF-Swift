@@ -25,6 +25,7 @@ import (
 	rfdock "penthertz/rfswift/dock"
 	rfnix "penthertz/rfswift/nix"
 	"penthertz/rfswift/remote"
+	"penthertz/rfswift/rfutils"
 )
 
 // This file is the bound API surface: every exported method is callable from the
@@ -1016,6 +1017,15 @@ func (a *App) emitOperationProgress(operation, target string, percent int, stage
 	wruntime.EventsEmit(a.ctx, "rfswift:operation-progress", map[string]any{
 		"operation": operation, "target": target, "percent": percent, "stage": stage,
 	})
+}
+
+// emitLimaProgress forwards a Lima VM boot step to the GUI, whatever started
+// the VM: mission creation, the engine doctor, a VM reset or a reconfigure.
+func (a *App) emitLimaProgress(p rfutils.LimaProgress) {
+	if a.ctx == nil {
+		return
+	}
+	wruntime.EventsEmit(a.ctx, "rfswift:lima-progress", p)
 }
 
 // --- notebook ---

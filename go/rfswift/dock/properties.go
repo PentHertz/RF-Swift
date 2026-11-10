@@ -1699,6 +1699,9 @@ func recreateContainerWithProperties(ctx context.Context, cli *client.Client, co
 		sanitizeHostConfigForPodman(hostConfig)
 	}
 
+	// The container has a TTY: runc mounts its pty over /dev/console.
+	dropTTYConsoleDevice(hostConfig)
+
 	// ── 4. Create the new container ──
 	reportConfigStage("Creating the container with the new configuration", 65)
 	common.PrintInfoMessage("Creating new container with updated configuration...")
@@ -1799,6 +1802,7 @@ func rollbackContainer(ctx context.Context, cli *client.Client, containerName st
 	if !useDirectConfigEdit() {
 		sanitizeHostConfigForPodman(rollbackHostConfig)
 	}
+	dropTTYConsoleDevice(rollbackHostConfig)
 
 	resp, err := cli.ContainerCreate(ctx, client.ContainerCreateOptions{
 		Config: &container.Config{
@@ -2054,6 +2058,9 @@ func recreateContainerWithUpdatedBinds(ctx context.Context, cli *client.Client, 
 		// Update label
 		oldConfig.Labels["org.rfswift.cgroup_rules"] = strings.Join(oldHostConfig.DeviceCgroupRules, ",")
 	}
+
+	// The container has a TTY: runc mounts its pty over /dev/console.
+	dropTTYConsoleDevice(oldHostConfig)
 
 	// 3. Create a temporary-named container first, then swap
 	tempContainerName := fmt.Sprintf("%s_rfswift_tmp_%d", containerName, time.Now().UnixNano())

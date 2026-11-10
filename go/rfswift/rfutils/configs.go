@@ -69,7 +69,9 @@ func GetDefaultDevices() string {
 	case "darwin":
 		// On macOS (Docker/OrbStack), /dev/snd and /dev/vhci do not exist.
 		// USB devices are available via Lima VM: use 'rfswift macusb attach' to hot-plug.
-		return "/dev/console:/dev/console"
+		// No /dev/console: the VM's console cannot be opened (EIO) and runc
+		// mounts the container's pty there anyway (see dock/console.go).
+		return ""
 	case "windows":
 		// WSL2/Docker Desktop - fewer device mappings available
 		return "/dev/bus/usb:/dev/bus/usb,/dev/snd:/dev/snd,/dev/console:/dev/console,/dev/vcsa:/dev/vcsa,/dev/tty:/dev/tty,/dev/tty0:/dev/tty0,/dev/tty1:/dev/tty1,/dev/tty2:/dev/tty2,/dev/uinput:/dev/uinput"

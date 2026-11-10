@@ -357,6 +357,7 @@ func ContainerUpgrade(containerIdentifier string, repositoriesToPreserve string,
 	// Keep (or give, for containers from older releases) the SELinux
 	// opt-out that lets the container use its workspace and devices.
 	applyHostSELinux(hostConfig, nil)
+	dropTTYConsoleDevice(hostConfig)
 
 	resp, err := cli.ContainerCreate(ctx, client.ContainerCreateOptions{Config: &container.Config{
 		Image:        newImage,
