@@ -66,3 +66,23 @@ func TestFindLimaTemplateVariant(t *testing.T) {
 		t.Errorf("findLimaTemplate(true) = %q, want %q", got, gpu)
 	}
 }
+
+func TestParseLimaUSB(t *testing.T) {
+	info := "  Device 0.1, Port 1, Speed 480 Mb/s, Product RTL2838UHIDIR, ID: usb-0bda-2838\r\n" +
+		"  Device 0.2, Port 2, Speed 480 Mb/s, Product HackRF One, ID: usb-1D50-6089\r\n" +
+		"  Device 0.3, Port 3, Speed 12 Mb/s, Product QEMU USB Tablet, ID: tablet\r\n" +
+		"  Device 0.4, Port 4, Speed 480 Mb/s, Product RTL2838UHIDIR, ID: usb-0bda-2838\r\n"
+	got := parseLimaUSB(info)
+	want := [][2]string{{"0x0bda", "0x2838"}, {"0x1d50", "0x6089"}}
+	if len(got) != len(want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("got %v, want %v", got, want)
+		}
+	}
+	if parseLimaUSB("") != nil || parseLimaUSB("No USB devices attached") != nil {
+		t.Fatal("empty info yielded devices")
+	}
+}
