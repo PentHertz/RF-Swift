@@ -1,0 +1,26 @@
+# osv-scanner exceptions for the Workbench module (picked up automatically by
+# `osv-scanner scan source -L go.mod` run from this directory).
+#
+# Every entry must say why the finding does not apply and carry an
+# ignoreUntil date, so it fails CI again and gets re-checked.
+
+# github.com/labstack/echo/v4 (a Wails v2 dependency), false positives.
+# echo v4.16.3 fixes both issues: its release notes (2026-10-29) name
+# CVE-2026-118653 and CVE-2026-118651, and the GitHub advisories mark v4 as
+# last affected in 4.16.2. The Go vulnerability database entries imported
+# them with v4 affected from 4.0.0 and no upper bound, so every v4 release
+# matches. Drop these entries once the Go entries list the v4 fix.
+# Even if they applied: echo is imported only by
+# wails/v2/internal/frontend/devserver, behind `//go:build dev`, which only
+# `wails dev` compiles. `wails build` (all Makefile and CI targets) never
+# links it, so echo is in no Workbench binary we ship.
+
+[[IgnoredVulns]]
+id = "GO-2026-6872"
+ignoreUntil = 2027-02-11
+reason = "Fixed in echo v4.16.3 (CVE-2026-118653, GHSA-246p-cpwv-v3jq: v4 last affected 4.16.2); the Go DB entry has no v4 upper bound. echo is only linked by the Wails dev server (build tag dev)."
+
+[[IgnoredVulns]]
+id = "GO-2026-6875"
+ignoreUntil = 2027-02-11
+reason = "Fixed in echo v4.16.3 (CVE-2026-118651, GHSA-99jh-6h7p-pp36: v4 last affected 4.16.2); the Go DB entry has no v4 upper bound. echo is only linked by the Wails dev server (build tag dev)."

@@ -86,6 +86,14 @@ semantic versioning. Dates are ISO-8601 (YYYY-MM-DD).
   twice. Installs from the Windows installer get the link to the new one.
 - The version notice shown by other commands says what to run:
   "RF Swift 4.0.5 is available (you have 4.0.4). Update with: rfswift update".
+- Go 1.27.4 for both modules and in `scripts/common.sh` (checksums pinned).
+- Dependencies: pflag 1.1.0, cheggaaa/pb 3.3.0, `golang.org/x/sys` 0.50.0,
+  `golang.org/x/mod` 0.43.0, `golang.org/x/term` 0.48.0, bubbletea 2.1.1,
+  lipgloss 2.1.0 and go-winio 0.6.4. The Workbench takes sigstore-go 1.4.0
+  (with sigstore 1.11.3, rekor 1.6.0 and grpc 1.85.0).
+- CI: codeql-action upload-sarif 4.39.3 and setup-dotnet 6.1.0. The
+  Workbench Makefile installs the Wails CLI 2.17.1, as CI does (it pinned
+  2.15.0).
 
 ### Fixed
 
@@ -146,6 +154,11 @@ semantic versioning. Dates are ISO-8601 (YYYY-MM-DD).
   now, with the cgroup rule of its major, as the Workbench and the profiles
   already did. Verified with an RTL-SDR attached from sys-usb to a running
   container.
+- CI: osv-scanner failed the Workbench audit on GO-2026-6872 and
+  GO-2026-6875 (echo, a Wails dependency). echo 4.16.3 fixes both, as its
+  release notes and the GitHub advisories say, but the Go vulnerability
+  database entries list every v4 release as affected. Both are ignored in
+  `go/rfswift-workbench/osv-scanner.toml` until 2027-02-11.
 
 ## [11-01-2026] - v4.0.5
 

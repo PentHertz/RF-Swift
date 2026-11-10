@@ -18,7 +18,7 @@
 
 BIN     := rfswift-workbench
 LDFLAGS := -s -w
-WAILS_VERSION := v2.15.0
+WAILS_VERSION := v2.17.1
 LINUX_TAGS := webkit2_41
 OUT     := build/bin
 HOSTARCH := $(shell go env GOARCH 2>/dev/null || echo amd64)
