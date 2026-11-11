@@ -177,7 +177,7 @@ func restrictRootlessPodmanHostConfig(hc *container.HostConfig, warn func(string
 	if len(hc.Devices) > 0 {
 		kept, dropped := filterRootlessDevices(hc.Devices, hostPathOpenable)
 		if len(dropped) > 0 {
-			warn(fmt.Sprintf("Rootless Podman: dropped %d device(s) this user cannot map into a user namespace: %s. Run RF Swift with sudo (rootful Podman) or Docker to attach them.", len(dropped), strings.Join(dropped, ", ")))
+			warn(fmt.Sprintf("Rootless Podman: dropped %d device(s) this user cannot map into a user namespace: %s. Run RF Swift with sudo (rootful Podman) or Docker to attach them.%s", len(dropped), strings.Join(dropped, ", "), rootfulPodmanHint()))
 		}
 		hc.Devices = kept
 	}
@@ -190,10 +190,18 @@ func restrictRootlessPodmanHostConfig(hc *container.HostConfig, warn func(string
 	}
 	// Entering the user namespace drops the host's supplementary groups, so
 	// a device this user may open on the host through dialout or plugdev is
-	// still EACCES inside the container. crun can keep them
-	// (--group-add keep-groups); runc cannot, and would fail to start.
+	// still EACCES inside the container. crun can keep them. The podman CLI
+	// spells it --group-add keep-groups, but that is a CLI keyword: through
+	// the Docker-compatible API (CreateContainer, ContainerRun) a GroupAdd of
+	// "keep-groups" is looked up as a group name and the start fails with
+	// "Unable to find group keep-groups". The CLI turns the keyword into the
+	// OCI annotation below, which the API carries as is. runc ignores it.
+	// Explicit groups are left alone: Podman refuses keep-groups with others.
 	if len(hc.GroupAdd) == 0 && podmanKeepsGroups() {
-		hc.GroupAdd = []string{"keep-groups"}
+		if hc.Annotations == nil {
+			hc.Annotations = map[string]string{}
+		}
+		hc.Annotations[podmanKeepGroupsAnnotation] = "1"
 	}
 	if len(hc.Resources.Ulimits) > 0 {
 		kept, dropped := filterRootlessUlimits(hc.Resources.Ulimits, hostHardLimit)
@@ -203,6 +211,10 @@ func restrictRootlessPodmanHostConfig(hc *container.HostConfig, warn func(string
 		hc.Resources.Ulimits = kept
 	}
 }
+
+// podmanKeepGroupsAnnotation is what `podman --group-add keep-groups` sets:
+// crun keeps the caller's supplementary groups in the container.
+const podmanKeepGroupsAnnotation = "run.oci.keep_original_groups"
 
 // podmanKeepsGroups reports whether the Podman OCI runtime is crun, the only
 // runtime that honours "keep-groups". Probed once per process; overridable

@@ -11,6 +11,7 @@ import (
 	"penthertz/rfswift/common"
 	rfdock "penthertz/rfswift/dock"
 	"penthertz/rfswift/remote"
+	"penthertz/rfswift/rfutils"
 )
 
 // App is the Wails-bound application object. Every exported method on it is
@@ -125,6 +126,9 @@ func (a *App) Startup(ctx context.Context) {
 	// invisible — the dialog sits still for up to ~30s before any image pull
 	// progress appears, and the user cannot tell whether anything is happening.
 	rfdock.SetEngineStatusReporter(a.emitEngineStatus)
+	// Lima VM boots report their steps (and a percentage) instead of writing
+	// limactl's log to a stdout nobody sees.
+	rfutils.SetLimaProgressReporter(a.emitLimaProgress)
 }
 
 // emitEngineStatus forwards a container-engine lifecycle update to the GUI. When

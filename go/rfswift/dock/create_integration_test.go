@@ -73,3 +73,44 @@ func TestCreateContainerCleansUpAfterStartFailure(t *testing.T) {
 		t.Fatalf("partial container %q remained after start failure", name)
 	}
 }
+
+// A /dev/console device mapping (the macOS default devices of older config
+// files) made every TTY container fail to start on OrbStack and Docker
+// Desktop with runc >= 1.2.8: "create /dev/console mount target: open
+// /dev/console: input/output error". CreateContainer must drop it.
+func TestCreateContainerStartsWithConsoleDevice(t *testing.T) {
+	SetPreferredEngine("docker")
+	engine := GetEngine()
+	if engine == nil || engine.Type() != EngineDocker || !engine.IsServiceRunning() {
+		t.Skip("Docker is not available")
+	}
+	availability, err := CheckImage("docker", "corebuild")
+	if err != nil || !availability.Present {
+		t.Skip("integration fixture penthertz/rfswift_resolute:corebuild is not installed")
+	}
+	cli, err := NewEngineClient()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cli.Close()
+	name := fmt.Sprintf("rfswift-console-test-%d", time.Now().UnixNano())
+	defer func() {
+		_, _ = cli.ContainerRemove(context.Background(), name, client.ContainerRemoveOptions{Force: true})
+	}()
+	if _, err := CreateContainer(CreateOptions{
+		Engine: "docker", Name: name, Image: "corebuild", Workspace: "none",
+		Network: "bridge", Devices: []string{"/dev/console:/dev/console"},
+		NoX11: true, Start: true,
+	}); err != nil {
+		t.Fatalf("container with a /dev/console mapping did not start: %v", err)
+	}
+	inspect, err := cli.ContainerInspect(context.Background(), name, client.ContainerInspectOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, dev := range inspect.Container.HostConfig.Devices {
+		if dev.PathInContainer == "/dev/console" {
+			t.Fatalf("/dev/console mapping was kept: %+v", dev)
+		}
+	}
+}

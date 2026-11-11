@@ -130,3 +130,48 @@ func (a *App) DockerAccessGrant() (hostsetup.DockerGrantReport, error) {
 	}
 	return hostsetup.GrantDockerAccess()
 }
+
+// QubesStatus reports RF Swift's Qubes OS integration for this qube (USB
+// from sys-usb, persistent engine storage, rootful Podman for the user,
+// root-owned workspaces). Never changes anything; Info.IsQubes is false
+// outside a local Qubes OS qube, and the GUI then shows nothing.
+func (a *App) QubesStatus() hostsetup.QubesStatus {
+	if !a.hostSetupApplies() || !hostsetup.IsQubes() {
+		return hostsetup.QubesStatus{Checks: []hostsetup.QubesCheck{}, Plan: []string{}, USB: []hostsetup.QubesUSBDevice{}, RootOwned: []string{}, DropDevices: []string{}, Detail: "not a local Qubes OS qube"}
+	}
+	return rfdock.QubesStatus()
+}
+
+// QubesSetupScript returns the root script the setup would run, so the GUI
+// can show it before asking.
+func (a *App) QubesSetupScript() (string, error) {
+	if !a.hostSetupApplies() || !hostsetup.IsQubes() {
+		return "", errors.New("the Qubes OS integration applies to a local Qubes OS qube only")
+	}
+	return rfdock.QubesSetupScript(hostsetup.DefaultQubesSetupOptions(rfdock.QubesInput()))
+}
+
+// QubesSetupResult is what QubesSetup did.
+type QubesSetupResult struct {
+	hostsetup.QubesSetupReport
+	ConfigChanges []string `json:"configChanges"`
+}
+
+// QubesSetup applies the Qubes OS integration after one polkit prompt
+// (`rfswift host qubes setup` with its defaults). The engine is detected
+// again afterwards, so once the rootful Podman socket is granted the
+// Workbench lists and drives the rootful containers without a restart.
+func (a *App) QubesSetup() (QubesSetupResult, error) {
+	if !a.hostSetupApplies() || !hostsetup.IsQubes() {
+		return QubesSetupResult{}, errors.New("the Qubes OS integration applies to a local Qubes OS qube only")
+	}
+	report, changes, err := rfdock.ApplyQubesSetup(hostsetup.DefaultQubesSetupOptions(rfdock.QubesInput()))
+	if changes == nil {
+		changes = []string{}
+	}
+	if report.Notes == nil {
+		report.Notes = []string{}
+	}
+	resetEngineEnv()
+	return QubesSetupResult{QubesSetupReport: report, ConfigChanges: changes}, err
+}

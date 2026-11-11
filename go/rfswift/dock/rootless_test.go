@@ -133,21 +133,26 @@ func TestRestrictRootlessPodmanKeepsGroupsOnlyWithCrun(t *testing.T) {
 	podmanKeepsGroups = func() bool { return true }
 	hc := &container.HostConfig{}
 	restrictRootlessPodmanHostConfig(hc, nil)
-	if len(hc.GroupAdd) != 1 || hc.GroupAdd[0] != "keep-groups" {
-		t.Fatalf("crun: GroupAdd = %v, want [keep-groups]", hc.GroupAdd)
+	// Through the Docker-compatible API a GroupAdd of "keep-groups" is taken
+	// as a group name and the start fails: the annotation is what works.
+	if len(hc.GroupAdd) != 0 {
+		t.Fatalf("crun: GroupAdd = %v, want none (the API cannot take keep-groups)", hc.GroupAdd)
+	}
+	if hc.Annotations[podmanKeepGroupsAnnotation] != "1" {
+		t.Fatalf("crun: annotations = %v, want %s=1", hc.Annotations, podmanKeepGroupsAnnotation)
 	}
 
 	podmanKeepsGroups = func() bool { return false }
 	hc = &container.HostConfig{}
 	restrictRootlessPodmanHostConfig(hc, nil)
-	if len(hc.GroupAdd) != 0 {
-		t.Fatalf("runc: GroupAdd = %v, want none (keep-groups would fail to start)", hc.GroupAdd)
+	if len(hc.GroupAdd) != 0 || len(hc.Annotations) != 0 {
+		t.Fatalf("runc: GroupAdd = %v, annotations = %v, want none", hc.GroupAdd, hc.Annotations)
 	}
 
 	podmanKeepsGroups = func() bool { return true }
 	hc = &container.HostConfig{GroupAdd: []string{"audio"}}
 	restrictRootlessPodmanHostConfig(hc, nil)
-	if len(hc.GroupAdd) != 1 || hc.GroupAdd[0] != "audio" {
-		t.Fatalf("explicit groups must be left alone, got %v", hc.GroupAdd)
+	if len(hc.GroupAdd) != 1 || hc.GroupAdd[0] != "audio" || hc.Annotations[podmanKeepGroupsAnnotation] != "" {
+		t.Fatalf("explicit groups must be left alone, got %v / %v", hc.GroupAdd, hc.Annotations)
 	}
 }

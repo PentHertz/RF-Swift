@@ -359,3 +359,38 @@ func RemoveStrayDeviceDirs(paths []string) error {
 	}
 	return hostsetup.RunPrivileged("set -e\n" + strings.Join(lines, "\n") + "\n")
 }
+
+// promoteDeviceTrees moves device mappings whose host side is a directory
+// (/dev/bus/usb, /dev/snd, /dev/input, ...) to the bind mounts. Docker and
+// Podman expand a directory given as a device into the nodes present at
+// creation, so a dongle plugged in, re-plugged or forwarded later (sys-usb on
+// Qubes OS, usbipd on Windows, the Lima VM on macOS) never appears in the
+// container. A bind mount of the tree shows nodes as they come and go; the
+// cgroup rule for its major makes them usable. CreateContainer (Workbench,
+// agent) does the same through normalizeCreationDevices; the profiles bind
+// /dev/bus/usb for the same reason.
+//
+//	in(1): []string binds   bind mounts "source:dest[:opts]"
+//	in(2): string devices   comma-separated device mappings
+//	in(3): func(string) bool isDir host-side directory probe
+//	out: []string binds with the trees added
+//	out: string devices without them
+func promoteDeviceTrees(binds []string, devices string, isDir func(string) bool) ([]string, string) {
+	var kept []string
+	out := append([]string(nil), binds...)
+	for _, spec := range strings.Split(devices, ",") {
+		spec = strings.TrimSpace(spec)
+		if spec == "" {
+			continue
+		}
+		parts := strings.SplitN(spec, ":", 3)
+		if len(parts) < 2 || !strings.HasPrefix(parts[0], "/dev/") || !isDir(parts[0]) {
+			kept = append(kept, spec)
+			continue
+		}
+		if !bindExistsByPrefix(out, parts[0]+":"+parts[1]) {
+			out = append(out, parts[0]+":"+parts[1])
+		}
+	}
+	return out, strings.Join(kept, ",")
+}

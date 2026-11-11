@@ -34,7 +34,7 @@ func maybeOfferPackagedHostSetup(cmd *cobra.Command) {
 		return
 	}
 	for c := cmd; c != nil; c = c.Parent() {
-		if c == hostSetupCmd || c == hostUdevCmd || c == hostDockerAccessCmd || c == hostIsolateCmd {
+		if c == hostSetupCmd || c == hostUdevCmd || c == hostDockerAccessCmd || c == hostIsolateCmd || c == hostQubesCmd {
 			return
 		}
 	}
@@ -697,6 +697,7 @@ func registerHostSetupCommands() {
 	hostDevcleanCmd.Flags().Bool("list", false, "only list the stray directories")
 	hostDevcleanCmd.Flags().BoolP("yes", "y", false, "remove without asking (scripts)")
 	HostCmd.AddCommand(hostSetupCmd, hostUdevCmd, hostDockerAccessCmd, hostIsolateCmd, hostDevcleanCmd)
+	registerHostQubesCommands()
 	hostIsolateCmd.Flags().Bool("status", false, "only show the state")
 	hostIsolateCmd.Flags().BoolP("yes", "y", false, "apply without asking")
 	hostIsolateCmd.Flags().Bool("sysctl", false, "last resort: lift Ubuntu's user-namespace restriction for every program (weakens the host)")

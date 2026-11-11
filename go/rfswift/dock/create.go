@@ -391,6 +391,8 @@ func CreateContainer(opts CreateOptions) (string, error) {
 		// reports only as "container create failed (no logs from conmon)".
 		restrictRootlessPodmanHostConfig(hostConfig, warn)
 	}
+	dropTTYConsoleDevice(hostConfig)
+	applyHostSELinux(hostConfig, nil)
 	var entrypoint []string
 	if opts.Desktop {
 		if opts.DesktopProto == "" {

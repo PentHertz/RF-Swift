@@ -78,6 +78,10 @@ Already on Kali, Parrot or DragonOS? Keep it, and add RF Swift on top. The RF st
 
 v4.0 (current release **v4.0.5**) is the biggest change since the project started. In one line: the same RF and hardware lab, now as containers **or** native environments, on your machine **or** on a remote one, from the terminal **or** from a GUI. The full list is in the [CHANGELOG](CHANGELOG.md) and on [rfswift.io](https://rfswift.io/docs/release-notes-v4/).
 
+### 🧊 Coming in v4.1: Qubes OS, and rootful Podman without sudo
+
+`rfswift host qubes setup` prepares a Qubes OS qube in one step. USB devices from `sys-usb` reach containers even when attached after they start, rootful engine storage survives AppVM restarts, and the CLI and the Workbench run as you on rootful Podman (`podman_mode = rootful`), with your audio, display, home and workspaces. `sudo rfswift` keeps your audio session and workspaces too, SELinux hosts get working unprivileged containers, and `rfswift run` follows USB hot-plug like the Workbench. Details in the [Qubes OS section](#-qubes-os) and the [CHANGELOG](CHANGELOG.md).
+
 ### ❄️ Nix engine: the tools without a container
 
 `--engine nix` installs a tool set straight onto the host as a reproducible, pinned Nix environment, with transactional updates and rollback generations and on-demand builds (`--lazy`). USB radios, audio and the GPU work with no device plumbing. On Linux and macOS the same environment also runs **isolated** on request (`--isolate`): a bubblewrap or Seatbelt jail that hides your home and the host filesystem and keeps the hardware. On Windows the engine runs inside WSL 2. The engine and its jail have their own section below.
@@ -212,6 +216,8 @@ https://github.com/user-attachments/assets/14b6d50f-5250-420e-94e4-474991113372
 
 
 - **Automatic cgroup handling**: RF Swift detects cgroup v1/v2 and configures device access rules accordingly
+- **Rootful service, your session**: `podman_mode = rootful` in `config.ini` (or `RFSWIFT_PODMAN_MODE=rootful`) makes RF Swift and the Workbench drive the system Podman service as your user once its socket is usable by you (`rfswift host qubes setup` does it on Qubes OS). Root-only devices and cgroup rules then work without `sudo`, and the podman CLI calls RF Swift makes go to the same service. `auto` (the default) keeps rootless Podman for a user and rootful for root.
+- **SELinux hosts**: with SELinux enforcing (Fedora, RHEL, Qubes OS Fedora templates), unprivileged containers are created with `label=disable`, the same choice toolbox and distrobox make: otherwise SELinux keeps the container from its workspace, the X11 socket and the USB nodes. Opt out with `[container] selinux_label = keep`.
 
 ### ❄️ Nix engine (native environments)
 
@@ -340,6 +346,28 @@ rfswift env install gnuradioPackages.gr-foo --env lab
 
 The installer's optional **Set up Nix in WSL 2** step does the provisioning too. Details: [docs/nix-engine.md](docs/nix-engine.md#windows-the-engine-runs-in-wsl-2).
 
+### 🧊 Qubes OS
+
+Inside a Qubes OS qube, USB devices come from `sys-usb` (qvm-usb), a template-based AppVM forgets everything outside `/home`, `/rw` and `/usr/local` at each restart, and USB work wants rootful Podman. `rfswift host qubes` checks all of it and `rfswift host qubes setup` fixes it in one root script, printed before it runs:
+
+**Recommended layout**: install RF Swift (rpm/deb package) and the engines you want (Podman, Docker, Nix) in the **template**, so every qube based on it gets them and they survive restarts. Give the RF qube a private volume large enough for images (RF Swift images take 8 to 18 GB each; in dom0: `qvm-volume extend <qube>:private 60G`), make sure the template also has `qubes-usb-proxy` so `sys-usb` can attach devices to the qube, then run the setup once in that qube:
+
+```bash
+rfswift host qubes                   # what is missing, and what the setup would do
+rfswift host qubes setup --dry-run   # print the root script only
+rfswift host qubes setup             # apply (one sudo call)
+```
+
+- **USB from sys-usb**: `vhci-hcd` is loaded at every start, so `/dev/bus/usb` exists before the first device is attached. Containers can be created first, and a dongle attached later from the devices tray icon (or `qvm-usb attach <qube> sys-usb:<busid>` in dom0) shows up in the running container.
+- **Rootful Podman without sudo**: the rootful Podman socket is made usable by your user and `podman_mode = rootful` is set in `config.ini`. `rfswift` and the Workbench then run as you, with your audio server, X11 session, home, workspaces and config, while containers get rootful device access (device cgroup rules, root-only nodes, realtime limits). Access to that socket is root-equivalent; inside a qube you already have passwordless root, so it grants nothing new, and the step is skipped where root needs a password.
+- **Persistence**: in an AppVM, the engines' storage (`/var/lib/containers`, `/var/lib/docker` and `/var/lib/containerd`, where current Docker keeps its images) and `/nix` go to bind-dirs (`/rw/config/qubes-bind-dirs.d/50_rfswift.conf`), and the setup switches them to the persistent copy right away, keeping what they hold, so images are pulled straight onto the private volume rather than onto the root volume, which is only as large as the template's and is discarded at restart (a store whose engine runs containers switches at the next restart). The rest is re-applied at boot by `/rw/config/rc.local.d/50-rfswift.rc`; delete both files to undo. A TemplateVM or StandaloneVM gets the configuration in `/etc` directly.
+- **Docker**: the setup starts `docker.socket` at every boot (enabled in a TemplateVM or StandaloneVM), keeps `/var/lib/docker` and `/var/lib/containerd` across restarts (Docker's containerd image store holds each image twice, compressed and unpacked, so count about twice the image size), and gives you the socket: the `docker` group plus an ACL that a socket drop-in re-applies whenever the socket is created, so Docker stays usable without logging out or restarting the qube. It never restarts a running daemon.
+- **Nix engine**: Determinate Nix installed in the template runs its daemon from `/usr/local/bin/determinate-nixd`, which no AppVM sees (an AppVM's `/usr/local` is its own), so every Nix build failed with "cannot open connection to remote store". The setup runs the Nix profile's own `nix-daemon` instead at every boot, keeps `/nix` across restarts (bind-dirs), and copies the live store there right away so environments built before the setup survive the first restart too.
+- **RTL-SDR dongles**: the DVB-T driver (`dvb_usb_rtl28xxu`) claims them on every attach, and nixpkgs' rtl-sdr does not detach it (the container images do), so native tools failed with `usb_claim_interface error -6`. The setup blacklists it; `--no-rtl-blacklist` keeps it for DVB-T TV use.
+- **Clean-ups**: workspace folders a previous `sudo rfswift run` left owned by root are given back to you, and `/dev/dri` (no GPU in a qube) is dropped from the default devices.
+
+`sudo rfswift ...` keeps working too: the audio TCP module is loaded into *your* PipeWire/PulseAudio session and workspaces are created in your home and owned by you, not root. The Workbench's **Engine doctor** shows the same checks with a **Set up for Qubes** button. Fedora templates run SELinux in enforcing mode; RF Swift gives its containers `label=disable` there (see the Podman highlights above). SDR streaming through `sys-usb`'s USB/IP link wants small USB transfers: with an RTL-SDR, librtlsdr's default async buffers (15 × 256 KiB in flight) make the USB proxy drop the device at any sample rate, while sync reads (`rtl_sdr -S`) and async reads with 16 KiB buffers (`rtl_sdr -b 16384`, or the gr-osmosdr/GQRX device string `rtl=0,buflen=16384`) stream at 1 MS/s without trouble. If a device still drops, give `sys-usb` more memory (in dom0: `qvm-prefs sys-usb memory` and `maxmem`, then restart it), as the Qubes USB troubleshooting guide suggests; for sustained high rates, assign a USB controller to the RF qube with `qvm-pci`.
+
 ## 📥 Install
 
 Current release: **v4.0.5**. Every artifact below comes from the [releases page](https://github.com/PentHertz/RF-Swift/releases); the script downloads from there too.
@@ -388,7 +416,7 @@ rfswift host docker-access         # docker group + socket ACL, works without lo
 rfswift host isolate               # Nix jail (--isolate): bubblewrap and, on Ubuntu 24.04+, its AppArmor profile
 ```
 
-The udev rules ship as a reference copy in `/usr/share/rfswift/udev/70-rfswift.rules` (and inside the binary). Rootless Podman and Nix environments run tools as your user and need them; Docker runs as root and does not. They grant group `plugdev` plus the logged-in user's seat ACL, never world-writable device nodes, and udev is reloaded on the spot. The setup wizard also offers to install Docker and/or Podman from your distribution's repositories, or to skip that and use the Nix engine. `get_rfswift.sh` asks the same questions (`RFSWIFT_INSTALL=cli|workbench|both`, `RFSWIFT_CHANNEL=stable|dev`, `RFSWIFT_UDEV=1|0`, `RFSWIFT_ENGINE=docker|podman|both|skip`, `RFSWIFT_NIX=1|0`, `RFSWIFT_ISOLATE=1|0` and `RFSWIFT_INSTALL_DIR=<dir>` answer up front), and the Workbench's **Engine doctor** has the same buttons behind a polkit prompt. They install `rfswift` in `/usr/bin`; the installer removes the copies an earlier tarball install left in `/usr/local/bin` or `~/.rfswift/bin` (and the shell alias pointing at them) when you agree, since those would shadow the packaged binary. A packaged `rfswift` is upgraded with the next package (or by re-running the installer), and `rfswift update` says so instead of overwriting it.
+The udev rules ship as a reference copy in `/usr/share/rfswift/udev/70-rfswift.rules` (and inside the binary). Rootless Podman and Nix environments run tools as your user and need them; Docker runs as root and does not. They grant group `plugdev` plus the logged-in user's seat ACL, never world-writable device nodes, and udev is reloaded on the spot. The setup wizard also offers to install Docker and/or Podman from your distribution's repositories, or to skip that and use the Nix engine. `get_rfswift.sh` asks the same questions (`RFSWIFT_INSTALL=cli|workbench|both`, `RFSWIFT_CHANNEL=stable|dev`, `RFSWIFT_UDEV=1|0`, `RFSWIFT_ENGINE=docker|podman|both|skip`, `RFSWIFT_NIX=1|0`, `RFSWIFT_ISOLATE=1|0` and `RFSWIFT_INSTALL_DIR=<dir>` answer up front), and the Workbench's **Engine doctor** has the same buttons behind a polkit prompt. They install `rfswift` in `/usr/bin`; the installer removes the copies an earlier tarball install left in `/usr/local/bin` or `~/.rfswift/bin` (and the shell alias pointing at them) when you agree, since those would shadow the packaged binary. `rfswift update` follows the way rfswift was installed: it fetches the release's deb/rpm/pacman package for your architecture, checks its SHA-256 and installs it with your package manager (sudo), runs `brew upgrade --cask rfswift` for Homebrew, and replaces a standalone binary in place. `rfswift update --check` only reports, `--yes` skips the question.
 
 On macOS, Homebrew installs the CLI and the Workbench GUI together from the signed release, and the bundled setup command picks your engine:
 

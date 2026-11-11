@@ -69,7 +69,9 @@ func GetDefaultDevices() string {
 	case "darwin":
 		// On macOS (Docker/OrbStack), /dev/snd and /dev/vhci do not exist.
 		// USB devices are available via Lima VM: use 'rfswift macusb attach' to hot-plug.
-		return "/dev/console:/dev/console"
+		// No /dev/console: the VM's console cannot be opened (EIO) and runc
+		// mounts the container's pty there anyway (see dock/console.go).
+		return ""
 	case "windows":
 		// WSL2/Docker Desktop - fewer device mappings available
 		return "/dev/bus/usb:/dev/bus/usb,/dev/snd:/dev/snd,/dev/console:/dev/console,/dev/vcsa:/dev/vcsa,/dev/tty:/dev/tty,/dev/tty0:/dev/tty0,/dev/tty1:/dev/tty1,/dev/tty2:/dev/tty2,/dev/uinput:/dev/uinput"
@@ -95,12 +97,23 @@ func ConfiguredEngine(filename string) string {
 	return strings.ToLower(configValue(filename, "general", "engine"))
 }
 
+// ConfiguredPodmanMode returns `[general] podman_mode` (auto, rootless or
+// rootful), lowercased, or "" when unset. Non-interactive, like
+// ConfiguredEngine.
+func ConfiguredPodmanMode(filename string) string {
+	return strings.ToLower(configValue(filename, "general", "podman_mode"))
+}
+
 // ConfiguredNixWSLDistro returns the WSL 2 distribution set under
 // `[nix] wsl_distro` (Windows: the distribution hosting the Nix engine), or ""
 // when unset. Non-interactive, like ConfiguredEngine.
 func ConfiguredNixWSLDistro(filename string) string {
 	return configValue(filename, "nix", "wsl_distro")
 }
+
+// ConfigValue reads one key of one section from config.ini without
+// prompting ("" when absent).
+func ConfigValue(filename, section, key string) string { return configValue(filename, section, key) }
 
 // configValue reads one key of one section from the INI-style config file
 // without prompting: "" when the file, section or key is absent.
@@ -450,6 +463,11 @@ repotag = penthertz/rfswift_resolute
 # Default engine when neither --engine nor RFSWIFT_ENGINE is set:
 # auto, docker, podman, lima, or nix (native environments).
 engine = auto
+# Linux, Podman run as a normal user: which Podman service RF Swift drives.
+# auto (rootless for a user, rootful for root), rootless, or rootful (the
+# system service, once its socket is made usable by you - 'rfswift host qubes
+# setup' does that on Qubes OS). Env: RFSWIFT_PODMAN_MODE.
+podman_mode = auto
 
 [container]
 shell = /bin/zsh

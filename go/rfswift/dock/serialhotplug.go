@@ -144,7 +144,7 @@ func SerialHotplugSupported(eng ContainerEngine) bool {
 
 // serialHotplugSupportedType is SerialHotplugSupported by engine type.
 func serialHotplugSupportedType(t EngineType) bool {
-	if t == EngineLima || (t == EnginePodman && os.Getuid() != 0) {
+	if t == EngineLima || (t == EnginePodman && podmanIsRootless()) {
 		return false
 	}
 	return deviceNumbersSupported()
@@ -160,7 +160,7 @@ func SerialHotplugUnavailableError(eng ContainerEngine) error {
 	case eng != nil && eng.Type() == EngineLima:
 		return errors.New("serial hot-plug is not available with the Lima engine: attach the device to the VM (rfswift macusb attach, or the USB button in the Workbench), then add the port as a device or bind mount")
 	case eng != nil && eng.Type() == EnginePodman:
-		return errors.New("serial hot-plug is not available with rootless Podman (device cgroup rules are refused): map the port when it is plugged in, or run RF Swift with sudo")
+		return errors.New("serial hot-plug is not available with rootless Podman (device cgroup rules are refused): map the port when it is plugged in, run RF Swift with sudo, or use the rootful service as your user (podman_mode = rootful; 'rfswift host qubes setup' on Qubes OS)")
 	default:
 		return errors.New("serial hot-plug is not available on this host")
 	}

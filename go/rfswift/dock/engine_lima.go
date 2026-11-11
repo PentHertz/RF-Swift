@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 	"time"
@@ -189,17 +190,80 @@ func (e *LimaEngine) RestartService() error {
 	instance := e.getInstance()
 
 	common.PrintInfoMessage(fmt.Sprintf("Restarting Docker inside Lima instance '%s'...", instance))
-	if err := exec.Command(rfutils.LimaCtl(), "shell", instance, "sudo", "systemctl", "restart", "docker").Run(); err != nil {
+	if err := restartDockerInLima(instance); err != nil {
 		// Fall back to full VM restart if in-VM restart fails
-		common.PrintWarningMessage("In-VM Docker restart failed, falling back to full VM restart...")
+		common.PrintWarningMessage(fmt.Sprintf("In-VM Docker restart failed (%v), falling back to full VM restart...", err))
+		// Stopping the VM drops QEMU's USB passthrough: note what was
+		// attached so the devices come back with the VM.
+		usb := limaAttachedUSB(instance)
 		_ = exec.Command(rfutils.LimaCtl(), "stop", instance).Run()
 		time.Sleep(2 * time.Second)
 		if err := rfutils.StartLimaInstance(instance); err != nil {
 			return fmt.Errorf("failed to restart Lima instance: %w", err)
 		}
+		reattachLimaUSB(instance, usb)
 	}
 
 	return e.waitForDocker()
+}
+
+// limaDockerRestartScript restarts Docker inside the VM. docker.service
+// accepts three starts a minute (StartLimitBurst=3), so a few configuration
+// changes in a row made `systemctl restart` fail with start-limit-hit, and
+// the fallback rebooted the VM (stopping every container, dropping the USB
+// passthrough). These restarts are deliberate, so the counter is cleared
+// first.
+const limaDockerRestartScript = "systemctl reset-failed docker.service docker.socket >/dev/null 2>&1; systemctl restart docker.service"
+
+func restartDockerInLima(instance string) error {
+	out, err := exec.Command(rfutils.LimaCtl(), "shell", instance, "sudo", "sh", "-c", limaDockerRestartScript).CombinedOutput()
+	if err != nil {
+		if msg := strings.TrimSpace(string(out)); msg != "" {
+			return fmt.Errorf("%v: %s", err, msg)
+		}
+		return err
+	}
+	return nil
+}
+
+// limaUSBIDRe matches the QMP ids AttachUSBToLima gives devices
+// ("ID: usb-0bda-2838" in `info usb`).
+var limaUSBIDRe = regexp.MustCompile(`ID:\s*usb-([0-9a-fA-F]{4})-([0-9a-fA-F]{4})\b`)
+
+// parseLimaUSB returns the vendor/product ids ("0x0bda", "0x2838") of the
+// devices RF Swift attached, from QMP `info usb` output.
+func parseLimaUSB(info string) [][2]string {
+	var out [][2]string
+	seen := map[string]bool{}
+	for _, m := range limaUSBIDRe.FindAllStringSubmatch(info, -1) {
+		vid, pid := "0x"+strings.ToLower(m[1]), "0x"+strings.ToLower(m[2])
+		if seen[vid+pid] {
+			continue
+		}
+		seen[vid+pid] = true
+		out = append(out, [2]string{vid, pid})
+	}
+	return out
+}
+
+// limaAttachedUSB lists the USB devices attached to the VM (none when QMP
+// cannot be reached).
+func limaAttachedUSB(instance string) [][2]string {
+	info, err := rfutils.ListUSBInLimaVM(instance)
+	if err != nil {
+		return nil
+	}
+	return parseLimaUSB(info)
+}
+
+// reattachLimaUSB attaches the devices again after a VM restart. A device
+// unplugged from the Mac in the meantime is reported and skipped.
+func reattachLimaUSB(instance string, devices [][2]string) {
+	for _, d := range devices {
+		if err := rfutils.AttachUSBToLima(d[0], d[1], instance); err != nil {
+			common.PrintWarningMessage(fmt.Sprintf("USB device %s:%s was attached before the VM restart but could not be attached again: %v (rfswift macusb attach)", d[0], d[1], err))
+		}
+	}
 }
 
 // GetHostConfigPath returns the Docker container config path inside the Lima VM.
@@ -481,12 +545,18 @@ portForwards:
 // waitForDocker waits for Docker to become reachable inside the Lima VM.
 func (e *LimaEngine) waitForDocker() error {
 	common.PrintInfoMessage("Waiting for Docker inside Lima VM...")
+	instance := e.getInstance()
 
 	// Re-detect socket after VM start
 	e.socket = ""
 
+	// limactl returns once its own checks pass, so Docker is usually up on
+	// the first try: probe before sleeping.
 	for i := 0; i < 30; i++ {
-		time.Sleep(2 * time.Second)
+		if i > 0 {
+			time.Sleep(2 * time.Second)
+		}
+		rfutils.ReportLimaProgress(instance, 92+i/5, "Waiting for Docker inside the VM")
 
 		// Try to get a fresh socket path
 		if e.GetSocketPath() == "" {
@@ -500,12 +570,15 @@ func (e *LimaEngine) waitForDocker() error {
 		if pingClient(cli) {
 			cli.Close()
 			common.PrintSuccessMessage("Docker is ready inside Lima VM")
+			rfutils.FinishLimaProgress(instance, nil)
 			return nil
 		}
 		cli.Close()
 	}
 
-	return fmt.Errorf("Docker did not become reachable inside Lima VM after 60 seconds")
+	err := fmt.Errorf("Docker did not become reachable inside Lima VM after 60 seconds")
+	rfutils.FinishLimaProgress(instance, err)
+	return err
 }
 
 // limaInstanceExists checks if a Lima instance has been created (regardless of state).

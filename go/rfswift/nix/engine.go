@@ -11,12 +11,16 @@
 package nix
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
+
+	"penthertz/rfswift/hostsetup"
 )
 
 // RunTool builds (only if needed) and runs a single tool from the pinned package
@@ -163,6 +167,41 @@ func IsAvailable() bool {
 	}
 	_, err := exec.LookPath(NixBinary())
 	return err == nil
+}
+
+// storeHealthTimeout bounds the store probe: a socket-activated daemon that
+// cannot start drops the connection at once, a hung one must not freeze the
+// caller (the Workbench polls the engine state).
+var storeHealthTimeout = 20 * time.Second
+
+// StoreHealth checks that nix can actually reach its store (`nix store
+// info`), not only that the binary exists. A multi-user install whose daemon
+// cannot start passes IsAvailable but fails every build with "cannot open
+// connection to remote store 'daemon'"; on a Qubes OS AppVM this is what a
+// Determinate Nix installed in the template does (its daemon binary lives
+// in the template's /usr/local). The error says why and how to fix it.
+// Windows (WSL) is checked through its own readiness probe; nil there.
+func StoreHealth() error {
+	if useWSL() {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), storeHealthTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, NixBinary(), append(experimentalArgs(), "store", "info")...)
+	var stderr strings.Builder
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		reason := strings.TrimSpace(stderr.String())
+		if lines := strings.Split(reason, "\n"); len(lines) > 0 {
+			reason = strings.TrimSpace(lines[len(lines)-1])
+		}
+		if reason == "" {
+			reason = err.Error()
+		}
+		reason = strings.TrimPrefix(reason, "error: ")
+		return fmt.Errorf("the Nix store does not answer (%s): %s", reason, hostsetup.NixDaemonHint())
+	}
+	return nil
 }
 
 // Version returns the output of `nix --version`, or an error if nix is absent.

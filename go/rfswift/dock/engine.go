@@ -107,6 +107,20 @@ func SetPreferredEngine(engine string) {
 	}
 }
 
+// ResetEngineDetection forgets the detected engine, keeping the preference,
+// so the next GetEngine detects again: after podman_mode changed, for
+// instance. The DOCKER_HOST / CONTAINER_HOST it exported are taken back.
+func ResetEngineDetection() {
+	activeEngineMu.Lock()
+	defer activeEngineMu.Unlock()
+	activeEngine = nil
+	if engineDockerHost {
+		os.Unsetenv("DOCKER_HOST")
+		engineDockerHost = false
+	}
+	withdrawContainerHost()
+}
+
 // GetEngine returns the active container engine, performing lazy detection on
 // first call. The result is cached for the process lifetime.
 //
@@ -227,9 +241,12 @@ func EnsureEngineRunning(engine ContainerEngine) error {
 		return fmt.Errorf("failed to start %s: %v", name, err)
 	}
 
-	// Wait for the service to become reachable
-	for i := 0; i < 15; i++ {
-		time.Sleep(2 * time.Second)
+	// Wait for the service to become reachable. StartService usually returns
+	// with it already up (Lima waits for Docker), so probe before sleeping.
+	for i := 0; i < 16; i++ {
+		if i > 0 {
+			time.Sleep(2 * time.Second)
+		}
 		if engine.IsServiceRunning() {
 			reportEngineStatus(fmt.Sprintf("%s is now running", name), true)
 			return nil
@@ -280,6 +297,9 @@ func detectEngine() ContainerEngine {
 			common.PrintInfoMessage("Container engine: Podman (explicit)")
 			return podman
 		}
+		if hint := podman.AccessHint(); hint != "" {
+			common.PrintWarningMessage(hint)
+		}
 		common.PrintWarningMessage("Podman requested but not available, trying Docker...")
 		if docker.IsAvailable() {
 			common.PrintInfoMessage("Container engine: Docker (fallback)")
@@ -316,6 +336,9 @@ func detectEngine() ContainerEngine {
 		if podman.IsAvailable() {
 			common.PrintInfoMessage("Container engine: Podman (auto-detected)")
 			return podman
+		}
+		if hint := podman.AccessHint(); hint != "" {
+			common.PrintWarningMessage(hint)
 		}
 		// On macOS, try Lima as a fallback — it can transparently provide
 		// a Docker engine inside a QEMU VM with USB passthrough support.

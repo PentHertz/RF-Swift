@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/FlUxIuS/pulseaudio_2"
+	common "penthertz/rfswift/common"
 )
 
 // PulseTCPModule is the PulseAudio / PipeWire (pipewire-pulse) module that
@@ -45,11 +46,23 @@ func pactlCommand(args ...string) (*exec.Cmd, error) {
 	if err != nil {
 		return nil, fmt.Errorf("pactl not found: %s", pactlInstallHint())
 	}
-	cmd := exec.Command(pactl, args...)
+	// Under sudo pactl must run in the invoking user's session: that is where
+	// the audio server lives (see session_unix.go).
+	cmd := sessionCommand(pactl, args...)
 	if runtime.GOOS == "darwin" {
 		cmd.Env = macOSPulseEnv()
 	}
 	return cmd, nil
+}
+
+// newPulseClient connects the pure-Go PulseAudio client (used when pactl is
+// missing) to the audio server of the session RF Swift acts for: under sudo
+// that is the invoking user's socket, not root's.
+func newPulseClient() (*pulseaudio.Client, error) {
+	if _, _, ok := common.InvokingIDs(); ok && runtime.GOOS == "linux" {
+		return pulseaudio.NewClient(sessionPulseSocket())
+	}
+	return pulseaudio.NewClient()
 }
 
 // listPulseModules returns the modules loaded in the running audio server:
@@ -78,7 +91,7 @@ func listPulseModules() ([]pulseModule, error) {
 		}
 		return mods, nil
 	}
-	client, err := pulseaudio.NewClient()
+	client, err := newPulseClient()
 	if err != nil {
 		return nil, fmt.Errorf("pactl not found and the native PulseAudio connection failed (%v); %s", err, pactlInstallHint())
 	}
@@ -132,7 +145,7 @@ func unloadPulseModule(index string) error {
 		}
 		return nil
 	}
-	client, err := pulseaudio.NewClient()
+	client, err := newPulseClient()
 	if err != nil {
 		return fmt.Errorf("pactl not found and the native PulseAudio connection failed (%v); %s", err, pactlInstallHint())
 	}

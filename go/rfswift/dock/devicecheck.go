@@ -16,6 +16,8 @@ import (
 	"strings"
 
 	"github.com/moby/moby/api/types/container"
+
+	"penthertz/rfswift/hostsetup"
 )
 
 // DeviceIssue is one device mapping (or /dev bind mount) the engine cannot
@@ -79,7 +81,9 @@ func currentDeviceCheckHost(eng ContainerEngine) deviceCheckHost {
 		return h
 	}
 	h.engine = eng.Type()
-	h.rootless = eng.Type() == EnginePodman && os.Getuid() != 0
+	if p, ok := eng.(*PodmanEngine); ok {
+		h.rootless = p.IsRootless()
+	}
 	if lima, ok := eng.(*LimaEngine); ok {
 		h.vmExists = func(paths []string) (map[string]bool, bool) { return limaPathsExist(lima.getInstance(), paths) }
 	}
@@ -156,6 +160,8 @@ func (h deviceCheckHost) issues(entries []deviceEntry) ([]DeviceIssue, string, s
 					// Attached on demand once plugged in: not a problem.
 				case IsSerialDevicePath(e.Path):
 					add(e, "not present on this host; rootless Podman maps a serial port at creation, so it must be plugged in first (Docker attaches serial ports on demand)")
+				case e.Path == "/dev/bus/usb" && hostsetup.IsQubes():
+					add(e, "no USB bus in this qube yet: it appears when sys-usb attaches a first device ("+hostsetup.QubesAttachHint()+"); 'rfswift host qubes setup' makes it exist at every start so containers can be created first and devices attached later")
 				default:
 					add(e, "not present on this host")
 				}
@@ -178,6 +184,9 @@ func (h deviceCheckHost) issues(entries []deviceEntry) ([]DeviceIssue, string, s
 			}
 		}
 		advice := "Fix the host permissions, or run RF Swift with sudo (rootful Podman) or Docker to map root-only devices."
+		if hostsetup.IsQubes() {
+			advice = "On Qubes OS, 'rfswift host qubes setup' lets RF Swift use rootful Podman as your user (root-only devices then map), or run it with sudo."
+		}
 		if !h.rootless {
 			advice = "Check the device is plugged in and the kernel module loaded."
 		}

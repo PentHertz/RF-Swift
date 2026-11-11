@@ -1630,6 +1630,9 @@ func recreateContainerWithProperties(ctx context.Context, cli *client.Client, co
 			hostConfig.CapAdd = strings.Split(props["Caps"], ",")
 		}
 	}
+	// Keep (or give, for containers from older releases) the SELinux
+	// opt-out that lets the container use its workspace and devices.
+	applyHostSELinux(hostConfig, nil)
 
 	// ── Restore cgroup rules from label if inspect returned empty ──
 	if len(hostConfig.DeviceCgroupRules) == 0 {
@@ -1695,6 +1698,9 @@ func recreateContainerWithProperties(ctx context.Context, cli *client.Client, co
 	if !useDirectConfigEdit() {
 		sanitizeHostConfigForPodman(hostConfig)
 	}
+
+	// The container has a TTY: runc mounts its pty over /dev/console.
+	dropTTYConsoleDevice(hostConfig)
 
 	// ── 4. Create the new container ──
 	reportConfigStage("Creating the container with the new configuration", 65)
@@ -1796,6 +1802,7 @@ func rollbackContainer(ctx context.Context, cli *client.Client, containerName st
 	if !useDirectConfigEdit() {
 		sanitizeHostConfigForPodman(rollbackHostConfig)
 	}
+	dropTTYConsoleDevice(rollbackHostConfig)
 
 	resp, err := cli.ContainerCreate(ctx, client.ContainerCreateOptions{
 		Config: &container.Config{
@@ -2051,6 +2058,9 @@ func recreateContainerWithUpdatedBinds(ctx context.Context, cli *client.Client, 
 		// Update label
 		oldConfig.Labels["org.rfswift.cgroup_rules"] = strings.Join(oldHostConfig.DeviceCgroupRules, ",")
 	}
+
+	// The container has a TTY: runc mounts its pty over /dev/console.
+	dropTTYConsoleDevice(oldHostConfig)
 
 	// 3. Create a temporary-named container first, then swap
 	tempContainerName := fmt.Sprintf("%s_rfswift_tmp_%d", containerName, time.Now().UnixNano())

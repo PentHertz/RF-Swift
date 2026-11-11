@@ -15,7 +15,7 @@ import (
 // RF Swift repo
 // Version is the single application version used by the CLI, remote agent and
 // Workbench. Keep it without a leading "v"; presentation layers add that.
-var Version = "4.0.5"
+var Version = "4.1.1-dev"
 var Codename = "Nucleus"
 var Branch = "main"
 var Owner = "PentHertz"
@@ -229,8 +229,14 @@ func PrintInfoMessage(message interface{}) {
 
 // PrintInfoBox prints an informational message in a styled box.
 func PrintInfoBox(message string) {
+	PrintInfoBoxTitled("Info", message)
+}
+
+// PrintInfoBoxTitled prints an informational message in a styled box whose
+// header reads title instead of "Info".
+func PrintInfoBoxTitled(title, message string) {
 	cyan := lipgloss.Color("#00BFFF")
-	messageBox("i", "Info", message, cyan, cyan)
+	messageBox("i", title, message, cyan, cyan)
 }
 
 // ConfigFileByPlatform returns the platform-appropriate absolute path to the
