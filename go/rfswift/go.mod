@@ -10,8 +10,8 @@ require (
 	github.com/cheggaaa/pb/v3 v3.3.0
 	github.com/creack/pty v1.1.24
 	github.com/go-resty/resty/v2 v2.17.2
-	github.com/moby/moby/api v1.56.1
-	github.com/moby/moby/client v0.6.2
+	github.com/moby/moby/api v1.57.0
+	github.com/moby/moby/client v0.6.3
 	github.com/moby/term v0.5.2
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/pflag v1.1.0
