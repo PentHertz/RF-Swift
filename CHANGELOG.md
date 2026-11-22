@@ -4,7 +4,13 @@ All notable changes to RF Swift are recorded here. The format is based on
 Keep a Changelog (https://keepachangelog.com), and the project aims to follow
 semantic versioning. Dates are ISO-8601 (YYYY-MM-DD).
 
-## [Unreleased] - v4.1.0
+## [Unreleased]
+
+### Changed
+
+- Dependencies: `golang.org/x/crypto` and the moby group bumped (Dependabot).
+
+## [11-12-2026] - v4.1.1
 
 ### Added
 
