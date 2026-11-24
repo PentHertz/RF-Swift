@@ -7,8 +7,11 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strings"
+	"sync"
+	"syscall"
 	"time"
 
 	"penthertz/rfswift/remote"
@@ -19,6 +22,9 @@ type MCPOptions struct {
 	Mission    string
 	AllowWrite bool
 	AllowExec  bool
+	// AllowTransmit lets execute_command and sessions run commands that
+	// transmit RF (agent_tx.go). It only has an effect together with AllowExec.
+	AllowTransmit bool
 }
 
 type mcpRequest struct {
@@ -33,6 +39,11 @@ type mcpServer struct {
 	eng   Engine
 	opts  MCPOptions
 	vault remote.SecretStore
+	// Background jobs and interactive sessions (agent_jobs.go), and what
+	// starts their processes (the local engine; tests substitute it).
+	jobs     *agentJobRegistry
+	jobsOnce sync.Once
+	procs    agentProcessStarter
 }
 
 // RunMCPServer serves newline-delimited JSON-RPC over stdin/stdout. Diagnostic
@@ -45,6 +56,19 @@ func RunMCPServer(in io.Reader, out io.Writer, opts MCPOptions) error {
 		return errors.New("invalid MCP mission scope")
 	}
 	s := &mcpServer{store: NewStore(""), eng: NewLocalEngine(), opts: opts, vault: remote.OSSecretStore{}}
+	// Nothing an agent started may outlive it: jobs and sessions (a
+	// transmission in particular) stop when the client closes the transport or
+	// ends this process.
+	defer s.registry().stopAll("agent disconnected")
+	signals := make(chan os.Signal, 1)
+	signal.Notify(signals, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
+	defer signal.Stop(signals)
+	go func() {
+		if _, ok := <-signals; ok {
+			s.registry().stopAll("agent disconnected")
+			os.Exit(0)
+		}
+	}()
 	scanner := bufio.NewScanner(in)
 	scanner.Buffer(make([]byte, 64*1024), 4<<20)
 	enc := json.NewEncoder(out)
@@ -87,7 +111,7 @@ func (s *mcpServer) handle(req mcpRequest) (any, *mcpRPCError) {
 		if version == "" {
 			version = "2025-06-18"
 		}
-		return map[string]any{"protocolVersion": version, "capabilities": map[string]any{"tools": map[string]any{"listChanged": false}}, "serverInfo": map[string]any{"name": "rf-swift-workbench", "version": "0.1.0"}, "instructions": "Mission-scoped RF/IoT assessment workspace. read_audit reports only the security health of the Nix closure or container image used to run tools. Environment scanner results must never be promoted into mission findings, target CVSS, or PwnDoc data. Mission findings represent operator-validated vulnerabilities or bugs discovered in the assessed IoT/RF target. Use read_evidence_index and approved artifact content to review notes, captures, and recordings. Secrets are a separate credential collection: list_secrets exposes metadata only, and save_secret stores exact observed values in the OS credential vault when write access is enabled. Never invent credentials or reproduce their values in notes, findings, reports, or chat. Proactively call recommend_tools before unfamiliar tasks. Respect authorization and use execute_command only for the selected assessment mission."}, nil
+		return map[string]any{"protocolVersion": version, "capabilities": map[string]any{"tools": map[string]any{"listChanged": false}}, "serverInfo": map[string]any{"name": "rf-swift-workbench", "version": "0.1.0"}, "instructions": "Mission-scoped RF/IoT assessment workspace. read_audit reports only the security health of the Nix closure or container image used to run tools. Environment scanner results must never be promoted into mission findings, target CVSS, or PwnDoc data. Mission findings represent operator-validated vulnerabilities or bugs discovered in the assessed IoT/RF target. Use read_evidence_index and approved artifact content to review notes, captures, and recordings. Secrets are a separate credential collection: list_secrets exposes metadata only, and save_secret stores exact observed values in the OS credential vault when write access is enabled. Never invent credentials or reproduce their values in notes, findings, reports, or chat. Proactively call recommend_tools before unfamiliar tasks. Respect authorization and use execute_command only for the selected assessment mission. Commands run as bounded jobs: a command still running after wait_seconds continues in the background (job_output, cancel_job); interactive programs run in sessions (session_start, session_send). Commands that transmit RF are refused unless the operator enabled RF transmission, and must then be declared with transmits and described in purpose. Agent findings are saved as draft candidates; findings the operator wrote cannot be changed. The RF Swift skills in .claude/skills and .agents/skills (start with rfswift-mission-workflow) explain the methods."}, nil
 	case "ping":
 		return map[string]any{}, nil
 	case "tools/list":
@@ -146,7 +170,20 @@ func (s *mcpServer) tools() []map[string]any {
 		)
 	}
 	if s.opts.AllowExec {
-		tools = append(tools, map[string]any{"name": "execute_command", "description": "Execute one command in the scoped mission target. Output and exit errors are returned to the client.", "inputSchema": schema(map[string]any{"mission": mission, "command": map[string]any{"type": "string", "maxLength": 16384}}, "command"), "annotations": map[string]any{"destructiveHint": true, "openWorldHint": true}})
+		purpose := map[string]any{"type": "string", "maxLength": 500, "description": "One line for the operator: what this does and why. For a transmission: frequency, power or gain, duration and target the operator approved"}
+		transmits := map[string]any{"type": "boolean", "default": false, "description": "Set when this intentionally radiates RF (SDR TX, replay, injection, rogue AP, base station). Refused unless the operator enabled RF transmission"}
+		jobID := map[string]any{"type": "string", "description": "Job ID returned by execute_command or list_jobs"}
+		sessionName := map[string]any{"type": "string", "pattern": "^[a-z0-9][a-z0-9_-]{0,31}$", "description": "Session name, e.g. pm3, uart, ble"}
+		expect := map[string]any{"type": "string", "maxLength": 512, "description": "Optional RE2 pattern; return as soon as the new output matches it (a prompt such as 'pm3 --> ' or '\\$ $')"}
+		tools = append(tools,
+			map[string]any{"name": "execute_command", "description": "Run one shell command (sh -lc) in the scoped mission target, starting in its workspace. Waits up to wait_seconds; a command still running then continues as a background job and its job_id is returned (follow with job_output, stop with cancel_job). Output is cleaned of terminal escapes and capped; the full log path is returned. Use max_seconds for timed captures. Use session_start for interactive programs. Commands that transmit RF are refused unless the operator enabled it.", "inputSchema": schema(map[string]any{"mission": mission, "command": map[string]any{"type": "string", "maxLength": 16384}, "purpose": purpose, "wait_seconds": map[string]any{"type": "number", "minimum": 0, "maximum": 300, "default": 60}, "max_seconds": map[string]any{"type": "number", "minimum": 0, "description": "Stop the command after this many seconds (0: no limit)"}, "transmits": transmits}, "command"), "annotations": map[string]any{"destructiveHint": true, "openWorldHint": true}},
+			map[string]any{"name": "job_output", "description": "Status and output of a job from a byte offset (use next_offset to continue). wait_seconds waits for the job to end first.", "inputSchema": schema(map[string]any{"job_id": jobID, "offset": map[string]any{"type": "integer", "minimum": 0, "default": 0}, "wait_seconds": map[string]any{"type": "number", "minimum": 0, "maximum": 300, "default": 0}, "max_bytes": map[string]any{"type": "integer", "minimum": 1, "maximum": 65536, "default": 16384}}, "job_id"), "annotations": map[string]any{"readOnlyHint": true}},
+			map[string]any{"name": "cancel_job", "description": "Stop a running job and everything it started.", "inputSchema": schema(map[string]any{"job_id": jobID}, "job_id"), "annotations": map[string]any{"destructiveHint": true}},
+			map[string]any{"name": "list_jobs", "description": "List this agent's jobs and sessions with their status. All of them are stopped when the agent disconnects.", "inputSchema": schema(nil), "annotations": map[string]any{"readOnlyHint": true}},
+			map[string]any{"name": "session_start", "description": "Open a persistent interactive terminal (a login shell) in the mission target, for interactive programs: pm3, bluetoothctl, gatttool -I, picocom/minicom serial consoles, OpenOCD telnet, gdb, rfcat -r, python3. command is typed into the shell after it starts. Returns the output so far.", "inputSchema": schema(map[string]any{"mission": mission, "name": sessionName, "command": map[string]any{"type": "string", "maxLength": 4096}, "purpose": purpose, "transmits": transmits, "wait_seconds": map[string]any{"type": "number", "minimum": 0, "maximum": 120, "default": 5}, "expect": expect}, "name"), "annotations": map[string]any{"destructiveHint": true, "openWorldHint": true}},
+			map[string]any{"name": "session_send", "description": "Type into a session and return the new output. Returns when expect matches, when the output has been quiet for 1.5 s, or after wait_seconds. enter=false sends the input as is (\\u0003 is Ctrl-C); an empty input with enter=false only reads.", "inputSchema": schema(map[string]any{"name": sessionName, "input": map[string]any{"type": "string", "maxLength": 4096}, "enter": map[string]any{"type": "boolean", "default": true}, "wait_seconds": map[string]any{"type": "number", "minimum": 0, "maximum": 120, "default": 3}, "expect": expect, "purpose": purpose, "transmits": transmits}, "name"), "annotations": map[string]any{"destructiveHint": true, "openWorldHint": true}},
+			map[string]any{"name": "session_close", "description": "Close a session and stop what runs in it.", "inputSchema": schema(map[string]any{"name": sessionName}, "name"), "annotations": map[string]any{"destructiveHint": true}},
+		)
 	}
 	return tools
 }
@@ -345,16 +382,34 @@ func (s *mcpServer) call(name string, args map[string]any) (any, error) {
 		if err != nil {
 			return nil, err
 		}
+		// An agent proposes, the operator decides: an agent finding is stored
+		// as a draft (the Workbench's candidate status), and a finding the
+		// operator wrote or edited is never changed through MCP.
+		notice := ""
+		if status := strings.ToLower(strings.TrimSpace(finding.Status)); status != "" && status != "draft" {
+			notice = fmt.Sprintf("status %q was replaced by draft: only the operator confirms agent findings", finding.Status)
+		}
+		finding.Status = "draft"
+		finding.Origin = "agent"
 		replaced := false
 		for i := range findings {
 			if findings[i].ID == finding.ID {
+				if findings[i].Origin != "agent" {
+					return nil, fmt.Errorf("finding %s belongs to the operator and cannot be changed by an agent: save a new candidate finding (new id) that references it instead", finding.ID)
+				}
 				findings[i], replaced = finding, true
 			}
 		}
 		if !replaced {
 			findings = append(findings, finding)
 		}
-		return finding, s.store.SaveFindings(s.opts.Workspace, mission, findings)
+		if err := s.store.SaveFindings(s.opts.Workspace, mission, findings); err != nil {
+			return nil, err
+		}
+		if notice != "" {
+			return map[string]any{"finding": finding, "notice": notice}, nil
+		}
+		return finding, nil
 	case "save_secret":
 		if !s.opts.AllowWrite {
 			return nil, errors.New("MCP write access is disabled")
@@ -374,7 +429,7 @@ func (s *mcpServer) call(name string, args map[string]any) (any, error) {
 			return nil, err
 		}
 		return item, nil
-	case "execute_command":
+	case "execute_command", "session_start":
 		if !s.opts.AllowExec {
 			return nil, errors.New("MCP command execution is disabled")
 		}
@@ -382,25 +437,26 @@ func (s *mcpServer) call(name string, args map[string]any) (any, error) {
 		if err != nil {
 			return nil, err
 		}
-		command, _ := args["command"].(string)
-		if strings.TrimSpace(command) == "" || len(command) > 16384 {
-			return nil, errors.New("a command of at most 16384 bytes is required")
+		if name == "session_start" {
+			return s.callSessionStart(mission, args)
 		}
-		events, eventErr := newAgentEventWriter(s.store, s.opts.Workspace, mission, command)
-		if eventErr != nil {
-			return nil, fmt.Errorf("open live terminal stream: %w", eventErr)
+		return s.runAgentCommand(mission, argString(args, "command"), argString(args, "purpose"), argBool(args, "transmits", false), args)
+	case "job_output", "cancel_job", "list_jobs", "session_send", "session_close":
+		if !s.opts.AllowExec {
+			return nil, errors.New("MCP command execution is disabled")
 		}
-		local, ok := s.eng.(*LocalEngine)
-		if !ok {
-			events.finish(errors.New("streaming is unavailable for this engine"))
-			return nil, errors.New("streaming is unavailable for this engine")
+		switch name {
+		case "job_output":
+			return s.callJobOutput(args)
+		case "cancel_job":
+			return s.callCancelJob(args)
+		case "list_jobs":
+			return s.callListJobs()
+		case "session_send":
+			return s.callSessionSend(args)
+		default:
+			return s.callSessionClose(args)
 		}
-		output, err := local.ExecStream(mission, command, events)
-		events.finish(err)
-		if err != nil {
-			return map[string]any{"output": output, "error": err.Error()}, nil
-		}
-		return map[string]any{"output": output}, nil
 	default:
 		return nil, fmt.Errorf("unknown tool %q", name)
 	}

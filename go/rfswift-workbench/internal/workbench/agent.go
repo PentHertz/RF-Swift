@@ -16,11 +16,14 @@ import (
 // AgentCfg controls the optional MCP bridge. RF Swift never stores a model API
 // key or calls a model provider; the selected external CLI owns authentication.
 type AgentCfg struct {
-	Enabled    bool            `json:"enabled"`
-	Client     string          `json:"client"`
-	AllowWrite bool            `json:"allowWrite"`
-	AllowExec  bool            `json:"allowExec"`
-	Yolo       map[string]bool `json:"yolo,omitempty"`
+	Enabled    bool   `json:"enabled"`
+	Client     string `json:"client"`
+	AllowWrite bool   `json:"allowWrite"`
+	AllowExec  bool   `json:"allowExec"`
+	// AllowTransmit lets the agent run commands that transmit RF (only with
+	// AllowExec); see agent_tx.go.
+	AllowTransmit bool            `json:"allowTransmit,omitempty"`
+	Yolo          map[string]bool `json:"yolo,omitempty"`
 	// Paths holds the program chosen in the settings for a client, by
 	// client id, for a CLI the automatic search does not find.
 	Paths map[string]string `json:"paths,omitempty"`
@@ -109,6 +112,9 @@ func agentPosture(cfg AgentCfg) []Check {
 	checks := []Check{{Severity: "ok", Label: "AI credentials", Detail: "RF Swift stores no model API key; authentication is owned by the selected external CLI."}}
 	if cfg.AllowExec {
 		checks = append(checks, Check{Severity: "warn", Label: "MCP command execution", Detail: "The selected agent may execute commands in its mission target.", Rec: "Enable only for an authorized mission and disable after use."})
+		if cfg.AllowTransmit {
+			checks = append(checks, Check{Severity: "warn", Label: "Agent RF transmission", Detail: "The selected agent may run commands that transmit RF; each transmission still has to be declared and described.", Rec: "Enable only while an approved transmission test is running, with a target the client owns, and never for licensed bands outside a shielded setup."})
+		}
 	} else if cfg.AllowWrite {
 		checks = append(checks, Check{Severity: "ok", Label: "MCP permissions", Detail: "Agent may update mission notes and findings but cannot execute commands."})
 	} else {
@@ -175,6 +181,9 @@ func (a *App) agentLaunchSpec(mission, requestedClient string) (AgentConnectResu
 	}
 	if cfg.AllowExec {
 		args = append(args, "--mcp-exec")
+		if cfg.AllowTransmit {
+			args = append(args, "--mcp-tx")
+		}
 	}
 	agentDir := filepath.Join(a.store.missionDir(a.workspace(), mission), "agent-workspace")
 	if err := os.MkdirAll(agentDir, 0o700); err != nil {
@@ -190,7 +199,7 @@ func (a *App) agentLaunchSpec(mission, requestedClient string) (AgentConnectResu
 	if err := verifyMCPCommand(executable, args); err != nil {
 		return AgentConnectResult{}, "", nil, fmt.Errorf("MCP verification failed: %w", err)
 	}
-	if err := writeAgentInstructions(agentDir, mission); err != nil {
+	if err := writeAgentInstructions(agentDir, mission, cfg); err != nil {
 		return AgentConnectResult{}, "", nil, err
 	}
 	launchArgs := []string{}
@@ -200,16 +209,40 @@ func (a *App) agentLaunchSpec(mission, requestedClient string) (AgentConnectResu
 	return AgentConnectResult{Client: clientID, Workspace: agentDir, ConfigPath: configPath, Verified: true}, selected.Path, launchArgs, nil
 }
 
-func writeAgentInstructions(agentDir, mission string) error {
-	body := "# RF Swift mission agent workspace\n\n" +
+func writeAgentInstructions(agentDir, mission string, cfg AgentCfg) error {
+	skills, agents, err := writeAgentKit(agentDir)
+	if err != nil {
+		return fmt.Errorf("install the RF Swift agent skills: %w", err)
+	}
+	var b strings.Builder
+	b.WriteString("# RF Swift mission agent workspace\n\n" +
 		"This directory is only a launcher workspace. Do not create assessment notes as ordinary files here.\n\n" +
 		"Use the `rfswift` MCP tools for mission data. In particular:\n\n" +
 		"- When asked to create, edit, append, or summarize a note, call `write_note` for mission `" + mission + "` and normally use name `note.md`.\n" +
-		"- Read the current note with `read_note` before changing it.\n" +
-		"- Store security findings with `save_finding`, not as loose files.\n" +
+		"- Read the current note with `read_note` before changing it. Keep the mission board in note `board.md` (skill `rfswift-mission-board`); its \"Hints from the operator\" section is the operator's.\n" +
+		"- Store security findings with `save_finding`, not as loose files. Agent findings are saved as `draft` candidates; only the operator confirms them, and you cannot change a finding the operator wrote.\n" +
 		"- When explicitly asked to collect secrets, search notes and approved captures/recordings, then call `save_secret` only for exact observed values with their precise source. Never guess credentials or repeat their values in notes, findings, reports, or chat.\n" +
 		"- Never claim a note or finding was saved unless the MCP tool returned success.\n" +
-		"- Ask before destructive or out-of-scope actions.\n"
+		"- Ask before destructive or out-of-scope actions, and before anything that changes the target device.\n")
+	if cfg.AllowExec {
+		b.WriteString("- Run commands with `execute_command` (always give a `purpose`). A command still running after `wait_seconds` continues as a background job: follow it with `job_output`, stop it with `cancel_job`. Use `max_seconds` for timed captures. Use `session_start`/`session_send` for interactive programs (pm3, bluetoothctl, picocom, OpenOCD telnet, gdb). Everything you start stops when you disconnect.\n")
+		if cfg.AllowTransmit {
+			b.WriteString("- RF transmission is enabled for this session, but every transmission still needs the operator's explicit approval in chat for that frequency, power, duration and target; then set `transmits: true` and describe it in `purpose`. Licensed bands only into a shielded enclosure or attenuated coax.\n")
+		} else {
+			b.WriteString("- RF transmission is disabled: commands that transmit are refused. Receive-only work is unaffected. If a test needs a transmission, explain it to the operator and wait.\n")
+		}
+	}
+	b.WriteString("\n## RF Swift skills\n\nLoad the skill that matches the task before starting it (start with `rfswift-mission-workflow`). If your client does not load skills by itself, read `.agents/skills/<name>/SKILL.md`.\n\n")
+	for _, sk := range skills {
+		b.WriteString("- `" + sk.Name + "`: " + firstSentence(sk.Description) + "\n")
+	}
+	if len(agents) > 0 {
+		b.WriteString("\n## RF Swift subagents\n\nClients with subagents (Claude Code: `.claude/agents`, OpenCode: `.opencode/agents`) can delegate to these specialists:\n\n")
+		for _, ag := range agents {
+			b.WriteString("- `" + ag.Name + "`: " + firstSentence(ag.Description) + "\n")
+		}
+	}
+	body := b.String()
 	for _, name := range []string{"AGENTS.md", "CLAUDE.md"} {
 		if err := os.WriteFile(filepath.Join(agentDir, name), []byte(body), 0o600); err != nil {
 			return err

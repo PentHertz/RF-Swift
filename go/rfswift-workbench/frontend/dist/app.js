@@ -66,7 +66,7 @@ let SECRETS=[];
 /* capture type registry: built-in + user-defined, classified by file extension.
    built-in types carry an SVG glyph; custom types carry a chosen emoji icon. */
 const BUILTIN_TYPES={
- iq:{label:"IQ recording",svg:'<path d="M3 12h3l2-6 4 14 3-11 2 5h4"/>',ext:["iq","cf32","cfile","cs8","cs16","sigmf-data","complex"]},
+ iq:{label:"IQ recording",svg:'<path d="M3 12h3l2-6 4 14 3-11 2 5h4"/>',ext:["iq","cu8","cs8","cu16","cs16","sc16","cf32","fc32","cf64","cfile","sigmf-data","complex"]},
  flipper:{label:"Flipper",svg:'<rect x="4" y="4" width="16" height="16" rx="3"/><path d="M8 14h4v2H8zM14 8h2v4h-2z"/>',ext:["sub","nfc","ir","u2f"]},
  proxmark:{label:"Proxmark",emoji:"\u{1F4B3}",ext:["eml","mfd","dump","rfid","json"]},
  binary:{label:"Binary / firmware",svg:'<path d="M9 3v18M15 3v18M4 8h16M4 16h16"/>',ext:["bin","elf","hex","img","fw","rom"]},
@@ -325,7 +325,7 @@ function findHTML(m){const ord={crit:0,high:1,med:2,low:3,"":4};
  return `<table class="ftable"><thead><tr><th>Sev</th><th>Finding</th><th>Type</th><th>Status</th><th></th></tr></thead><tbody>
    ${rows.map(({f,i})=>`<tr>
      <td><span class="chip ${f.sev||"low"}"><span class="d"></span>${SEVNAME[f.sev]||"unrated"}</span></td>
-     <td class="ttl">${esc(f.title)}</td><td class="src">${esc(f.vulnType||f.src||"")}</td>
+     <td class="ttl">${esc(f.title)}${f.origin==="agent"?' <span class="chip low" title="Proposed by the coding agent; edit it to make it yours"><span class="d"></span>AI</span>':""}</td><td class="src">${esc(f.vulnType||f.src||"")}</td>
      <td><span class="chip low"><span class="d"></span>${esc(f.status)}</span></td><td><button class="btn ghost sm" data-fedit="${i}">Edit</button></td></tr>`).join("")||`<tr><td colspan="5"><div class="empty">no findings for ${esc(m.id)} yet</div></td></tr>`}</tbody></table>
    <div class="addbar"><label class="fld u10">New finding<input data-ftitle placeholder="title, then calculate CVSS severity"></label>
      <button class="btn ghost sm" data-findai>Suggest from evidence</button><button class="btn ghost sm" data-findsecrets>Collect credentials</button><button class="btn sm" data-fadd>Add &amp; edit</button></div>
@@ -555,7 +555,7 @@ function auditConn(c){if(CONN_AUDITS[c.id])return CONN_AUDITS[c.id];const ch=[];
   ch.push({s:c.version==="up-to-date"?"ok":"warn",l:"Agent version",d:c.version==="up-to-date"?"Agent is up to date.":"Agent is outdated.",r:c.version==="up-to-date"?null:"Update the RF Swift agent to pick up security fixes."});
   const ai=aiCfg();
   if(!ai.enabled)ch.push({s:"ok",l:"MCP agent bridge",d:"Disabled; no coding agent can access Workbench data."});
-  else ch.push({s:ai.allowExec?"warn":"ok",l:"MCP permissions",d:ai.allowExec?"Mission-scoped command execution enabled.":(ai.allowWrite?"Notes and findings write access; command execution disabled.":"Read-only mission access."),r:ai.allowExec?"Disable command execution when the agent no longer needs it.":null});
+  else ch.push({s:ai.allowExec?"warn":"ok",l:"MCP permissions",d:ai.allowExec?(ai.allowTransmit?"Mission-scoped command execution enabled, including commands that transmit RF.":"Mission-scoped command execution enabled; RF transmission refused."):(ai.allowWrite?"Notes and findings write access; command execution disabled.":"Read-only mission access."),r:ai.allowExec?"Disable command execution when the agent no longer needs it.":null});
   const ord={crit:0,warn:1,ok:2};const posture=ch.reduce((w,x)=>ord[x.s]<ord[w]?x.s:w,"ok");
   return {checks:ch,posture};
 }
@@ -775,7 +775,7 @@ document.addEventListener("keydown",e=>{if(e.key==="Escape")$("#reportModal").cl
 const SPARK='<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="u3"><path d="M12 3l1.9 4.6L18.5 9l-4.6 1.4L12 15l-1.9-4.6L5.5 9l4.6-1.4z"/></svg>';
 const AGENTLABEL={codex:"Codex CLI",claude:"Claude Code",kimi:"Kimi Code",glm:"GLM / Z.ai CLI",opencode:"OpenCode",mistral:"Mistral Vibe"};
 let backendAICfg=null,agentClients=[];
-function aiCfg(){const def={enabled:false,client:"codex",allowWrite:false,allowExec:false,yolo:{},paths:{}};if(backendAICfg)return Object.assign(def,backendAICfg);try{return Object.assign(def,JSON.parse(store.get("agentcfg","{}")));}catch(e){return def;}}
+function aiCfg(){const def={enabled:false,client:"codex",allowWrite:false,allowExec:false,allowTransmit:false,yolo:{},paths:{}};if(backendAICfg)return Object.assign(def,backendAICfg);try{return Object.assign(def,JSON.parse(store.get("agentcfg","{}")));}catch(e){return def;}}
 function setAiCfg(c){backendAICfg=c;if(online)return B.SetAgentCfg(c);store.set("agentcfg",JSON.stringify(c));return Promise.resolve();}
 function aiTag(){const c=aiCfg();return AGENTLABEL[c.client]||c.client||"coding agent";}
 function renderAIChip(){const c=aiCfg(),b=$("#aiBtn");b.innerHTML=SPARK+" "+(c.enabled?aiTag():"Agent");b.style.color=c.enabled?"var(--accent)":"";b.style.borderColor=c.enabled?"var(--accent)":"";}
@@ -785,9 +785,10 @@ function renderAIBody(){const c=aiCfg(),clients=agentClients.length?agentClients
    <label class="fld">Coding-agent CLI<select id="aiProv">${clients.map(x=>`<option value="${esc(x.id)}" ${c.client===x.id?"selected":""}>${esc(x.label)}${x.available?" - installed":" - not found"}</option>`).join("")}</select></label>
    <div class="u23"><label class="fld u10">Program path<input id="aiPath" spellcheck="false"></label><button class="btn ghost fldbtn" id="aiBrowse" type="button">Browse...</button></div>
    <div id="aiPathHint" class="u16"></div>
-   <div class="card u120"><div class="cardhead"><h3>MCP permissions</h3><span class="chip ${c.allowExec?"high":"ok"}"><span class="d"></span>${c.allowExec?"command access":(c.allowWrite?"workspace write":"read only")}</span></div><div class="u121">
+   <div class="card u120"><div class="cardhead"><h3>MCP permissions</h3><span class="chip ${c.allowExec?"high":"ok"}"><span class="d"></span>${c.allowExec?(c.allowTransmit?"command + RF TX":"command access"):(c.allowWrite?"workspace write":"read only")}</span></div><div class="u121">
      <label><input type="checkbox" id="aiWrite" ${c.allowWrite?"checked":""}> Allow updating notes and findings</label>
      <label><input type="checkbox" id="aiExec" ${c.allowExec?"checked":""}> Allow executing commands inside the selected mission</label>
+     <label><input type="checkbox" id="aiTx" ${c.allowExec&&c.allowTransmit?"checked":""} ${c.allowExec?"":"disabled"}> Allow commands that transmit RF (each transmission must still be declared and approved)</label>
      <label><input type="checkbox" id="aiYolo" ${(c.yolo||{})[c.client]?"checked":""}> YOLO mode for this coding-agent CLI</label>
      <div class="u122"><b>Warning:</b> YOLO mode disables the selected CLI's confirmation prompts and may also disable its sandbox. It does not expand RF Swift MCP permissions, but enabled command access can still affect the mission target.</div>
      <div class="u123">Disabled by default. Each MCP process is restricted to the mission used when it is launched. Command execution is advertised to the client only when explicitly enabled. Keep read-only for summaries and report drafting, enable write or command access for the task and switch it off afterwards: everything the agent reads is untrusted evidence that may carry injected instructions, and it is sent to the CLI vendor under that account.</div></div></div>
@@ -801,7 +802,8 @@ function renderAIBody(){const c=aiCfg(),clients=agentClients.length?agentClients
   pathBox.oninput=()=>{paths[provider.value]=pathBox.value.trim();};
   $("#aiBrowse").onclick=()=>{if(!online){toast("Backend not connected");return;}B.SelectAgentProgram().then(p=>{if(p){pathBox.value=p;paths[provider.value]=p;}}).catch(e=>toast("Browse failed: "+((e&&e.message)||e)));};
   showPath();
-  $("#aiSave").onclick=()=>{yolo[provider.value]=yoloBox.checked;paths[provider.value]=pathBox.value.trim();const nc={enabled:$("#aiOn").checked,client:provider.value,allowWrite:$("#aiWrite").checked,allowExec:$("#aiExec").checked,yolo,paths};setAiCfg(nc).then(async()=>{if(online){try{backendAICfg=await B.GetAgentCfg();agentClients=await B.AgentClients()||agentClients;}catch(e){console.error("AgentClients",e);}}renderAIChip();$("#aiModal").classList.remove("open");renderDock();toast(nc.enabled?(aiTag()+" MCP bridge enabled"):"MCP bridge disabled");}).catch(e=>{toast("Agent settings failed: "+((e&&e.message)||e));if(online)B.GetAgentCfg().then(saved=>{backendAICfg=saved;}).catch(()=>{});});};
+  $("#aiExec").onchange=()=>{const tx=$("#aiTx");if(!tx)return;tx.disabled=!$("#aiExec").checked;if(tx.disabled)tx.checked=false;};
+  $("#aiSave").onclick=()=>{yolo[provider.value]=yoloBox.checked;paths[provider.value]=pathBox.value.trim();const nc={enabled:$("#aiOn").checked,client:provider.value,allowWrite:$("#aiWrite").checked,allowExec:$("#aiExec").checked,allowTransmit:$("#aiExec").checked&&$("#aiTx").checked,yolo,paths};setAiCfg(nc).then(async()=>{if(online){try{backendAICfg=await B.GetAgentCfg();agentClients=await B.AgentClients()||agentClients;}catch(e){console.error("AgentClients",e);}}renderAIChip();$("#aiModal").classList.remove("open");renderDock();toast(nc.enabled?(aiTag()+" MCP bridge enabled"):"MCP bridge disabled");}).catch(e=>{toast("Agent settings failed: "+((e&&e.message)||e));if(online)B.GetAgentCfg().then(saved=>{backendAICfg=saved;}).catch(()=>{});});};
 }
 $("#aiBtn").onclick=async()=>{if(online){try{agentClients=await B.AgentClients()||agentClients;}catch(e){console.error("AgentClients",e);}}renderAIBody();$("#aiModal").classList.add("open");};
 $("#aiClose").onclick=()=>$("#aiModal").classList.remove("open");

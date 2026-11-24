@@ -33,6 +33,7 @@ func main() {
 	mcpMission := flag.String("mission", "", "restrict MCP access to one mission")
 	mcpWrite := flag.Bool("mcp-write", false, "allow MCP clients to change notes and findings")
 	mcpExec := flag.Bool("mcp-exec", false, "allow MCP clients to execute mission commands")
+	mcpTx := flag.Bool("mcp-tx", false, "with --mcp-exec, allow MCP clients to run commands that transmit RF (each one must still be declared)")
 	applyChange := flag.String("apply-container-change", "", "internal: apply a container configuration change (JSON) and exit; the Workbench runs itself this way as root through polkit")
 	flag.Parse()
 	if *applyChange != "" {
@@ -43,7 +44,7 @@ func main() {
 		return
 	}
 	if *mcpMode {
-		if err := workbench.RunMCPServer(os.Stdin, os.Stdout, workbench.MCPOptions{Workspace: *mcpWorkspace, Mission: *mcpMission, AllowWrite: *mcpWrite, AllowExec: *mcpExec}); err != nil {
+		if err := workbench.RunMCPServer(os.Stdin, os.Stdout, workbench.MCPOptions{Workspace: *mcpWorkspace, Mission: *mcpMission, AllowWrite: *mcpWrite, AllowExec: *mcpExec, AllowTransmit: *mcpExec && *mcpTx}); err != nil {
 			fmt.Fprintln(os.Stderr, "rfswift-workbench mcp:", err)
 			os.Exit(1)
 		}

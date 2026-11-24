@@ -1434,6 +1434,9 @@ func (a *App) SaveFinding(mission string, f Finding) (Finding, error) {
 	if err != nil {
 		return f, err
 	}
+	// Saved from the Workbench, a finding is the operator's: an agent can no
+	// longer change it (an agent's candidate becomes the operator's on edit).
+	f.Origin = "operator"
 	if f.ID == "" {
 		f.ID = "F-" + strconv.FormatInt(time.Now().UnixNano(), 36)
 		fs = append(fs, f)
@@ -1720,6 +1723,9 @@ func (a *App) MCPCommand(mission string) (string, error) {
 	}
 	if cfg.AllowExec {
 		args = append(args, "--mcp-exec")
+		if cfg.AllowTransmit {
+			args = append(args, "--mcp-tx")
+		}
 	}
 	parts := []string{shellQuote(executable)}
 	for _, arg := range args {

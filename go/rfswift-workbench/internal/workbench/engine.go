@@ -1132,24 +1132,32 @@ func execNixEnvironment(ev *rfnix.Environment, command string) (string, error) {
 }
 
 func execNixEnvironmentStream(ev *rfnix.Environment, command string, live io.Writer) (string, error) {
+	c, err := nixEnvironmentCommand(ev, command)
+	if err != nil {
+		return "", err
+	}
+	var captured strings.Builder
+	combined := io.MultiWriter(&captured, live)
+	c.Stdout, c.Stderr = combined, combined
+	if err := c.Run(); err != nil {
+		return captured.String(), fmt.Errorf("command failed: %w", err)
+	}
+	return captured.String(), nil
+}
+
+// nixEnvironmentCommand builds, without starting it, the command that runs
+// command with sh -lc in the Nix environment ev: its PATH and OpenGL runtime,
+// its workspace as the working directory, and its bubblewrap jail when the
+// environment was created isolated. Callers attach output and start it.
+func nixEnvironmentCommand(ev *rfnix.Environment, command string) (*exec.Cmd, error) {
 	if strings.TrimSpace(command) == "" {
-		return "", errors.New("command is required")
+		return nil, errors.New("command is required")
 	}
 	if rfnix.UsesWSL() {
 		// Windows: the environment lives in the WSL 2 distribution; the Linux
 		// rfswift there runs the command with the environment's PATH and GL
 		// runtime (there is no sh, nix profile or bubblewrap on this side).
-		c, err := rfnix.WSLEnvironmentCommand(ev.Name, command)
-		if err != nil {
-			return "", err
-		}
-		var captured strings.Builder
-		combined := io.MultiWriter(&captured, live)
-		c.Stdout, c.Stderr = combined, combined
-		if err := c.Run(); err != nil {
-			return captured.String(), fmt.Errorf("command failed: %w", err)
-		}
-		return captured.String(), nil
+		return rfnix.WSLEnvironmentCommand(ev.Name, command)
 	}
 	workdir := ev.Workspace
 	if workdir == "" {
@@ -1157,7 +1165,7 @@ func execNixEnvironmentStream(ev *rfnix.Environment, command string, live io.Wri
 	}
 	shell, err := exec.LookPath("sh")
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	// OpenGL runtime for GUI tools on non-NixOS hosts (same as the CLI shell).
 	gl := rfnix.GLEnvironment(ev, false)
@@ -1202,23 +1210,16 @@ func execNixEnvironmentStream(ev *rfnix.Environment, command string, live io.Wri
 		}
 	}
 	c.Dir = workdir
-	var captured strings.Builder
-	combined := io.MultiWriter(&captured, live)
-	c.Stdout, c.Stderr = combined, combined
 	// When the environment was created with isolation, run the command inside
 	// the same bubblewrap jail the CLI shell uses (Linux only).
 	if ev.Isolate && rfnix.IsolateSupported() {
 		jailed, jerr := rfnix.IsolateCommand(c, ev, workdir)
 		if jerr != nil {
-			return "", jerr
+			return nil, jerr
 		}
 		c = jailed
 	}
-	runErr := c.Run()
-	if runErr != nil {
-		return captured.String(), fmt.Errorf("command failed: %w", runErr)
-	}
-	return captured.String(), nil
+	return c, nil
 }
 
 // --- helpers ---

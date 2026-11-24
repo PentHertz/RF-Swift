@@ -18,7 +18,9 @@ type CaptureType struct {
 // BuiltinCaptureTypes are the default types files auto-classify into.
 func BuiltinCaptureTypes() []CaptureType {
 	return []CaptureType{
-		{Key: "iq", Label: "IQ recording", Exts: []string{"iq", "cf32", "cfile", "cs8", "cs16", "sigmf-data", "complex"}},
+		// Raw IQ by sample format: cu8 (RTL-SDR, rtl_433), cs8 (HackRF), cs16/sc16
+		// (bladeRF, UHD, LimeSDR), cu16, cf32/fc32/cfile (GNU Radio), cf64.
+		{Key: "iq", Label: "IQ recording", Exts: []string{"iq", "cu8", "cs8", "cu16", "cs16", "sc16", "cf32", "fc32", "cf64", "cfile", "sigmf-data", "complex"}},
 		{Key: "flipper", Label: "Flipper", Exts: []string{"sub", "nfc", "ir", "u2f"}},
 		{Key: "proxmark", Label: "Proxmark", Exts: []string{"eml", "mfd", "dump", "rfid", "json"}},
 		{Key: "binary", Label: "Binary / firmware", Exts: []string{"bin", "elf", "hex", "img", "fw", "rom"}},

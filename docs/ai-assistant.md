@@ -23,9 +23,15 @@ single project and mission. Permissions are independent:
 
 - Read-only exposes mission discovery, notes, and findings.
 - Write access additionally exposes `write_note` and `save_finding`.
-- Command access additionally exposes `execute_command` inside the mission
-  target. This is disabled by default and should only be enabled for an
-  authorized assessment.
+- Command access additionally exposes `execute_command`, the job tools and the
+  interactive session tools inside the mission target. This is disabled by
+  default and should only be enabled for an authorized assessment.
+- RF transmission is a separate switch on top of command access (**Allow
+  commands that transmit RF**, `--mcp-tx`). Without it, commands that transmit
+  are refused; with it, each transmission must still be declared and described
+  (see [RF transmission gate](#rf-transmission-gate)).
+- Findings an agent saves are drafts: the agent cannot confirm a finding or
+  change one the operator wrote (see [Agent findings](#agent-findings)).
 
 Tools that are not permitted are omitted from `tools/list`, not merely rejected
 after an agent tries them. Agent permissions are kept in the local RF Swift user
@@ -119,8 +125,9 @@ other stdio MCP client. The general form is:
 rfswift-workbench --mcp --workspace PROJECT --mission MISSION
 ```
 
-Optional flags are `--mcp-write` and `--mcp-exec`. Register that command as a
-stdio MCP server named `rfswift`, then use the mission prompt from the panel.
+Optional flags are `--mcp-write`, `--mcp-exec` and, with `--mcp-exec`,
+`--mcp-tx`. Register that command as a stdio MCP server named `rfswift`, then use
+the mission prompt from the panel.
 
 ## MCP tools
 
@@ -133,8 +140,139 @@ stdio MCP server named `rfswift`, then use the mission prompt from the panel.
 | `read_note` | read | Read a mission Markdown note |
 | `list_findings` | read | Read PwnDoc-compatible structured findings |
 | `write_note` | write | Replace or append to a Markdown note |
-| `save_finding` | write | Create or replace a structured finding |
-| `execute_command` | execute | Run a command in the selected mission target |
+| `save_finding` | write | Create or update the agent's own draft finding |
+| `execute_command` | execute | Run a command in the mission target as a bounded job (`wait_seconds`, `max_seconds`, `purpose`, `transmits`) |
+| `job_output` | execute | Status and output of a job from an offset; optionally wait for it to end |
+| `cancel_job` | execute | Stop a job and everything it started |
+| `list_jobs` | execute | List the agent's jobs and sessions |
+| `session_start` | execute | Open a persistent interactive terminal, optionally typing a command into it |
+| `session_send` | execute | Type into a session and return the new output (`expect` pattern, idle detection, timeout) |
+| `session_close` | execute | Close a session and stop what runs in it |
+
+## Commands, jobs and sessions
+
+`execute_command` runs `sh -lc` in the mission target, starting in the mission
+workspace (`/workspace` in containers, the environment's workspace in Nix
+missions; `RFSWIFT_WORKSPACE` holds it). It waits at most `wait_seconds`
+(default 60, maximum 300). A command that is still running then becomes a
+background job: the call returns the output so far, `next_offset` and a
+`job_id`, and the command keeps running. `job_output` continues from an offset
+(and can wait for the end), `cancel_job` stops it, `max_seconds` stops it after
+a fixed time, which is how timed captures are run.
+
+Output is read from a terminal, cleaned of colour and cursor sequences (a
+progress bar keeps its last state), written to
+`<mission>/agent-workspace/jobs/<time>-<job>.log` up to 32 MiB, and returned to
+the agent as an excerpt of at most 24 KiB that keeps the beginning and the end.
+At most 8 jobs and 6 sessions run at once.
+
+Sessions are login shells for programs that keep a prompt (`pm3`,
+`bluetoothctl`, `gatttool -I`, `picocom`, OpenOCD's telnet port, `gdb`,
+`rfcat -r`). `session_send` types a line and returns when the output matches
+`expect`, when it has been quiet for 1.5 seconds, or after `wait_seconds`; each
+call returns only output the agent has not seen yet.
+
+In containers a job is stopped through a second exec that signals its process
+group; in Nix missions the process group is signalled on the host (the console
+is closed on Windows). When the agent's MCP server ends (the CLI exits, the
+client closes the transport, or the process is terminated), every job and
+session it started is stopped, so no capture or transmission outlives the
+agent. Each job and session still appears live in its **AI · tool** tab.
+
+## RF transmission gate
+
+Receiving needs no permission beyond command access. A command that
+intentionally radiates is refused unless **Allow commands that transmit RF** is
+enabled for the agent. With it enabled, the agent must also set
+`transmits: true` and describe the transmission (frequency, power or gain,
+duration, target) in `purpose`; the description appears with an `[RF TX]` tag in
+the AI tool tab. The generated `AGENTS.md`/`CLAUDE.md` and the skills tell the
+agent to get the operator's explicit approval for each transmission, and that
+licensed bands are only transmitted into a shielded enclosure or over attenuated
+coax.
+
+Detection covers the transmit modes of the tools RF Swift ships: HackRF
+`hackrf_transfer -t/-c`, UHD TX examples, `bladeRF-cli tx`, the rpitx suite,
+`urh_cli -tx`, rfcat `RFxmit`, `aireplay-ng`, `mdk3`/`mdk4`, access-point tools
+(`hostapd*`, `airbase-ng`, `eaphammer`, `wifiphisher`, ...), `hcxdumptool`,
+bettercap injection modules, btlejack jamming/hijacking, killerbee injectors,
+keystroke-injection tools, and cellular stacks (srsRAN, OCUDU `gnb`, OAI,
+osmocom BTS/TRX, YateBTS, OpenBTS), in commands and in session input. Text
+matching cannot see inside a script or a GNU Radio flowgraph, so the agent's
+declaration is the primary control and detection is the safety net. The switch
+is shown in the Agent posture checks.
+
+## Agent findings
+
+`save_finding` stores what an agent saves with status `draft` and origin
+`agent`; the findings list marks it **AI**. A status the agent asks for is
+replaced by `draft`, and the result says so. An agent may update its own drafts,
+but never a finding the operator wrote or edited: saving a finding from the
+Workbench makes it the operator's. Findings created before this change count as
+the operator's. The agent saves a new draft that references the operator's
+finding instead.
+
+## Skills and subagents
+
+On **Connect & launch**, the Workbench writes the RF Swift agent kit into the
+mission's `agent-workspace` and lists it in `AGENTS.md`/`CLAUDE.md`:
+
+- Skills (Agent Skills format, `rfswift-*/SKILL.md`) in `.claude/skills` (Claude
+  Code, also read by OpenCode) and `.agents/skills` (Codex, OpenCode, Kimi Code,
+  Mistral Vibe): `rfswift-mission-workflow` (how to work through these tools),
+  `rfswift-findings-qualification` (proof, control cases, CVSS for adjacent and
+  physical attacks), `rfswift-mission-board` (facts, open directions and operator
+  hints in note `board.md`), and domain skills for SDR setup, spectrum survey, IQ
+  capture, signal analysis, sub-GHz ISM, GNSS, Wi-Fi, Bluetooth/BLE, Zigbee/Thread/
+  Z-Wave/LoRaWAN, RFID/NFC, hardware interfaces, firmware, automotive CAN and the
+  cellular lab.
+- Subagents in `.claude/agents` (Claude Code) and `.opencode/agents` (OpenCode,
+  `mode: subagent`): `rfswift-rf-recon` (receive only), `rfswift-signal-analyst`
+  (files only), `rfswift-wireless-tester`, `rfswift-hardware-hacker`,
+  `rfswift-cellular-lab` and `rfswift-evidence-reviewer`.
+
+Everything RF Swift writes there is named `rfswift-*` and rewritten on every
+connect; other skills and agents in those folders are left alone. The sources
+are in `go/rfswift-workbench/internal/workbench/agentkit/`.
+
+## Design decisions
+
+- **Bounded waits instead of blocking calls.** `execute_command` used to wait for
+  the command to end and keep all its output in memory, so a capture, a sweep or
+  `rtl_433` never answered and the Workbench kept growing. A job model keeps the
+  agent responsive and lets it follow long work. The limits (60 s default wait,
+  300 s maximum, 24 KiB inline, 32 MiB per log, 8 jobs, 6 sessions) keep a turn,
+  the agent's context and the disk bounded; large data belongs in files in the
+  workspace.
+- **Nothing outlives the agent.** Jobs and sessions belong to the MCP server
+  process of one agent session and are stopped when it ends, including on
+  SIGTERM/SIGHUP. A forgotten capture or transmission must not keep running after
+  the operator disconnected the agent.
+- **Sessions detect prompts generically.** Instead of a list of known prompts per
+  tool, `session_send` returns on the agent's `expect` pattern, or after 1.5 s of
+  quiet output; a slow command is read again with an empty send. This works for
+  any interactive program at the cost of an extra read now and then.
+- **Transmission is its own permission, declared by the agent.** Command access
+  does not imply the right to radiate. The agent's `transmits` declaration is the
+  primary control because text matching cannot see inside scripts or GNU Radio
+  flowgraphs; the detection patterns catch the transmit modes of the tools RF
+  Swift ships and refuse undeclared ones. Whether a setup is shielded cannot be
+  checked by software: the licensed-band rule is stated to the agent (instructions
+  and skills) and to the operator, and enforced by the operator's approval.
+- **Agent findings are drafts.** The findings editor's statuses are draft, open,
+  confirmed, in progress, remediated, risk accepted and false positive; `draft` is
+  the existing candidate state, so no new status was added. A finding without an
+  origin (all findings saved before this change) counts as the operator's, the
+  safe default. Saving a finding from the Workbench makes it the operator's; MCP
+  has no delete tool.
+- **The skills ship with the Workbench.** They are embedded in the binary, so they
+  always match the tools that binary serves, and written into each mission's agent
+  workspace rather than the user's global skill folders, so they do not affect the
+  user's other projects. Subagents are written for Claude Code and OpenCode; the
+  other clients get the skills and the index in `AGENTS.md`.
+- **No typed tool recipes.** The agent composes command lines itself through
+  `execute_command`; `recommend_tools` and the skills say which program and
+  options to use.
 
 Editor AI actions now prepare a scoped prompt and copy it for the external agent;
 they never send document contents to a provider directly.

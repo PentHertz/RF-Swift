@@ -6,7 +6,43 @@ semantic versioning. Dates are ISO-8601 (YYYY-MM-DD).
 
 ## [Unreleased]
 
+### Added
+
+- Workbench agent (MCP): commands run as bounded background jobs.
+  `execute_command` waits up to `wait_seconds` (60 s by default) and then
+  returns the output so far and a `job_id` while the command keeps running;
+  `job_output`, `cancel_job` and `list_jobs` follow it up, `max_seconds` ends
+  timed captures. Output is cleaned of terminal escapes, written to the
+  mission's `agent-workspace/jobs/` (32 MiB cap) and returned as a bounded
+  excerpt. Every job stops when the agent disconnects.
+- Workbench agent (MCP): interactive sessions (`session_start`,
+  `session_send` with an `expect` pattern, `session_close`) for pm3,
+  bluetoothctl, gatttool, serial consoles, OpenOCD, gdb and other programs
+  that keep a prompt.
+- Workbench agent (MCP): RF transmission gate. Commands that transmit (SDR
+  TX, replay, Wi-Fi/802.15.4/BLE injection, rogue access points, cellular
+  base stations and UEs) are refused unless **Allow commands that transmit
+  RF** is enabled in the Agent settings (`--mcp-tx`); even then each one must
+  be declared (`transmits: true`) and described in `purpose`.
+- Workbench agent: RF Swift skills and subagents. Connecting an agent writes
+  the RF Swift skills (mission workflow, findings qualification, mission
+  board, SDR setup, spectrum survey, Wi-Fi, Bluetooth/BLE, IoT radios,
+  RFID/NFC, hardware interfaces, firmware, automotive CAN, cellular lab, ...)
+  to `.claude/skills` and `.agents/skills`, and six specialist subagents to
+  `.claude/agents` and `.opencode/agents`, in the mission's agent workspace;
+  `AGENTS.md`/`CLAUDE.md` index them.
+
+### Fixed
+
+- Workbench: captures with the `.cu8` (RTL-SDR, rtl_433), `.cu16`, `.sc16`, `.fc32` and `.cf64`
+  sample formats are classified as IQ recordings; they used to be listed as plain files.
+
 ### Changed
+
+- Workbench agent (MCP): findings saved by an agent are stored as `draft`
+  with origin `agent` (marked **AI** in the findings list), and an agent can
+  no longer change a finding the operator wrote or edited; `save_finding`
+  used to replace any finding with the same ID and accept any status.
 
 - Dependencies: `golang.org/x/crypto` and the moby group bumped (Dependabot).
 

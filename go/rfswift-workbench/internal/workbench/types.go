@@ -194,6 +194,10 @@ type Finding struct {
 	RetestDescription     string           `json:"retestDescription"`
 	Paragraphs            []map[string]any `json:"paragraphs"`
 	CustomFields          []map[string]any `json:"customFields"`
+	// Origin is "agent" for a finding an MCP agent saved and has not been
+	// touched by the operator since; empty or "operator" otherwise. Agents may
+	// only change their own findings, which always stay drafts.
+	Origin string `json:"origin,omitempty"`
 }
 
 // Capture is one artifact an assessment produced (IQ, Flipper, Proxmark,

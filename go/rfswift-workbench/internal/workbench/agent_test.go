@@ -61,7 +61,7 @@ func TestWriteAgentMCPConfigKimiProjectScope(t *testing.T) {
 
 func TestWriteAgentInstructionsRoutesNotesThroughMCP(t *testing.T) {
 	dir := t.TempDir()
-	if err := writeAgentInstructions(dir, "rfid-lab"); err != nil {
+	if err := writeAgentInstructions(dir, "rfid-lab", AgentCfg{}); err != nil {
 		t.Fatal(err)
 	}
 	for _, name := range []string{"AGENTS.md", "CLAUDE.md"} {
