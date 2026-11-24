@@ -5,6 +5,7 @@
 package workbench
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -74,6 +75,8 @@ type agentJob struct {
 	stoppedBy  string
 	readOff    int64
 	changed    chan struct{}
+	// sendMu keeps concurrent session_send calls from interleaving.
+	sendMu sync.Mutex
 }
 
 type agentJobRegistry struct {
@@ -364,8 +367,9 @@ func (j *agentJob) stop(reason string) {
 	}
 }
 
-// waitDone waits for the job to end, at most d.
-func (j *agentJob) waitDone(d time.Duration) bool {
+// waitDone waits for the job to end, at most d, or until ctx is cancelled
+// (the client cancelled the tool call).
+func (j *agentJob) waitDone(ctx context.Context, d time.Duration) bool {
 	if d <= 0 {
 		return !j.isRunning()
 	}
@@ -376,6 +380,8 @@ func (j *agentJob) waitDone(d time.Duration) bool {
 		return true
 	case <-timer.C:
 		return false
+	case <-ctx.Done():
+		return !j.isRunning()
 	}
 }
 
@@ -383,9 +389,12 @@ func (j *agentJob) waitDone(d time.Duration) bool {
 // without expect, until output arrived after since and then stayed quiet for
 // idle, or until the job ends or maxWait passes. It reports whether expect
 // matched.
-func (j *agentJob) waitOutput(from int64, since time.Time, expect *regexp.Regexp, idle, maxWait time.Duration) bool {
+func (j *agentJob) waitOutput(ctx context.Context, from int64, since time.Time, expect *regexp.Regexp, idle, maxWait time.Duration) bool {
 	deadline := time.Now().Add(maxWait)
 	for {
+		if ctx.Err() != nil {
+			return false
+		}
 		j.mu.Lock()
 		ch, ended, last, size := j.changed, !j.ended.IsZero(), j.lastOutput, j.size
 		partial := j.cleaner.Partial()
@@ -414,6 +423,7 @@ func (j *agentJob) waitOutput(from int64, since time.Time, expect *regexp.Regexp
 		select {
 		case <-ch:
 		case <-timer.C:
+		case <-ctx.Done():
 		}
 		timer.Stop()
 	}
@@ -543,9 +553,9 @@ func argString(args map[string]any, key string) string {
 	return v
 }
 
-// runAgentCommand is execute_command and run_tool: start the command as a job,
+// runAgentCommand is execute_command: start the command as a job,
 // wait for it a bounded time, and report.
-func (s *mcpServer) runAgentCommand(mission, command, purpose string, transmits bool, args map[string]any) (any, error) {
+func (s *mcpServer) runAgentCommand(ctx context.Context, mission, command, purpose string, transmits bool, args map[string]any) (any, error) {
 	if strings.TrimSpace(command) == "" || len(command) > 16384 {
 		return nil, errors.New("a command of at most 16384 bytes is required")
 	}
@@ -570,7 +580,13 @@ func (s *mcpServer) runAgentCommand(mission, command, purpose string, transmits 
 			timer.Stop()
 		}()
 	}
-	finished := job.waitDone(wait)
+	finished := job.waitDone(ctx, wait)
+	if ctx.Err() != nil && !finished {
+		// The client cancelled the call (the operator pressed Esc): the
+		// command it started stops too.
+		job.stop("cancelled by the client")
+		finished = true
+	}
 	if !finished {
 		job.commit()
 	}
@@ -590,13 +606,13 @@ func (s *mcpServer) runAgentCommand(mission, command, purpose string, transmits 
 	return result, nil
 }
 
-func (s *mcpServer) callJobOutput(args map[string]any) (any, error) {
+func (s *mcpServer) callJobOutput(ctx context.Context, args map[string]any) (any, error) {
 	job, err := s.registry().get(argString(args, "job_id"))
 	if err != nil {
 		return nil, err
 	}
 	if wait := argSeconds(args, "wait_seconds", 0, agentMaxWait); wait > 0 {
-		job.waitDone(wait)
+		job.waitDone(ctx, wait)
 	}
 	if job.isRunning() {
 		job.commit()
@@ -651,7 +667,7 @@ func (s *mcpServer) callListJobs() (any, error) {
 	return map[string]any{"jobs": out}, nil
 }
 
-func (s *mcpServer) callSessionStart(mission string, args map[string]any) (any, error) {
+func (s *mcpServer) callSessionStart(ctx context.Context, mission string, args map[string]any) (any, error) {
 	name := strings.TrimSpace(argString(args, "name"))
 	if !sessionNamePattern.MatchString(name) {
 		return nil, errors.New("name must be 1-32 characters: lowercase letters, digits, '-' or '_' (for example pm3, uart, ble)")
@@ -674,7 +690,7 @@ func (s *mcpServer) callSessionStart(mission string, args map[string]any) (any, 
 		return nil, err
 	}
 	start := time.Now()
-	job.waitOutput(0, start.Add(-time.Second), nil, 800*time.Millisecond, 5*time.Second)
+	job.waitOutput(ctx, 0, start.Add(-time.Second), nil, 800*time.Millisecond, 5*time.Second)
 	matched := false
 	if command != "" {
 		expect, err := compileExpect(args)
@@ -688,16 +704,21 @@ func (s *mcpServer) callSessionStart(mission string, args map[string]any) (any, 
 		if err := job.proc.Input([]byte(command + "\r")); err != nil {
 			return nil, err
 		}
-		matched = job.waitOutput(from, sent, expect, agentSessionIdle, argSeconds(args, "wait_seconds", 5*time.Second, agentSessionMaxWait))
+		matched = job.waitOutput(ctx, from, sent, expect, agentSessionIdle, argSeconds(args, "wait_seconds", 5*time.Second, agentSessionMaxWait))
+	}
+	if ctx.Err() != nil {
+		job.stop("cancelled by the client")
 	}
 	return s.sessionResult(job, matched), nil
 }
 
-func (s *mcpServer) callSessionSend(args map[string]any) (any, error) {
+func (s *mcpServer) callSessionSend(ctx context.Context, args map[string]any) (any, error) {
 	job, err := s.registry().session(argString(args, "name"))
 	if err != nil {
 		return nil, err
 	}
+	job.sendMu.Lock()
+	defer job.sendMu.Unlock()
 	if !job.isRunning() {
 		result := s.sessionResult(job, false)
 		result["note"] = "The session has ended; open a new one with session_start."
@@ -736,7 +757,12 @@ func (s *mcpServer) callSessionSend(args map[string]any) (any, error) {
 		}
 	}
 	wait := argSeconds(args, "wait_seconds", agentDefaultSendWait, agentSessionMaxWait)
-	matched := job.waitOutput(from, sent, expect, agentSessionIdle, wait)
+	matched := job.waitOutput(ctx, from, sent, expect, agentSessionIdle, wait)
+	if ctx.Err() != nil && job.isRunning() {
+		// A cancelled call interrupts what it started in the session, the
+		// way Ctrl-C would; the session itself stays open.
+		_ = job.proc.Input([]byte{0x03})
+	}
 	return s.sessionResult(job, matched), nil
 }
 

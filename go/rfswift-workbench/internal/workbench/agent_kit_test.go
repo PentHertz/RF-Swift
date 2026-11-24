@@ -175,3 +175,52 @@ func TestClassifyCaptureRecognisesIQSampleFormats(t *testing.T) {
 		}
 	}
 }
+
+func TestWriteAgentKitWritesCodexKimiAndVibeAgents(t *testing.T) {
+	dir := t.TempDir()
+	_, agents, err := writeAgentKit(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, ag := range agents {
+		codex, err := os.ReadFile(filepath.Join(dir, ".codex", "agents", ag.Name+".toml"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		text := string(codex)
+		for _, want := range []string{"name = \"" + strings.ReplaceAll(ag.Name, "-", "_") + "\"", "description = \"", "developer_instructions = '''\n", "## Hand-off"} {
+			if !strings.Contains(text, want) {
+				t.Errorf("codex %s lacks %q", ag.Name, want)
+			}
+		}
+		kimi, err := os.ReadFile(filepath.Join(dir, ".kimi-code", "agents", ag.Name+".md"))
+		if err != nil || !strings.HasPrefix(string(kimi), "---\nname: "+ag.Name+"\ndescription: \"") || !strings.Contains(string(kimi), "## Hand-off") {
+			t.Errorf("kimi agent %s malformed: %v\n%.200s", ag.Name, err, kimi)
+		}
+		vibe, err := os.ReadFile(filepath.Join(dir, ".vibe", "agents", ag.Name+".toml"))
+		if err != nil || !strings.Contains(string(vibe), "agent_type = \"agent\"") || !strings.Contains(string(vibe), "instructions = '''\n") {
+			t.Errorf("vibe agent %s malformed: %v", ag.Name, err)
+		}
+		if strings.Count(string(codex), "'''") != 2 || strings.Count(string(vibe), "'''") != 2 {
+			t.Errorf("%s: a prompt contains the TOML literal delimiter", ag.Name)
+		}
+	}
+}
+
+func TestAgentStartAsArgs(t *testing.T) {
+	if args, err := agentStartAsArgs("/w", "mistral", "rfswift-rf-recon"); err != nil || strings.Join(args, " ") != "--agent rfswift-rf-recon" {
+		t.Fatalf("vibe: %v %v", args, err)
+	}
+	if args, err := agentStartAsArgs("/w", "kimi", "rfswift-rf-recon"); err != nil || len(args) != 2 || args[0] != "--agent-file" || !strings.HasSuffix(args[1], filepath.Join(".kimi-code", "agents", "rfswift-rf-recon.md")) {
+		t.Fatalf("kimi: %v %v", args, err)
+	}
+	if _, err := agentStartAsArgs("/w", "mistral", "rfswift-unknown"); err == nil {
+		t.Fatal("unknown agent accepted")
+	}
+	if _, err := agentStartAsArgs("/w", "codex", "rfswift-rf-recon"); err == nil {
+		t.Fatal("start-as accepted for a client that uses subagents")
+	}
+	if args, err := agentStartAsArgs("/w", "codex", ""); err != nil || args != nil {
+		t.Fatalf("empty choice: %v %v", args, err)
+	}
+}

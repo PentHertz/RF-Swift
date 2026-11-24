@@ -45,8 +45,27 @@ semantic versioning. Dates are ISO-8601 (YYYY-MM-DD).
   known transmit tools are cross-checked, transmitting commands may only name
   in-scope addresses, and excluded addresses are refused on any command.
 
+- Workbench agent: the six RF Swift specialist agents are also written for Codex
+  (`.codex/agents/*.toml`, which inherit the mission's MCP server), Kimi Code
+  (`.kimi-code/agents/*.md`) and Mistral Vibe (`.vibe/agents/*.toml`). Vibe
+  subagents cannot use MCP tools, so for Vibe they are agents to start the session
+  as; **Start as** in the Agent settings starts Mistral Vibe (`--agent`) or Kimi Code
+  (`--agent-file`) as the chosen specialist.
+- Workbench agent: two skills, `rfswift-iot-device-assessment` (assessing a
+  whole device: interface inventory from the FCC ID and teardown, RF scope, order
+  of work, hardware, cross-interface chains) and `rfswift-red-en18031-assessment`
+  (Radio Equipment Directive test plan and per-mechanism evidence matrix);
+  `rfswift-findings-qualification` covers attack chains.
+
 ### Fixed
 
+- Workbench agent (MCP): cancelling a tool call in the coding-agent CLI (Esc)
+  had no effect: the server ignored `notifications/cancelled` and answered one
+  request at a time, so a cancelled `execute_command` kept waiting (60 s by
+  default) and every other call, `cancel_job` included, waited behind it. Tool
+  calls now run concurrently (store-writing tools stay serialised), and a
+  cancelled call sends no response and stops its command, or sends Ctrl-C to the
+  program it drives in a session.
 - Workbench: captures with the `.cu8` (RTL-SDR, rtl_433), `.cu16`, `.sc16`, `.fc32` and `.cf64`
   sample formats are classified as IQ recordings; they used to be listed as plain files.
 

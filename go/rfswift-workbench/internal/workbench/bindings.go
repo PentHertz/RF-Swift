@@ -1696,6 +1696,15 @@ func (a *App) SetAgentCfg(cfg AgentCfg) error {
 		return err
 	}
 	cfg.Paths = paths
+	for client, name := range cfg.StartAs {
+		if strings.TrimSpace(name) == "" {
+			delete(cfg.StartAs, client)
+			continue
+		}
+		if _, err := agentStartAsArgs("", client, name); err != nil {
+			return err
+		}
+	}
 	return a.store.SaveAgentCfg(cfg)
 }
 

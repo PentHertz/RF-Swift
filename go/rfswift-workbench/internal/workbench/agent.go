@@ -27,6 +27,10 @@ type AgentCfg struct {
 	// Paths holds the program chosen in the settings for a client, by
 	// client id, for a CLI the automatic search does not find.
 	Paths map[string]string `json:"paths,omitempty"`
+	// StartAs starts a client as one of the RF Swift specialist agents
+	// instead of its default agent, by client id (Mistral Vibe: --agent,
+	// Kimi Code: --agent-file). Empty starts the client's default agent.
+	StartAs map[string]string `json:"startAs,omitempty"`
 }
 
 type AgentClient struct {
@@ -206,6 +210,11 @@ func (a *App) agentLaunchSpec(mission, requestedClient string) (AgentConnectResu
 	if cfg.Yolo[clientID] {
 		launchArgs = agentYoloArgs(clientID)
 	}
+	startArgs, err := agentStartAsArgs(agentDir, clientID, cfg.StartAs[clientID])
+	if err != nil {
+		return AgentConnectResult{}, "", nil, err
+	}
+	launchArgs = append(launchArgs, startArgs...)
 	return AgentConnectResult{Client: clientID, Workspace: agentDir, ConfigPath: configPath, Verified: true}, selected.Path, launchArgs, nil
 }
 
@@ -238,7 +247,7 @@ func writeAgentInstructions(agentDir, mission string, cfg AgentCfg) error {
 		b.WriteString("- `" + sk.Name + "`: " + firstSentence(sk.Description) + "\n")
 	}
 	if len(agents) > 0 {
-		b.WriteString("\n## RF Swift subagents\n\nClients with subagents (Claude Code: `.claude/agents`, OpenCode: `.opencode/agents`) can delegate to these specialists:\n\n")
+		b.WriteString("\n## RF Swift specialist agents\n\nDelegate to these specialists when a task matches. They are subagents in Claude Code (`.claude/agents`), OpenCode (`.opencode/agents`), Codex (`.codex/agents`, named with underscores, e.g. `rfswift_rf_recon`) and Kimi Code (`.kimi-code/agents`). Mistral Vibe subagents cannot use MCP tools, so in Vibe they are agents the session can be started as (`vibe --agent <name>`, or \"Start as\" in the Workbench Agent settings).\n\n")
 		for _, ag := range agents {
 			b.WriteString("- `" + ag.Name + "`: " + firstSentence(ag.Description) + "\n")
 		}

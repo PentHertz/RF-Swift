@@ -10,7 +10,9 @@ with the radios, probes and adapters attached, plus the mission's notes,
 findings, captures and recordings in the Workbench. You reach it through the
 `rfswift` MCP server. Domain skills (`rfswift-sdr-setup`,
 `rfswift-wifi-assessment`, `rfswift-rfid-nfc`, `rfswift-hardware-interfaces`,
-...) assume what this one explains.
+...) assume what this one explains. For a whole device, start with
+`rfswift-iot-device-assessment`; for EU Radio Equipment Directive work, add
+`rfswift-red-en18031-assessment`.
 
 ## Ground rules
 
@@ -82,6 +84,10 @@ Use a session for anything that keeps a prompt: `pm3`, `bluetoothctl`,
 1. `session_start {name: "pm3", command: "pm3", expect: "pm3 --> "}`
 2. `session_send {name: "pm3", input: "hf search", expect: "pm3 --> ", wait_seconds: 20}`
 3. `session_close {name: "pm3"}` when done.
+
+If the operator cancels a tool call in your client (Esc), the call stops: a
+command started by `execute_command` is stopped, and a program running in a
+session receives Ctrl-C (the session stays open).
 
 `session_send` returns when `expect` matches, when the output has been quiet for
 1.5 s, or after `wait_seconds`. Without `expect`, a slow command may still be

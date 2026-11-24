@@ -1,6 +1,6 @@
 ---
 name: rfswift-findings-qualification
-description: How to qualify and write findings in an RF Swift mission - what counts as proof for RF, wireless, RFID and hardware weaknesses, control cases that rule out coincidence, candidate versus verified status, CVSS v3.1 vectors for adjacent-radio and physical attacks (AV:A, AV:P), and the save_finding fields. Use it before calling save_finding, when reviewing evidence, and when preparing a report.
+description: How to qualify and write findings in an RF Swift mission - what counts as proof for RF, wireless, RFID and hardware weaknesses, control cases that rule out coincidence, candidate versus verified status, attack chains across interfaces, CVSS v3.1 vectors for adjacent-radio and physical attacks (AV:A, AV:P), and the save_finding fields. Use it before calling save_finding, when reviewing evidence, and when preparing a report.
 ---
 
 # Qualifying findings
@@ -77,6 +77,28 @@ not what is imaginable. Write the vector, not only the score:
 
 Never invent CVE identifiers or versions. If a component version is known, say
 which, and leave CVE matching to the operator.
+
+## Chains
+
+On devices, the serious issue is often a chain: the Zigbee network key is sent in
+the clear at join, so captured traffic can be decrypted, so the lock can be
+commanded; or a Wi-Fi PSK read from unprotected flash is the same on every unit,
+so one bought device opens every customer's network.
+
+- Record each link as its own finding, with its own proof, control case,
+  severity and weakness classes. A link can be fixed on its own, and the report
+  must still be right if one link is.
+- Describe the chain in the finding with the highest end impact (or a dedicated
+  "attack chain" finding): the steps in order, each with the finding id that
+  proves it, what an attacker needs (radio range, physical access to one unit,
+  time), and the demonstrated end result.
+- Score the chain finding on its demonstrated end impact; score each link on what
+  it allows by itself. Do not raise a link's severity because of the chain.
+- A chain is demonstrated only when every step was shown on the target, in order.
+  A step taken from documentation or assumed keeps the chain a hypothesis: say
+  which step is missing.
+- Note the chain on the mission board so the other specialists test the links it
+  depends on (for example, a second unit to check that a key is shared).
 
 ## Writing it
 

@@ -776,7 +776,7 @@ document.addEventListener("keydown",e=>{if(e.key==="Escape")$("#reportModal").cl
 const SPARK='<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="u3"><path d="M12 3l1.9 4.6L18.5 9l-4.6 1.4L12 15l-1.9-4.6L5.5 9l4.6-1.4z"/></svg>';
 const AGENTLABEL={codex:"Codex CLI",claude:"Claude Code",kimi:"Kimi Code",glm:"GLM / Z.ai CLI",opencode:"OpenCode",mistral:"Mistral Vibe"};
 let backendAICfg=null,agentClients=[];
-function aiCfg(){const def={enabled:false,client:"codex",allowWrite:false,allowExec:false,allowTransmit:false,yolo:{},paths:{}};if(backendAICfg)return Object.assign(def,backendAICfg);try{return Object.assign(def,JSON.parse(store.get("agentcfg","{}")));}catch(e){return def;}}
+function aiCfg(){const def={enabled:false,client:"codex",allowWrite:false,allowExec:false,allowTransmit:false,yolo:{},paths:{},startAs:{}};if(backendAICfg)return Object.assign(def,backendAICfg);try{return Object.assign(def,JSON.parse(store.get("agentcfg","{}")));}catch(e){return def;}}
 function setAiCfg(c){backendAICfg=c;if(online)return B.SetAgentCfg(c);store.set("agentcfg",JSON.stringify(c));return Promise.resolve();}
 function aiTag(){const c=aiCfg();return AGENTLABEL[c.client]||c.client||"coding agent";}
 function renderAIChip(){const c=aiCfg(),b=$("#aiBtn");b.innerHTML=SPARK+" "+(c.enabled?aiTag():"Agent");b.style.color=c.enabled?"var(--accent)":"";b.style.borderColor=c.enabled?"var(--accent)":"";}
@@ -786,6 +786,8 @@ function renderAIBody(){const c=aiCfg(),clients=agentClients.length?agentClients
    <label class="fld">Coding-agent CLI<select id="aiProv">${clients.map(x=>`<option value="${esc(x.id)}" ${c.client===x.id?"selected":""}>${esc(x.label)}${x.available?" - installed":" - not found"}</option>`).join("")}</select></label>
    <div class="u23"><label class="fld u10">Program path<input id="aiPath" spellcheck="false"></label><button class="btn ghost fldbtn" id="aiBrowse" type="button">Browse...</button></div>
    <div id="aiPathHint" class="u16"></div>
+   <label class="fld" id="aiStartWrap">Start as<select id="aiStart"><option value="">Default agent</option>${KIT_AGENTS.map(a=>`<option value="${esc(a.name)}" title="${esc(a.description)}">${esc(a.name)}</option>`).join("")}</select></label>
+   <div id="aiStartHint" class="u16"></div>
    <div class="card u120"><div class="cardhead"><h3>MCP permissions</h3><span class="chip ${c.allowExec?"high":"ok"}"><span class="d"></span>${c.allowExec?(c.allowTransmit?"command + RF TX":"command access"):(c.allowWrite?"workspace write":"read only")}</span></div><div class="u121">
      <label><input type="checkbox" id="aiWrite" ${c.allowWrite?"checked":""}> Allow updating notes and findings</label>
      <label><input type="checkbox" id="aiExec" ${c.allowExec?"checked":""}> Allow executing commands inside the selected mission</label>
@@ -797,14 +799,16 @@ function renderAIBody(){const c=aiCfg(),clients=agentClients.length?agentClients
   /* Program path: empty uses what the Workbench finds (PATH, then the nvm,
      fnm, pnpm, yarn, deno and mise folders); a full path is for a CLI
      installed elsewhere. It is checked when the settings are saved. */
-  const yolo=Object.assign({},c.yolo||{}),paths=Object.assign({},c.paths||{}),provider=$("#aiProv"),yoloBox=$("#aiYolo"),pathBox=$("#aiPath"),pathHint=$("#aiPathHint");
+  const yolo=Object.assign({},c.yolo||{}),paths=Object.assign({},c.paths||{}),startAs=Object.assign({},c.startAs||{}),provider=$("#aiProv"),yoloBox=$("#aiYolo"),pathBox=$("#aiPath"),pathHint=$("#aiPathHint"),startBox=$("#aiStart"),startWrap=$("#aiStartWrap"),startHint=$("#aiStartHint");
+  const showStart=()=>{const id=provider.value,supported=id==="mistral"||id==="kimi";startWrap.style.display=supported?"":"none";startBox.value=supported?(startAs[id]||""):"";startHint.textContent=supported?"Starts the CLI as an RF Swift specialist instead of its default agent. "+(id==="mistral"?"Mistral Vibe subagents cannot use MCP tools, so the specialists are offered this way.":"Kimi Code can also delegate to them as subagents."):"This CLI delegates to the RF Swift specialists as subagents.";};
+  startBox.onchange=()=>{const id=provider.value;if(startBox.value)startAs[id]=startBox.value;else delete startAs[id];};
   const showPath=()=>{const id=provider.value,x=clients.find(k=>k.id===id)||{};pathBox.value=paths[id]||"";pathBox.placeholder=x.available&&!x.custom?x.path:"Full path of the "+(x.command||id)+" program";pathHint.textContent=x.custom&&x.problem?x.problem:x.available?(x.custom?"Using this program.":"Found at "+x.path+". Leave empty to keep it, or give another program."):"Not found on PATH or in the usual install folders: install it, or give the full path of its program (Browse shows hidden folders such as .nvm and .local).";};
-  provider.onchange=()=>{yoloBox.checked=!!yolo[provider.value];showPath();};yoloBox.onchange=()=>{yolo[provider.value]=yoloBox.checked;};
+  provider.onchange=()=>{yoloBox.checked=!!yolo[provider.value];showPath();showStart();};yoloBox.onchange=()=>{yolo[provider.value]=yoloBox.checked;};
   pathBox.oninput=()=>{paths[provider.value]=pathBox.value.trim();};
   $("#aiBrowse").onclick=()=>{if(!online){toast("Backend not connected");return;}B.SelectAgentProgram().then(p=>{if(p){pathBox.value=p;paths[provider.value]=p;}}).catch(e=>toast("Browse failed: "+((e&&e.message)||e)));};
-  showPath();
+  showPath();showStart();
   $("#aiExec").onchange=()=>{const tx=$("#aiTx");if(!tx)return;tx.disabled=!$("#aiExec").checked;if(tx.disabled)tx.checked=false;};
-  $("#aiSave").onclick=()=>{yolo[provider.value]=yoloBox.checked;paths[provider.value]=pathBox.value.trim();const nc={enabled:$("#aiOn").checked,client:provider.value,allowWrite:$("#aiWrite").checked,allowExec:$("#aiExec").checked,allowTransmit:$("#aiExec").checked&&$("#aiTx").checked,yolo,paths};setAiCfg(nc).then(async()=>{if(online){try{backendAICfg=await B.GetAgentCfg();agentClients=await B.AgentClients()||agentClients;}catch(e){console.error("AgentClients",e);}}renderAIChip();$("#aiModal").classList.remove("open");renderDock();toast(nc.enabled?(aiTag()+" MCP bridge enabled"):"MCP bridge disabled");}).catch(e=>{toast("Agent settings failed: "+((e&&e.message)||e));if(online)B.GetAgentCfg().then(saved=>{backendAICfg=saved;}).catch(()=>{});});};
+  $("#aiSave").onclick=()=>{yolo[provider.value]=yoloBox.checked;paths[provider.value]=pathBox.value.trim();const nc={enabled:$("#aiOn").checked,client:provider.value,allowWrite:$("#aiWrite").checked,allowExec:$("#aiExec").checked,allowTransmit:$("#aiExec").checked&&$("#aiTx").checked,yolo,paths,startAs};setAiCfg(nc).then(async()=>{if(online){try{backendAICfg=await B.GetAgentCfg();agentClients=await B.AgentClients()||agentClients;}catch(e){console.error("AgentClients",e);}}renderAIChip();$("#aiModal").classList.remove("open");renderDock();toast(nc.enabled?(aiTag()+" MCP bridge enabled"):"MCP bridge disabled");}).catch(e=>{toast("Agent settings failed: "+((e&&e.message)||e));if(online)B.GetAgentCfg().then(saved=>{backendAICfg=saved;}).catch(()=>{});});};
 }
 $("#aiBtn").onclick=async()=>{if(online){try{agentClients=await B.AgentClients()||agentClients;}catch(e){console.error("AgentClients",e);}}renderAIBody();$("#aiModal").classList.add("open");};
 $("#aiClose").onclick=()=>$("#aiModal").classList.remove("open");
@@ -900,6 +904,7 @@ document.addEventListener("keydown",e=>{if(e.key==="Escape")$("#findModal").clas
 // poll) rather than snapshotting once - otherwise the app locks into mock mode.
 let B=null, online=false;
 let COMPLIANCE=null;
+let KIT_AGENTS=[];
 let MISSION_TEMPLATES=[];
 let CONTAINER_PROFILES=[],CONTAINER_DEFAULTS=null;
 let pullEventsBound=false,pullLayers={},pullDisplayedPct=0;
@@ -952,7 +957,7 @@ function renderNixBuild(ev){if(!ev||!ev.progress||!activeCreationName||ev.missio
  $("#cm_buildnow").textContent=now.join("\n");if(p.done&&p.error)nixBuildOpenLog();}
 function appendNixBuildLog(ev){if(!ev||!Array.isArray(ev.lines)||!activeCreationName||ev.mission!==activeCreationName)return;const pre=$("#cm_buildlog");if(!pre)return;$("#cm_build").style.display="block";const atBottom=pre.scrollHeight-pre.scrollTop-pre.clientHeight<24;nixBuild.lines.push(...ev.lines.map(String));if(nixBuild.lines.length>400)nixBuild.lines.splice(0,nixBuild.lines.length-400);pre.textContent=nixBuild.lines.join("\n");if(atBottom)pre.scrollTop=pre.scrollHeight;}
 $("#transferClose").onclick=()=>$("#transferModal").classList.remove("open");
-function detectBackend(){const app=window.go?.workbench?.App||window.go?.main?.App;if(app){B=app;online=true;if(B.ComplianceCatalog)B.ComplianceCatalog().then(c=>{COMPLIANCE=c;}).catch(()=>{});bindPullEvents();bindAuditEvents();bindTransferEvents();bindOperationEvents();return true;}return false;}
+function detectBackend(){const app=window.go?.workbench?.App||window.go?.main?.App;if(app){B=app;online=true;if(B.ComplianceCatalog)B.ComplianceCatalog().then(c=>{COMPLIANCE=c;}).catch(()=>{});if(B.AgentKitAgents)B.AgentKitAgents().then(a=>{KIT_AGENTS=a||[];}).catch(()=>{});bindPullEvents();bindAuditEvents();bindTransferEvents();bindOperationEvents();return true;}return false;}
 detectBackend();
 function _rerender(){renderRail();renderMissionBar();renderDock();}
 let NIX_OK=true,HOST_OS="";

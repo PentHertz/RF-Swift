@@ -2,6 +2,8 @@ package workbench
 
 import (
 	"bufio"
+	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -44,6 +46,17 @@ type mcpServer struct {
 	jobs     *agentJobRegistry
 	jobsOnce sync.Once
 	procs    agentProcessStarter
+	// callMu serialises the tools that read and write the mission store
+	// (notes, findings, secrets); the command, job and session tools run
+	// concurrently so a long wait never blocks list_jobs or cancel_job.
+	callMu sync.Mutex
+}
+
+// concurrentTools may run alongside other calls.
+var concurrentTools = map[string]bool{
+	"execute_command": true, "job_output": true, "cancel_job": true, "list_jobs": true,
+	"session_start": true, "session_send": true, "session_close": true,
+	"read_scope": true, "map_compliance": true, "recommend_tools": true,
 }
 
 // RunMCPServer serves newline-delimited JSON-RPC over stdin/stdout. Diagnostic
@@ -56,10 +69,6 @@ func RunMCPServer(in io.Reader, out io.Writer, opts MCPOptions) error {
 		return errors.New("invalid MCP mission scope")
 	}
 	s := &mcpServer{store: NewStore(""), eng: NewLocalEngine(), opts: opts, vault: remote.OSSecretStore{}}
-	// Nothing an agent started may outlive it: jobs and sessions (a
-	// transmission in particular) stop when the client closes the transport or
-	// ends this process.
-	defer s.registry().stopAll("agent disconnected")
 	signals := make(chan os.Signal, 1)
 	signal.Notify(signals, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
 	defer signal.Stop(signals)
@@ -69,24 +78,101 @@ func RunMCPServer(in io.Reader, out io.Writer, opts MCPOptions) error {
 			os.Exit(0)
 		}
 	}()
+	return s.serve(in, out)
+}
+
+// requestKey normalises a JSON-RPC id (number or string) for lookups.
+func requestKey(id json.RawMessage) string {
+	var buf bytes.Buffer
+	if err := json.Compact(&buf, id); err != nil {
+		return string(id)
+	}
+	return buf.String()
+}
+
+// serve runs the JSON-RPC loop. tools/call requests run in their own
+// goroutine, so a command waiting for its result does not hold up the next
+// request, and a notifications/cancelled from the client cancels the call it
+// names: the call stops waiting, stops what it started (a command, or the
+// program running in a session, with Ctrl-C) and, as the MCP specification
+// asks, sends no response. When the input ends, every call is cancelled and
+// every job and session is stopped: nothing an agent started outlives it.
+func (s *mcpServer) serve(in io.Reader, out io.Writer) error {
+	base, cancelAll := context.WithCancel(context.Background())
+	var wg sync.WaitGroup
+	defer func() {
+		cancelAll()
+		wg.Wait()
+		s.registry().stopAll("agent disconnected")
+	}()
+	var writeMu sync.Mutex
+	enc := json.NewEncoder(out)
+	write := func(v any) {
+		writeMu.Lock()
+		defer writeMu.Unlock()
+		_ = enc.Encode(v)
+	}
+	type inflight struct {
+		cancel    context.CancelFunc
+		cancelled bool
+	}
+	var callsMu sync.Mutex
+	calls := map[string]*inflight{}
+	reply := func(req mcpRequest, result any, rpcErr *mcpRPCError) {
+		if rpcErr != nil {
+			write(mcpError(req.ID, rpcErr.code, rpcErr.message))
+			return
+		}
+		write(map[string]any{"jsonrpc": "2.0", "id": req.ID, "result": result})
+	}
 	scanner := bufio.NewScanner(in)
 	scanner.Buffer(make([]byte, 64*1024), 4<<20)
-	enc := json.NewEncoder(out)
 	for scanner.Scan() {
 		var req mcpRequest
 		if err := json.Unmarshal(scanner.Bytes(), &req); err != nil {
-			_ = enc.Encode(mcpError(nil, -32700, "parse error"))
+			write(mcpError(nil, -32700, "parse error"))
 			continue
 		}
 		if len(req.ID) == 0 { // notification
+			if req.Method == "notifications/cancelled" {
+				var p struct {
+					RequestID json.RawMessage `json:"requestId"`
+				}
+				if json.Unmarshal(req.Params, &p) == nil && len(p.RequestID) > 0 {
+					callsMu.Lock()
+					if c := calls[requestKey(p.RequestID)]; c != nil {
+						c.cancelled = true
+						c.cancel()
+					}
+					callsMu.Unlock()
+				}
+			}
 			continue
 		}
-		result, rpcErr := s.handle(req)
-		if rpcErr != nil {
-			_ = enc.Encode(mcpError(req.ID, rpcErr.code, rpcErr.message))
+		if req.Method != "tools/call" {
+			result, rpcErr := s.handle(req)
+			reply(req, result, rpcErr)
 			continue
 		}
-		_ = enc.Encode(map[string]any{"jsonrpc": "2.0", "id": req.ID, "result": result})
+		key := requestKey(req.ID)
+		ctx, cancel := context.WithCancel(base)
+		c := &inflight{cancel: cancel}
+		callsMu.Lock()
+		calls[key] = c
+		callsMu.Unlock()
+		wg.Add(1)
+		go func(req mcpRequest) {
+			defer wg.Done()
+			defer cancel()
+			result, rpcErr := s.handleCtx(ctx, req)
+			callsMu.Lock()
+			delete(calls, key)
+			cancelled := c.cancelled
+			callsMu.Unlock()
+			if !cancelled {
+				reply(req, result, rpcErr)
+			}
+		}(req)
 	}
 	return scanner.Err()
 }
@@ -101,6 +187,10 @@ func mcpError(id json.RawMessage, code int, message string) map[string]any {
 }
 
 func (s *mcpServer) handle(req mcpRequest) (any, *mcpRPCError) {
+	return s.handleCtx(context.Background(), req)
+}
+
+func (s *mcpServer) handleCtx(ctx context.Context, req mcpRequest) (any, *mcpRPCError) {
 	switch req.Method {
 	case "initialize":
 		var p struct {
@@ -124,7 +214,7 @@ func (s *mcpServer) handle(req mcpRequest) (any, *mcpRPCError) {
 		if err := json.Unmarshal(req.Params, &p); err != nil {
 			return nil, &mcpRPCError{-32602, "invalid tool arguments"}
 		}
-		value, err := s.call(p.Name, p.Arguments)
+		value, err := s.callCtx(ctx, p.Name, p.Arguments)
 		if err != nil {
 			return toolResult(err.Error(), true), nil
 		}
@@ -215,6 +305,14 @@ func (s *mcpServer) mission(args map[string]any) (string, error) {
 }
 
 func (s *mcpServer) call(name string, args map[string]any) (any, error) {
+	return s.callCtx(context.Background(), name, args)
+}
+
+func (s *mcpServer) callCtx(ctx context.Context, name string, args map[string]any) (any, error) {
+	if !concurrentTools[name] {
+		s.callMu.Lock()
+		defer s.callMu.Unlock()
+	}
 	switch name {
 	case "recommend_tools":
 		task, _ := args["task"].(string)
@@ -449,22 +547,22 @@ func (s *mcpServer) call(name string, args map[string]any) (any, error) {
 			return nil, err
 		}
 		if name == "session_start" {
-			return s.callSessionStart(mission, args)
+			return s.callSessionStart(ctx, mission, args)
 		}
-		return s.runAgentCommand(mission, argString(args, "command"), argString(args, "purpose"), argBool(args, "transmits", false), args)
+		return s.runAgentCommand(ctx, mission, argString(args, "command"), argString(args, "purpose"), argBool(args, "transmits", false), args)
 	case "job_output", "cancel_job", "list_jobs", "session_send", "session_close":
 		if !s.opts.AllowExec {
 			return nil, errors.New("MCP command execution is disabled")
 		}
 		switch name {
 		case "job_output":
-			return s.callJobOutput(args)
+			return s.callJobOutput(ctx, args)
 		case "cancel_job":
 			return s.callCancelJob(args)
 		case "list_jobs":
 			return s.callListJobs()
 		case "session_send":
-			return s.callSessionSend(args)
+			return s.callSessionSend(ctx, args)
 		default:
 			return s.callSessionClose(args)
 		}

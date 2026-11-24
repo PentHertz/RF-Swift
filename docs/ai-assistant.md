@@ -174,6 +174,14 @@ Sessions are login shells for programs that keep a prompt (`pm3`,
 `expect`, when it has been quiet for 1.5 seconds, or after `wait_seconds`; each
 call returns only output the agent has not seen yet.
 
+Tool calls run concurrently: while one call waits for its command, the agent
+can still list, read or cancel jobs (calls that change notes, findings or
+secrets stay serialised). When the client cancels a call
+(`notifications/cancelled`, for example when the operator presses Esc), the call
+stops waiting and sends no response, as the MCP specification asks; a command it
+started is stopped, and a program it was driving in a session receives Ctrl-C
+while the session stays open. A cancelled `job_output` only stops waiting.
+
 In containers a job is stopped through a second exec that signals its process
 group; in Nix missions the process group is signalled on the host (the console
 is closed on Windows). When the agent's MCP server ends (the CLI exits, the
@@ -272,14 +280,32 @@ mission's `agent-workspace` and lists it in `AGENTS.md`/`CLAUDE.md`:
   Mistral Vibe): `rfswift-mission-workflow` (how to work through these tools),
   `rfswift-findings-qualification` (proof, control cases, CVSS for adjacent and
   physical attacks), `rfswift-mission-board` (facts, open directions and operator
-  hints in note `board.md`), and domain skills for SDR setup, spectrum survey, IQ
+  hints in note `board.md`), `rfswift-iot-device-assessment` (a whole device:
+  interface inventory, order of work, hardware, chains),
+  `rfswift-red-en18031-assessment` (test plan and evidence matrix per EN 18031
+  mechanism), and domain skills for SDR setup, spectrum survey, IQ
   capture, signal analysis, sub-GHz ISM, GNSS, Wi-Fi, Bluetooth/BLE, Zigbee/Thread/
   Z-Wave/LoRaWAN, RFID/NFC, hardware interfaces, firmware, automotive CAN and the
   cellular lab.
-- Subagents in `.claude/agents` (Claude Code) and `.opencode/agents` (OpenCode,
-  `mode: subagent`): `rfswift-rf-recon` (receive only), `rfswift-signal-analyst`
-  (files only), `rfswift-wireless-tester`, `rfswift-hardware-hacker`,
-  `rfswift-cellular-lab` and `rfswift-evidence-reviewer`.
+- Six specialist agents: `rfswift-rf-recon` (receive only),
+  `rfswift-signal-analyst` (files only), `rfswift-wireless-tester`,
+  `rfswift-hardware-hacker`, `rfswift-cellular-lab` and
+  `rfswift-evidence-reviewer`, written in each client's format:
+
+  | Client | Where | Form |
+  |---|---|---|
+  | Claude Code | `.claude/agents/*.md` | subagents |
+  | OpenCode | `.opencode/agents/*.md` (`mode: subagent`) | subagents |
+  | Codex | `.codex/agents/*.toml` (`name`, `description`, `developer_instructions`; names use underscores, e.g. `rfswift_rf_recon`) | subagents; they inherit the session's MCP servers, so they reach the mission |
+  | Kimi Code | `.kimi-code/agents/*.md` (frontmatter `name`, `description`) | subagents, or the main agent with **Start as** (`--agent-file`) |
+  | Mistral Vibe | `.vibe/agents/*.toml` (`agent_type = "agent"`, `instructions`) | agents to start the session as, with **Start as** (`--agent`) |
+
+  Mistral Vibe subagents can only use Vibe's built-in tools, never MCP tools,
+  so a Vibe subagent could not reach the mission; the specialists are
+  user-facing Vibe agents instead. **Start as** in the Agent settings (shown for
+  Mistral Vibe and Kimi Code) starts the CLI as the chosen specialist. Codex and
+  Kimi Code agents end with a hand-off paragraph, because their custom agents
+  run without the client's own subagent framing.
 
 Everything RF Swift writes there is named `rfswift-*` and rewritten on every
 connect; other skills and agents in those folders are left alone. The sources
@@ -294,6 +320,11 @@ are in `go/rfswift-workbench/internal/workbench/agentkit/`.
   300 s maximum, 24 KiB inline, 32 MiB per log, 8 jobs, 6 sessions) keep a turn,
   the agent's context and the disk bounded; large data belongs in files in the
   workspace.
+- **Cancellation stops the work, not just the wait.** An operator who presses
+  Esc expects the command to stop; leaving it running in the background would
+  surprise them, and a transmission must never continue unseen. Only the call
+  that started a command stops it; reading a job's output and cancelling that
+  read leaves the job alone.
 - **Nothing outlives the agent.** Jobs and sessions belong to the MCP server
   process of one agent session and are stopped when it ends, including on
   SIGTERM/SIGHUP. A forgotten capture or transmission must not keep running after
@@ -318,8 +349,9 @@ are in `go/rfswift-workbench/internal/workbench/agentkit/`.
 - **The skills ship with the Workbench.** They are embedded in the binary, so they
   always match the tools that binary serves, and written into each mission's agent
   workspace rather than the user's global skill folders, so they do not affect the
-  user's other projects. Subagents are written for Claude Code and OpenCode; the
-  other clients get the skills and the index in `AGENTS.md`.
+  user's other projects. The specialist agents are written in every client's
+  own format from one source; for Mistral Vibe they are selectable agents
+  because its subagents cannot use MCP tools.
 - **The scope only restricts.** It is a list of what the operator approved, kept
   where the agent cannot write. A mission without a scope keeps the previous
   behaviour, and an imported scope can never enable transmission.
