@@ -220,7 +220,8 @@ func writeAgentInstructions(agentDir, mission string, cfg AgentCfg) error {
 		"Use the `rfswift` MCP tools for mission data. In particular:\n\n" +
 		"- When asked to create, edit, append, or summarize a note, call `write_note` for mission `" + mission + "` and normally use name `note.md`.\n" +
 		"- Read the current note with `read_note` before changing it. Keep the mission board in note `board.md` (skill `rfswift-mission-board`); its \"Hints from the operator\" section is the operator's.\n" +
-		"- Store security findings with `save_finding`, not as loose files. Agent findings are saved as `draft` candidates; only the operator confirms them, and you cannot change a finding the operator wrote.\n" +
+		"- Store security findings with `save_finding`, not as loose files. Agent findings are saved as `draft` candidates; only the operator confirms them, and you cannot change a finding the operator wrote. Call `map_compliance` and set the finding's `weakness` to the matching class ids: the report then lists the EN 18031 (EU Radio Equipment Directive), ETSI EN 303 645, OWASP IoT and IEC 62443-4-2 requirements it relates to.\n" +
+		"- Read the mission's RF scope with `read_scope` before active work. Never target an excluded address; when the scope defines transmit bands, every transmission needs `tx_frequency_hz` inside one of them. Only the operator can change the scope.\n" +
 		"- When explicitly asked to collect secrets, search notes and approved captures/recordings, then call `save_secret` only for exact observed values with their precise source. Never guess credentials or repeat their values in notes, findings, reports, or chat.\n" +
 		"- Never claim a note or finding was saved unless the MCP tool returned success.\n" +
 		"- Ask before destructive or out-of-scope actions, and before anything that changes the target device.\n")

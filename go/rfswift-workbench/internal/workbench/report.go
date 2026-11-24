@@ -94,7 +94,11 @@ func BuildReportMarkdown(m Mission, findings []Finding, note string, captures []
 		if refs := splitLines(f.References); len(refs) > 0 {
 			b.WriteString("**References:** " + strings.Join(refs, ", ") + "\n\n")
 		}
+		if line := complianceLine(MapFindingCompliance(f)); line != "" {
+			b.WriteString("**Requirements:** " + line + "\n\n")
+		}
 	}
+	b.WriteString(complianceSummary(sorted))
 	b.WriteString("## Notes\n\n" + orDefault(note, "_No notes recorded._") + "\n\n")
 	b.WriteString("## Captures\n\n")
 	if len(captures) == 0 {

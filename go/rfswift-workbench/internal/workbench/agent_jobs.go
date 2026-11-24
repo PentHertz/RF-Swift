@@ -553,6 +553,10 @@ func (s *mcpServer) runAgentCommand(mission, command, purpose string, transmits 
 	if err != nil {
 		return nil, err
 	}
+	txFreq, _ := argNumber(args, "tx_frequency_hz")
+	if err := s.checkScope(mission, command, tx, txFreq); err != nil {
+		return nil, err
+	}
 	wait := argSeconds(args, "wait_seconds", agentDefaultWait, agentMaxWait)
 	maxRun := argSeconds(args, "max_seconds", 0, 7*24*time.Hour)
 	job, err := s.startAgentJob(mission, "job", "", command, purpose, tx, false)
@@ -660,6 +664,10 @@ func (s *mcpServer) callSessionStart(mission string, args map[string]any) (any, 
 		if tx, err = s.checkTransmit(command, argBool(args, "transmits", false), purpose); err != nil {
 			return nil, err
 		}
+		txFreq, _ := argNumber(args, "tx_frequency_hz")
+		if err := s.checkScope(mission, command, tx, txFreq); err != nil {
+			return nil, err
+		}
 	}
 	job, err := s.startAgentJob(mission, "session", name, command, purpose, tx, true)
 	if err != nil {
@@ -700,6 +708,10 @@ func (s *mcpServer) callSessionSend(args map[string]any) (any, error) {
 	if strings.TrimSpace(input) != "" {
 		tx, err := s.checkTransmit(input, argBool(args, "transmits", false), argString(args, "purpose"))
 		if err != nil {
+			return nil, err
+		}
+		txFreq, _ := argNumber(args, "tx_frequency_hz")
+		if err := s.checkScope(job.mission, input, tx, txFreq); err != nil {
 			return nil, err
 		}
 		if tx {

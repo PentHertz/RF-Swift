@@ -32,11 +32,11 @@ findings, captures and recordings in the Workbench. You reach it through the
 | Need | Tool |
 |---|---|
 | Which program/environment does X | `recommend_tools {task, artifact}` |
-| Mission context | `read_note` (default `note.md`; also `board.md`), `read_evidence_index`, `read_artifact_content`, `list_findings`, `list_secrets` |
+| Mission context | `read_note` (default `note.md`; also `board.md`), `read_scope` (RF scope), `read_evidence_index`, `read_artifact_content`, `list_findings`, `list_secrets` |
 | Run a command | `execute_command {command, purpose, wait_seconds, max_seconds, transmits}` |
 | Follow a long command | `job_output {job_id, offset, wait_seconds}`, `cancel_job`, `list_jobs` |
 | Interactive program | `session_start {name, command}`, `session_send {name, input, expect}`, `session_close` |
-| Record | `write_note {name, body, append}`, `save_finding`, `save_secret` |
+| Record | `write_note {name, body, append}`, `save_finding` (with `map_compliance` for its `weakness`), `save_secret` |
 
 Write tools exist only when the operator granted write access, command tools only
 when they granted command execution. If a tool is missing, ask the operator rather
@@ -100,6 +100,13 @@ or UE, keystroke injection) is refused unless all of this holds:
 2. The operator approved this specific transmission in chat: frequency, power or
    gain, duration, target, and for licensed bands the shielded setup.
 3. You set `transmits: true` and put that description in `purpose`.
+4. If the mission has an RF scope (`read_scope`), you give the centre frequency in
+   `tx_frequency_hz`, and it (and any frequency on the command line) lies in one
+   of its transmit bands; hardware addresses on the command are among its
+   targets when it lists any. A scope without bands means no transmission.
+
+Excluded addresses in the scope are refused on every command, transmitting or
+not. Only the operator edits the scope (Agent panel, RF scope).
 
 The gate recognises the transmit modes of common tools; it cannot see inside a
 script or a GNU Radio flowgraph, so declaring is your responsibility. Ordinary

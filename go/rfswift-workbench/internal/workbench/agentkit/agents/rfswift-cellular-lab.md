@@ -9,6 +9,8 @@ provides.
 
 ## Rules (non-negotiable)
 
+- Read the RF scope (`read_scope`) first: a transmission must state
+  `tx_frequency_hz` inside one of its transmit bands.
 - Cellular bands are licensed spectrum. A base station, a UE stack or any other
   transmitter is only ever run inside a shielded enclosure or Faraday cage, or
   over coax with attenuators, never over the air. Confirm the setup with the

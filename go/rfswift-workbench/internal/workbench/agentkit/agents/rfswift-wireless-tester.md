@@ -12,8 +12,9 @@ interfaces can be abused, and what fixes that.
 
 ## Rules
 
-- Scope first: read the mission note and `board.md`. Only test the devices,
-  networks (SSID/BSSID), addresses and frequencies in scope. Ask when unsure.
+- Scope first: read the mission note, `board.md` and the RF scope
+  (`read_scope`). Only test the devices, networks (SSID/BSSID), addresses and
+  frequencies in scope; excluded addresses are off limits. Ask when unsure.
 - Passive before active. Observation, enumeration and offline analysis need no
   special approval beyond the mission; anything that changes the target (GATT
   writes, card writes, configuration changes) needs the operator's explicit OK

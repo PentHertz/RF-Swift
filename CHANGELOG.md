@@ -32,6 +32,19 @@ semantic versioning. Dates are ISO-8601 (YYYY-MM-DD).
   `.claude/agents` and `.opencode/agents`, in the mission's agent workspace;
   `AGENTS.md`/`CLAUDE.md` index them.
 
+- Workbench: compliance mapping. Findings carry weakness classes (set in the
+  finding editor or by an agent through `map_compliance`, otherwise inferred from
+  the type and title) mapped to EN 18031 (EU Radio Equipment Directive), ETSI EN
+  303 645, the OWASP IoT Top 10 and IEC 62443-4-2. The finding editor previews the
+  requirements and the Markdown report lists them per finding and in a compliance
+  table. The tables are not yet reviewed against the standard texts.
+- Workbench agent: per-mission RF scope (**RF scope** in the Agent panel):
+  transmit bands, in-scope target addresses and excluded addresses, readable by the
+  agent (`read_scope`) and enforced by the transmission gate. With a scope, every
+  transmission states `tx_frequency_hz` inside a band, command-line frequencies of
+  known transmit tools are cross-checked, transmitting commands may only name
+  in-scope addresses, and excluded addresses are refused on any command.
+
 ### Fixed
 
 - Workbench: captures with the `.cu8` (RTL-SDR, rtl_433), `.cu16`, `.sc16`, `.fc32` and `.cf64`

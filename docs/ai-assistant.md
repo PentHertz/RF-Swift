@@ -140,8 +140,10 @@ the mission prompt from the panel.
 | `read_note` | read | Read a mission Markdown note |
 | `list_findings` | read | Read PwnDoc-compatible structured findings |
 | `write_note` | write | Replace or append to a Markdown note |
+| `read_scope` | read | Read the mission's RF scope: transmit bands, in-scope and excluded addresses |
+| `map_compliance` | read | Map a finding to EN 18031, ETSI EN 303 645, OWASP IoT and IEC 62443-4-2 requirements, or list the weakness classes |
 | `save_finding` | write | Create or update the agent's own draft finding |
-| `execute_command` | execute | Run a command in the mission target as a bounded job (`wait_seconds`, `max_seconds`, `purpose`, `transmits`) |
+| `execute_command` | execute | Run a command in the mission target as a bounded job (`wait_seconds`, `max_seconds`, `purpose`, `transmits`, `tx_frequency_hz`) |
 | `job_output` | execute | Status and output of a job from an offset; optionally wait for it to end |
 | `cancel_job` | execute | Stop a job and everything it started |
 | `list_jobs` | execute | List the agent's jobs and sessions |
@@ -201,6 +203,54 @@ osmocom BTS/TRX, YateBTS, OpenBTS), in commands and in session input. Text
 matching cannot see inside a script or a GNU Radio flowgraph, so the agent's
 declaration is the primary control and detection is the safety net. The switch
 is shown in the Agent posture checks.
+
+## Mission RF scope
+
+The operator can give each mission an RF scope (**RF scope** in the Agent panel):
+
+- **Transmit bands**, one per line (`433.05-434.79 MHz # gate remote`,
+  `2400-2483.5 MHz`, `868M-868.6M`, or plain Hz).
+- **In-scope targets**: Wi-Fi BSSIDs and clients, Bluetooth/BLE addresses.
+- **Excluded addresses**, never targeted.
+
+It is stored as `scope.json` in the mission directory, outside the notes, so the
+agent can read it (`read_scope`) but cannot change it; it travels with portable
+mission exports. Once a mission has a scope:
+
+- every transmission must give its centre frequency in `tx_frequency_hz`, inside a
+  transmit band; frequencies on the command line of `hackrf_transfer` (`-f`), the
+  UHD TX examples (`--freq`) and `urh_cli` (`-f`) are checked too, so a command
+  cannot claim one frequency and use another;
+- a scope without transmit bands allows no transmission at all;
+- hardware addresses on a transmitting command must be among the in-scope targets
+  when that list is not empty;
+- an excluded address is refused on every agent command, receive-only ones
+  included.
+
+Without a scope, transmissions are limited by the transmission permission and the
+operator's approval only. The scope narrows what the permission allows; it never
+grants transmission by itself.
+
+## Compliance mapping
+
+Each finding can name the weakness classes it belongs to (`weakness`: `replay`,
+`default-credentials`, `debug-interface`, ...; 18 classes). When it names none,
+the classes are inferred from its type and category, then from its title. Each
+class maps to the requirements it relates to in:
+
+- **EN 18031-1/-2/-3** (the harmonised standards of the EU Radio Equipment
+  Directive delegated act, applicable since 1 August 2025), by security mechanism
+  ([ACM], [AUM], [SUM], [SSM], [SCM], [RLM], [CCK], [GEC], [CRY], ...);
+- **ETSI EN 303 645** provision groups (5.1 to 5.13, 6);
+- the **OWASP IoT Top 10** (2018);
+- **IEC 62443-4-2** foundational requirements and selected CR/EDR.
+
+The finding editor shows the mapping as you type, the Markdown report lists the
+requirements under each finding and ends with a compliance table, and agents
+use `map_compliance` to set `weakness`. The PwnDoc export does not carry the
+mapping (PwnDoc would store it as references and duplicate it on every round
+trip). The tables are in
+`go/rfswift-workbench/internal/workbench/compliance/rf-iot-compliance.json`.
 
 ## Agent findings
 
@@ -270,6 +320,25 @@ are in `go/rfswift-workbench/internal/workbench/agentkit/`.
   workspace rather than the user's global skill folders, so they do not affect the
   user's other projects. Subagents are written for Claude Code and OpenCode; the
   other clients get the skills and the index in `AGENTS.md`.
+- **The scope only restricts.** It is a list of what the operator approved, kept
+  where the agent cannot write. A mission without a scope keeps the previous
+  behaviour, and an imported scope can never enable transmission.
+- **Frequencies are declared, then cross-checked.** Text cannot reveal the
+  frequency of every transmit path (a script, a flowgraph, a Wi-Fi interface's
+  channel), so the agent states it in `tx_frequency_hz` and the gate checks the
+  command-line frequency of the tools whose syntax is known. Address checks look
+  at 48-bit addresses in the command; other identifiers (SSIDs, Zigbee PAN IDs,
+  card UIDs) stay with the operator's approval.
+- **Compliance by weakness class, at mechanism or provision level.** Findings
+  are mapped through a small set of weakness classes, not one by one, and the
+  tables name EN 18031 mechanisms, ETSI provision groups and IEC 62443 FR/CR
+  rather than every sub-requirement, so the report stays readable and the tables
+  reviewable. They support a report; they are not a conformity assessment, and
+  the EN 18031 citation in the Official Journal lists restrictions to check.
+  The first version of the tables was written without checking each entry
+  against the standard texts: have it reviewed before relying on it in
+  deliverables, and correct `rf-iot-compliance.json` (the loader refuses a
+  mapping to a requirement that is not in its framework's list).
 - **No typed tool recipes.** The agent composes command lines itself through
   `execute_command`; `recommend_tools` and the skills say which program and
   options to use.

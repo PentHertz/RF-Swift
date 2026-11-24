@@ -1,0 +1,658 @@
+{
+ "note": "Starting point for reports, not a conformity assessment: confirm every requirement against the edition of the standard you assess against, and the Official Journal citation of EN 18031 (it lists restrictions).",
+ "frameworks": [
+  {
+   "id": "en18031",
+   "short": "EN 18031",
+   "name": "EN 18031-1/-2/-3:2024 (EU Radio Equipment Directive, Article 3(3)(d)(e)(f))",
+   "note": "Harmonised standards for the RED delegated act (Regulation (EU) 2022/30), applicable since 1 August 2025. Part 1: internet-connected radio equipment (network protection). Part 2: radio equipment processing personal data, toys and childcare equipment and wearables (privacy). Part 3: internet-connected radio equipment processing virtual money or monetary value (fraud). Requirements are grouped by security mechanism; the mechanism applies in every part that covers the equipment.",
+   "requirements": {
+    "ACM": "Access control mechanism",
+    "AUM": "Authentication mechanism",
+    "SUM": "Secure update mechanism",
+    "SSM": "Secure storage mechanism",
+    "SCM": "Secure communication mechanism",
+    "RLM": "Resilience mechanism",
+    "NMM": "Network monitoring mechanism",
+    "TCM": "Traffic control mechanism",
+    "CCK": "Confidential cryptographic keys",
+    "GEC": "General equipment capabilities",
+    "CRY": "Cryptography",
+    "LGM": "Logging mechanism (part 2, part 3)",
+    "DLM": "Deletion mechanism (part 2)",
+    "UNM": "User notification mechanism (part 2)"
+   }
+  },
+  {
+   "id": "etsi303645",
+   "short": "ETSI EN 303 645",
+   "name": "ETSI EN 303 645 (Cyber security for consumer IoT: baseline requirements)",
+   "note": "Provision groups of clauses 5 and 6. Also the basis of the UK PSTI product security regime and of many IoT certification schemes.",
+   "requirements": {
+    "5.1": "No universal default passwords",
+    "5.2": "Implement a means to manage reports of vulnerabilities",
+    "5.3": "Keep software updated",
+    "5.4": "Securely store sensitive security parameters",
+    "5.5": "Communicate securely",
+    "5.6": "Minimize exposed attack surfaces",
+    "5.7": "Ensure software integrity",
+    "5.8": "Ensure that personal data is secure",
+    "5.9": "Make systems resilient to outages",
+    "5.10": "Examine system telemetry data",
+    "5.11": "Make it easy for users to delete user data",
+    "5.12": "Make installation and maintenance of devices easy",
+    "5.13": "Validate input data",
+    "6": "Data protection provisions for consumer IoT"
+   }
+  },
+  {
+   "id": "owaspiot",
+   "short": "OWASP IoT",
+   "name": "OWASP IoT Top 10 (2018)",
+   "note": "Awareness list, not a standard; useful to explain a finding to a non-specialist reader.",
+   "requirements": {
+    "I1": "Weak, guessable, or hardcoded passwords",
+    "I2": "Insecure network services",
+    "I3": "Insecure ecosystem interfaces",
+    "I4": "Lack of secure update mechanism",
+    "I5": "Use of insecure or outdated components",
+    "I6": "Insufficient privacy protection",
+    "I7": "Insecure data transfer and storage",
+    "I8": "Lack of device management",
+    "I9": "Insecure default settings",
+    "I10": "Lack of physical hardening"
+   }
+  },
+  {
+   "id": "iec62443",
+   "short": "IEC 62443-4-2",
+   "name": "IEC 62443-4-2 (Technical security requirements for IACS components)",
+   "note": "For industrial automation and control system components. FR are the foundational requirements; CR (component) and EDR (embedded device) numbers are the standard's.",
+   "requirements": {
+    "FR1": "Identification and authentication control",
+    "FR2": "Use control",
+    "FR3": "System integrity",
+    "FR4": "Data confidentiality",
+    "FR5": "Restricted data flow",
+    "FR6": "Timely response to events",
+    "FR7": "Resource availability",
+    "CR 1.2": "Software process and device identification and authentication",
+    "CR 1.5": "Authenticator management",
+    "CR 1.7": "Strength of password-based authentication",
+    "CR 3.1": "Communication integrity",
+    "CR 3.4": "Software and information integrity",
+    "CR 3.5": "Input validation",
+    "CR 4.1": "Information confidentiality",
+    "CR 4.3": "Use of cryptography",
+    "CR 7.1": "Denial of service protection",
+    "CR 7.7": "Least functionality",
+    "EDR 2.13": "Use of physical diagnostic and test interfaces",
+    "EDR 3.10": "Support for updates",
+    "EDR 3.14": "Integrity of the boot process"
+   }
+  }
+ ],
+ "classes": [
+  {
+   "id": "default-credentials",
+   "label": "Default, weak or hard-coded password",
+   "keywords": [
+    "default password",
+    "default credential",
+    "hardcoded password",
+    "hard-coded password",
+    "hardcoded credential",
+    "hard-coded credential",
+    "weak password",
+    "guessable password",
+    "universal password",
+    "maintenance password",
+    "backdoor account"
+   ],
+   "map": {
+    "en18031": [
+     "AUM"
+    ],
+    "etsi303645": [
+     "5.1"
+    ],
+    "owaspiot": [
+     "I1"
+    ],
+    "iec62443": [
+     "FR1",
+     "CR 1.5",
+     "CR 1.7"
+    ]
+   }
+  },
+  {
+   "id": "hardcoded-keys",
+   "label": "Hard-coded, default or shared cryptographic key or secret",
+   "keywords": [
+    "hardcoded key",
+    "hard-coded key",
+    "default key",
+    "shared key",
+    "private key in firmware",
+    "secret in firmware",
+    "api key",
+    "api token",
+    "key reuse",
+    "same key",
+    "embedded key",
+    "trust center link key",
+    "zigbeealliance09",
+    "appkey"
+   ],
+   "map": {
+    "en18031": [
+     "CCK",
+     "SSM"
+    ],
+    "etsi303645": [
+     "5.4"
+    ],
+    "owaspiot": [
+     "I7"
+    ],
+    "iec62443": [
+     "FR4",
+     "CR 4.3"
+    ]
+   }
+  },
+  {
+   "id": "missing-authentication",
+   "label": "Missing or weak authentication on a radio or local interface",
+   "keywords": [
+    "missing authentication",
+    "no authentication",
+    "unauthenticated",
+    "without authentication",
+    "just works",
+    "unauthenticated write",
+    "no pairing",
+    "open gatt",
+    "authentication bypass",
+    "weak authentication"
+   ],
+   "map": {
+    "en18031": [
+     "AUM",
+     "ACM"
+    ],
+    "etsi303645": [
+     "5.5",
+     "5.6"
+    ],
+    "owaspiot": [
+     "I2",
+     "I3"
+    ],
+    "iec62443": [
+     "FR1",
+     "FR2",
+     "CR 1.2"
+    ]
+   }
+  },
+  {
+   "id": "replay",
+   "label": "Replayable or forgeable radio messages (fixed code, missing freshness)",
+   "keywords": [
+    "replay",
+    "fixed code",
+    "fixed-code",
+    "rolling code",
+    "rolling-code",
+    "freshness",
+    "relay attack",
+    "frame counter",
+    "counter reset",
+    "rolljam"
+   ],
+   "map": {
+    "en18031": [
+     "SCM",
+     "AUM"
+    ],
+    "etsi303645": [
+     "5.5"
+    ],
+    "owaspiot": [
+     "I7"
+    ],
+    "iec62443": [
+     "FR3",
+     "CR 3.1"
+    ]
+   }
+  },
+  {
+   "id": "cleartext-communication",
+   "label": "Unencrypted or unprotected radio or network communication",
+   "keywords": [
+    "cleartext",
+    "clear text",
+    "plaintext",
+    "plain text",
+    "unencrypted",
+    "no encryption",
+    "not encrypted",
+    "null cipher",
+    "eea0",
+    "eia0",
+    "null integrity",
+    "sniffable"
+   ],
+   "map": {
+    "en18031": [
+     "SCM"
+    ],
+    "etsi303645": [
+     "5.5"
+    ],
+    "owaspiot": [
+     "I7"
+    ],
+    "iec62443": [
+     "FR4",
+     "CR 4.1",
+     "CR 3.1"
+    ]
+   }
+  },
+  {
+   "id": "weak-cryptography",
+   "label": "Broken or weak cryptography",
+   "keywords": [
+    "weak crypto",
+    "broken crypto",
+    "weak cipher",
+    "crypto1",
+    "mifare classic",
+    "keeloq",
+    "hitag2",
+    "wep",
+    "legacy pairing",
+    "le legacy",
+    "s0 security",
+    "3des",
+    "md5",
+    "weak key",
+    "short key"
+   ],
+   "map": {
+    "en18031": [
+     "CRY",
+     "SCM"
+    ],
+    "etsi303645": [
+     "5.5"
+    ],
+    "owaspiot": [
+     "I7"
+    ],
+    "iec62443": [
+     "FR4",
+     "CR 4.3"
+    ]
+   }
+  },
+  {
+   "id": "cloneable-credential",
+   "label": "Cloneable or emulatable credential (badge, card, keyfob identifier)",
+   "keywords": [
+    "clon*",
+    "emulat*",
+    "em4100",
+    "em410x",
+    "hid prox",
+    "magic card",
+    "uid only",
+    "static identifier"
+   ],
+   "map": {
+    "en18031": [
+     "AUM"
+    ],
+    "owaspiot": [
+     "I1"
+    ],
+    "iec62443": [
+     "FR1",
+     "CR 1.2"
+    ]
+   }
+  },
+  {
+   "id": "debug-interface",
+   "label": "Exposed debug or test interface (UART, JTAG, SWD, bootloader console)",
+   "keywords": [
+    "uart",
+    "jtag",
+    "swd",
+    "debug interface",
+    "debug port",
+    "serial console",
+    "test interface",
+    "test pad",
+    "u-boot",
+    "bootloader console",
+    "interruptible boot",
+    "root shell on console"
+   ],
+   "map": {
+    "en18031": [
+     "ACM"
+    ],
+    "etsi303645": [
+     "5.6"
+    ],
+    "owaspiot": [
+     "I10",
+     "I9"
+    ],
+    "iec62443": [
+     "FR2",
+     "EDR 2.13"
+    ]
+   }
+  },
+  {
+   "id": "readable-storage",
+   "label": "Unprotected storage (readable flash or memory, no read-out protection)",
+   "keywords": [
+    "flash dump",
+    "readable flash",
+    "read protection",
+    "read-out protection",
+    "rdp",
+    "unencrypted storage",
+    "unencrypted flash",
+    "eeprom dump",
+    "memory dump"
+   ],
+   "map": {
+    "en18031": [
+     "SSM",
+     "CCK"
+    ],
+    "etsi303645": [
+     "5.4"
+    ],
+    "owaspiot": [
+     "I7",
+     "I10"
+    ],
+    "iec62443": [
+     "FR4",
+     "CR 4.1"
+    ]
+   }
+  },
+  {
+   "id": "insecure-update",
+   "label": "Unauthenticated or unprotected software update",
+   "keywords": [
+    "firmware update",
+    "unsigned firmware",
+    "unsigned update",
+    "update mechanism",
+    "ota update",
+    "update signature",
+    "downgrade",
+    "rollback"
+   ],
+   "map": {
+    "en18031": [
+     "SUM"
+    ],
+    "etsi303645": [
+     "5.3",
+     "5.7"
+    ],
+    "owaspiot": [
+     "I4"
+    ],
+    "iec62443": [
+     "FR3",
+     "CR 3.4",
+     "EDR 3.10"
+    ]
+   }
+  },
+  {
+   "id": "boot-integrity",
+   "label": "Missing secure boot or software integrity protection",
+   "keywords": [
+    "secure boot",
+    "boot integrity",
+    "verified boot",
+    "modified firmware",
+    "integrity check",
+    "tamper*"
+   ],
+   "map": {
+    "etsi303645": [
+     "5.7"
+    ],
+    "owaspiot": [
+     "I10"
+    ],
+    "iec62443": [
+     "FR3",
+     "CR 3.4",
+     "EDR 3.14"
+    ]
+   }
+  },
+  {
+   "id": "outdated-components",
+   "label": "Known-vulnerable or outdated components",
+   "keywords": [
+    "outdated",
+    "out of date",
+    "end of life",
+    "end-of-life",
+    "known vulnerability",
+    "known vulnerable",
+    "vulnerable version",
+    "old kernel",
+    "cve-*"
+   ],
+   "map": {
+    "en18031": [
+     "GEC"
+    ],
+    "etsi303645": [
+     "5.3"
+    ],
+    "owaspiot": [
+     "I5"
+    ]
+   }
+  },
+  {
+   "id": "excessive-exposure",
+   "label": "Unnecessary exposed service or radio feature",
+   "keywords": [
+    "exposed service",
+    "open port",
+    "telnet",
+    "unnecessary service",
+    "attack surface",
+    "always discoverable",
+    "discoverable",
+    "unused interface",
+    "exposed interface"
+   ],
+   "map": {
+    "en18031": [
+     "ACM",
+     "GEC"
+    ],
+    "etsi303645": [
+     "5.6"
+    ],
+    "owaspiot": [
+     "I2",
+     "I9"
+    ],
+    "iec62443": [
+     "FR5",
+     "CR 7.7"
+    ]
+   }
+  },
+  {
+   "id": "unprotected-management-frames",
+   "label": "Unprotected Wi-Fi management frames (no PMF)",
+   "keywords": [
+    "pmf",
+    "802.11w",
+    "management frame",
+    "deauthentication",
+    "deauth"
+   ],
+   "map": {
+    "en18031": [
+     "SCM",
+     "RLM"
+    ],
+    "etsi303645": [
+     "5.5",
+     "5.9"
+    ],
+    "owaspiot": [
+     "I7"
+    ],
+    "iec62443": [
+     "CR 3.1",
+     "CR 7.1"
+    ]
+   }
+  },
+  {
+   "id": "denial-of-service",
+   "label": "Susceptibility to radio or protocol denial of service",
+   "keywords": [
+    "denial of service",
+    "denial-of-service",
+    "dos",
+    "jamming",
+    "flood",
+    "resilience",
+    "crash",
+    "reboot loop"
+   ],
+   "map": {
+    "en18031": [
+     "RLM"
+    ],
+    "etsi303645": [
+     "5.9"
+    ],
+    "iec62443": [
+     "FR7",
+     "CR 7.1"
+    ]
+   }
+  },
+  {
+   "id": "input-validation",
+   "label": "Insufficient validation of radio or protocol input",
+   "keywords": [
+    "input validation",
+    "malformed",
+    "parser",
+    "buffer overflow",
+    "overflow",
+    "fuzz",
+    "command injection",
+    "out-of-bounds",
+    "sql injection",
+    "format string"
+   ],
+   "map": {
+    "etsi303645": [
+     "5.13"
+    ],
+    "owaspiot": [
+     "I3"
+    ],
+    "iec62443": [
+     "FR3",
+     "CR 3.5"
+    ]
+   }
+  },
+  {
+   "id": "privacy-tracking",
+   "label": "Trackable identifier or personal data exposed over radio",
+   "keywords": [
+    "tracking",
+    "trackable",
+    "static mac",
+    "static address",
+    "privacy",
+    "identifier leak",
+    "imsi",
+    "probe request",
+    "preferred network list",
+    "pnl",
+    "personal data",
+    "location leak"
+   ],
+   "map": {
+    "en18031": [
+     "SCM"
+    ],
+    "etsi303645": [
+     "5.8",
+     "6"
+    ],
+    "owaspiot": [
+     "I6"
+    ],
+    "iec62443": [
+     "FR4"
+    ]
+   }
+  },
+  {
+   "id": "weak-wifi-security",
+   "label": "Weak Wi-Fi security configuration (WPS, weak PSK, WPA2/WPA3 transition)",
+   "keywords": [
+    "wps",
+    "pixie",
+    "weak psk",
+    "pre-shared key",
+    "handshake cracked",
+    "pmkid",
+    "transition mode",
+    "wpa2-psk",
+    "open network"
+   ],
+   "map": {
+    "en18031": [
+     "AUM",
+     "SCM"
+    ],
+    "etsi303645": [
+     "5.1",
+     "5.5"
+    ],
+    "owaspiot": [
+     "I1",
+     "I9"
+    ],
+    "iec62443": [
+     "FR1",
+     "CR 1.7"
+    ]
+   }
+  }
+ ]
+}

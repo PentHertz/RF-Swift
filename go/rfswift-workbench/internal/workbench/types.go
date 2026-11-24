@@ -198,6 +198,9 @@ type Finding struct {
 	// touched by the operator since; empty or "operator" otherwise. Agents may
 	// only change their own findings, which always stay drafts.
 	Origin string `json:"origin,omitempty"`
+	// Weakness lists compliance weakness class ids (compliance.go), separated
+	// by commas; empty means they are inferred from the type and title.
+	Weakness string `json:"weakness,omitempty"`
 }
 
 // Capture is one artifact an assessment produced (IQ, Flipper, Proxmark,

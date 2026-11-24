@@ -95,6 +95,14 @@ which, and leave CVE matching to the operator.
   per-device keys, ...).
 - `references`: standards or vendor documents, one per line.
 - `src`: the evidence file or note.
+- `weakness`: the compliance weakness class ids, comma-separated. Call
+  `map_compliance {vuln_type, title}` to see which classes and requirements
+  match, or `map_compliance {}` for the list, and set the ones that describe the
+  weakness (for example `replay` or `default-credentials, hardcoded-keys`). The
+  report then names the EN 18031 mechanism ([AUM], [SCM], ...), the ETSI EN
+  303 645 provision, the OWASP IoT category and the IEC 62443-4-2 requirement.
+  Do not cite a requirement the mapping does not give; the operator decides on
+  conformity claims.
 
 Before saving, check `list_findings` for a duplicate; update your own candidate
 (same `id`) rather than creating a second one.
