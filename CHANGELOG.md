@@ -59,6 +59,13 @@ semantic versioning. Dates are ISO-8601 (YYYY-MM-DD).
 
 ### Fixed
 
+- CI: a transient error from the Go module proxy or checksum database (for example
+  an HTTP/2 `stream error ... INTERNAL_ERROR` from sum.golang.org) failed the
+  modules audit while it built osv-scanner, and could fail any job that installs a
+  Go tool (Wails, nfpm, gosec, govulncheck). Those steps and `go mod download` now go
+  through `.github/scripts/go-retry.sh`, which retries up to four times with a
+  growing delay; verification is unchanged, and a checksum mismatch fails at once
+  without a retry.
 - Workbench agent (MCP): cancelling a tool call in the coding-agent CLI (Esc)
   had no effect: the server ignored `notifications/cancelled` and answered one
   request at a time, so a cancelled `execute_command` kept waiting (60 s by

@@ -10,7 +10,9 @@
 #     full commit SHA (a tag like @v4 is mutable and can be repointed
 #     by a compromised maintainer account; a SHA cannot).
 #   - The scanners themselves (govulncheck, osv-scanner) are installed
-#     with `go install <module>@<version>`, which verifies every
+#     with `go install <module>@<version>` (through .github/scripts/go-retry.sh,
+#     which retries transient proxy/sumdb errors but never a checksum
+#     mismatch), which verifies every
 #     downloaded module against the Go checksum database
 #     (sum.golang.org) - the same transparency log that protects our
 #     regular dependencies. No curl-pipe-bash, no unverified release
@@ -55,7 +57,7 @@ jobs:
         # Every module fetched here is validated against go.sum AND the
         # sum.golang.org transparency log (GONOSUMDB/GONOSUMCHECK are
         # not set, so verification is on by default).
-        run: go mod download
+        run: bash "${{ github.workspace }}/.github/scripts/go-retry.sh" mod download
 
       - name: Verify downloaded module cache
         # Local replacements have no downloaded archive or ziphash. Make
@@ -117,7 +119,7 @@ jobs:
           cache-dependency-path: ${{ inputs.module }}/go.sum
 
       - name: Install govulncheck (sumdb-verified)
-        run: go install golang.org/x/vuln/cmd/govulncheck@v1.9.0
+        run: bash "${{ github.workspace }}/.github/scripts/go-retry.sh" install golang.org/x/vuln/cmd/govulncheck@v1.9.0
 
       - name: Scan for reachable known vulnerabilities
         run: govulncheck ./...
@@ -143,7 +145,7 @@ jobs:
           cache-dependency-path: ${{ inputs.module }}/go.sum
 
       - name: Install osv-scanner (sumdb-verified)
-        run: go install github.com/google/osv-scanner/v2/cmd/osv-scanner@v2.7.0
+        run: bash "${{ github.workspace }}/.github/scripts/go-retry.sh" install github.com/google/osv-scanner/v2/cmd/osv-scanner@v2.7.0
 
       - name: Scan dependency graph against OSV.dev
         # Non-zero exit on any finding fails the job (and therefore

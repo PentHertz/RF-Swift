@@ -149,7 +149,7 @@ jobs:
       - name: Install Wails CLI
         # go install verifies the module against the Go checksum database,
         # same trust model as every other dependency of the project.
-        run: go install "github.com/wailsapp/wails/v2/cmd/wails@${WAILS_VERSION}"
+        run: bash "${{ github.workspace }}/.github/scripts/go-retry.sh" install "github.com/wailsapp/wails/v2/cmd/wails@${WAILS_VERSION}"
 
       - name: Build universal Workbench app
         run: |
